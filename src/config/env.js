@@ -7,19 +7,27 @@
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import fs from 'fs';
 
 // Get current directory in ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Load environment variables - go up TWO levels from src/config/ to root
-const result = dotenv.config({ path: join(__dirname, '../../.env') });
+// Path to .env file (go up TWO levels from src/config/ to root)
+const envPath = join(__dirname, '../../.env');
 
-if (result.error) {
-  console.error('❌ Error loading .env file:', result.error);
+// Only try to load .env if it exists (Railway uses environment variables directly)
+let result = { parsed: {} };
+if (fs.existsSync(envPath)) {
+  result = dotenv.config({ path: envPath });
+  if (result.error) {
+    console.error('❌ Error loading .env file:', result.error);
+  } else {
+    console.error('✅ Environment variables loaded from .env');
+  }
 } else {
-  // Use stderr instead of stdout (MCP uses stdout for JSON-RPC)
-  console.error('✅ Environment variables loaded from .env');
+  // In production (Railway), environment variables are set directly
+  console.error('ℹ️  No .env file found - using system environment variables (Railway/Production mode)');
 }
 
 export default result;

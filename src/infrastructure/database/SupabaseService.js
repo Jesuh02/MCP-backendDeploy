@@ -16,10 +16,15 @@ export class SupabaseService {
         }
 
         const supabaseUrl = process.env.SUPABASE_URL;
-        const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
+        const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
 
         if (!supabaseUrl || !supabaseKey) {
-            throw new Error('Supabase credentials not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY in .env');
+            console.error('❌ Supabase credentials missing!');
+            console.error('   Required environment variables:');
+            console.error('   - SUPABASE_URL (current:', supabaseUrl ? 'SET' : 'NOT SET', ')');
+            console.error('   - SUPABASE_SERVICE_KEY or SUPABASE_KEY (current:', supabaseKey ? 'SET' : 'NOT SET', ')');
+            console.error('   Configure these in Railway Dashboard > Variables');
+            throw new Error('Supabase credentials not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY/SUPABASE_KEY in Railway environment variables');
         }
 
         this.client = createClient(supabaseUrl, supabaseKey, {
