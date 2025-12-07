@@ -1004,7 +1004,7 @@ El archivo que enviaste no pudo ser procesado correctamente por el sistema. Esto
                             return res.json({ respuesta_texto: respuestaFormateada });
                         } else {
                             // Si el análisis falló pero tenemos información del error
-                            console.log('⚠️ Análisis de GitHub falló:', analysisResult ? .error || 'Error desconocido');
+                            console.log('⚠️ Análisis de GitHub falló:', analysisResult?.error || 'Error desconocido');
 
                             const respuestaError = `⚠️ **ERROR AL ANALIZAR REPOSITORIO**
 
