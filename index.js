@@ -14,6 +14,7 @@ import { DocxLoader } from 'langchain/document_loaders/fs/docx';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { LLMService } from './src/infrastructure/ai/LLMService.js';
 import { MCPService } from './src/domain/services/MCPService.js';
+import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -1562,6 +1563,283 @@ function getLocalIPAddress() {
     return results;
 }
 
+// ============================================================
+// MCP ENDPOINTS (Integrated from mcp-http.js for single-port deployment)
+// ============================================================
+
+// Initialize Supabase service for MCP endpoints
+const supabaseService = SupabaseService.getInstance();
+
+/**
+ * MCP Health check endpoint
+ */
+app.get('/health', async(req, res) => {
+    try {
+        const dbHealth = await supabaseService.healthCheck();
+
+        // Test LLM connection
+        let llmHealth = { status: 'not_tested' };
+        try {
+            if (llmService) {
+                llmHealth = await llmService.testConnection();
+            }
+        } catch (e) {
+            llmHealth = { status: 'error', error: e.message };
+        }
+
+        res.json({
+            status: 'ok',
+            server: 'tareamov-mcp-server',
+            version: '1.0.0',
+            timestamp: new Date().toISOString(),
+            services: {
+                database: dbHealth,
+                llm: llmHealth
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+/**
+ * MCP initialize endpoint
+ */
+app.post('/initialize', async(req, res) => {
+    console.log('🔧 MCP Initialize request received');
+
+    try {
+        await supabaseService.testConnection();
+        console.log('✅ Supabase connected');
+
+        res.json({
+            jsonrpc: '2.0',
+            id: req.body.id,
+            result: {
+                protocolVersion: '2024-11-05',
+                capabilities: {
+                    tools: {
+                        listChanged: true
+                    },
+                    resources: {
+                        subscribe: true,
+                        listChanged: true
+                    }
+                },
+                serverInfo: {
+                    name: 'tareamov-mcp-server',
+                    version: '1.0.0'
+                }
+            }
+        });
+    } catch (error) {
+        console.error('❌ Initialize error:', error);
+        res.status(500).json({
+            jsonrpc: '2.0',
+            id: req.body.id,
+            error: {
+                code: -32603,
+                message: 'Internal error during initialization',
+                data: error.message
+            }
+        });
+    }
+});
+
+/**
+ * MCP tools/list endpoint
+ */
+app.post('/tools/list', async(req, res) => {
+    console.log('🔧 Tools list request received');
+
+    res.json({
+        jsonrpc: '2.0',
+        id: req.body.id,
+        result: {
+            tools: [{
+                    name: 'query_database',
+                    description: `Execute queries on the TareaMov Supabase database. Returns real-time data.
+
+**CAPABILITIES:**
+- Execute RAW PostgreSQL/SQL queries directly (SELECT, INSERT, UPDATE, DELETE)
+- Process natural language queries that are auto-converted to SQL
+- Full access to all Supabase tables and relationships
+
+**AVAILABLE TABLES:**
+usuarios, personas, courses, videos, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos, progreso_estudiante`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            query: {
+                                type: 'string',
+                                description: 'SQL query (preferred) or natural language query.'
+                            }
+                        },
+                        required: ['query']
+                    }
+                },
+                {
+                    name: 'get_database_schema',
+                    description: `Get the complete Supabase database schema with all tables, columns, types, and relationships.`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {},
+                        description: 'No parameters required - returns full schema'
+                    }
+                },
+                {
+                    name: 'analyze_github_repo',
+                    description: `Analyze and grade a GitHub repository. Extracts code, README, and structure to evaluate quality.`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            repoUrl: {
+                                type: 'string',
+                                description: 'GitHub repository URL (e.g., https://github.com/user/repo)'
+                            },
+                            criteria: {
+                                type: 'string',
+                                description: 'Optional evaluation criteria or rubric'
+                            },
+                            taskDescription: {
+                                type: 'string',
+                                description: 'Optional task/assignment description for context'
+                            }
+                        },
+                        required: ['repoUrl']
+                    }
+                }
+            ]
+        }
+    });
+});
+
+/**
+ * MCP tools/call endpoint
+ */
+app.post('/tools/call', async(req, res) => {
+    const { params } = req.body;
+    console.log('🔧 Tool call request:', params?.name);
+
+    try {
+        const { name, arguments: args } = params;
+
+        if (name === 'query_database') {
+            let result;
+            const isSQL = /^\s*(select|insert|update|delete|with)\s/i.test(args.query);
+
+            if (isSQL) {
+                console.log('📊 Executing raw SQL query...');
+                result = await mcpService.processQuery(args.query, { includeSchema: true });
+            } else {
+                console.log('🤖 Processing Natural Language Query via Agent...');
+                try {
+                    const agentResponse = await mcpService.processQueryWithAgent(args.query);
+                    result = {
+                        data: agentResponse,
+                        sqlScript: "-- Executed via LLM Agent with tool calling"
+                    };
+                } catch (agentError) {
+                    console.error('❌ Agent error:', agentError);
+                    result = {
+                        error: true,
+                        message: `Error del agente LLM: ${agentError.message}`
+                    };
+                }
+            }
+
+            res.json({
+                jsonrpc: '2.0',
+                id: req.body.id,
+                result: {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify(result, null, 2)
+                    }]
+                }
+            });
+        } else if (name === 'get_database_schema') {
+            const schema = await mcpService.getDatabaseSchema();
+            res.json({
+                jsonrpc: '2.0',
+                id: req.body.id,
+                result: {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify(schema, null, 2)
+                    }]
+                }
+            });
+        } else if (name === 'analyze_github_repo') {
+            console.log('🐙 Analyzing GitHub repository:', args.repoUrl);
+
+            try {
+                const result = await mcpService.analyzeGitHubRepo(args.repoUrl, {
+                    taskDescription: args.taskDescription,
+                    gradingCriteria: args.gradingCriteria,
+                    focusAreas: args.focusAreas,
+                    maxFiles: args.maxFiles
+                });
+
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify(result, null, 2)
+                        }]
+                    }
+                });
+            } catch (githubError) {
+                console.error('❌ GitHub analysis error:', githubError);
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                error: true,
+                                message: `Error analizando repositorio: ${githubError.message}`
+                            }, null, 2)
+                        }]
+                    }
+                });
+            }
+        } else {
+            res.status(404).json({
+                jsonrpc: '2.0',
+                id: req.body.id,
+                error: {
+                    code: -32601,
+                    message: `Tool not found: ${name}`
+                }
+            });
+        }
+    } catch (error) {
+        console.error('❌ Tool call error:', error);
+        res.json({
+            jsonrpc: '2.0',
+            id: req.body.id,
+            result: {
+                content: [{
+                    type: 'text',
+                    text: `❌ Error executing tool: ${error.message}\nHint: Check table names and SQL syntax.`
+                }]
+            }
+        });
+    }
+});
+
+// ============================================================
+// END OF MCP ENDPOINTS
+// ============================================================
+
 // Listen on all interfaces so the service is reachable from other devices on the LAN
 app.listen(PORT, '0.0.0.0', () => {
     const localIPs = getLocalIPAddress();
@@ -1590,5 +1868,9 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`   • POST /feedback-entrega`);
     console.log(`   • POST /procesar-prompt`);
     console.log(`   • GET  / (health check)`);
+    console.log(`   • GET  /health (MCP health)`);
+    console.log(`   • POST /initialize (MCP)`);
+    console.log(`   • POST /tools/list (MCP)`);
+    console.log(`   • POST /tools/call (MCP)`);
     console.log('='.repeat(60));
 });

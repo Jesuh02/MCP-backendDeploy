@@ -5,9 +5,10 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "sh start.sh",
+    "start": "node index.js",
     "start:api": "node index.js",
     "start:mcp": "node src/mcp-http.js",
+    "start:both": "sh start.sh",
     "start-legacy": "node index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test src/**/*.test.js",

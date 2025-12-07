@@ -15,16 +15,12 @@ COPY . .
 # Create logs directory
 RUN mkdir -p logs
 
-# Make start script executable
-RUN chmod +x start.sh
-
-# Expose ports (3001 for API, 3000 for MCP)
+# Expose main port (Railway will use PORT env variable)
 EXPOSE 3001
-EXPOSE 3000
 
-# Health check (check main API on port 3001)
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3001/', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+  CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 3001) + '/', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
 # Start server
 CMD ["npm", "start"]
