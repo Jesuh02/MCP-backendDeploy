@@ -38,7 +38,21 @@ try {
 try {
     // Try to load from environment variable first (Scalable/Cloud Native)
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        let serviceAccount;
+        try {
+            serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        } catch (error) {
+            console.warn('⚠️ Error parsing FIREBASE_SERVICE_ACCOUNT JSON:', error.message);
+            // Attempt to fix common copy-paste issues with escaped quotes
+            const cleaned = process.env.FIREBASE_SERVICE_ACCOUNT.toString().replace(/\\"/g, '"');
+            serviceAccount = JSON.parse(cleaned);
+        }
+
+        // Fix private_key newlines (common issue with Env Vars)
+        if (serviceAccount.private_key) {
+            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+        }
+
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount)
         });
