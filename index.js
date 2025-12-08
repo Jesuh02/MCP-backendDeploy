@@ -1321,17 +1321,28 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
             console.log('⏱️ DURACIÓN TOTAL:', duracion, 'segundos');
             console.log('==============================================');
 
-            // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+            // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
             if (userId) {
+                const notifTitle = "Respuesta Lista 🤖";
+                const notifBody = "DeepSeek ha respondido a tu consulta.";
+
+                // Push Notification
                 sendPushNotification(
                     userId,
-                    "Respuesta Lista 🤖",
-                    "DeepSeek ha respondido a tu consulta.",
+                    notifTitle,
+                    notifBody,
                     { 
                         type: "DEEPSEEK_RESPONSE", 
                         fragment: "ChatBotFragment" 
                     }
                 ).catch(err => console.error('Error enviando push:', err));
+
+                // Email Notification
+                sendEmailNotification(
+                    userId,
+                    notifTitle,
+                    `Hola,\n\nTu consulta ha sido procesada por DeepSeek.\n\nRespuesta:\n${respuestaAutomatica.substring(0, 200)}...\n\nAbre la app para ver la respuesta completa.`
+                ).catch(err => console.error('Error enviando email:', err));
             }
 
             return res.json({ respuesta_texto: respuestaAutomatica });
