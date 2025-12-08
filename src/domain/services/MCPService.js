@@ -54,7 +54,7 @@ export class MCPService {
     async generateDataSnapshot(query, options = {}) {
         const {
             isBusinessQuestion = false,
-                reason = 'fallback'
+            reason = 'fallback'
         } = options;
 
         const sqlStatements = [];
@@ -71,8 +71,7 @@ export class MCPService {
             { key: 'task_submissions_total', table: 'task_submissions' }
         ];
 
-        for (const { key, table }
-            of countConfigs) {
+        for (const { key, table } of countConfigs) {
             const sql = `SELECT COUNT(*) AS total FROM ${table}`;
             sqlStatements.push(sql);
 
