@@ -997,6 +997,103 @@ app.get('/', (req, res) => {
 });
 
 /**
+ * Notifica a los suscriptores cuando un creador sube un nuevo video.
+ * 1. Busca los suscriptores del creador.
+ * 2. Guarda la notificación en la base de datos (tabla 'notifications').
+ * 3. Envía notificaciones Push a los dispositivos de los suscriptores.
+ */
+app.post('/notify-video-upload', async(req, res) => {
+    const { creatorId, videoTitle, videoId } = req.body;
+
+    if (!creatorId || !videoTitle || !videoId) {
+        return res.status(400).json({ error: 'Faltan datos requeridos: creatorId, videoTitle, videoId' });
+    }
+
+    console.log(`📢 Procesando notificación de video para creador ${creatorId}`);
+
+    try {
+        // 1. Obtener información del creador (nombre)
+        const { data: creator, error: creatorError } = await supabaseService.client
+            .from('usuarios')
+            .select('usuario')
+            .eq('id', creatorId)
+            .single();
+
+        if (creatorError || !creator) {
+            throw new Error(`Error obteniendo creador: ${creatorError?.message}`);
+        }
+
+        // 2. Obtener suscriptores del creador
+        const { data: subscriptions, error: subError } = await supabaseService.client
+            .from('subscriptions')
+            .select('subscriber_id')
+            .eq('creator_id', creatorId);
+
+        if (subError) {
+            throw new Error(`Error obteniendo suscriptores: ${subError.message}`);
+        }
+
+        if (!subscriptions || subscriptions.length === 0) {
+            console.log('ℹ️ El creador no tiene suscriptores.');
+            return res.json({ message: 'Sin suscriptores para notificar', count: 0 });
+        }
+
+        const subscriberIds = subscriptions.map(s => s.subscriber_id);
+        console.log(`👥 Encontrados ${subscriberIds.length} suscriptores.`);
+
+        // 3. Preparar notificaciones para la base de datos
+        const notificationsToInsert = subscriberIds.map(subId => ({
+            user_id: subId,
+            title: 'Nuevo video disponible',
+            message: `${creator.usuario} ha subido: ${videoTitle}`,
+            type: 'video_upload',
+            related_id: videoId,
+            is_read: false,
+            created_at: new Date().toISOString()
+        }));
+
+        // 4. Guardar en Supabase (tabla 'notifications')
+        // Asegúrate de que la tabla 'notifications' exista en tu esquema
+        const { error: insertError } = await supabaseService.client
+            .from('notifications')
+            .insert(notificationsToInsert);
+
+        if (insertError) {
+            console.error('⚠️ Error guardando notificaciones en DB:', insertError.message);
+            // No detenemos el proceso, intentamos enviar Push de todos modos
+        } else {
+            console.log('✅ Notificaciones guardadas en base de datos.');
+        }
+
+        // 5. Enviar Notificaciones Push
+        let pushCount = 0;
+        for (const subId of subscriberIds) {
+            await sendPushNotification(
+                subId,
+                '¡Nuevo Video!',
+                `${creator.usuario} acaba de subir un nuevo video: ${videoTitle}`, {
+                    type: 'video_upload',
+                    videoId: videoId.toString(),
+                    creatorId: creatorId.toString()
+                }
+            );
+            pushCount++;
+        }
+
+        res.json({
+            success: true,
+            message: `Notificaciones procesadas`,
+            subscribers: subscriberIds.length,
+            pushSent: pushCount
+        });
+
+    } catch (error) {
+        console.error('❌ Error en /notify-video-upload:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * Recibe un prompt, lo divide o resume si supera el límite de tokens,
  * y lo envía al modelo Granite/Ollama.
  */

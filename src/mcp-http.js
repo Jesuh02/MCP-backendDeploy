@@ -267,6 +267,10 @@ app.post('/tools/call', async(req, res) => {
             // Check if it's likely SQL
             const isSQL = /^\s*(select|insert|update|delete|with)\s/i.test(args.query);
 
+            if (!mcpService) {
+                throw new Error('MCPService not initialized');
+            }
+
             if (isSQL) {
                 console.log('📊 Executing raw SQL query...');
                 result = await mcpService.processQuery(args.query, { includeSchema: true });
@@ -305,6 +309,9 @@ app.post('/tools/call', async(req, res) => {
                 }
             });
         } else if (name === 'get_database_schema') {
+            if (!mcpService) {
+                throw new Error('MCPService not initialized');
+            }
             const schema = await mcpService.getDatabaseSchema();
             res.json({
                 jsonrpc: '2.0',
@@ -317,6 +324,9 @@ app.post('/tools/call', async(req, res) => {
                 }
             });
         } else if (name === 'analyze_github_repo') {
+            if (!mcpService) {
+                throw new Error('MCPService not initialized');
+            }
             // Nueva herramienta para analizar y calificar repositorios de GitHub
             console.log('🐙 Analyzing GitHub repository:', args.repoUrl);
 
