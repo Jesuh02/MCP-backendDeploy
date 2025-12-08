@@ -88,6 +88,15 @@ try {
     console.error('❌ Failed to initialize MCPService:', error.message);
 }
 
+// Initialize SupabaseService
+let supabaseService = null;
+try {
+    supabaseService = SupabaseService.getInstance();
+    console.log('✅ SupabaseService initialized');
+} catch (error) {
+    console.error('❌ Failed to initialize SupabaseService:', error.message);
+}
+
 /**
  * Detecta si el nombre de archivo indica un repositorio de GitHub
  * Formato: github_OWNER_REPO o github_OWNER_REPO_BRANCH
@@ -1245,6 +1254,19 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
             console.log('⏱️ DURACIÓN TOTAL:', duracion, 'segundos');
             console.log('==============================================');
 
+            // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+            if (userId) {
+                sendPushNotification(
+                    userId,
+                    "Respuesta Lista 🤖",
+                    "DeepSeek ha respondido a tu consulta.",
+                    { 
+                        type: "DEEPSEEK_RESPONSE", 
+                        fragment: "ChatBotFragment" 
+                    }
+                ).catch(err => console.error('Error enviando push:', err));
+            }
+
             return res.json({ respuesta_texto: respuestaAutomatica });
         }
 
@@ -1388,6 +1410,20 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 } catch (err) {
                     console.log('⚠️ Error extrayendo/persistiendo calificación (fallback):', err.message);
                 }
+
+                // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+                if (userId) {
+                    sendPushNotification(
+                        userId,
+                        "Respuesta Lista 🤖",
+                        "DeepSeek ha respondido a tu consulta.",
+                        { 
+                            type: "DEEPSEEK_RESPONSE", 
+                            fragment: "ChatBotFragment" 
+                        }
+                    ).catch(err => console.error('Error enviando push:', err));
+                }
+
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 return res.json({ respuesta_texto: respuestaFinal });
             } catch (err) {
@@ -1471,6 +1507,20 @@ INSTRUCCIONES: Responde en español de forma clara y educativa basándote en la 
                 } catch (err) {
                     console.log('⚠️ Error extrayendo/persistiendo calificación (sin archivo):', err.message);
                 }
+
+                // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+                if (userId) {
+                    sendPushNotification(
+                        userId,
+                        "Respuesta Lista 🤖",
+                        "DeepSeek ha respondido a tu consulta.",
+                        { 
+                            type: "DEEPSEEK_RESPONSE", 
+                            fragment: "ChatBotFragment" 
+                        }
+                    ).catch(err => console.error('Error enviando push:', err));
+                }
+
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 return res.json({ respuesta_texto: respuestaFinal });
             } catch (err) {
@@ -1558,6 +1608,19 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
                 console.log('⏱️ DURACIÓN:', Math.round(duration / 1000), 'segundos');
                 console.log('==============================================');
 
+                // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+                if (userId) {
+                    sendPushNotification(
+                        userId,
+                        "Respuesta Lista 🤖",
+                        "DeepSeek ha respondido a tu consulta.",
+                        { 
+                            type: "DEEPSEEK_RESPONSE", 
+                            fragment: "ChatBotFragment" 
+                        }
+                    ).catch(err => console.error('Error enviando push:', err));
+                }
+
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
                 return res.json({ respuesta_texto: respuestaEvaluacion });
 
@@ -1639,6 +1702,20 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
             console.log('🕐 HORA DE RESPUESTA:', endTime.toLocaleString('es-ES'));
             console.log('⏱️ DURACIÓN TOTAL:', Math.round(duration / 1000), 'segundos');
             console.log('==============================================');
+
+            // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+            if (userId) {
+                sendPushNotification(
+                    userId,
+                    "Respuesta Lista 🤖",
+                    "DeepSeek ha respondido a tu consulta.",
+                    { 
+                        type: "DEEPSEEK_RESPONSE", 
+                        fragment: "ChatBotFragment" 
+                    }
+                ).catch(err => console.error('Error enviando push:', err));
+            }
+
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
             return res.json({ respuesta_texto: respuestaFinal });
         } catch (err) {
@@ -1677,7 +1754,7 @@ function getLocalIPAddress() {
 // ============================================================
 
 // Initialize Supabase service for MCP endpoints
-const supabaseService = SupabaseService.getInstance();
+// const supabaseService = SupabaseService.getInstance(); // Already initialized at top level
 
 /**
  * MCP Health check endpoint
