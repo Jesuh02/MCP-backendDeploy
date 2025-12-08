@@ -29,7 +29,12 @@ app.use((req, res, next) => {
 
 // Initialize services
 const supabase = SupabaseService.getInstance();
-const mcpService = new MCPService();
+let mcpService;
+try {
+    mcpService = new MCPService();
+} catch (error) {
+    console.error('❌ Failed to initialize MCPService:', error);
+}
 
 /**
  * Health check endpoint
@@ -41,7 +46,9 @@ app.get('/health', async(req, res) => {
         // Test LLM connection
         let llmHealth = { status: 'not_tested' };
         try {
-            llmHealth = await mcpService.llmService.testConnection();
+            if (mcpService && mcpService.llmService) {
+                llmHealth = await mcpService.llmService.testConnection();
+            }
         } catch (e) {
             llmHealth = { status: 'error', error: e.message };
         }

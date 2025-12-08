@@ -1913,7 +1913,9 @@ app.get('/health', async(req, res) => {
         // Test LLM connection
         let llmHealth = { status: 'not_tested' };
         try {
-            if (llmService) {
+            if (mcpService && mcpService.llmService) {
+                llmHealth = await mcpService.llmService.testConnection();
+            } else if (llmService) {
                 llmHealth = await llmService.testConnection();
             }
         } catch (e) {
