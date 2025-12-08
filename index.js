@@ -1065,9 +1065,11 @@ app.post('/notify-video-upload', async(req, res) => {
             console.log('✅ Notificaciones guardadas en base de datos.');
         }
 
-        // 5. Enviar Notificaciones Push
+        // 5. Enviar Notificaciones Push y Email
         let pushCount = 0;
+        let emailCount = 0;
         for (const subId of subscriberIds) {
+            // Push Notification
             await sendPushNotification(
                 subId,
                 '¡Nuevo Video!',
@@ -1078,13 +1080,22 @@ app.post('/notify-video-upload', async(req, res) => {
                 }
             );
             pushCount++;
+
+            // Email Notification
+            await sendEmailNotification(
+                subId,
+                '¡Nuevo Video Disponible! 🎥',
+                `Hola,\n\n${creator.usuario} acaba de subir un nuevo video titulado: "${videoTitle}".\n\n¡Entra a la app para verlo ahora!`
+            );
+            emailCount++;
         }
 
         res.json({
             success: true,
             message: `Notificaciones procesadas`,
             subscribers: subscriberIds.length,
-            pushSent: pushCount
+            pushSent: pushCount,
+            emailSent: emailCount
         });
 
     } catch (error) {
@@ -1334,6 +1345,81 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                 }
             } else {
                 console.log('⚠️ No se pudo extraer URL de GitHub del nombre:', extractedFileName);
+            }
+        }
+
+        // 📧 DETECCIÓN DE SOLICITUD DE NOTIFICACIÓN/CORREO
+        const esSolicitudCorreo = /envi(ar|a|e)\s+(un\s+)?(correo|email|mail)|notific(ar|a|e)\s+a|mand(ar|a|e)\s+(un\s+)?(correo|email)/i.test(prompt);
+        
+        if (esSolicitudCorreo) {
+            console.log('📧 SOLICITUD DE CORREO DETECTADA');
+            
+            try {
+                // 1. Extraer intención y datos con LLM
+                const extractionPrompt = `ACTÚA COMO UN PARSER DE COMANDOS.
+                Analiza la solicitud del usuario para enviar un correo electrónico.
+                
+                Solicitud: "${prompt}"
+                
+                Extrae la siguiente información en formato JSON PURO:
+                {
+                    "target_type": "me" (si es para mí/usuario actual) o "user" (si es para otro) or "unknown",
+                    "target_name": "nombre del usuario destinatario (si target_type es user)",
+                    "subject": "Asunto del correo (inferido o explícito)",
+                    "body": "Cuerpo del mensaje (inferido o explícito)"
+                }
+                
+                Responde SOLO con el JSON.`;
+
+                const extractionResponse = await callDeepSeek(null, extractionPrompt);
+                const jsonMatch = extractionResponse.match(/\{[\s\S]*\}/);
+                
+                if (jsonMatch) {
+                    const cmd = JSON.parse(jsonMatch[0]);
+                    console.log('📧 DATOS EXTRAÍDOS:', cmd);
+                    
+                    let targetUserId = null;
+                    
+                    if (cmd.target_type === 'me') {
+                        targetUserId = userId;
+                        if (!targetUserId) {
+                            // Intentar buscar por username si está disponible en el body (a veces se envía como 'studentName' o similar)
+                            // O responder pidiendo login
+                            console.log('⚠️ UserId no disponible en request para envío a "me"');
+                        }
+                    } else if (cmd.target_type === 'user' && cmd.target_name) {
+                        // Buscar usuario en DB
+                        if (supabaseService) {
+                            const { data: users, error } = await supabaseService.client
+                                .from('usuarios')
+                                .select('id, email')
+                                .ilike('usuario', cmd.target_name)
+                                .limit(1);
+                                
+                            if (users && users.length > 0) {
+                                targetUserId = users[0].id;
+                            } else {
+                                return res.json({ respuesta_texto: `⚠️ No encontré al usuario "${cmd.target_name}" en la base de datos.` });
+                            }
+                        }
+                    }
+                    
+                    if (targetUserId) {
+                        // Enviar correo
+                        console.log(`📧 Enviando correo a ID: ${targetUserId}`);
+                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de TareaMov', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
+                        
+                        // Responder al usuario
+                        const respuestaExito = `✅ Correo enviado exitosamente a ${cmd.target_type === 'me' ? 'tu dirección de email' : cmd.target_name}.\n\n**Asunto:** ${cmd.subject}\n**Mensaje:** ${cmd.body}`;
+                        
+                        return res.json({ respuesta_texto: respuestaExito });
+                    } else if (cmd.target_type === 'me' && !userId) {
+                         return res.json({ respuesta_texto: "⚠️ No puedo enviarte un correo porque no detecto tu ID de usuario. Asegúrate de haber iniciado sesión." });
+                    }
+                }
+            } catch (err) {
+                console.error('❌ Error procesando solicitud de correo:', err);
+                // Continuar con el flujo normal si falla la extracción
             }
         }
 
@@ -2124,6 +2210,35 @@ usuarios, personas, courses, videos, topics, content_items, tasks, task_submissi
                     }
                 },
                 {
+                    name: 'send_notification',
+                    description: `Send a notification to a user via Email and/or Push.
+Use this tool when the user asks to send a notification, email, or alert to someone.
+You can send to specific users by their ID.`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            userId: {
+                                type: 'string',
+                                description: 'The UUID of the user to notify'
+                            },
+                            title: {
+                                type: 'string',
+                                description: 'Title of the notification/email'
+                            },
+                            message: {
+                                type: 'string',
+                                description: 'Body content of the notification/email'
+                            },
+                            channel: {
+                                type: 'string',
+                                enum: ['email', 'push', 'both'],
+                                description: 'Delivery channel (default: both)'
+                            }
+                        },
+                        required: ['userId', 'title', 'message']
+                    }
+                },
+                {
                     name: 'analyze_github_repo',
                     description: `Analyze and grade a GitHub repository. Extracts code, README, and structure to evaluate quality.`,
                     inputSchema: {
@@ -2206,6 +2321,44 @@ app.post('/tools/call', async(req, res) => {
                     }]
                 }
             });
+        } else if (name === 'send_notification') {
+            console.log('📧 Sending notification to:', args.userId);
+            const { userId, title, message, channel = 'both' } = args;
+            const results = [];
+
+            try {
+                if (channel === 'push' || channel === 'both') {
+                    await sendPushNotification(userId, title, message);
+                    results.push('Push sent');
+                }
+                if (channel === 'email' || channel === 'both') {
+                    await sendEmailNotification(userId, title, message);
+                    results.push('Email sent');
+                }
+
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: `Notification sent successfully via: ${results.join(', ')}`
+                        }]
+                    }
+                });
+            } catch (error) {
+                console.error('❌ Notification error:', error);
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: `Error sending notification: ${error.message}`
+                        }]
+                    }
+                });
+            }
         } else if (name === 'analyze_github_repo') {
             console.log('🐙 Analyzing GitHub repository:', args.repoUrl);
 
