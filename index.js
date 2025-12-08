@@ -16,9 +16,34 @@ import { LLMService } from './src/infrastructure/ai/LLMService.js';
 import { MCPService } from './src/domain/services/MCPService.js';
 import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
 
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 const MAX_TOKENS = 4096;
+
+// Initialize Firebase Admin
+const admin = require('firebase-admin');
+try {
+    // Try to load from environment variable first (Scalable/Cloud Native)
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        console.log('✅ Firebase Admin initialized from environment variable');
+    } else {
+        // Fallback to file
+        const serviceAccount = require('./serviceAccountKey.json');
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        console.log('✅ Firebase Admin initialized from file');
+    }
+} catch (error) {
+    console.warn('⚠️ Firebase Admin not initialized:', error.message);
+}
 
 // Initialize LLMService with DeepSeek
 let llmService = null;
@@ -228,6 +253,77 @@ async function updateTaskSubmissionSupabase(submissionId, grade, feedback) {
 // Configurar bodyParser.json() ANTES de las rutas
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
+
+/**
+ * Envía una notificación push a un usuario específico vía FCM
+ */
+async function sendPushNotification(userId, title, body, data = {}) {
+    if (!admin.apps.length) {
+        console.warn('⚠️ Firebase Admin no está inicializado. Saltando notificación.');
+        return;
+    }
+
+    try {
+        // 1. Obtener los tokens del usuario desde Supabase
+        const { data: tokens, error } = await supabaseService.client
+            .from('user_fcm_tokens')
+            .select('token')
+            .eq('user_id', userId);
+
+        if (error) {
+            console.error('❌ Error obteniendo tokens FCM:', error.message);
+            return;
+        }
+
+        if (!tokens || tokens.length === 0) {
+            console.log(`ℹ️ El usuario ${userId} no tiene tokens FCM registrados.`);
+            return;
+        }
+
+        const registrationTokens = tokens.map(t => t.token);
+        
+        // Eliminar duplicados si los hay
+        const uniqueTokens = [...new Set(registrationTokens)];
+
+        // 2. Construir el mensaje
+        const message = {
+            notification: { title, body },
+            data: data,
+            tokens: uniqueTokens,
+            android: {
+                priority: 'high',
+                notification: {
+                    channelId: 'deepseek_updates'
+                }
+            }
+        };
+
+        // 3. Enviar vía FCM Multicast
+        const response = await admin.messaging().sendMulticast(message);
+        console.log(`📨 Notificaciones enviadas a usuario ${userId}: ${response.successCount} éxitos, ${response.failureCount} fallos`);
+
+        // Limpiar tokens inválidos
+        if (response.failureCount > 0) {
+            const failedTokens = [];
+            response.responses.forEach((resp, idx) => {
+                if (!resp.success) {
+                    failedTokens.push(uniqueTokens[idx]);
+                }
+            });
+            
+            if (failedTokens.length > 0) {
+                console.log('🧹 Limpiando tokens inválidos:', failedTokens.length);
+                await supabaseService.client
+                    .from('user_fcm_tokens')
+                    .delete()
+                    .in('token', failedTokens);
+            }
+        }
+
+    } catch (error) {
+        console.error('❌ Error enviando notificación:', error);
+    }
+}
 
 // Configurar timeouts globales para Express
 app.use((req, res, next) => {
@@ -826,7 +922,7 @@ app.post('/procesar-prompt', async(req, res) => {
         console.log('==============================================');
 
         // Recibe prompt del usuario, url de ollama y contexto del archivo (descripcionTarea)
-        let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent } = req.body;
+        let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent, userId } = req.body;
 
         // CORRECCIÓN AUTOMÁTICA: Si ollamaUrl usa cualquier IP del servidor, cambiarla a localhost
         // Esto es necesario porque el móvil envía la IP del host, pero Ollama está en localhost del servidor
@@ -1198,6 +1294,19 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 if (!respuestaFinal || !respuestaFinal.trim()) {
                     console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA, aplicando mensaje por defecto');
                     respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
+                }
+
+                // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+                if (userId) {
+                    sendPushNotification(
+                        userId,
+                        "Respuesta Lista 🤖",
+                        "DeepSeek ha respondido a tu consulta.",
+                        { 
+                            type: "DEEPSEEK_RESPONSE", 
+                            fragment: "ChatBotFragment" 
+                        }
+                    ).catch(err => console.error('Error enviando push:', err));
                 }
 
                 const tokensRespuestaSimple = encode(respuestaFinal).length;
