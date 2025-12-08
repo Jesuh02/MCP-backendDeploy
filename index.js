@@ -25,6 +25,16 @@ const MAX_TOKENS = 4096;
 
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
+
+// Initialize Nodemailer for Email Notifications
+let nodemailer;
+try {
+    nodemailer = require('nodemailer');
+    console.log('✅ Nodemailer initialized');
+} catch (e) {
+    console.warn('⚠️ Nodemailer not found. Email notifications will not work. Run: npm install nodemailer');
+}
+
 try {
     // Try to load from environment variable first (Scalable/Cloud Native)
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
@@ -331,6 +341,63 @@ async function sendPushNotification(userId, title, body, data = {}) {
 
     } catch (error) {
         console.error('❌ Error enviando notificación:', error);
+    }
+}
+
+/**
+ * Envía una notificación por correo electrónico a un usuario específico
+ */
+async function sendEmailNotification(userId, subject, text) {
+    if (!nodemailer) {
+        console.warn('⚠️ Nodemailer no está disponible. Saltando email.');
+        return;
+    }
+
+    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+        console.warn('⚠️ Credenciales de Gmail no configuradas (GMAIL_USER, GMAIL_APP_PASSWORD). Saltando email.');
+        return;
+    }
+
+    try {
+        // 1. Obtener el email del usuario desde Supabase
+        const { data: user, error } = await supabaseService.client
+            .from('usuarios')
+            .select('email')
+            .eq('id', userId)
+            .single();
+
+        if (error || !user || !user.email) {
+            console.error('❌ No se encontró email para el usuario', userId);
+            return;
+        }
+
+        // 2. Configurar el transporter de Gmail
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: process.env.GMAIL_USER,
+                pass: process.env.GMAIL_APP_PASSWORD
+            }
+        });
+
+        // 3. Enviar el correo
+        const info = await transporter.sendMail({
+            from: `"TareaMov AI" <${process.env.GMAIL_USER}>`,
+            to: user.email,
+            subject: subject,
+            text: text,
+            html: `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                    <h2 style="color: #4a90e2;">${subject}</h2>
+                    <p style="font-size: 16px;">${text.replace(/\n/g, '<br>')}</p>
+                    <hr style="border: 1px solid #eee; margin: 20px 0;">
+                    <p style="font-size: 12px; color: #888;">Este es un mensaje automático de TareaMov.</p>
+                   </div>`
+        });
+
+        console.log(`📧 Email enviado a ${user.email}: ${info.messageId}`);
+
+    } catch (error) {
+        console.error('❌ Error enviando email:', error);
     }
 }
 
@@ -1318,17 +1385,28 @@ Responde considerando el contexto académico disponible si es relevante para la 
                     respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
                 }
 
-                // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+                // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
                 if (userId) {
+                    const notifTitle = "Respuesta Lista 🤖";
+                    const notifBody = "DeepSeek ha respondido a tu consulta.";
+                    
+                    // Push Notification
                     sendPushNotification(
                         userId,
-                        "Respuesta Lista 🤖",
-                        "DeepSeek ha respondido a tu consulta.",
+                        notifTitle,
+                        notifBody,
                         { 
                             type: "DEEPSEEK_RESPONSE", 
                             fragment: "ChatBotFragment" 
                         }
                     ).catch(err => console.error('Error enviando push:', err));
+
+                    // Email Notification
+                    sendEmailNotification(
+                        userId,
+                        notifTitle,
+                        `Hola,\n\nTu consulta ha sido procesada por DeepSeek.\n\nRespuesta:\n${respuestaFinal.substring(0, 200)}...\n\nAbre la app para ver la respuesta completa.`
+                    ).catch(err => console.error('Error enviando email:', err));
                 }
 
                 const tokensRespuestaSimple = encode(respuestaFinal).length;
@@ -1411,17 +1489,28 @@ Responde considerando el contexto académico disponible si es relevante para la 
                     console.log('⚠️ Error extrayendo/persistiendo calificación (fallback):', err.message);
                 }
 
-                // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+                // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
                 if (userId) {
+                    const notifTitle = "Respuesta Lista 🤖";
+                    const notifBody = "DeepSeek ha respondido a tu consulta.";
+                    
+                    // Push Notification
                     sendPushNotification(
                         userId,
-                        "Respuesta Lista 🤖",
-                        "DeepSeek ha respondido a tu consulta.",
+                        notifTitle,
+                        notifBody,
                         { 
                             type: "DEEPSEEK_RESPONSE", 
                             fragment: "ChatBotFragment" 
                         }
                     ).catch(err => console.error('Error enviando push:', err));
+
+                    // Email Notification
+                    sendEmailNotification(
+                        userId,
+                        notifTitle,
+                        `Hola,\n\nTu consulta ha sido procesada por DeepSeek.\n\nRespuesta:\n${respuestaFinal.substring(0, 200)}...\n\nAbre la app para ver la respuesta completa.`
+                    ).catch(err => console.error('Error enviando email:', err));
                 }
 
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1508,17 +1597,28 @@ INSTRUCCIONES: Responde en español de forma clara y educativa basándote en la 
                     console.log('⚠️ Error extrayendo/persistiendo calificación (sin archivo):', err.message);
                 }
 
-                // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+                // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
                 if (userId) {
+                    const notifTitle = "Respuesta Lista 🤖";
+                    const notifBody = "DeepSeek ha respondido a tu consulta.";
+
+                    // Push Notification
                     sendPushNotification(
                         userId,
-                        "Respuesta Lista 🤖",
-                        "DeepSeek ha respondido a tu consulta.",
+                        notifTitle,
+                        notifBody,
                         { 
                             type: "DEEPSEEK_RESPONSE", 
                             fragment: "ChatBotFragment" 
                         }
                     ).catch(err => console.error('Error enviando push:', err));
+
+                    // Email Notification
+                    sendEmailNotification(
+                        userId,
+                        notifTitle,
+                        `Hola,\n\nTu consulta ha sido procesada por DeepSeek.\n\nRespuesta:\n${respuestaFinal.substring(0, 200)}...\n\nAbre la app para ver la respuesta completa.`
+                    ).catch(err => console.error('Error enviando email:', err));
                 }
 
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1608,17 +1708,28 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
                 console.log('⏱️ DURACIÓN:', Math.round(duration / 1000), 'segundos');
                 console.log('==============================================');
 
-                // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+                // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
                 if (userId) {
+                    const notifTitle = "Respuesta Lista 🤖";
+                    const notifBody = "DeepSeek ha respondido a tu consulta.";
+
+                    // Push Notification
                     sendPushNotification(
                         userId,
-                        "Respuesta Lista 🤖",
-                        "DeepSeek ha respondido a tu consulta.",
+                        notifTitle,
+                        notifBody,
                         { 
                             type: "DEEPSEEK_RESPONSE", 
                             fragment: "ChatBotFragment" 
                         }
                     ).catch(err => console.error('Error enviando push:', err));
+
+                    // Email Notification
+                    sendEmailNotification(
+                        userId,
+                        notifTitle,
+                        `Hola,\n\nTu consulta ha sido procesada por DeepSeek.\n\nRespuesta:\n${respuestaEvaluacion.substring(0, 200)}...\n\nAbre la app para ver la respuesta completa.`
+                    ).catch(err => console.error('Error enviando email:', err));
                 }
 
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1703,17 +1814,28 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
             console.log('⏱️ DURACIÓN TOTAL:', Math.round(duration / 1000), 'segundos');
             console.log('==============================================');
 
-            // ENVIAR NOTIFICACIÓN PUSH SI HAY USER_ID
+            // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
             if (userId) {
+                const notifTitle = "Respuesta Lista 🤖";
+                const notifBody = "DeepSeek ha respondido a tu consulta.";
+
+                // Push Notification
                 sendPushNotification(
                     userId,
-                    "Respuesta Lista 🤖",
-                    "DeepSeek ha respondido a tu consulta.",
+                    notifTitle,
+                    notifBody,
                     { 
                         type: "DEEPSEEK_RESPONSE", 
                         fragment: "ChatBotFragment" 
                     }
                 ).catch(err => console.error('Error enviando push:', err));
+
+                // Email Notification
+                sendEmailNotification(
+                    userId,
+                    notifTitle,
+                    `Hola,\n\nTu consulta ha sido procesada por DeepSeek.\n\nRespuesta:\n${respuestaFinal.substring(0, 200)}...\n\nAbre la app para ver la respuesta completa.`
+                ).catch(err => console.error('Error enviando email:', err));
             }
 
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
