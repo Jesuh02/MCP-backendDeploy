@@ -39,3 +39,5 @@ coverage/
 
 # Production
 *.tgz
+
+serviceAccountKey.json
