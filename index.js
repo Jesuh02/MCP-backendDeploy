@@ -367,8 +367,9 @@ async function sendEmailNotification(userId, subject, text) {
         return;
     }
 
-    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-        console.warn('⚠️ Credenciales de Gmail no configuradas (GMAIL_USER, GMAIL_APP_PASSWORD). Saltando email.');
+    // Verificar que Resend esté configurado (Railway-compatible)
+    if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
+        console.warn('⚠️ Resend no configurado (RESEND_API_KEY, RESEND_FROM_EMAIL). Saltando email.');
         return;
     }
 
@@ -385,67 +386,23 @@ async function sendEmailNotification(userId, subject, text) {
             return;
         }
 
-        // 2. Configurar el transporter (Resend, SendGrid o Gmail)
-        let transporter;
-        
-        if (process.env.RESEND_API_KEY) {
-            // Usar Resend (RECOMENDADO - más simple que SendGrid)
-            transporter = nodemailer.createTransport({
-                host: 'smtp.resend.com',
-                port: 465,
-                secure: true,
-                auth: {
-                    user: 'resend',
-                    pass: process.env.RESEND_API_KEY
-                }
-            });
-        } else if (process.env.SENDGRID_API_KEY) {
-            // Usar SendGrid (alternativa)
-            transporter = nodemailer.createTransport({
-                host: 'smtp.sendgrid.net',
-                port: 587,
-                secure: false,
-                auth: {
-                    user: 'apikey',
-                    pass: process.env.SENDGRID_API_KEY
-                }
-            });
-        } else if (process.env.MAILGUN_API_KEY && process.env.MAILGUN_DOMAIN) {
-            // Usar Mailgun (otra alternativa)
-            transporter = nodemailer.createTransport({
-                host: 'smtp.mailgun.org',
-                port: 587,
-                secure: false,
-                auth: {
-                    user: `postmaster@${process.env.MAILGUN_DOMAIN}`,
-                    pass: process.env.MAILGUN_API_KEY
-                }
-            });
-        } else {
-            // Fallback a Gmail con configuración extendida
-            transporter = nodemailer.createTransport({
-                host: 'smtp.gmail.com',
-                port: 587,
-                secure: false,
-                auth: {
-                    user: process.env.GMAIL_USER,
-                    pass: process.env.GMAIL_APP_PASSWORD
-                },
-                tls: {
-                    rejectUnauthorized: false
-                },
-                connectionTimeout: 10000,
-                greetingTimeout: 5000,
-                socketTimeout: 30000
-            });
-        }
+        // 2. Configurar el transporter con Resend (Railway-compatible)
+        const transporter = nodemailer.createTransport({
+            host: 'smtp.resend.com',
+            port: 465,
+            secure: true,
+            auth: {
+                user: 'resend',
+                pass: process.env.RESEND_API_KEY
+            },
+            connectionTimeout: 10000,  // 10 segundos
+            greetingTimeout: 5000,      // 5 segundos
+            socketTimeout: 30000        // 30 segundos
+        });
 
         // 3. Enviar el correo
-        const fromEmail = process.env.RESEND_FROM_EMAIL || 
-                         process.env.SENDGRID_FROM_EMAIL || 
-                         process.env.GMAIL_USER;
         const info = await transporter.sendMail({
-            from: `"TareaMov AI" <${fromEmail}>`,
+            from: `"TareaMov AI" <${process.env.RESEND_FROM_EMAIL}>`,
             to: user.email,
             subject: subject,
             text: text,
@@ -457,10 +414,11 @@ async function sendEmailNotification(userId, subject, text) {
                    </div>`
         });
 
-        console.log(`📧 Email enviado a ${user.email}: ${info.messageId}`);
+        console.log(`📧 Email enviado a ${user.email} via Resend: ${info.messageId}`);
 
     } catch (error) {
-        console.error('❌ Error enviando email:', error);
+        console.error('❌ Error enviando email via Resend:', error.message);
+        // No lanzar el error para evitar que falle toda la operación
     }
 }
 
@@ -2127,181 +2085,6 @@ function getLocalIPAddress() {
 
     return results;
 }
-
-// ============================================================
-// MCP SSE ENDPOINT (For VS Code integration)
-// ============================================================
-
-/**
- * SSE endpoint for VS Code MCP client
- * VS Code expects Server-Sent Events for real-time communication
- */
-app.get('/sse', (req, res) => {
-    console.log('🔌 SSE connection established from VS Code');
-    
-    // Set headers for SSE
-    res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*'
-    });
-
-    // Send initial connection message
-    res.write(`data: ${JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'notifications/initialized',
-        params: {}
-    })}\n\n`);
-
-    // Keep connection alive
-    const heartbeat = setInterval(() => {
-        res.write(': heartbeat\n\n');
-    }, 30000);
-
-    // Clean up on disconnect
-    req.on('close', () => {
-        console.log('🔌 SSE connection closed');
-        clearInterval(heartbeat);
-    });
-});
-
-/**
- * POST endpoint for VS Code MCP messages
- * Handles JSON-RPC requests from VS Code
- */
-app.post('/message', express.json(), async (req, res) => {
-    console.log('📨 MCP message received:', req.body);
-    
-    try {
-        const { method, params, id } = req.body;
-        
-        if (method === 'initialize') {
-            await supabaseService.testConnection();
-            
-            res.json({
-                jsonrpc: '2.0',
-                id: id,
-                result: {
-                    protocolVersion: '2024-11-05',
-                    capabilities: {
-                        tools: { listChanged: true },
-                        resources: { subscribe: true, listChanged: true }
-                    },
-                    serverInfo: {
-                        name: 'tareamov-mcp-server',
-                        version: '1.0.0'
-                    }
-                }
-            });
-        } else if (method === 'tools/list') {
-            res.json({
-                jsonrpc: '2.0',
-                id: id,
-                result: {
-                    tools: [
-                        {
-                            name: 'query_database',
-                            description: 'Execute SQL queries or natural language questions on TareaMov database',
-                            inputSchema: {
-                                type: 'object',
-                                properties: {
-                                    query: {
-                                        type: 'string',
-                                        description: 'SQL query or natural language question'
-                                    }
-                                },
-                                required: ['query']
-                            }
-                        },
-                        {
-                            name: 'get_database_schema',
-                            description: 'Get the complete database schema',
-                            inputSchema: {
-                                type: 'object',
-                                properties: {}
-                            }
-                        }
-                    ]
-                }
-            });
-        } else if (method === 'tools/call') {
-            const toolName = params.name;
-            const toolArgs = params.arguments || {};
-            
-            if (toolName === 'query_database') {
-                const query = toolArgs.query;
-                const { data, error } = await supabaseService.client
-                    .rpc('execute_sql', { sql_query: query });
-                
-                if (error) {
-                    res.json({
-                        jsonrpc: '2.0',
-                        id: id,
-                        error: {
-                            code: -32000,
-                            message: error.message
-                        }
-                    });
-                } else {
-                    res.json({
-                        jsonrpc: '2.0',
-                        id: id,
-                        result: {
-                            content: [{
-                                type: 'text',
-                                text: JSON.stringify(data, null, 2)
-                            }]
-                        }
-                    });
-                }
-            } else if (toolName === 'get_database_schema') {
-                const { data, error } = await supabaseService.client
-                    .from('information_schema.tables')
-                    .select('*');
-                
-                res.json({
-                    jsonrpc: '2.0',
-                    id: id,
-                    result: {
-                        content: [{
-                            type: 'text',
-                            text: JSON.stringify(data, null, 2)
-                        }]
-                    }
-                });
-            } else {
-                res.json({
-                    jsonrpc: '2.0',
-                    id: id,
-                    error: {
-                        code: -32601,
-                        message: `Tool not found: ${toolName}`
-                    }
-                });
-            }
-        } else {
-            res.json({
-                jsonrpc: '2.0',
-                id: id,
-                error: {
-                    code: -32601,
-                    message: `Method not found: ${method}`
-                }
-            });
-        }
-    } catch (error) {
-        console.error('❌ Error processing MCP message:', error);
-        res.json({
-            jsonrpc: '2.0',
-            id: req.body.id,
-            error: {
-                code: -32000,
-                message: error.message
-            }
-        });
-    }
-});
 
 // ============================================================
 // MCP ENDPOINTS (Integrated from mcp-http.js for single-port deployment)

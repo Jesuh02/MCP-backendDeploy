@@ -374,6 +374,32 @@ export class MCPService {
      */
 
     /**
+     * Detect if query requires ANALYSIS/INSIGHTS (not just data retrieval)
+     * Keywords that trigger LLM analysis:
+     * - analiza, recomienda, estrategia, insights, por qué
+     * - mejora, optimiza, sugiere, explica
+     */
+    detectIfAnalysisRequired(query) {
+        const lower = query.toLowerCase();
+        const analysisKeywords = [
+            'analiza', 'analizar', 'análisis',
+            'recomienda', 'recomendación', 'recomendaciones',
+            'estrategia', 'estratégico',
+            'insights', 'insight',
+            'por qué', 'porque',
+            'mejora', 'mejorar', 'optimiza', 'optimizar',
+            'sugiere', 'sugerencia', 'sugerencias',
+            'explica', 'explicar', 'explicación',
+            'interpreta', 'interpretación',
+            'evalúa', 'evaluación', 'evaluar',
+            'compara', 'comparación', 'comparar',
+            'tendencia', 'tendencias', 'patrón', 'patrones'
+        ];
+        
+        return analysisKeywords.some(keyword => lower.includes(keyword));
+    }
+
+    /**
      * Process a query using an LLM Agent that can call tools.
      */
     async processQueryWithAgent(query) {
@@ -500,8 +526,78 @@ SELECT ...
                     }
                 }
 
-                // If we have results, ask LLM to analyze them
+                // If we have results, check if analysis is needed
                 if (result !== null) {
+                    // 🚀 OPTIMIZATION: Check if user wants analysis
+                    const needsAnalysis = this.detectIfAnalysisRequired(query);
+                    
+                    if (!needsAnalysis) {
+                        // Fast path: Return data directly formatted without LLM analysis
+                        logger.info("⚡ Fast-path: Returning data without analysis (user didn't request it)");
+                        
+                        // Format results as simple table or count
+                        if (!result || result.length === 0) {
+                            return "No se encontraron resultados.";
+                        }
+                        
+                        // If single count result
+                        if (result.length === 1 && Object.keys(result[0]).length === 1) {
+                            const key = Object.keys(result[0])[0];
+                            const value = result[0][key];
+                            return `📊 Total: ${value}`;
+                        }
+                        
+                        // If list result, format as markdown table
+                        const columns = Object.keys(result[0]);
+                        const columnNames = columns.map(col => {
+                            // Friendly column names in Spanish
+                            const names = {
+                                'id': 'ID',
+                                'usuario': 'Usuario',
+                                'username': 'Usuario',
+                                'email': 'Email',
+                                'nombre_completo': 'Nombre',
+                                'telefono': 'Teléfono',
+                                'rol': 'Rol',
+                                'activo': 'Activo',
+                                'fecha_registro': 'Registro',
+                                'title': 'Título',
+                                'titulo': 'Título',
+                                'description': 'Descripción',
+                                'descripcion': 'Descripción',
+                                'created_at': 'Creado',
+                                'updated_at': 'Actualizado',
+                                'name': 'Nombre',
+                                'nombre': 'Nombre'
+                            };
+                            return names[col] || col.replace('_', ' ').charAt(0).toUpperCase() + col.slice(1);
+                        });
+                        
+                        let table = `Encontré ${result.length} resultado${result.length > 1 ? 's' : ''}:\n\n`;
+                        table += `| ${columnNames.map(n => `**${n}**`).join(' | ')} |\n`;
+                        table += `| ${columns.map(() => ':---').join(' | ')} |\n`;
+                        
+                        const maxRows = 20;
+                        const displayRows = result.slice(0, maxRows);
+                        
+                        displayRows.forEach(row => {
+                            const values = columns.map(col => {
+                                const val = row[col];
+                                if (val === null || val === undefined) return '-';
+                                if (typeof val === 'boolean') return val ? '✓' : '✗';
+                                return String(val);
+                            });
+                            table += `| ${values.join(' | ')} |\n`;
+                        });
+                        
+                        if (result.length > maxRows) {
+                            table += `\n... y ${result.length - maxRows} más.`;
+                        }
+                        
+                        return table;
+                    }
+                    
+                    // User requested analysis - proceed with LLM
                     logger.info("📈 Step 3: Requesting analysis from LLM...");
 
                     // Detect if this is a LIST query (usuarios, cursos, tareas, etc.)
