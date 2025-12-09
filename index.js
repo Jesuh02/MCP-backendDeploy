@@ -360,21 +360,17 @@ async function sendPushNotification(userId, title, body, data = {}) {
 
 /**
  * Envía una notificación por correo electrónico a un usuario específico
- * ASÍNCRONO Y NO BLOQUEANTE - no espera a que se complete el envío
  */
 async function sendEmailNotification(userId, subject, text) {
-    // Fire and forget - no bloquea el flujo principal
-    setImmediate(async () => {
-        try {
-            if (!nodemailer) {
-                console.warn('⚠️ Nodemailer no está disponible. Saltando email.');
-                return;
-            }
+    if (!nodemailer) {
+        console.warn('⚠️ Nodemailer no está disponible. Saltando email.');
+        return;
+    }
 
-            if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-                console.warn('⚠️ Credenciales de Gmail no configuradas (GMAIL_USER, GMAIL_APP_PASSWORD). Saltando email.');
-                return;
-            }
+    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+        console.warn('⚠️ Credenciales de Gmail no configuradas (GMAIL_USER, GMAIL_APP_PASSWORD). Saltando email.');
+        return;
+    }
 
     try {
         // 1. Obtener el email del usuario desde Supabase
@@ -392,20 +388,17 @@ async function sendEmailNotification(userId, subject, text) {
         // 2. Configurar el transporter (Resend, SendGrid o Gmail)
         let transporter;
         
-            if (process.env.RESEND_API_KEY) {
-                // Usar Resend (RECOMENDADO - más simple que SendGrid)
-                transporter = nodemailer.createTransport({
-                    host: 'smtp.resend.com',
-                    port: 465,
-                    secure: true,
-                    auth: {
-                        user: 'resend',
-                        pass: process.env.RESEND_API_KEY
-                    },
-                    connectionTimeout: 5000,  // 5 segundos máximo
-                    socketTimeout: 5000,      // 5 segundos máximo
-                    greetingTimeout: 3000     // 3 segundos para saludo
-                });
+        if (process.env.RESEND_API_KEY) {
+            // Usar Resend (RECOMENDADO - más simple que SendGrid)
+            transporter = nodemailer.createTransport({
+                host: 'smtp.resend.com',
+                port: 465,
+                secure: true,
+                auth: {
+                    user: 'resend',
+                    pass: process.env.RESEND_API_KEY
+                }
+            });
         } else if (process.env.SENDGRID_API_KEY) {
             // Usar SendGrid (alternativa)
             transporter = nodemailer.createTransport({
@@ -447,32 +440,28 @@ async function sendEmailNotification(userId, subject, text) {
             });
         }
 
-            // 3. Enviar el correo
-            const fromEmail = process.env.RESEND_FROM_EMAIL || 
-                             process.env.SENDGRID_FROM_EMAIL || 
-                             process.env.GMAIL_USER;
-            const info = await transporter.sendMail({
-                from: `"TareaMov AI" <${fromEmail}>`,
-                to: user.email,
-                subject: subject,
-                text: text,
-                html: `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-                        <h2 style="color: #4a90e2;">${subject}</h2>
-                        <p style="font-size: 16px;">${text.replace(/\n/g, '<br>')}</p>
-                        <hr style="border: 1px solid #eee; margin: 20px 0;">
-                        <p style="font-size: 12px; color: #888;">Este es un mensaje automático de TareaMov.</p>
-                       </div>`
-            });
+        // 3. Enviar el correo
+        const fromEmail = process.env.RESEND_FROM_EMAIL || 
+                         process.env.SENDGRID_FROM_EMAIL || 
+                         process.env.GMAIL_USER;
+        const info = await transporter.sendMail({
+            from: `"TareaMov AI" <${fromEmail}>`,
+            to: user.email,
+            subject: subject,
+            text: text,
+            html: `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                    <h2 style="color: #4a90e2;">${subject}</h2>
+                    <p style="font-size: 16px;">${text.replace(/\n/g, '<br>')}</p>
+                    <hr style="border: 1px solid #eee; margin: 20px 0;">
+                    <p style="font-size: 12px; color: #888;">Este es un mensaje automático de TareaMov.</p>
+                   </div>`
+        });
 
-            console.log(`📧 Email enviado a ${user.email}: ${info.messageId}`);
+        console.log(`📧 Email enviado a ${user.email}: ${info.messageId}`);
 
-        } catch (error) {
-            console.error('❌ Error enviando email (no bloqueante):', error.message);
-        }
-    });
-    
-    // Retornar inmediatamente sin esperar el email
-    return;
+    } catch (error) {
+        console.error('❌ Error enviando email:', error);
+    }
 }
 
 // Configurar timeouts globales para Express
