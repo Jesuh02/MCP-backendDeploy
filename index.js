@@ -385,18 +385,67 @@ async function sendEmailNotification(userId, subject, text) {
             return;
         }
 
-        // 2. Configurar el transporter de Gmail
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: process.env.GMAIL_USER,
-                pass: process.env.GMAIL_APP_PASSWORD
-            }
-        });
+        // 2. Configurar el transporter (Resend, SendGrid o Gmail)
+        let transporter;
+        
+        if (process.env.RESEND_API_KEY) {
+            // Usar Resend (RECOMENDADO - más simple que SendGrid)
+            transporter = nodemailer.createTransport({
+                host: 'smtp.resend.com',
+                port: 465,
+                secure: true,
+                auth: {
+                    user: 'resend',
+                    pass: process.env.RESEND_API_KEY
+                }
+            });
+        } else if (process.env.SENDGRID_API_KEY) {
+            // Usar SendGrid (alternativa)
+            transporter = nodemailer.createTransport({
+                host: 'smtp.sendgrid.net',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: 'apikey',
+                    pass: process.env.SENDGRID_API_KEY
+                }
+            });
+        } else if (process.env.MAILGUN_API_KEY && process.env.MAILGUN_DOMAIN) {
+            // Usar Mailgun (otra alternativa)
+            transporter = nodemailer.createTransport({
+                host: 'smtp.mailgun.org',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: `postmaster@${process.env.MAILGUN_DOMAIN}`,
+                    pass: process.env.MAILGUN_API_KEY
+                }
+            });
+        } else {
+            // Fallback a Gmail con configuración extendida
+            transporter = nodemailer.createTransport({
+                host: 'smtp.gmail.com',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: process.env.GMAIL_USER,
+                    pass: process.env.GMAIL_APP_PASSWORD
+                },
+                tls: {
+                    rejectUnauthorized: false
+                },
+                connectionTimeout: 10000,
+                greetingTimeout: 5000,
+                socketTimeout: 30000
+            });
+        }
 
         // 3. Enviar el correo
+        const fromEmail = process.env.RESEND_FROM_EMAIL || 
+                         process.env.SENDGRID_FROM_EMAIL || 
+                         process.env.GMAIL_USER;
         const info = await transporter.sendMail({
-            from: `"TareaMov AI" <${process.env.GMAIL_USER}>`,
+            from: `"TareaMov AI" <${fromEmail}>`,
             to: user.email,
             subject: subject,
             text: text,
