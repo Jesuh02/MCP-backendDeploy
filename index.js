@@ -2129,6 +2129,181 @@ function getLocalIPAddress() {
 }
 
 // ============================================================
+// MCP SSE ENDPOINT (For VS Code integration)
+// ============================================================
+
+/**
+ * SSE endpoint for VS Code MCP client
+ * VS Code expects Server-Sent Events for real-time communication
+ */
+app.get('/sse', (req, res) => {
+    console.log('🔌 SSE connection established from VS Code');
+    
+    // Set headers for SSE
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*'
+    });
+
+    // Send initial connection message
+    res.write(`data: ${JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'notifications/initialized',
+        params: {}
+    })}\n\n`);
+
+    // Keep connection alive
+    const heartbeat = setInterval(() => {
+        res.write(': heartbeat\n\n');
+    }, 30000);
+
+    // Clean up on disconnect
+    req.on('close', () => {
+        console.log('🔌 SSE connection closed');
+        clearInterval(heartbeat);
+    });
+});
+
+/**
+ * POST endpoint for VS Code MCP messages
+ * Handles JSON-RPC requests from VS Code
+ */
+app.post('/message', express.json(), async (req, res) => {
+    console.log('📨 MCP message received:', req.body);
+    
+    try {
+        const { method, params, id } = req.body;
+        
+        if (method === 'initialize') {
+            await supabaseService.testConnection();
+            
+            res.json({
+                jsonrpc: '2.0',
+                id: id,
+                result: {
+                    protocolVersion: '2024-11-05',
+                    capabilities: {
+                        tools: { listChanged: true },
+                        resources: { subscribe: true, listChanged: true }
+                    },
+                    serverInfo: {
+                        name: 'tareamov-mcp-server',
+                        version: '1.0.0'
+                    }
+                }
+            });
+        } else if (method === 'tools/list') {
+            res.json({
+                jsonrpc: '2.0',
+                id: id,
+                result: {
+                    tools: [
+                        {
+                            name: 'query_database',
+                            description: 'Execute SQL queries or natural language questions on TareaMov database',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {
+                                    query: {
+                                        type: 'string',
+                                        description: 'SQL query or natural language question'
+                                    }
+                                },
+                                required: ['query']
+                            }
+                        },
+                        {
+                            name: 'get_database_schema',
+                            description: 'Get the complete database schema',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {}
+                            }
+                        }
+                    ]
+                }
+            });
+        } else if (method === 'tools/call') {
+            const toolName = params.name;
+            const toolArgs = params.arguments || {};
+            
+            if (toolName === 'query_database') {
+                const query = toolArgs.query;
+                const { data, error } = await supabaseService.client
+                    .rpc('execute_sql', { sql_query: query });
+                
+                if (error) {
+                    res.json({
+                        jsonrpc: '2.0',
+                        id: id,
+                        error: {
+                            code: -32000,
+                            message: error.message
+                        }
+                    });
+                } else {
+                    res.json({
+                        jsonrpc: '2.0',
+                        id: id,
+                        result: {
+                            content: [{
+                                type: 'text',
+                                text: JSON.stringify(data, null, 2)
+                            }]
+                        }
+                    });
+                }
+            } else if (toolName === 'get_database_schema') {
+                const { data, error } = await supabaseService.client
+                    .from('information_schema.tables')
+                    .select('*');
+                
+                res.json({
+                    jsonrpc: '2.0',
+                    id: id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify(data, null, 2)
+                        }]
+                    }
+                });
+            } else {
+                res.json({
+                    jsonrpc: '2.0',
+                    id: id,
+                    error: {
+                        code: -32601,
+                        message: `Tool not found: ${toolName}`
+                    }
+                });
+            }
+        } else {
+            res.json({
+                jsonrpc: '2.0',
+                id: id,
+                error: {
+                    code: -32601,
+                    message: `Method not found: ${method}`
+                }
+            });
+        }
+    } catch (error) {
+        console.error('❌ Error processing MCP message:', error);
+        res.json({
+            jsonrpc: '2.0',
+            id: req.body.id,
+            error: {
+                code: -32000,
+                message: error.message
+            }
+        });
+    }
+});
+
+// ============================================================
 // MCP ENDPOINTS (Integrated from mcp-http.js for single-port deployment)
 // ============================================================
 
