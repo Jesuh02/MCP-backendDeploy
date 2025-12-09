@@ -360,18 +360,21 @@ async function sendPushNotification(userId, title, body, data = {}) {
 
 /**
  * Envía una notificación por correo electrónico a un usuario específico
+ * ASÍNCRONO Y NO BLOQUEANTE - no espera a que se complete el envío
  */
 async function sendEmailNotification(userId, subject, text) {
-    if (!nodemailer) {
-        console.warn('⚠️ Nodemailer no está disponible. Saltando email.');
-        return;
-    }
+    // Fire and forget - no bloquea el flujo principal
+    setImmediate(async () => {
+        try {
+            if (!nodemailer) {
+                console.warn('⚠️ Nodemailer no está disponible. Saltando email.');
+                return;
+            }
 
-    // Verificar que Resend esté configurado (Railway-compatible)
-    if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
-        console.warn('⚠️ Resend no configurado (RESEND_API_KEY, RESEND_FROM_EMAIL). Saltando email.');
-        return;
-    }
+            if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+                console.warn('⚠️ Credenciales de Gmail no configuradas (GMAIL_USER, GMAIL_APP_PASSWORD). Saltando email.');
+                return;
+            }
 
     try {
         // 1. Obtener el email del usuario desde Supabase
@@ -386,40 +389,90 @@ async function sendEmailNotification(userId, subject, text) {
             return;
         }
 
-        // 2. Configurar el transporter con Resend (Railway-compatible)
-        const transporter = nodemailer.createTransport({
-            host: 'smtp.resend.com',
-            port: 465,
-            secure: true,
-            auth: {
-                user: 'resend',
-                pass: process.env.RESEND_API_KEY
-            },
-            connectionTimeout: 10000,  // 10 segundos
-            greetingTimeout: 5000,      // 5 segundos
-            socketTimeout: 30000        // 30 segundos
-        });
+        // 2. Configurar el transporter (Resend, SendGrid o Gmail)
+        let transporter;
+        
+            if (process.env.RESEND_API_KEY) {
+                // Usar Resend (RECOMENDADO - más simple que SendGrid)
+                transporter = nodemailer.createTransport({
+                    host: 'smtp.resend.com',
+                    port: 465,
+                    secure: true,
+                    auth: {
+                        user: 'resend',
+                        pass: process.env.RESEND_API_KEY
+                    },
+                    connectionTimeout: 5000,  // 5 segundos máximo
+                    socketTimeout: 5000,      // 5 segundos máximo
+                    greetingTimeout: 3000     // 3 segundos para saludo
+                });
+        } else if (process.env.SENDGRID_API_KEY) {
+            // Usar SendGrid (alternativa)
+            transporter = nodemailer.createTransport({
+                host: 'smtp.sendgrid.net',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: 'apikey',
+                    pass: process.env.SENDGRID_API_KEY
+                }
+            });
+        } else if (process.env.MAILGUN_API_KEY && process.env.MAILGUN_DOMAIN) {
+            // Usar Mailgun (otra alternativa)
+            transporter = nodemailer.createTransport({
+                host: 'smtp.mailgun.org',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: `postmaster@${process.env.MAILGUN_DOMAIN}`,
+                    pass: process.env.MAILGUN_API_KEY
+                }
+            });
+        } else {
+            // Fallback a Gmail con configuración extendida
+            transporter = nodemailer.createTransport({
+                host: 'smtp.gmail.com',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: process.env.GMAIL_USER,
+                    pass: process.env.GMAIL_APP_PASSWORD
+                },
+                tls: {
+                    rejectUnauthorized: false
+                },
+                connectionTimeout: 10000,
+                greetingTimeout: 5000,
+                socketTimeout: 30000
+            });
+        }
 
-        // 3. Enviar el correo
-        const info = await transporter.sendMail({
-            from: `"TareaMov AI" <${process.env.RESEND_FROM_EMAIL}>`,
-            to: user.email,
-            subject: subject,
-            text: text,
-            html: `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-                    <h2 style="color: #4a90e2;">${subject}</h2>
-                    <p style="font-size: 16px;">${text.replace(/\n/g, '<br>')}</p>
-                    <hr style="border: 1px solid #eee; margin: 20px 0;">
-                    <p style="font-size: 12px; color: #888;">Este es un mensaje automático de TareaMov.</p>
-                   </div>`
-        });
+            // 3. Enviar el correo
+            const fromEmail = process.env.RESEND_FROM_EMAIL || 
+                             process.env.SENDGRID_FROM_EMAIL || 
+                             process.env.GMAIL_USER;
+            const info = await transporter.sendMail({
+                from: `"TareaMov AI" <${fromEmail}>`,
+                to: user.email,
+                subject: subject,
+                text: text,
+                html: `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                        <h2 style="color: #4a90e2;">${subject}</h2>
+                        <p style="font-size: 16px;">${text.replace(/\n/g, '<br>')}</p>
+                        <hr style="border: 1px solid #eee; margin: 20px 0;">
+                        <p style="font-size: 12px; color: #888;">Este es un mensaje automático de TareaMov.</p>
+                       </div>`
+            });
 
-        console.log(`📧 Email enviado a ${user.email} via Resend: ${info.messageId}`);
+            console.log(`📧 Email enviado a ${user.email}: ${info.messageId}`);
 
-    } catch (error) {
-        console.error('❌ Error enviando email via Resend:', error.message);
-        // No lanzar el error para evitar que falle toda la operación
-    }
+        } catch (error) {
+            console.error('❌ Error enviando email (no bloqueante):', error.message);
+        }
+    });
+    
+    // Retornar inmediatamente sin esperar el email
+    return;
 }
 
 // Configurar timeouts globales para Express
