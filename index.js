@@ -36,8 +36,44 @@ try {
 }
 
 try {
-    // Try to load from environment variable first (Scalable/Cloud Native)
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    // OPTION 1: Use individual environment variables (RECOMMENDED for Railway)
+    if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+        console.log('🔧 Using individual Firebase environment variables');
+        
+        let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+        
+        // Fix escaped newlines if present
+        if (privateKey.includes('\\n')) {
+            privateKey = privateKey.replace(/\\n/g, '\n');
+        }
+        
+        const serviceAccount = {
+            type: 'service_account',
+            project_id: process.env.FIREBASE_PROJECT_ID,
+            private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+            private_key: privateKey,
+            client_email: process.env.FIREBASE_CLIENT_EMAIL,
+            client_id: process.env.FIREBASE_CLIENT_ID || '',
+            auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+            token_uri: 'https://oauth2.googleapis.com/token',
+            auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+            client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL || ''
+        };
+        
+        console.log('🔑 Private key info:', {
+            length: privateKey.length,
+            startsCorrect: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
+            endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----')
+        });
+        
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        console.log('✅ Firebase Admin initialized from individual environment variables');
+    }
+    // OPTION 2: Try to load from FIREBASE_SERVICE_ACCOUNT JSON (legacy)
+    else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        console.log('🔧 Using FIREBASE_SERVICE_ACCOUNT JSON');
         let serviceAccount;
         try {
             serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -48,37 +84,29 @@ try {
             serviceAccount = JSON.parse(cleaned);
         }
 
-        // Fix private_key newlines (CRITICAL: Handle all possible escape scenarios)
+        // Fix private_key newlines
         if (serviceAccount.private_key) {
             let privateKey = serviceAccount.private_key;
-            
-            // Case 1: Literal \\n string (double escaped) -> replace with actual newlines
             if (privateKey.includes('\\n')) {
                 privateKey = privateKey.replace(/\\n/g, '\n');
             }
-            
-            // Case 2: Already has actual newlines but might be mixed
-            // Ensure it starts and ends correctly
-            if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
-                console.warn('⚠️ Private key format issue detected');
-            }
-            
             serviceAccount.private_key = privateKey;
             
             console.log('🔑 Private key processed:', {
                 length: privateKey.length,
                 startsCorrect: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
-                endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----'),
-                hasNewlines: privateKey.includes('\n')
+                endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----')
             });
         }
 
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount)
         });
-        console.log('✅ Firebase Admin initialized from environment variable');
-    } else {
-        // Fallback to file
+        console.log('✅ Firebase Admin initialized from FIREBASE_SERVICE_ACCOUNT JSON');
+    } 
+    // OPTION 3: Fallback to local file
+    else {
+        console.log('🔧 Using local serviceAccountKey.json file');
         const serviceAccount = require('./serviceAccountKey.json');
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount)
@@ -87,7 +115,7 @@ try {
     }
 } catch (error) {
     console.warn('⚠️ Firebase Admin not initialized:', error.message);
-    console.warn('💡 Check that FIREBASE_SERVICE_ACCOUNT is properly formatted in Railway');
+    console.warn('💡 Use individual env vars: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL');
 }
 
 // Initialize LLMService with DeepSeek
