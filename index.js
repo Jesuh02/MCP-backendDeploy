@@ -1363,6 +1363,9 @@ app.post('/notify-video-upload', async(req, res) => {
  * Notifica por email al usuario cuando recibe una respuesta del chat IA
  * Endpoint: POST /notify-chat-response
  * Body: { userId, responsePreview }
+ * 
+ * 🔒 SEGURIDAD: NO envía la respuesta completa por email (datos sensibles)
+ * Solo notifica que hay una respuesta disponible con deep link a la app
  */
 app.post('/notify-chat-response', async(req, res) => {
     const { userId, responsePreview } = req.body;
@@ -1386,31 +1389,40 @@ app.post('/notify-chat-response', async(req, res) => {
             return res.status(404).json({ error: 'Usuario no encontrado o sin email' });
         }
 
-        // Preparar el contenido del email
-        const preview = responsePreview || 'El asistente de IA ha respondido a tu consulta.';
-        const previewText = preview.substring(0, 200) + (preview.length > 200 ? '...' : '');
-
+        // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
+        // Solo notificar que hay una respuesta disponible
         const emailSubject = '🤖 Nueva respuesta del Asistente de IA';
+        
+        // Deep link para abrir directamente la app en el chat
+        const appDeepLink = `tareamov://chat?userId=${userId}`;
+        
         const emailBody = `Hola ${user.username || 'Usuario'},
 
-Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2).
+Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respuesta está lista.
 
-📝 Vista previa de la respuesta:
-${previewText}
+🔒 Por seguridad, la respuesta completa solo está disponible dentro de la aplicación.
 
-💡 Abre la aplicación para ver la respuesta completa y continuar la conversación.
+📱 Abre la aplicación para ver tu respuesta personalizada y continuar la conversación de forma segura.
+
+🔗 Abrir TareaMov: ${appDeepLink}
 
 ---
+💡 Consejos de seguridad:
+- Las respuestas del IA pueden contener información sensible
+- Nunca compartimos datos completos por email
+- Siempre verifica tu identidad en la app antes de ver respuestas
+
 Este es un mensaje automático de TareaMov.`;
 
         // Enviar email usando la función existente
         await sendEmailNotification(userId, emailSubject, emailBody);
 
-        console.log(`✅ Notificación de chat enviada a ${user.email}`);
+        console.log(`✅ Notificación de chat enviada a ${user.email} (sin datos sensibles)`);
         res.json({ 
             success: true, 
             message: 'Notificación enviada',
-            email: user.email
+            email: user.email,
+            securityNote: 'Response preview not included for security'
         });
 
     } catch (error) {
