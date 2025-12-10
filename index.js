@@ -1209,6 +1209,219 @@ app.get('/', (req, res) => {
 });
 
 /**
+ * Smart link handler: Detecta si la app está instalada y redirige o descarga APK
+ * GET /app-link?userId=XXX
+ * - Si el usuario tiene la app instalada: redirige al deep link (tareamov://...)
+ * - Si NO tiene la app: descarga automáticamente el APK
+ */
+app.get('/app-link', async (req, res) => {
+    const { userId, action = 'chat' } = req.query;
+
+    if (!userId) {
+        return res.status(400).send('userId es requerido');
+    }
+
+    // Construir deep link para la app
+    const deepLink = `tareamov://${action}?userId=${userId}`;
+    const apkUrl = `${req.protocol}://${req.get('host')}/download-apk`;
+
+    // Página HTML que detecta si la app está instalada
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abriendo TareaMov...</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 40px;
+            max-width: 500px;
+        }
+        .logo {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        h1 {
+            font-size: 32px;
+            margin-bottom: 16px;
+            font-weight: 700;
+        }
+        p {
+            font-size: 18px;
+            opacity: 0.9;
+            margin-bottom: 30px;
+        }
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 30px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .btn {
+            display: inline-block;
+            background: white;
+            color: #667eea;
+            padding: 16px 32px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 16px;
+            margin-top: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            transition: transform 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">📱</div>
+        <div id="opening">
+            <h1>Abriendo TareaMov</h1>
+            <p>Redirigiendo a la aplicación...</p>
+            <div class="spinner"></div>
+        </div>
+        <div id="download" class="hidden">
+            <h1>Descarga TareaMov</h1>
+            <p>La aplicación no está instalada en tu dispositivo</p>
+            <a href="${apkUrl}" class="btn">📥 Descargar APK</a>
+            <p style="margin-top: 20px; font-size: 14px;">La descarga comenzará automáticamente en 3 segundos...</p>
+        </div>
+    </div>
+
+    <script>
+        // Intentar abrir la app con deep link
+        const deepLink = "${deepLink}";
+        const apkUrl = "${apkUrl}";
+        let appOpened = false;
+
+        // Detectar si el usuario sale de la página (app se abrió)
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                appOpened = true;
+            }
+        });
+
+        // Intentar abrir la app
+        window.location.href = deepLink;
+
+        // Si después de 2 segundos no se abrió la app, mostrar descarga
+        setTimeout(function() {
+            if (!appOpened && !document.hidden) {
+                // La app no está instalada, mostrar descarga
+                document.getElementById('opening').classList.add('hidden');
+                document.getElementById('download').classList.remove('hidden');
+                
+                // Iniciar descarga automática después de 3 segundos
+                setTimeout(function() {
+                    window.location.href = apkUrl;
+                }, 3000);
+            }
+        }, 2000);
+
+        // Fallback: Si el usuario vuelve a la página, también mostrar descarga
+        window.addEventListener('focus', function() {
+            setTimeout(function() {
+                if (!document.hidden) {
+                    document.getElementById('opening').classList.add('hidden');
+                    document.getElementById('download').classList.remove('hidden');
+                }
+            }, 500);
+        });
+    </script>
+</body>
+</html>`;
+
+    res.send(html);
+});
+
+/**
+ * Descarga el APK de TareaMov
+ * GET /download-apk
+ */
+app.get('/download-apk', (req, res) => {
+    const apkPath = './app-debug.apk';
+    const fs = require('fs');
+    
+    // Verificar si el APK existe
+    if (!fs.existsSync(apkPath)) {
+        return res.status(404).send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APK no disponible</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+        .container {
+            max-width: 500px;
+        }
+        h1 { font-size: 32px; margin-bottom: 16px; }
+        p { font-size: 18px; opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚠️ APK no disponible</h1>
+        <p>El archivo app-debug.apk no se encuentra en el servidor.</p>
+        <p style="margin-top: 20px; font-size: 14px;">Contacta al administrador para obtener el APK.</p>
+    </div>
+</body>
+</html>
+        `);
+    }
+    
+    // Configurar headers para descarga
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    res.setHeader('Content-Disposition', 'attachment; filename="TareaMov.apk"');
+    
+    // Enviar el archivo
+    res.sendFile(apkPath, { root: __dirname }, (err) => {
+        if (err) {
+            console.error('❌ Error enviando APK:', err);
+            res.status(500).send('Error al descargar el APK');
+        } else {
+            console.log('✅ APK descargado exitosamente');
+        }
+    });
+});
+
+/**
  * Notifica a los suscriptores cuando un creador crea un nuevo curso
  * 1. Busca los suscriptores del creador.
  * 2. Guarda la notificación en la base de datos (tabla 'notifications').
@@ -1473,8 +1686,8 @@ app.post('/notify-chat-response', async(req, res) => {
         // Solo notificar que hay una respuesta disponible
         const emailSubject = '🤖 Nueva respuesta del Asistente de IA';
         
-        // Deep link para abrir directamente la app en el chat
-        const appDeepLink = `tareamov://chat?userId=${userId}`;
+        // Smart link que detecta si la app está instalada o descarga el APK
+        const smartLink = `${process.env.BASE_URL || 'http://localhost:3000'}/app-link?userId=${userId}&action=chat`;
         
         const emailBody = `Hola ${user.username || 'Usuario'},
 
@@ -1482,9 +1695,9 @@ Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respue
 
 🔒 Por seguridad, la respuesta completa solo está disponible dentro de la aplicación.
 
-📱 Abre la aplicación para ver tu respuesta personalizada y continuar la conversación de forma segura.
+📱 Haz clic en el enlace para abrir la app o descargarla si aún no la tienes:
 
-🔗 Abrir TareaMov: ${appDeepLink}
+🔗 Abrir TareaMov: ${smartLink}
 
 ---
 💡 Consejos de seguridad:
