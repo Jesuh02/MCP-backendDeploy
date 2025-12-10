@@ -425,136 +425,86 @@ async function sendEmailNotification(userId, subject, text) {
             return;
         }
 
-        const htmlContent = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background: #f4f4f4; margin: 0; padding: 0; }
-        .container { max-width: 600px; margin: 20px auto; background: white; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 20px; text-align: center; }
-        .header h1 { margin: 0; font-size: 28px; }
-        .header p { margin: 5px 0 0 0; opacity: 0.9; }
-        .content { padding: 40px 30px; }
-        .content h2 { color: #667eea; margin-top: 0; }
-        .content p { font-size: 16px; line-height: 1.8; }
-        .button { display: inline-block; padding: 12px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
-        .footer { background: #f9f9f9; padding: 20px; text-align: center; border-top: 1px solid #eee; }
-        .footer p { margin: 5px 0; font-size: 12px; color: #888; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🎓 TareaMov</h1>
-            <p>Plataforma de Cursos en Línea</p>
-        </div>
-        <div class="content">
-            <h2>${subject}</h2>
-            <p>${text.replace(/\n/g, '<br>')}</p>
-            <a href="https://tareamov.app" class="button">Ir a TareaMov</a>
-        </div>
-        <div class="footer">
-            <p>Este es un correo automático de TareaMov. Por favor no responder.</p>
-            <p>© 2025 TareaMov - Todos los derechos reservados</p>
-        </div>
-    </div>
-</body>
-</html>`;
+        const htmlContent = `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                <h2 style="color: #4a90e2;">${subject}</h2>
+                <p style="font-size: 16px;">${text.replace(/\n/g, '<br>')}</p>
+                <hr style="border: 1px solid #eee; margin: 20px 0;">
+                <p style="font-size: 12px; color: #888;">Este es un mensaje automático de TareaMov.</p>
+               </div>`;
 
         // 2. OPCIÓN 1: Resend HTTP API (RECOMENDADO para Railway)
         if (process.env.RESEND_API_KEY) {
             console.log('📧 Enviando email via Resend HTTP API...');
             
-            try {
-                const resendResponse = await axios.post('https://api.resend.com/emails', {
-                    from: 'TareaMov Notificaciones <notificaciones@send.yisuscompany.com>',
-                    to: [user.email],
-                    subject: subject,
-                    html: htmlContent,
-                    text: text // Fallback para clientes que no soportan HTML
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-                        'Content-Type': 'application/json'
-                    },
-                    timeout: 10000
-                });
+            const resendResponse = await axios.post('https://api.resend.com/emails', {
+                from: process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
+                to: [user.email],
+                subject: subject,
+                html: htmlContent
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            });
 
-                console.log(`✅ Email enviado a ${user.email} via Resend`);
-                console.log(`   📬 ID: ${resendResponse.data.id}`);
-                return;
-            } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
-                // Continuar con siguiente opción
-            }
+            console.log(`✅ Email enviado a ${user.email} via Resend: ${resendResponse.data.id}`);
+            return;
         }
 
         // 3. OPCIÓN 2: SendGrid HTTP API
         if (process.env.SENDGRID_API_KEY) {
             console.log('📧 Enviando email via SendGrid HTTP API...');
             
-            try {
-                const sgResponse = await axios.post('https://api.sendgrid.com/v3/mail/send', {
-                    personalizations: [{
-                        to: [{ email: user.email }],
-                        subject: subject
-                    }],
-                    from: { 
-                        email: process.env.SENDGRID_FROM_EMAIL || 'noreply@tareamov.app',
-                        name: 'TareaMov'
-                    },
-                    content: [{
-                        type: 'text/html',
-                        value: htmlContent
-                    }]
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
-                        'Content-Type': 'application/json'
-                    },
-                    timeout: 10000
-                });
+            const sgResponse = await axios.post('https://api.sendgrid.com/v3/mail/send', {
+                personalizations: [{
+                    to: [{ email: user.email }],
+                    subject: subject
+                }],
+                from: { 
+                    email: process.env.SENDGRID_FROM_EMAIL || 'noreply@example.com',
+                    name: 'TareaMov AI'
+                },
+                content: [{
+                    type: 'text/html',
+                    value: htmlContent
+                }]
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            });
 
-                console.log(`✅ Email enviado a ${user.email} via SendGrid`);
-                return;
-            } catch (sgError) {
-                console.error('❌ Error con SendGrid:', sgError.response?.data || sgError.message);
-                // Continuar con siguiente opción
-            }
+            console.log(`✅ Email enviado a ${user.email} via SendGrid: ${sgResponse.status}`);
+            return;
         }
 
         // 4. FALLBACK: Gmail SMTP (⚠️ NO funciona en Railway, solo desarrollo local)
         if (nodemailer && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
             console.warn('⚠️ Usando Gmail SMTP - Solo funciona en desarrollo local, NO en Railway');
             
-            try {
-                const transporter = nodemailer.createTransport({
-                    service: 'gmail',
-                    auth: {
-                        user: process.env.GMAIL_USER,
-                        pass: process.env.GMAIL_APP_PASSWORD
-                    }
-                });
+            const transporter = nodemailer.createTransport({
+                service: 'gmail',
+                auth: {
+                    user: process.env.GMAIL_USER,
+                    pass: process.env.GMAIL_APP_PASSWORD
+                }
+            });
 
-                const info = await transporter.sendMail({
-                    from: `"TareaMov" <${process.env.GMAIL_USER}>`,
-                    to: user.email,
-                    subject: subject,
-                    text: text,
-                    html: htmlContent
-                });
+            const info = await transporter.sendMail({
+                from: `"TareaMov AI" <${process.env.GMAIL_USER}>`,
+                to: user.email,
+                subject: subject,
+                text: text,
+                html: htmlContent
+            });
 
-                console.log(`✅ Email enviado a ${user.email} via Gmail`);
-                return;
-            } catch (gmailError) {
-                console.error('❌ Gmail SMTP bloqueado en Railway:', gmailError.message);
-            }
+            console.log(`✅ Email enviado a ${user.email}: ${info.messageId}`);
+            return;
         }
 
-        console.error('❌ No hay servicio de email configurado');
-        console.error('   💡 Configura RESEND_API_KEY o SENDGRID_API_KEY en Railway');
+        console.error('❌ No hay servicio de email configurado (RESEND_API_KEY o SENDGRID_API_KEY requeridos para Railway)');
 
     } catch (error) {
         console.error('❌ Error enviando email:', error.message);
@@ -1144,6 +1094,129 @@ La respuesta debe ser educativa, constructiva y MUY CLARA sobre por qué se asig
 // Ruta de prueba para verificar que el microservicio está activo
 app.get('/', (req, res) => {
     res.json({ status: 'ok', message: 'Microservicio activo', timestamp: new Date().toISOString() });
+});
+
+/**
+ * Notifica a los suscriptores cuando un creador crea un nuevo curso
+ * 1. Busca los suscriptores del creador.
+ * 2. Guarda la notificación en la base de datos (tabla 'notifications').
+ * 3. Envía emails con Resend a los suscriptores.
+ */
+app.post('/notify-course-creation', async(req, res) => {
+    try {
+        const { creatorUserId, creatorUsername, courseId, courseTitle, courseThumbnailUrl } = req.body;
+
+        if (!creatorUserId || !courseId) {
+            return res.status(400).json({ error: 'Missing required fields: creatorUserId, courseId' });
+        }
+
+        console.log(`📢 Course creation notification: User ${creatorUserId} created course "${courseTitle}"`);
+
+        // 1. Fetch subscribers from Supabase
+        const subscribersResponse = await axios.get(
+            `${process.env.SUPABASE_URL}/rest/v1/subscriptions?subscriber_id=eq.${creatorUserId}&select=subscribed_to_id`,
+            {
+                headers: {
+                    'apikey': process.env.SUPABASE_KEY,
+                    'Authorization': `Bearer ${process.env.SUPABASE_KEY}`
+                }
+            }
+        );
+
+        const subscribers = subscribersResponse.data || [];
+        console.log(`Found ${subscribers.length} subscribers for user ${creatorUserId}`);
+
+        if (subscribers.length === 0) {
+            return res.json({ message: 'No subscribers to notify', notificationsSent: 0 });
+        }
+
+        // 2. Get subscriber details (username, email)
+        const subscriberIds = subscribers.map(s => s.subscribed_to_id);
+        const usersResponse = await axios.get(
+            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,usuario,email`,
+            {
+                headers: {
+                    'apikey': process.env.SUPABASE_KEY,
+                    'Authorization': `Bearer ${process.env.SUPABASE_KEY}`
+                }
+            }
+        );
+
+        const users = usersResponse.data || [];
+
+        // 3. Create notification records + send emails
+        let successCount = 0;
+        
+        for (const user of users) {
+            try {
+                // Create in-app notification
+                const notification = {
+                    user_id: user.id,
+                    type: 'new_course',
+                    title: `${creatorUsername || 'Un creador'} subió un nuevo curso`,
+                    message: `${courseTitle || 'Nuevo curso disponible'}`,
+                    sender_username: creatorUsername,
+                    sender_avatar_url: null, // Could fetch from personas table
+                    thumbnail_url: courseThumbnailUrl,
+                    related_id: courseId,
+                    is_read: false
+                };
+
+                await axios.post(
+                    `${process.env.SUPABASE_URL}/rest/v1/notifications`,
+                    notification,
+                    {
+                        headers: {
+                            'apikey': process.env.SUPABASE_KEY,
+                            'Authorization': `Bearer ${process.env.SUPABASE_KEY}`,
+                            'Content-Type': 'application/json'
+                        }
+                    }
+                );
+
+                // Send email with Resend
+                if (user.email) {
+                    try {
+                        await axios.post('https://api.resend.com/emails', {
+                            from: 'Notificaciones <notificaciones@yisuscompany.com>',
+                            to: user.email,
+                            subject: `¡${creatorUsername} subió un nuevo curso!`,
+                            html: `
+                                <h2>Nuevo curso disponible</h2>
+                                <p><strong>${creatorUsername}</strong> acaba de publicar un nuevo curso:</p>
+                                <h3>${courseTitle}</h3>
+                                <p>¡Entra a la app para verlo ahora!</p>
+                                <br>
+                                <p>Saludos,<br>El equipo de YisusCompany</p>
+                            `
+                        }, {
+                            headers: {
+                                'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+                                'Content-Type': 'application/json'
+                            }
+                        });
+                        console.log(`✅ Email sent to ${user.email}`);
+                    } catch (emailError) {
+                        console.warn(`⚠️ Failed to send email to ${user.email}:`, emailError.message);
+                    }
+                }
+
+                successCount++;
+            } catch (error) {
+                console.error(`Error notifying user ${user.id}:`, error.message);
+            }
+        }
+
+        res.json({ 
+            message: 'Notifications sent',
+            notificationsSent: successCount,
+            totalSubscribers: users.length
+        });
+
+    } catch (error) {
+        console.error('Error in notify-course-creation:', error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 /**
