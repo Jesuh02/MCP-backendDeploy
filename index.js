@@ -1687,7 +1687,7 @@ app.post('/notify-chat-response', async(req, res) => {
         const emailSubject = '🤖 Nueva respuesta del Asistente de IA';
         
         // Smart link que detecta si la app está instalada o descarga el APK
-        const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$`;
+        const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
         
         const emailBody = `Hola ${user.username || 'Usuario'},
 
