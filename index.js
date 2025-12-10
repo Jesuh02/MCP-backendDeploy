@@ -409,18 +409,9 @@ async function sendPushNotification(userId, title, body, data = {}) {
 
 /**
  * Envía una notificación por correo electrónico a un usuario específico
+ * OPTIMIZADO PARA RAILWAY: Usa HTTP APIs en lugar de SMTP
  */
 async function sendEmailNotification(userId, subject, text) {
-    if (!nodemailer) {
-        console.warn('⚠️ Nodemailer no está disponible. Saltando email.');
-        return;
-    }
-
-    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-        console.warn('⚠️ Credenciales de Gmail no configuradas (GMAIL_USER, GMAIL_APP_PASSWORD). Saltando email.');
-        return;
-    }
-
     try {
         // 1. Obtener el email del usuario desde Supabase
         const { data: user, error } = await supabaseService.client
@@ -430,86 +421,147 @@ async function sendEmailNotification(userId, subject, text) {
             .single();
 
         if (error || !user || !user.email) {
-            console.error('❌ No se encontró email para el usuario', userId);
+            console.warn(`⚠️ No se encontró email para userId ${userId}`);
             return;
         }
 
-        // 2. Configurar el transporter (Resend, SendGrid o Gmail)
-        let transporter;
-        
+        const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background: #f4f4f4; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; background: white; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 20px; text-align: center; }
+        .header h1 { margin: 0; font-size: 28px; }
+        .header p { margin: 5px 0 0 0; opacity: 0.9; }
+        .content { padding: 40px 30px; }
+        .content h2 { color: #667eea; margin-top: 0; }
+        .content p { font-size: 16px; line-height: 1.8; }
+        .button { display: inline-block; padding: 12px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .footer { background: #f9f9f9; padding: 20px; text-align: center; border-top: 1px solid #eee; }
+        .footer p { margin: 5px 0; font-size: 12px; color: #888; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎓 TareaMov</h1>
+            <p>Plataforma de Cursos en Línea</p>
+        </div>
+        <div class="content">
+            <h2>${subject}</h2>
+            <p>${text.replace(/\n/g, '<br>')}</p>
+            <a href="https://tareamov.app" class="button">Ir a TareaMov</a>
+        </div>
+        <div class="footer">
+            <p>Este es un correo automático de TareaMov. Por favor no responder.</p>
+            <p>© 2025 TareaMov - Todos los derechos reservados</p>
+        </div>
+    </div>
+</body>
+</html>`;
+
+        // 2. OPCIÓN 1: Resend HTTP API (RECOMENDADO para Railway)
         if (process.env.RESEND_API_KEY) {
-            // Usar Resend (RECOMENDADO - más simple que SendGrid)
-            transporter = nodemailer.createTransport({
-                host: 'smtp.resend.com',
-                port: 465,
-                secure: true,
-                auth: {
-                    user: 'resend',
-                    pass: process.env.RESEND_API_KEY
-                }
-            });
-        } else if (process.env.SENDGRID_API_KEY) {
-            // Usar SendGrid (alternativa)
-            transporter = nodemailer.createTransport({
-                host: 'smtp.sendgrid.net',
-                port: 587,
-                secure: false,
-                auth: {
-                    user: 'apikey',
-                    pass: process.env.SENDGRID_API_KEY
-                }
-            });
-        } else if (process.env.MAILGUN_API_KEY && process.env.MAILGUN_DOMAIN) {
-            // Usar Mailgun (otra alternativa)
-            transporter = nodemailer.createTransport({
-                host: 'smtp.mailgun.org',
-                port: 587,
-                secure: false,
-                auth: {
-                    user: `postmaster@${process.env.MAILGUN_DOMAIN}`,
-                    pass: process.env.MAILGUN_API_KEY
-                }
-            });
-        } else {
-            // Fallback a Gmail con configuración extendida
-            transporter = nodemailer.createTransport({
-                host: 'smtp.gmail.com',
-                port: 587,
-                secure: false,
-                auth: {
-                    user: process.env.GMAIL_USER,
-                    pass: process.env.GMAIL_APP_PASSWORD
-                },
-                tls: {
-                    rejectUnauthorized: false
-                },
-                connectionTimeout: 10000,
-                greetingTimeout: 5000,
-                socketTimeout: 30000
-            });
+            console.log('📧 Enviando email via Resend HTTP API...');
+            
+            try {
+                const resendResponse = await axios.post('https://api.resend.com/emails', {
+                    from: 'TareaMov Notificaciones <notificaciones@send.yisuscompany.com>',
+                    to: [user.email],
+                    subject: subject,
+                    html: htmlContent,
+                    text: text // Fallback para clientes que no soportan HTML
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
+                });
+
+                console.log(`✅ Email enviado a ${user.email} via Resend`);
+                console.log(`   📬 ID: ${resendResponse.data.id}`);
+                return;
+            } catch (resendError) {
+                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
+                // Continuar con siguiente opción
+            }
         }
 
-        // 3. Enviar el correo
-        const fromEmail = process.env.RESEND_FROM_EMAIL || 
-                         process.env.SENDGRID_FROM_EMAIL || 
-                         process.env.GMAIL_USER;
-        const info = await transporter.sendMail({
-            from: `"TareaMov AI" <${fromEmail}>`,
-            to: user.email,
-            subject: subject,
-            text: text,
-            html: `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-                    <h2 style="color: #4a90e2;">${subject}</h2>
-                    <p style="font-size: 16px;">${text.replace(/\n/g, '<br>')}</p>
-                    <hr style="border: 1px solid #eee; margin: 20px 0;">
-                    <p style="font-size: 12px; color: #888;">Este es un mensaje automático de TareaMov.</p>
-                   </div>`
-        });
+        // 3. OPCIÓN 2: SendGrid HTTP API
+        if (process.env.SENDGRID_API_KEY) {
+            console.log('📧 Enviando email via SendGrid HTTP API...');
+            
+            try {
+                const sgResponse = await axios.post('https://api.sendgrid.com/v3/mail/send', {
+                    personalizations: [{
+                        to: [{ email: user.email }],
+                        subject: subject
+                    }],
+                    from: { 
+                        email: process.env.SENDGRID_FROM_EMAIL || 'noreply@tareamov.app',
+                        name: 'TareaMov'
+                    },
+                    content: [{
+                        type: 'text/html',
+                        value: htmlContent
+                    }]
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
+                });
 
-        console.log(`📧 Email enviado a ${user.email}: ${info.messageId}`);
+                console.log(`✅ Email enviado a ${user.email} via SendGrid`);
+                return;
+            } catch (sgError) {
+                console.error('❌ Error con SendGrid:', sgError.response?.data || sgError.message);
+                // Continuar con siguiente opción
+            }
+        }
+
+        // 4. FALLBACK: Gmail SMTP (⚠️ NO funciona en Railway, solo desarrollo local)
+        if (nodemailer && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+            console.warn('⚠️ Usando Gmail SMTP - Solo funciona en desarrollo local, NO en Railway');
+            
+            try {
+                const transporter = nodemailer.createTransport({
+                    service: 'gmail',
+                    auth: {
+                        user: process.env.GMAIL_USER,
+                        pass: process.env.GMAIL_APP_PASSWORD
+                    }
+                });
+
+                const info = await transporter.sendMail({
+                    from: `"TareaMov" <${process.env.GMAIL_USER}>`,
+                    to: user.email,
+                    subject: subject,
+                    text: text,
+                    html: htmlContent
+                });
+
+                console.log(`✅ Email enviado a ${user.email} via Gmail`);
+                return;
+            } catch (gmailError) {
+                console.error('❌ Gmail SMTP bloqueado en Railway:', gmailError.message);
+            }
+        }
+
+        console.error('❌ No hay servicio de email configurado');
+        console.error('   💡 Configura RESEND_API_KEY o SENDGRID_API_KEY en Railway');
 
     } catch (error) {
-        console.error('❌ Error enviando email:', error);
+        console.error('❌ Error enviando email:', error.message);
+        if (error.response) {
+            console.error('   HTTP Status:', error.response.status);
+            console.error('   Detalles:', JSON.stringify(error.response.data, null, 2));
+        }
     }
 }
 
