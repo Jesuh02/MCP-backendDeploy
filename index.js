@@ -436,20 +436,52 @@ async function sendEmailNotification(userId, subject, text) {
         if (process.env.RESEND_API_KEY) {
             console.log('📧 Enviando email via Resend HTTP API...');
             
-            const resendResponse = await axios.post('https://api.resend.com/emails', {
-                from: process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
-                to: [user.email],
-                subject: subject,
-                html: htmlContent
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-                    'Content-Type': 'application/json'
-                }
-            });
+            // ✅ Dominio verificado: yisuscompany.com (IONOS DNS configurado)
+            // Registros DNS configurados en IONOS:
+            // - MX: inbound-smtp.us-east-1.amazonaws.com
+            // - TXT resend._domainkey: [DKIM key]
+            // - MX send: feedback-smtp.us-east-1.amazonses.com
+            // - TXT send: v=spf1 include:amazonses.com ~all
+            // - TXT _dmarc: v=DMARC1; p=none;
+            const fromEmail = 'notificaciones@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            
+            try {
+                const resendResponse = await axios.post('https://api.resend.com/emails', {
+                    from: fromEmail,
+                    to: [user.email],
+                    subject: subject,
+                    html: htmlContent
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
 
-            console.log(`✅ Email enviado a ${user.email} via Resend: ${resendResponse.data.id}`);
-            return;
+                console.log(`✅ Email enviado a ${user.email} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
+                return;
+            } catch (resendError) {
+                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
+                // Fallback a onboarding@resend.dev si falla el dominio personalizado
+                console.log('🔄 Reintentando con email por defecto de Resend...');
+                try {
+                    const fallbackResponse = await axios.post('https://api.resend.com/emails', {
+                        from: 'onboarding@resend.dev',
+                        to: [user.email],
+                        subject: subject,
+                        html: htmlContent
+                    }, {
+                        headers: {
+                            'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    console.log(`✅ Email enviado a ${user.email} via fallback: ${fallbackResponse.data.id}`);
+                    return;
+                } catch (fallbackError) {
+                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
+                }
+            }
         }
 
         // 3. OPCIÓN 2: SendGrid HTTP API
