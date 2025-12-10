@@ -48,9 +48,29 @@ try {
             serviceAccount = JSON.parse(cleaned);
         }
 
-        // Fix private_key newlines (common issue with Env Vars)
+        // Fix private_key newlines (CRITICAL: Handle all possible escape scenarios)
         if (serviceAccount.private_key) {
-            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+            let privateKey = serviceAccount.private_key;
+            
+            // Case 1: Literal \\n string (double escaped) -> replace with actual newlines
+            if (privateKey.includes('\\n')) {
+                privateKey = privateKey.replace(/\\n/g, '\n');
+            }
+            
+            // Case 2: Already has actual newlines but might be mixed
+            // Ensure it starts and ends correctly
+            if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
+                console.warn('⚠️ Private key format issue detected');
+            }
+            
+            serviceAccount.private_key = privateKey;
+            
+            console.log('🔑 Private key processed:', {
+                length: privateKey.length,
+                startsCorrect: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
+                endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----'),
+                hasNewlines: privateKey.includes('\n')
+            });
         }
 
         admin.initializeApp({
@@ -67,6 +87,7 @@ try {
     }
 } catch (error) {
     console.warn('⚠️ Firebase Admin not initialized:', error.message);
+    console.warn('💡 Check that FIREBASE_SERVICE_ACCOUNT is properly formatted in Railway');
 }
 
 // Initialize LLMService with DeepSeek
