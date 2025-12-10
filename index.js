@@ -1328,6 +1328,66 @@ app.post('/notify-video-upload', async(req, res) => {
 });
 
 /**
+ * Notifica por email al usuario cuando recibe una respuesta del chat IA
+ * Endpoint: POST /notify-chat-response
+ * Body: { userId, responsePreview }
+ */
+app.post('/notify-chat-response', async(req, res) => {
+    const { userId, responsePreview } = req.body;
+
+    if (!userId) {
+        return res.status(400).json({ error: 'userId es requerido' });
+    }
+
+    console.log(`📧 Enviando notificación de chat para usuario ${userId}`);
+
+    try {
+        // Obtener información del usuario (email, nombre)
+        const { data: user, error: userError } = await supabaseService.client
+            .from('usuarios')
+            .select('email, username')
+            .eq('id', userId)
+            .single();
+
+        if (userError || !user || !user.email) {
+            console.warn(`⚠️ No se encontró email para userId ${userId}`);
+            return res.status(404).json({ error: 'Usuario no encontrado o sin email' });
+        }
+
+        // Preparar el contenido del email
+        const preview = responsePreview || 'El asistente de IA ha respondido a tu consulta.';
+        const previewText = preview.substring(0, 200) + (preview.length > 200 ? '...' : '');
+
+        const emailSubject = '🤖 Nueva respuesta del Asistente de IA';
+        const emailBody = `Hola ${user.username || 'Usuario'},
+
+Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2).
+
+📝 Vista previa de la respuesta:
+${previewText}
+
+💡 Abre la aplicación para ver la respuesta completa y continuar la conversación.
+
+---
+Este es un mensaje automático de TareaMov.`;
+
+        // Enviar email usando la función existente
+        await sendEmailNotification(userId, emailSubject, emailBody);
+
+        console.log(`✅ Notificación de chat enviada a ${user.email}`);
+        res.json({ 
+            success: true, 
+            message: 'Notificación enviada',
+            email: user.email
+        });
+
+    } catch (error) {
+        console.error('❌ Error en /notify-chat-response:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * Recibe un prompt, lo divide o resume si supera el límite de tokens,
  * y lo envía al modelo Granite/Ollama.
  */
