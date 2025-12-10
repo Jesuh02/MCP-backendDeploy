@@ -23,8 +23,13 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const MAX_TOKENS = 4096;
 
-// Initialize Firebase Admin
-const admin = require('firebase-admin');
+// Initialize Firebase Admin (with error handling)
+let admin;
+try {
+    admin = require('firebase-admin');
+} catch (e) {
+    console.warn('⚠️ Firebase Admin not available:', e.message);
+}
 
 // Initialize Nodemailer for Email Notifications
 let nodemailer;
@@ -35,12 +40,14 @@ try {
     console.warn('⚠️ Nodemailer not found. Email notifications will not work. Run: npm install nodemailer');
 }
 
-try {
-    // OPTION 1: Use individual environment variables (RECOMMENDED for Railway)
-    if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
-        console.log('🔧 Using individual Firebase environment variables');
-        
-        let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+// Only initialize Firebase if admin was loaded successfully
+if (admin) {
+    try {
+        // OPTION 1: Use individual environment variables (RECOMMENDED for Railway)
+        if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+            console.log('🔧 Using individual Firebase environment variables');
+            
+            let privateKey = process.env.FIREBASE_PRIVATE_KEY;
         
         // Fix escaped newlines if present
         if (privateKey.includes('\\n')) {
@@ -113,9 +120,12 @@ try {
         });
         console.log('✅ Firebase Admin initialized from file');
     }
-} catch (error) {
-    console.warn('⚠️ Firebase Admin not initialized:', error.message);
-    console.warn('💡 Use individual env vars: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL');
+    } catch (error) {
+        console.warn('⚠️ Firebase Admin not initialized:', error.message);
+        console.warn('💡 Use individual env vars: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL');
+    }
+} else {
+    console.warn('⚠️ Firebase Admin package not available - push notifications disabled');
 }
 
 // Initialize LLMService with DeepSeek
@@ -340,8 +350,8 @@ app.use(bodyParser.json({ limit: '50mb' }));
  * Envía una notificación push a un usuario específico vía FCM
  */
 async function sendPushNotification(userId, title, body, data = {}) {
-    if (!admin.apps.length) {
-        console.warn('⚠️ Firebase Admin no está inicializado. Saltando notificación.');
+    if (!admin || !admin.apps || !admin.apps.length) {
+        console.warn('⚠️ Firebase Admin no está inicializado. Saltando notificación push.');
         return;
     }
 
@@ -425,12 +435,82 @@ async function sendEmailNotification(userId, subject, text) {
             return;
         }
 
-        const htmlContent = `<div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-                <h2 style="color: #4a90e2;">${subject}</h2>
-                <p style="font-size: 16px;">${text.replace(/\n/g, '<br>')}</p>
-                <hr style="border: 1px solid #eee; margin: 20px 0;">
-                <p style="font-size: 12px; color: #888;">Este es un mensaje automático de TareaMov.</p>
-               </div>`;
+        const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${subject}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); overflow: hidden;">
+                    <!-- Header with gradient -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">
+                                TareaMov
+                            </h1>
+                            <p style="margin: 10px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">
+                                Tu plataforma de aprendizaje
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            <h2 style="margin: 0 0 20px 0; color: #1a202c; font-size: 24px; font-weight: 600;">
+                                ${subject}
+                            </h2>
+                            <div style="color: #4a5568; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">
+                                ${text.replace(/\n/g, '<br>')}
+                            </div>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #f7fafc; padding: 30px; border-top: 1px solid #e2e8f0;">
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <p style="margin: 0 0 15px 0; color: #718096; font-size: 14px;">
+                                            Este es un mensaje automático de TareaMov
+                                        </p>
+                                        <p style="margin: 0; color: #a0aec0; font-size: 12px;">
+                                            © ${new Date().getFullYear()} TareaMov. Todos los derechos reservados.
+                                        </p>
+                                        <div style="margin-top: 20px;">
+                                            <a href="https://yisuscompany.com" style="color: #667eea; text-decoration: none; font-size: 13px; margin: 0 10px;">
+                                                yisuscompany.com
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                </table>
+                
+                <!-- Unsubscribe section -->
+                <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px;">
+                    <tr>
+                        <td style="text-align: center; color: #a0aec0; font-size: 12px;">
+                            <p style="margin: 0;">
+                                Recibiste este correo porque eres usuario de TareaMov
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>`;
 
         // 2. OPCIÓN 1: Resend HTTP API (RECOMENDADO para Railway)
         if (process.env.RESEND_API_KEY) {
