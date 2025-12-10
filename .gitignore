@@ -42,3 +42,4 @@ coverage/
 
 serviceAccountKey.json
 .railway-env.json
+app-debug.apk
