@@ -346,13 +346,6 @@ async function updateTaskSubmissionSupabase(submissionId, grade, feedback) {
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
 
-// Servir archivos estáticos (imágenes para emails)
-import path from 'path';
-import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-app.use('/public', express.static(path.join(__dirname, 'public')));
-
 /**
  * Envía una notificación push a un usuario específico vía FCM
  */
@@ -384,18 +377,10 @@ async function sendPushNotification(userId, title, body, data = {}) {
         // Eliminar duplicados si los hay
         const uniqueTokens = [...new Set(registrationTokens)];
 
-        // 2. Convertir todos los valores de data a strings (FCM solo acepta strings)
-        const safeData = {};
-        if (data && typeof data === 'object') {
-            for (const [key, value] of Object.entries(data)) {
-                safeData[key] = value !== null && value !== undefined ? String(value) : '';
-            }
-        }
-
-        // 3. Construir el mensaje
+        // 2. Construir el mensaje
         const message = {
             notification: { title, body },
-            data: safeData,
+            data: data,
             tokens: uniqueTokens,
             android: {
                 priority: 'high',
@@ -405,7 +390,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
             }
         };
 
-        // 4. Enviar vía FCM Multicast
+        // 3. Enviar vía FCM Multicast
         const response = await admin.messaging().sendMulticast(message);
         console.log(`📨 Notificaciones enviadas a usuario ${userId}: ${response.successCount} éxitos, ${response.failureCount} fallos`);
 
@@ -450,224 +435,46 @@ async function sendEmailNotification(userId, subject, text) {
             return;
         }
 
-        // Obtener nombre del usuario desde Supabase
-        const { data: userData, error: userError } = await supabaseService.client
-            .from('usuarios')
-            .select('username')
-            .eq('id', userId)
-            .single();
-        
-        const userName = userData?.username || 'Usuario';
-        
-        // URL del app link para redirección
-        const appLinkUrl = `${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/app-link?userId=${userId}&action=chat`;
-
         const htmlContent = `
 <!DOCTYPE html>
-<html lang="es">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tu mensaje está listo - CourseV</title>
+    <title>${subject}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
-    <!--[if mso]>
-    <style type="text/css">
-        body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
-    </style>
-    <![endif]-->
-    
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f5f5f5;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f5f5f5; padding: 40px 20px;">
         <tr>
-            <td align="center" style="padding: 20px 10px;">
-                
-                <!-- Container Principal -->
-                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                    
-                    <!-- Header con Logo - CLICKEABLE -->
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); overflow: hidden;">
+                    <!-- Content -->
                     <tr>
-                        <td style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 25px 20px; text-align: center;">
-                            <a href="${appLinkUrl}" target="_blank" style="text-decoration: none;">
-                                <table cellpadding="0" cellspacing="0" border="0" align="center">
-                                    <tr>
-                                        <td style="padding-right: 12px;">
-                                            <img src="${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/ghost-image" 
-                                                 alt="CourseV" 
-                                                 width="45" 
-                                                 height="45"
-                                                 style="display: block; border-radius: 10px;">
-                                        </td>
-                                        <td>
-                                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 800; letter-spacing: 2px;">COURSEV</h1>
-                                        </td>
-                                    </tr>
-                                </table>
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <!-- Banner Principal - CLICKEABLE -->
-                    <tr>
-                        <td>
-                            <a href="${appLinkUrl}" target="_blank" style="text-decoration: none; display: block;">
-                                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-                                    <tr>
-                                        <td style="padding: 40px 30px; text-align: center;">
-                                            <p style="margin: 0 0 8px 0; color: rgba(255,255,255,0.9); font-size: 14px; text-transform: uppercase; letter-spacing: 3px;">
-                                                🎉 ¡NOTIFICACIÓN!
-                                            </p>
-                                            <h2 style="margin: 0 0 15px 0; color: #ffffff; font-size: 26px; font-weight: 700; line-height: 1.3;">
-                                                Tu Mensaje Está Listo
-                                            </h2>
-                                            <p style="margin: 0; color: rgba(255,255,255,0.85); font-size: 15px;">
-                                                El asistente IA ha procesado tu consulta
-                                            </p>
-                                        </td>
-                                    </tr>
-                                </table>
-                            </a>
-                        </td>
-                    </tr>
-                    
-                    <!-- Contenido Principal -->
-                    <tr>
-                        <td style="padding: 35px 30px;">
-                            
-                            <!-- Saludo -->
-                            <p style="margin: 0 0 20px 0; color: #1a1a2e; font-size: 18px; font-weight: 600;">
-                                ¡Hola, ${userName}! 👋
-                            </p>
-                            
-                            <!-- Mensaje -->
-                            <p style="margin: 0 0 25px 0; color: #4a4a4a; font-size: 15px; line-height: 1.7;">
-                                Tu consulta ha sido procesada exitosamente por nuestro asistente de inteligencia artificial. 
-                                La respuesta completa te está esperando en la aplicación.
-                            </p>
-                            
-                            <!-- Card de Estado -->
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8f9fa; border-radius: 12px; margin-bottom: 25px;">
-                                <tr>
-                                    <td style="padding: 20px;">
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                                            <tr>
-                                                <td width="50" valign="top">
-                                                    <div style="width: 45px; height: 45px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; text-align: center; line-height: 45px;">
-                                                        <span style="color: #ffffff; font-size: 20px;">✓</span>
-                                                    </div>
-                                                </td>
-                                                <td style="padding-left: 15px;">
-                                                    <p style="margin: 0 0 5px 0; color: #10b981; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">
-                                                        ESTADO
-                                                    </p>
-                                                    <p style="margin: 0; color: #1a1a2e; font-size: 16px; font-weight: 600;">
-                                                        Respuesta Lista para Ver
-                                                    </p>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                    </td>
-                                </tr>
-                            </table>
-                            
-                            <!-- Botón CTA Principal -->
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                                <tr>
-                                    <td align="center" style="padding: 10px 0 30px 0;">
-                                        <a href="${appLinkUrl}" 
-                                           target="_blank"
-                                           style="display: inline-block; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #ffffff; text-decoration: none; padding: 18px 50px; border-radius: 30px; font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 15px rgba(26, 26, 46, 0.3);">
-                                            VER MENSAJE →
-                                        </a>
-                                    </td>
-                                </tr>
-                            </table>
-                            
-                            <!-- Divider -->
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                                <tr>
-                                    <td style="border-top: 1px solid #e5e5e5; padding-top: 25px;">
-                                    </td>
-                                </tr>
-                            </table>
-                            
-                            <!-- Info de Seguridad -->
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #fff8e6; border-left: 4px solid #f59e0b; border-radius: 0 8px 8px 0;">
-                                <tr>
-                                    <td style="padding: 15px 20px;">
-                                        <p style="margin: 0 0 8px 0; color: #92400e; font-size: 13px; font-weight: 700;">
-                                            🔒 AVISO DE SEGURIDAD
-                                        </p>
-                                        <p style="margin: 0; color: #78716c; font-size: 13px; line-height: 1.5;">
-                                            Por tu seguridad, el contenido completo solo está disponible dentro de la app. 
-                                            Nunca compartimos información sensible por correo electrónico.
-                                        </p>
-                                    </td>
-                                </tr>
-                            </table>
-                            
-                        </td>
-                    </tr>
-                    
-                    <!-- Sección de Acciones Rápidas -->
-                    <tr>
-                        <td style="background-color: #f8f9fa; padding: 25px 30px;">
-                            <p style="margin: 0 0 15px 0; color: #6b7280; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; text-align: center;">
-                                ACCIONES RÁPIDAS
-                            </p>
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                                <tr>
-                                    <td width="50%" style="padding-right: 10px;">
-                                        <a href="${appLinkUrl}" target="_blank" style="display: block; background-color: #ffffff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 15px; text-align: center; text-decoration: none;">
-                                            <span style="display: block; font-size: 24px; margin-bottom: 5px;">💬</span>
-                                            <span style="color: #1a1a2e; font-size: 13px; font-weight: 600;">Ver Chat</span>
-                                        </a>
-                                    </td>
-                                    <td width="50%" style="padding-left: 10px;">
-                                        <a href="${appLinkUrl}" target="_blank" style="display: block; background-color: #ffffff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 15px; text-align: center; text-decoration: none;">
-                                            <span style="display: block; font-size: 24px; margin-bottom: 5px;">📚</span>
-                                            <span style="color: #1a1a2e; font-size: 13px; font-weight: 600;">Mis Cursos</span>
-                                        </a>
-                                    </td>
-                                </tr>
-                            </table>
+                        <td style="padding: 40px 30px;">
+                            <h2 style="margin: 0 0 20px 0; color: #1a202c; font-size: 24px; font-weight: 600;">
+                                ${subject}
+                            </h2>
+                            <div style="color: #4a5568; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">
+                                ${text.replace(/\n/g, '<br>')}
+                            </div>
                         </td>
                     </tr>
                     
                     <!-- Footer -->
                     <tr>
-                        <td style="background-color: #1a1a2e; padding: 30px; text-align: center;">
-                            <a href="${appLinkUrl}" target="_blank" style="text-decoration: none;">
-                                <p style="margin: 0 0 15px 0; color: #ffffff; font-size: 20px; font-weight: 800; letter-spacing: 2px;">
-                                    COURSEV
-                                </p>
-                            </a>
-                            <p style="margin: 0 0 15px 0; color: rgba(255,255,255,0.6); font-size: 12px; line-height: 1.6;">
-                                Tu plataforma de aprendizaje inteligente<br>
-                                Impulsado por IA
-                            </p>
-                            <table cellpadding="0" cellspacing="0" border="0" align="center" style="margin-bottom: 15px;">
+                        <td style="background-color: #f7fafc; padding: 30px; border-top: 1px solid #e2e8f0;">
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
-                                    <td style="padding: 0 8px;">
-                                        <a href="${appLinkUrl}" style="color: rgba(255,255,255,0.5); font-size: 11px; text-decoration: none;">Abrir App</a>
-                                    </td>
-                                    <td style="color: rgba(255,255,255,0.3);">|</td>
-                                    <td style="padding: 0 8px;">
-                                        <a href="${appLinkUrl}" style="color: rgba(255,255,255,0.5); font-size: 11px; text-decoration: none;">Ayuda</a>
-                                    </td>
-                                    <td style="color: rgba(255,255,255,0.3);">|</td>
-                                    <td style="padding: 0 8px;">
-                                        <a href="${appLinkUrl}" style="color: rgba(255,255,255,0.5); font-size: 11px; text-decoration: none;">Configuración</a>
+                                    <td style="text-align: center;">
+                                        <p style="margin: 0; color: #a0aec0; font-size: 12px;">
+                                            © ${new Date().getFullYear()} Todos los derechos reservados.
+                                        </p>
                                     </td>
                                 </tr>
                             </table>
-                            <p style="margin: 0; color: rgba(255,255,255,0.4); font-size: 11px;">
-                                © 2025 CourseV. Todos los derechos reservados.
-                            </p>
                         </td>
                     </tr>
-                    
                 </table>
-                
             </td>
         </tr>
     </table>
@@ -686,11 +493,10 @@ async function sendEmailNotification(userId, subject, text) {
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
             const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Dominio verificado en Resend
-            const fromName = 'CourseV';
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
-                    from: `${fromName} <${fromEmail}>`,
+                    from: fromEmail,
                     to: [user.email],
                     subject: subject,
                     html: htmlContent
@@ -738,7 +544,7 @@ async function sendEmailNotification(userId, subject, text) {
                 }],
                 from: { 
                     email: process.env.SENDGRID_FROM_EMAIL || 'noreply@example.com',
-                    name: 'TareaMov AI'
+                    name: 'CourseVv AI'
                 },
                 content: [{
                     type: 'text/html',
@@ -768,7 +574,7 @@ async function sendEmailNotification(userId, subject, text) {
             });
 
             const info = await transporter.sendMail({
-                from: `"TareaMov AI" <${process.env.GMAIL_USER}>`,
+                from: `"CourseVv AI" <${process.env.GMAIL_USER}>`,
                 to: user.email,
                 subject: subject,
                 text: text,
@@ -1372,31 +1178,9 @@ app.get('/', (req, res) => {
 });
 
 /**
- * Endpoint para servir la imagen del fantasma pixel art para emails
- * GET /ghost-image
- * Devuelve una imagen PNG del fantasma cyberpunk
- */
-app.get('/ghost-image', (req, res) => {
-    // Imagen del fantasma pixel art en base64 (60x60 PNG)
-    // Esta es una imagen pequeña que se carga rápidamente en emails
-    const ghostImageBase64 = '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';
-    
-    // Convertir base64 a buffer
-    const imageBuffer = Buffer.from(ghostImageBase64, 'base64');
-    
-    // Enviar imagen
-    res.set({
-        'Content-Type': 'image/png',
-        'Content-Length': imageBuffer.length,
-        'Cache-Control': 'public, max-age=31536000'  // Cache por 1 año
-    });
-    res.send(imageBuffer);
-});
-
-/**
  * Smart link handler: Detecta si la app está instalada y redirige o descarga APK
  * GET /app-link?userId=XXX
- * - Si el usuario tiene la app instalada: redirige al deep link (tareamov://...)
+ * - Si el usuario tiene la app instalada: redirige al deep link (CourseVv://...)
  * - Si NO tiene la app: descarga automáticamente el APK
  */
 app.get('/app-link', async (req, res) => {
@@ -1407,7 +1191,7 @@ app.get('/app-link', async (req, res) => {
     }
 
     // Construir deep link para la app
-    const deepLink = `tareamov://${action}?userId=${userId}`;
+    const deepLink = `CourseVv://${action}?userId=${userId}`;
     const apkUrl = `${req.protocol}://${req.get('host')}/download-apk`;
 
     // Página HTML que detecta si la app está instalada
@@ -1417,7 +1201,7 @@ app.get('/app-link', async (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Abriendo TareaMov...</title>
+    <title>Abriendo CourseV...</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1486,12 +1270,12 @@ app.get('/app-link', async (req, res) => {
     <div class="container">
         <div class="logo">📱</div>
         <div id="opening">
-            <h1>Abriendo TareaMov</h1>
+            <h1>Abriendo CourseVv</h1>
             <p>Redirigiendo a la aplicación...</p>
             <div class="spinner"></div>
         </div>
         <div id="download" class="hidden">
-            <h1>Descarga TareaMov</h1>
+            <h1>Descarga CourseVv</h1>
             <p>La aplicación no está instalada en tu dispositivo</p>
             <a href="${apkUrl}" class="btn">📥 Descargar APK</a>
             <p style="margin-top: 20px; font-size: 14px;">La descarga comenzará automáticamente en 3 segundos...</p>
@@ -1545,7 +1329,7 @@ app.get('/app-link', async (req, res) => {
 });
 
 /**
- * Descarga el APK de TareaMov
+ * Descarga el APK de CourseVv
  * GET /download-apk
  */
 app.get('/download-apk', (req, res) => {
@@ -1593,7 +1377,7 @@ app.get('/download-apk', (req, res) => {
     
     // Configurar headers para descarga
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition', 'attachment; filename="TareaMov.apk"');
+    res.setHeader('Content-Disposition', 'attachment; filename="CourseVv.apk"');
     
     // Enviar el archivo
     res.sendFile(apkPath, { root: __dirname }, (err) => {
@@ -1643,7 +1427,7 @@ app.post('/notify-course-creation', async(req, res) => {
         // 2. Get subscriber details (username, email)
         const subscriberIds = subscribers.map(s => s.subscribed_to_id);
         const usersResponse = await axios.get(
-            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,username,email`,
+            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,usuario,email`,
             {
                 headers: {
                     'apikey': process.env.SUPABASE_KEY,
@@ -1688,7 +1472,7 @@ app.post('/notify-course-creation', async(req, res) => {
                 if (user.email) {
                     try {
                         await axios.post('https://api.resend.com/emails', {
-                            from: 'Notificaciones <notificaciones@yisuscompany.com>',
+                            from: 'CourseV <CourseV@yisuscompany.com>',
                             to: user.email,
                             subject: `¡${creatorUsername} subió un nuevo curso!`,
                             html: `
@@ -1748,7 +1532,7 @@ app.post('/notify-video-upload', async(req, res) => {
         // 1. Obtener información del creador (nombre)
         const { data: creator, error: creatorError } = await supabaseService.client
             .from('usuarios')
-            .select('username')
+            .select('usuario')
             .eq('id', creatorId)
             .single();
 
@@ -1778,7 +1562,7 @@ app.post('/notify-video-upload', async(req, res) => {
         const notificationsToInsert = subscriberIds.map(subId => ({
             user_id: subId,
             title: 'Nuevo video disponible',
-            message: `${creator.username} ha subido: ${videoTitle}`,
+            message: `${creator.usuario} ha subido: ${videoTitle}`,
             type: 'video_upload',
             related_id: videoId,
             is_read: false,
@@ -1806,7 +1590,7 @@ app.post('/notify-video-upload', async(req, res) => {
             await sendPushNotification(
                 subId,
                 '¡Nuevo Video!',
-                `${creator.username} acaba de subir un nuevo video: ${videoTitle}`, {
+                `${creator.usuario} acaba de subir un nuevo video: ${videoTitle}`, {
                     type: 'video_upload',
                     videoId: videoId.toString(),
                     creatorId: creatorId.toString()
@@ -1818,7 +1602,7 @@ app.post('/notify-video-upload', async(req, res) => {
             await sendEmailNotification(
                 subId,
                 '¡Nuevo Video Disponible! 🎥',
-                `Hola,\n\n${creator.username} acaba de subir un nuevo video titulado: "${videoTitle}".\n\n¡Entra a la app para verlo ahora!`
+                `Hola,\n\n${creator.usuario} acaba de subir un nuevo video titulado: "${videoTitle}".\n\n¡Entra a la app para verlo ahora!`
             );
             emailCount++;
         }
@@ -1856,7 +1640,6 @@ app.post('/notify-chat-response', async(req, res) => {
 
     try {
         // Obtener información del usuario (email, nombre)
-        // NOTA: La tabla usuarios tiene campo 'username' (no 'usuario')
         const { data: user, error: userError } = await supabaseService.client
             .from('usuarios')
             .select('email, username')
@@ -1864,18 +1647,16 @@ app.post('/notify-chat-response', async(req, res) => {
             .single();
 
         if (userError || !user || !user.email) {
-            console.warn(`⚠️ No se encontró email para userId ${userId}. Error: ${userError?.message || 'Sin email'}`);
+            console.warn(`⚠️ No se encontró email para userId ${userId}`);
             return res.status(404).json({ error: 'Usuario no encontrado o sin email' });
         }
-
-        console.log(`📧 Email encontrado: ${user.email}, Usuario: ${user.username || 'Sin nombre'}`);
 
         // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
         // Solo notificar que hay una respuesta disponible
         const emailSubject = '🤖 Nueva respuesta del Asistente de IA';
         
         // Smart link que detecta si la app está instalada o descarga el APK
-        const smartLink = `${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/app-link?userId=${userId}&action=chat`;
+        const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
         
         const emailBody = `Hola ${user.username || 'Usuario'},
 
@@ -1885,7 +1666,7 @@ Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respue
 
 📱 Haz clic en el enlace para abrir la app o descargarla si aún no la tienes:
 
-🔗 Abrir TareaMov: ${smartLink}
+🔗 Abrir CourseVv: ${smartLink}
 
 ---
 💡 Consejos de seguridad:
@@ -1893,7 +1674,7 @@ Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respue
 - Nunca compartimos datos completos por email
 - Siempre verifica tu identidad en la app antes de ver respuestas
 
-Este es un mensaje automático de TareaMov.`;
+Este es un mensaje automático de CourseVv.`;
 
         // Enviar email usando la función existente
         await sendEmailNotification(userId, emailSubject, emailBody);
@@ -1955,27 +1736,18 @@ app.post('/send-push-notification', async(req, res) => {
         const sendPromises = tokens.map(async ({ token }) => {
             try {
                 // Usar prioridad alta y data payload para que se muestre SIEMPRE
-                // IMPORTANTE: Todos los valores en data DEBEN ser strings para FCM
-                const safeData = {};
-                if (data && typeof data === 'object') {
-                    for (const [key, value] of Object.entries(data)) {
-                        // Convertir todos los valores a string (FCM solo acepta strings)
-                        safeData[key] = value !== null && value !== undefined ? String(value) : '';
-                    }
-                }
-                
                 const message = {
                     notification: {
-                        title: title || '🤖 TareaMov - Nueva respuesta',
+                        title: title || '🤖 CourseVv - Nueva respuesta',
                         body: body || 'Tu consulta ha sido procesada',
                     },
                     data: {
-                        userId: String(userId),
+                        userId: userId.toString(),
                         type: 'chat_response',
                         timestamp: new Date().toISOString(),
-                        title: title || '🤖 TareaMov - Nueva respuesta',
+                        title: title || '🤖 CourseVv - Nueva respuesta',
                         body: body || 'Tu consulta ha sido procesada',
-                        ...safeData
+                        ...data
                     },
                     android: {
                         priority: 'high',
@@ -1986,7 +1758,7 @@ app.post('/send-push-notification', async(req, res) => {
                             defaultSound: true,
                             defaultVibrateTimings: true,
                             defaultLightSettings: true,
-                            color: '#6366f1', // Indigo color (TareaMov brand)
+                            color: '#6366f1', // Indigo color (CourseVv brand)
                             icon: 'ic_notification',
                             clickAction: 'OPEN_CHAT',
                             // Forzar que se muestre como notificación del sistema
@@ -2343,7 +2115,7 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                     if (targetUserId) {
                         // Enviar correo
                         console.log(`📧 Enviando correo a ID: ${targetUserId}`);
-                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de TareaMov', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
+                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de CourseVv', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
                         
                         // Responder al usuario
                         const respuestaExito = `✅ Correo enviado exitosamente a ${cmd.target_type === 'me' ? 'tu dirección de email' : cmd.target_name}.\n\n**Asunto:** ${cmd.subject}\n**Mensaje:** ${cmd.body}`;
@@ -3043,7 +2815,7 @@ app.get('/health', async(req, res) => {
 
         res.json({
             status: 'ok',
-            server: 'tareamov-mcp-server',
+            server: 'CourseVv-mcp-server',
             version: '1.0.0',
             timestamp: new Date().toISOString(),
             services: {
@@ -3085,7 +2857,7 @@ app.post('/initialize', async(req, res) => {
                     }
                 },
                 serverInfo: {
-                    name: 'tareamov-mcp-server',
+                    name: 'CourseVv-mcp-server',
                     version: '1.0.0'
                 }
             }
@@ -3116,7 +2888,7 @@ app.post('/tools/list', async(req, res) => {
         result: {
             tools: [{
                     name: 'query_database',
-                    description: `Execute queries on the TareaMov Supabase database. Returns real-time data.
+                    description: `Execute queries on the CourseVv Supabase database. Returns real-time data.
 
 **CAPABILITIES:**
 - Execute RAW PostgreSQL/SQL queries directly (SELECT, INSERT, UPDATE, DELETE)
