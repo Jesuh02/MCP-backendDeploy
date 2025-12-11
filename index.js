@@ -686,7 +686,7 @@ async function sendEmailNotification(userId, subject, text) {
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
             const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Dominio verificado en Resend
-            const fromName = 'CourseV AI Assistant';
+            const fromName = 'CourseV';
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
