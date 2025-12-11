@@ -384,10 +384,18 @@ async function sendPushNotification(userId, title, body, data = {}) {
         // Eliminar duplicados si los hay
         const uniqueTokens = [...new Set(registrationTokens)];
 
-        // 2. Construir el mensaje
+        // 2. Convertir todos los valores de data a strings (FCM solo acepta strings)
+        const safeData = {};
+        if (data && typeof data === 'object') {
+            for (const [key, value] of Object.entries(data)) {
+                safeData[key] = value !== null && value !== undefined ? String(value) : '';
+            }
+        }
+
+        // 3. Construir el mensaje
         const message = {
             notification: { title, body },
-            data: data,
+            data: safeData,
             tokens: uniqueTokens,
             android: {
                 priority: 'high',
@@ -397,7 +405,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
             }
         };
 
-        // 3. Enviar vía FCM Multicast
+        // 4. Enviar vía FCM Multicast
         const response = await admin.messaging().sendMulticast(message);
         console.log(`📨 Notificaciones enviadas a usuario ${userId}: ${response.successCount} éxitos, ${response.failureCount} fallos`);
 
@@ -1920,18 +1928,27 @@ app.post('/send-push-notification', async(req, res) => {
         const sendPromises = tokens.map(async ({ token }) => {
             try {
                 // Usar prioridad alta y data payload para que se muestre SIEMPRE
+                // IMPORTANTE: Todos los valores en data DEBEN ser strings para FCM
+                const safeData = {};
+                if (data && typeof data === 'object') {
+                    for (const [key, value] of Object.entries(data)) {
+                        // Convertir todos los valores a string (FCM solo acepta strings)
+                        safeData[key] = value !== null && value !== undefined ? String(value) : '';
+                    }
+                }
+                
                 const message = {
                     notification: {
                         title: title || '🤖 TareaMov - Nueva respuesta',
                         body: body || 'Tu consulta ha sido procesada',
                     },
                     data: {
-                        userId: userId.toString(),
+                        userId: String(userId),
                         type: 'chat_response',
                         timestamp: new Date().toISOString(),
                         title: title || '🤖 TareaMov - Nueva respuesta',
                         body: body || 'Tu consulta ha sido procesada',
-                        ...data
+                        ...safeData
                     },
                     android: {
                         priority: 'high',
