@@ -1832,25 +1832,28 @@ app.post('/notify-chat-response', async(req, res) => {
 
     try {
         // Obtener información del usuario (email, nombre)
+        // NOTA: La tabla usuarios tiene campo 'usuario' no 'username'
         const { data: user, error: userError } = await supabaseService.client
             .from('usuarios')
-            .select('email, username')
+            .select('email, usuario')
             .eq('id', userId)
             .single();
 
         if (userError || !user || !user.email) {
-            console.warn(`⚠️ No se encontró email para userId ${userId}`);
+            console.warn(`⚠️ No se encontró email para userId ${userId}. Error: ${userError?.message || 'Sin email'}`);
             return res.status(404).json({ error: 'Usuario no encontrado o sin email' });
         }
+
+        console.log(`📧 Email encontrado: ${user.email}, Usuario: ${user.usuario || 'Sin nombre'}`);
 
         // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
         // Solo notificar que hay una respuesta disponible
         const emailSubject = '🤖 Nueva respuesta del Asistente de IA';
         
         // Smart link que detecta si la app está instalada o descarga el APK
-        const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
+        const smartLink = `${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/app-link?userId=${userId}&action=chat`;
         
-        const emailBody = `Hola ${user.username || 'Usuario'},
+        const emailBody = `Hola ${user.usuario || 'Usuario'},
 
 Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respuesta está lista.
 
