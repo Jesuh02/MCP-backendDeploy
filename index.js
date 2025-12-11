@@ -492,7 +492,7 @@ async function sendEmailNotification(userId, subject, text) {
             // - MX send: feedback-smtp.us-east-1.amazonses.com
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
-            const fromEmail = 'Chiv0@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Dominio verificado en Resend
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
