@@ -448,6 +448,18 @@ async function sendEmailNotification(userId, subject, text) {
         <tr>
             <td align="center">
                 <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); overflow: hidden;">
+                    <!-- Header with gradient -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">
+                                TareaMov
+                            </h1>
+                            <p style="margin: 10px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">
+                                Tu plataforma de aprendizaje
+                            </p>
+                        </td>
+                    </tr>
+                    
                     <!-- Content -->
                     <tr>
                         <td style="padding: 40px 30px;">
@@ -466,12 +478,31 @@ async function sendEmailNotification(userId, subject, text) {
                             <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
                                     <td style="text-align: center;">
-                                        <p style="margin: 0; color: #a0aec0; font-size: 12px;">
-                                            © ${new Date().getFullYear()} Todos los derechos reservados.
+                                        <p style="margin: 0 0 15px 0; color: #718096; font-size: 14px;">
+                                            Este es un mensaje automático de TareaMov
                                         </p>
+                                        <p style="margin: 0; color: #a0aec0; font-size: 12px;">
+                                            © ${new Date().getFullYear()} TareaMov. Todos los derechos reservados.
+                                        </p>
+                                        <div style="margin-top: 20px;">
+                                            <a href="https://yisuscompany.com" style="color: #667eea; text-decoration: none; font-size: 13px; margin: 0 10px;">
+                                                yisuscompany.com
+                                            </a>
+                                        </div>
                                     </td>
                                 </tr>
                             </table>
+                        </td>
+                    </tr>
+                </table>
+                
+                <!-- Unsubscribe section -->
+                <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px;">
+                    <tr>
+                        <td style="text-align: center; color: #a0aec0; font-size: 12px;">
+                            <p style="margin: 0;">
+                                Recibiste este correo porque eres usuario de TareaMov
+                            </p>
                         </td>
                     </tr>
                 </table>
@@ -492,7 +523,7 @@ async function sendEmailNotification(userId, subject, text) {
             // - MX send: feedback-smtp.us-east-1.amazonses.com
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
-            const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            const fromEmail = 'notificaciones@yisuscompany.com'; // ✅ Dominio verificado en Resend
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
