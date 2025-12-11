@@ -453,11 +453,11 @@ async function sendEmailNotification(userId, subject, text) {
         // Obtener nombre del usuario desde Supabase
         const { data: userData, error: userError } = await supabaseService.client
             .from('usuarios')
-            .select('usuario')
+            .select('username')
             .eq('id', userId)
             .single();
         
-        const userName = userData?.usuario || 'Usuario';
+        const userName = userData?.username || 'Usuario';
 
         const htmlContent = `
 <!DOCTYPE html>
@@ -1619,7 +1619,7 @@ app.post('/notify-course-creation', async(req, res) => {
         // 2. Get subscriber details (username, email)
         const subscriberIds = subscribers.map(s => s.subscribed_to_id);
         const usersResponse = await axios.get(
-            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,usuario,email`,
+            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,username,email`,
             {
                 headers: {
                     'apikey': process.env.SUPABASE_KEY,
@@ -1724,7 +1724,7 @@ app.post('/notify-video-upload', async(req, res) => {
         // 1. Obtener información del creador (nombre)
         const { data: creator, error: creatorError } = await supabaseService.client
             .from('usuarios')
-            .select('usuario')
+            .select('username')
             .eq('id', creatorId)
             .single();
 
@@ -1754,7 +1754,7 @@ app.post('/notify-video-upload', async(req, res) => {
         const notificationsToInsert = subscriberIds.map(subId => ({
             user_id: subId,
             title: 'Nuevo video disponible',
-            message: `${creator.usuario} ha subido: ${videoTitle}`,
+            message: `${creator.username} ha subido: ${videoTitle}`,
             type: 'video_upload',
             related_id: videoId,
             is_read: false,
@@ -1782,7 +1782,7 @@ app.post('/notify-video-upload', async(req, res) => {
             await sendPushNotification(
                 subId,
                 '¡Nuevo Video!',
-                `${creator.usuario} acaba de subir un nuevo video: ${videoTitle}`, {
+                `${creator.username} acaba de subir un nuevo video: ${videoTitle}`, {
                     type: 'video_upload',
                     videoId: videoId.toString(),
                     creatorId: creatorId.toString()
@@ -1794,7 +1794,7 @@ app.post('/notify-video-upload', async(req, res) => {
             await sendEmailNotification(
                 subId,
                 '¡Nuevo Video Disponible! 🎥',
-                `Hola,\n\n${creator.usuario} acaba de subir un nuevo video titulado: "${videoTitle}".\n\n¡Entra a la app para verlo ahora!`
+                `Hola,\n\n${creator.username} acaba de subir un nuevo video titulado: "${videoTitle}".\n\n¡Entra a la app para verlo ahora!`
             );
             emailCount++;
         }
@@ -1832,10 +1832,10 @@ app.post('/notify-chat-response', async(req, res) => {
 
     try {
         // Obtener información del usuario (email, nombre)
-        // NOTA: La tabla usuarios tiene campo 'usuario' no 'username'
+        // NOTA: La tabla usuarios tiene campo 'username' (no 'usuario')
         const { data: user, error: userError } = await supabaseService.client
             .from('usuarios')
-            .select('email, usuario')
+            .select('email, username')
             .eq('id', userId)
             .single();
 
@@ -1844,7 +1844,7 @@ app.post('/notify-chat-response', async(req, res) => {
             return res.status(404).json({ error: 'Usuario no encontrado o sin email' });
         }
 
-        console.log(`📧 Email encontrado: ${user.email}, Usuario: ${user.usuario || 'Sin nombre'}`);
+        console.log(`📧 Email encontrado: ${user.email}, Usuario: ${user.username || 'Sin nombre'}`);
 
         // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
         // Solo notificar que hay una respuesta disponible
@@ -1853,7 +1853,7 @@ app.post('/notify-chat-response', async(req, res) => {
         // Smart link que detecta si la app está instalada o descarga el APK
         const smartLink = `${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/app-link?userId=${userId}&action=chat`;
         
-        const emailBody = `Hola ${user.usuario || 'Usuario'},
+        const emailBody = `Hola ${user.username || 'Usuario'},
 
 Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respuesta está lista.
 
