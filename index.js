@@ -1698,8 +1698,8 @@ Este es un mensaje automático de TareaMov.`;
  * Endpoint: POST /send-push-notification
  * Body: { userId, title, body, data }
  * 
- * Envía notificación push cuando el usuario recibe respuesta del chat
- * y la app está en background o cerrada
+ * Envía notificación push SIEMPRE (foreground y background)
+ * como notificación del sistema Android
  */
 app.post('/send-push-notification', async(req, res) => {
     const { userId, title, body, data } = req.body;
@@ -1708,7 +1708,7 @@ app.post('/send-push-notification', async(req, res) => {
         return res.status(400).json({ error: 'userId es requerido' });
     }
 
-    console.log(`📱 Enviando notificación push para usuario ${userId}`);
+    console.log(`📱 Enviando notificación push del sistema para usuario ${userId}`);
 
     try {
         // Verificar que Firebase Admin esté disponible
@@ -1735,15 +1735,18 @@ app.post('/send-push-notification', async(req, res) => {
         // Intentar enviar a todos los tokens del usuario (puede tener múltiples dispositivos)
         const sendPromises = tokens.map(async ({ token }) => {
             try {
+                // Usar prioridad alta y data payload para que se muestre SIEMPRE
                 const message = {
                     notification: {
-                        title: title || '🤖 Nueva respuesta del chat',
+                        title: title || '🤖 TareaMov - Nueva respuesta',
                         body: body || 'Tu consulta ha sido procesada',
                     },
                     data: {
                         userId: userId.toString(),
                         type: 'chat_response',
                         timestamp: new Date().toISOString(),
+                        title: title || '🤖 TareaMov - Nueva respuesta',
+                        body: body || 'Tu consulta ha sido procesada',
                         ...data
                     },
                     android: {
@@ -1757,14 +1760,23 @@ app.post('/send-push-notification', async(req, res) => {
                             defaultLightSettings: true,
                             color: '#6366f1', // Indigo color (TareaMov brand)
                             icon: 'ic_notification',
-                            clickAction: 'OPEN_CHAT'
+                            clickAction: 'OPEN_CHAT',
+                            // Forzar que se muestre como notificación del sistema
+                            tag: 'chat_response',
+                            notificationCount: 1
+                        }
+                    },
+                    // Prioridad alta para delivery inmediato
+                    webpush: {
+                        headers: {
+                            Urgency: 'high'
                         }
                     },
                     token: token
                 };
 
                 const response = await admin.messaging().send(message);
-                console.log(`✅ Push notification enviada exitosamente:`, response);
+                console.log(`✅ Notificación push del sistema enviada exitosamente:`, response);
                 return { success: true, token, messageId: response };
             } catch (error) {
                 console.error(`❌ Error enviando push a token ${token.substring(0, 10)}...`, error.message);
@@ -1786,7 +1798,7 @@ app.post('/send-push-notification', async(req, res) => {
         const results = await Promise.all(sendPromises);
         const successCount = results.filter(r => r.success).length;
 
-        console.log(`📊 Notificaciones enviadas: ${successCount}/${tokens.length}`);
+        console.log(`📊 Notificaciones del sistema enviadas: ${successCount}/${tokens.length}`);
         
         res.json({ 
             success: successCount > 0,
