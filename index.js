@@ -426,7 +426,7 @@ async function sendEmailNotification(userId, subject, text) {
         // 1. Obtener el email del usuario desde Supabase
         const { data: user, error } = await supabaseService.client
             .from('usuarios')
-            .select('email')
+            .select('email, username')
             .eq('id', userId)
             .single();
 
@@ -434,6 +434,22 @@ async function sendEmailNotification(userId, subject, text) {
             console.warn(`⚠️ No se encontró email para userId ${userId}`);
             return;
         }
+
+        // 2. Validar y limpiar el email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const cleanEmail = user.email.trim().toLowerCase();
+        
+        if (!emailRegex.test(cleanEmail)) {
+            console.error(`❌ Email inválido para userId ${userId}: "${user.email}"`);
+            console.error('   El email no cumple con el formato email@example.com');
+            return;
+        }
+
+        console.log(`📧 Email validado: ${cleanEmail}`);
+        
+        // 3. Preparar nombre del destinatario (opcional, mejora la presentación)
+        const recipientName = user.username || 'Usuario';
+        const toField = `${recipientName} <${cleanEmail}>`;
 
         const htmlContent = `
 <!DOCTYPE html>
@@ -514,63 +530,62 @@ async function sendEmailNotification(userId, subject, text) {
 
         // 2. OPCIÓN 1: Resend HTTP API (RECOMENDADO para Railway)
         if (process.env.RESEND_API_KEY) {
-            console.log('📧 Enviando email via Resend HTTP API...');
+            console.log(`📧 Enviando email via Resend a: ${cleanEmail}`);
             
             // ✅ Dominio verificado: yisuscompany.com (IONOS DNS configurado)
-            // Registros DNS configurados en IONOS:
-            // - MX: inbound-smtp.us-east-1.amazonaws.com
-            // - TXT resend._domainkey: [DKIM key]
-            // - MX send: feedback-smtp.us-east-1.amazonses.com
-            // - TXT send: v=spf1 include:amazonses.com ~all
-            // - TXT _dmarc: v=DMARC1; p=none;
-            const fromEmail = 'notificaciones@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            const fromEmail = 'notificaciones@yisuscompany.com';
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
                     from: fromEmail,
-                    to: [user.email],
+                    to: cleanEmail, // ✅ Solo el email limpio, sin nombre
                     subject: subject,
                     html: htmlContent
                 }, {
                     headers: {
                         'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    timeout: 10000 // 10 segundos timeout
                 });
 
-                console.log(`✅ Email enviado a ${user.email} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
+                console.log(`✅ Email enviado exitosamente a ${cleanEmail} via Resend: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
+                const errorDetails = resendError.response?.data || resendError.message;
+                console.error('❌ Error con Resend:', JSON.stringify(errorDetails, null, 2));
+                
                 // Fallback a onboarding@resend.dev si falla el dominio personalizado
                 console.log('🔄 Reintentando con email por defecto de Resend...');
                 try {
                     const fallbackResponse = await axios.post('https://api.resend.com/emails', {
                         from: 'onboarding@resend.dev',
-                        to: [user.email],
+                        to: cleanEmail, // ✅ Solo el email limpio
                         subject: subject,
                         html: htmlContent
                     }, {
                         headers: {
                             'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
                             'Content-Type': 'application/json'
-                        }
+                        },
+                        timeout: 10000
                     });
-                    console.log(`✅ Email enviado a ${user.email} via fallback: ${fallbackResponse.data.id}`);
+                    console.log(`✅ Email enviado a ${cleanEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
+                    const fallbackDetails = fallbackError.response?.data || fallbackError.message;
+                    console.error('❌ Fallback también falló:', JSON.stringify(fallbackDetails, null, 2));
                 }
             }
         }
 
         // 3. OPCIÓN 2: SendGrid HTTP API
         if (process.env.SENDGRID_API_KEY) {
-            console.log('📧 Enviando email via SendGrid HTTP API...');
+            console.log(`📧 Enviando email via SendGrid a: ${cleanEmail}`);
             
             const sgResponse = await axios.post('https://api.sendgrid.com/v3/mail/send', {
                 personalizations: [{
-                    to: [{ email: user.email }],
+                    to: [{ email: cleanEmail }], // ✅ Solo el email limpio
                     subject: subject
                 }],
                 from: { 
@@ -585,10 +600,11 @@ async function sendEmailNotification(userId, subject, text) {
                 headers: {
                     'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
                     'Content-Type': 'application/json'
-                }
+                },
+                timeout: 10000
             });
 
-            console.log(`✅ Email enviado a ${user.email} via SendGrid: ${sgResponse.status}`);
+            console.log(`✅ Email enviado a ${cleanEmail} via SendGrid: ${sgResponse.status}`);
             return;
         }
 
@@ -601,18 +617,20 @@ async function sendEmailNotification(userId, subject, text) {
                 auth: {
                     user: process.env.GMAIL_USER,
                     pass: process.env.GMAIL_APP_PASSWORD
-                }
+                },
+                connectionTimeout: 10000,
+                greetingTimeout: 10000
             });
 
             const info = await transporter.sendMail({
                 from: `"TareaMov AI" <${process.env.GMAIL_USER}>`,
-                to: user.email,
+                to: cleanEmail, // ✅ Solo el email limpio
                 subject: subject,
                 text: text,
                 html: htmlContent
             });
 
-            console.log(`✅ Email enviado a ${user.email}: ${info.messageId}`);
+            console.log(`✅ Email enviado a ${cleanEmail}: ${info.messageId}`);
             return;
         }
 
@@ -1720,6 +1738,113 @@ Este es un mensaje automático de TareaMov.`;
 
     } catch (error) {
         console.error('❌ Error en /notify-chat-response:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * Envía notificación push via Firebase Cloud Messaging
+ * Endpoint: POST /send-push-notification
+ * Body: { userId, title, body, data }
+ * 
+ * Envía notificación push cuando el usuario recibe respuesta del chat
+ * y la app está en background o cerrada
+ */
+app.post('/send-push-notification', async(req, res) => {
+    const { userId, title, body, data } = req.body;
+
+    if (!userId) {
+        return res.status(400).json({ error: 'userId es requerido' });
+    }
+
+    console.log(`📱 Enviando notificación push para usuario ${userId}`);
+
+    try {
+        // Verificar que Firebase Admin esté disponible
+        if (!admin || !admin.messaging) {
+            console.warn('⚠️ Firebase Admin no disponible - push notifications desactivadas');
+            return res.status(503).json({ 
+                error: 'Push notifications no disponibles',
+                reason: 'Firebase Admin not configured'
+            });
+        }
+
+        // Obtener FCM token del usuario desde Supabase
+        const { data: tokens, error: tokenError } = await supabaseService.client
+            .from('user_fcm_tokens')
+            .select('token')
+            .eq('user_id', userId)
+            .order('last_updated', { ascending: false });
+
+        if (tokenError || !tokens || tokens.length === 0) {
+            console.warn(`⚠️ No se encontró FCM token para userId ${userId}`);
+            return res.status(404).json({ error: 'No FCM token found for user' });
+        }
+
+        // Intentar enviar a todos los tokens del usuario (puede tener múltiples dispositivos)
+        const sendPromises = tokens.map(async ({ token }) => {
+            try {
+                const message = {
+                    notification: {
+                        title: title || '🤖 Nueva respuesta del chat',
+                        body: body || 'Tu consulta ha sido procesada',
+                    },
+                    data: {
+                        userId: userId.toString(),
+                        type: 'chat_response',
+                        timestamp: new Date().toISOString(),
+                        ...data
+                    },
+                    android: {
+                        priority: 'high',
+                        notification: {
+                            channelId: 'chat_notifications',
+                            sound: 'default',
+                            priority: 'high',
+                            defaultSound: true,
+                            defaultVibrateTimings: true,
+                            defaultLightSettings: true,
+                            color: '#6366f1', // Indigo color (TareaMov brand)
+                            icon: 'ic_notification',
+                            clickAction: 'OPEN_CHAT'
+                        }
+                    },
+                    token: token
+                };
+
+                const response = await admin.messaging().send(message);
+                console.log(`✅ Push notification enviada exitosamente:`, response);
+                return { success: true, token, messageId: response };
+            } catch (error) {
+                console.error(`❌ Error enviando push a token ${token.substring(0, 10)}...`, error.message);
+                
+                // Si el token es inválido, eliminarlo de la base de datos
+                if (error.code === 'messaging/invalid-registration-token' || 
+                    error.code === 'messaging/registration-token-not-registered') {
+                    await supabaseService.client
+                        .from('user_fcm_tokens')
+                        .delete()
+                        .eq('token', token);
+                    console.log(`🗑️ Token inválido eliminado de la base de datos`);
+                }
+                
+                return { success: false, token, error: error.message };
+            }
+        });
+
+        const results = await Promise.all(sendPromises);
+        const successCount = results.filter(r => r.success).length;
+
+        console.log(`📊 Notificaciones enviadas: ${successCount}/${tokens.length}`);
+        
+        res.json({ 
+            success: successCount > 0,
+            message: `Push notifications sent to ${successCount} device(s)`,
+            results
+        });
+
+    } catch (error) {
+        console.error('❌ Error en /send-push-notification:', error);
         res.status(500).json({ error: error.message });
     }
 });
