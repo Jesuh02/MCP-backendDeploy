@@ -426,7 +426,7 @@ async function sendEmailNotification(userId, subject, text) {
         // 1. Obtener el email del usuario desde Supabase
         const { data: user, error } = await supabaseService.client
             .from('usuarios')
-            .select('email, username')
+            .select('email')
             .eq('id', userId)
             .single();
 
@@ -434,22 +434,6 @@ async function sendEmailNotification(userId, subject, text) {
             console.warn(`⚠️ No se encontró email para userId ${userId}`);
             return;
         }
-
-        // 2. Validar y limpiar el email
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        const cleanEmail = user.email.trim().toLowerCase();
-        
-        if (!emailRegex.test(cleanEmail)) {
-            console.error(`❌ Email inválido para userId ${userId}: "${user.email}"`);
-            console.error('   El email no cumple con el formato email@example.com');
-            return;
-        }
-
-        console.log(`📧 Email validado: ${cleanEmail}`);
-        
-        // 3. Preparar nombre del destinatario (opcional, mejora la presentación)
-        const recipientName = user.username || 'Usuario';
-        const toField = `${recipientName} <${cleanEmail}>`;
 
         const htmlContent = `
 <!DOCTYPE html>
@@ -530,62 +514,63 @@ async function sendEmailNotification(userId, subject, text) {
 
         // 2. OPCIÓN 1: Resend HTTP API (RECOMENDADO para Railway)
         if (process.env.RESEND_API_KEY) {
-            console.log(`📧 Enviando email via Resend a: ${cleanEmail}`);
+            console.log('📧 Enviando email via Resend HTTP API...');
             
             // ✅ Dominio verificado: yisuscompany.com (IONOS DNS configurado)
-            const fromEmail = 'notificaciones@yisuscompany.com';
+            // Registros DNS configurados en IONOS:
+            // - MX: inbound-smtp.us-east-1.amazonaws.com
+            // - TXT resend._domainkey: [DKIM key]
+            // - MX send: feedback-smtp.us-east-1.amazonses.com
+            // - TXT send: v=spf1 include:amazonses.com ~all
+            // - TXT _dmarc: v=DMARC1; p=none;
+            const fromEmail = 'notificaciones@yisuscompany.com'; // ✅ Dominio verificado en Resend
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
                     from: fromEmail,
-                    to: cleanEmail, // ✅ Solo el email limpio, sin nombre
+                    to: [user.email],
                     subject: subject,
                     html: htmlContent
                 }, {
                     headers: {
                         'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
                         'Content-Type': 'application/json'
-                    },
-                    timeout: 10000 // 10 segundos timeout
+                    }
                 });
 
-                console.log(`✅ Email enviado exitosamente a ${cleanEmail} via Resend: ${resendResponse.data.id}`);
+                console.log(`✅ Email enviado a ${user.email} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                const errorDetails = resendError.response?.data || resendError.message;
-                console.error('❌ Error con Resend:', JSON.stringify(errorDetails, null, 2));
-                
+                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
                 // Fallback a onboarding@resend.dev si falla el dominio personalizado
                 console.log('🔄 Reintentando con email por defecto de Resend...');
                 try {
                     const fallbackResponse = await axios.post('https://api.resend.com/emails', {
                         from: 'onboarding@resend.dev',
-                        to: cleanEmail, // ✅ Solo el email limpio
+                        to: [user.email],
                         subject: subject,
                         html: htmlContent
                     }, {
                         headers: {
                             'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
                             'Content-Type': 'application/json'
-                        },
-                        timeout: 10000
+                        }
                     });
-                    console.log(`✅ Email enviado a ${cleanEmail} via fallback: ${fallbackResponse.data.id}`);
+                    console.log(`✅ Email enviado a ${user.email} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    const fallbackDetails = fallbackError.response?.data || fallbackError.message;
-                    console.error('❌ Fallback también falló:', JSON.stringify(fallbackDetails, null, 2));
+                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
                 }
             }
         }
 
         // 3. OPCIÓN 2: SendGrid HTTP API
         if (process.env.SENDGRID_API_KEY) {
-            console.log(`📧 Enviando email via SendGrid a: ${cleanEmail}`);
+            console.log('📧 Enviando email via SendGrid HTTP API...');
             
             const sgResponse = await axios.post('https://api.sendgrid.com/v3/mail/send', {
                 personalizations: [{
-                    to: [{ email: cleanEmail }], // ✅ Solo el email limpio
+                    to: [{ email: user.email }],
                     subject: subject
                 }],
                 from: { 
@@ -600,11 +585,10 @@ async function sendEmailNotification(userId, subject, text) {
                 headers: {
                     'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
                     'Content-Type': 'application/json'
-                },
-                timeout: 10000
+                }
             });
 
-            console.log(`✅ Email enviado a ${cleanEmail} via SendGrid: ${sgResponse.status}`);
+            console.log(`✅ Email enviado a ${user.email} via SendGrid: ${sgResponse.status}`);
             return;
         }
 
@@ -617,20 +601,18 @@ async function sendEmailNotification(userId, subject, text) {
                 auth: {
                     user: process.env.GMAIL_USER,
                     pass: process.env.GMAIL_APP_PASSWORD
-                },
-                connectionTimeout: 10000,
-                greetingTimeout: 10000
+                }
             });
 
             const info = await transporter.sendMail({
                 from: `"TareaMov AI" <${process.env.GMAIL_USER}>`,
-                to: cleanEmail, // ✅ Solo el email limpio
+                to: user.email,
                 subject: subject,
                 text: text,
                 html: htmlContent
             });
 
-            console.log(`✅ Email enviado a ${cleanEmail}: ${info.messageId}`);
+            console.log(`✅ Email enviado a ${user.email}: ${info.messageId}`);
             return;
         }
 
