@@ -463,7 +463,7 @@ async function sendEmailNotification(userId, subject, text) {
                     <tr>
                         <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
                             <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">
-                                CourseV
+                                TareaMov
                             </h1>
                             <p style="margin: 10px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">
                                 Tu plataforma de aprendizaje
@@ -490,10 +490,10 @@ async function sendEmailNotification(userId, subject, text) {
                                 <tr>
                                     <td style="text-align: center;">
                                         <p style="margin: 0 0 15px 0; color: #718096; font-size: 14px;">
-                                            Este es un mensaje automático de CourseV
+                                            Este es un mensaje automático de TareaMov
                                         </p>
                                         <p style="margin: 0; color: #a0aec0; font-size: 12px;">
-                                            © ${new Date().getFullYear()} CourseV. Todos los derechos reservados.
+                                            © ${new Date().getFullYear()} TareaMov. Todos los derechos reservados.
                                         </p>
                                         <div style="margin-top: 20px;">
                                             <a href="https://yisuscompany.com" style="color: #667eea; text-decoration: none; font-size: 13px; margin: 0 10px;">
@@ -512,7 +512,7 @@ async function sendEmailNotification(userId, subject, text) {
                     <tr>
                         <td style="text-align: center; color: #a0aec0; font-size: 12px;">
                             <p style="margin: 0;">
-                                Recibiste este correo porque eres usuario de CourseV
+                                Recibiste este correo porque eres usuario de TareaMov
                             </p>
                         </td>
                     </tr>
@@ -534,7 +534,7 @@ async function sendEmailNotification(userId, subject, text) {
             // - MX send: feedback-smtp.us-east-1.amazonses.com
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
-            const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            const fromEmail = 'notificaciones@yisuscompany.com'; // ✅ Dominio verificado en Resend
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
@@ -586,7 +586,7 @@ async function sendEmailNotification(userId, subject, text) {
                 }],
                 from: { 
                     email: process.env.SENDGRID_FROM_EMAIL || 'noreply@example.com',
-                    name: 'CourseV AI'
+                    name: 'TareaMov AI'
                 },
                 content: [{
                     type: 'text/html',
@@ -616,7 +616,7 @@ async function sendEmailNotification(userId, subject, text) {
             });
 
             const info = await transporter.sendMail({
-                from: `"CourseV AI" <${process.env.GMAIL_USER}>`,
+                from: `"TareaMov AI" <${process.env.GMAIL_USER}>`,
                 to: userEmail,
                 subject: subject,
                 text: text,
@@ -1222,7 +1222,7 @@ app.get('/', (req, res) => {
 /**
  * Smart link handler: Detecta si la app está instalada y redirige o descarga APK
  * GET /app-link?userId=XXX
- * - Si el usuario tiene la app instalada: redirige al deep link (CourseV://...)
+ * - Si el usuario tiene la app instalada: redirige al deep link (tareamov://...)
  * - Si NO tiene la app: descarga automáticamente el APK
  */
 app.get('/app-link', async (req, res) => {
@@ -1233,7 +1233,7 @@ app.get('/app-link', async (req, res) => {
     }
 
     // Construir deep link para la app
-    const deepLink = `CourseV://${action}?userId=${userId}`;
+    const deepLink = `tareamov://${action}?userId=${userId}`;
     const apkUrl = `${req.protocol}://${req.get('host')}/download-apk`;
 
     // Página HTML que detecta si la app está instalada
@@ -1243,7 +1243,7 @@ app.get('/app-link', async (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Abriendo CourseV...</title>
+    <title>Abriendo TareaMov...</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1312,12 +1312,12 @@ app.get('/app-link', async (req, res) => {
     <div class="container">
         <div class="logo">📱</div>
         <div id="opening">
-            <h1>Abriendo CourseV</h1>
+            <h1>Abriendo TareaMov</h1>
             <p>Redirigiendo a la aplicación...</p>
             <div class="spinner"></div>
         </div>
         <div id="download" class="hidden">
-            <h1>Descarga CourseV</h1>
+            <h1>Descarga TareaMov</h1>
             <p>La aplicación no está instalada en tu dispositivo</p>
             <a href="${apkUrl}" class="btn">📥 Descargar APK</a>
             <p style="margin-top: 20px; font-size: 14px;">La descarga comenzará automáticamente en 3 segundos...</p>
@@ -1371,7 +1371,7 @@ app.get('/app-link', async (req, res) => {
 });
 
 /**
- * Descarga el APK de CourseV
+ * Descarga el APK de TareaMov
  * GET /download-apk
  */
 app.get('/download-apk', (req, res) => {
@@ -1419,7 +1419,7 @@ app.get('/download-apk', (req, res) => {
     
     // Configurar headers para descarga
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition', 'attachment; filename="CourseV.apk"');
+    res.setHeader('Content-Disposition', 'attachment; filename="TareaMov.apk"');
     
     // Enviar el archivo
     res.sendFile(apkPath, { root: __dirname }, (err) => {
@@ -1514,7 +1514,7 @@ app.post('/notify-course-creation', async(req, res) => {
                 if (user.email) {
                     try {
                         await axios.post('https://api.resend.com/emails', {
-                            from: 'CourseV <CourseV@yisuscompany.com>',
+                            from: 'Notificaciones <notificaciones@yisuscompany.com>',
                             to: user.email,
                             subject: `¡${creatorUsername} subió un nuevo curso!`,
                             html: `
@@ -1708,7 +1708,7 @@ Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respue
 
 📱 Haz clic en el enlace para abrir la app o descargarla si aún no la tienes:
 
-🔗 Abrir CourseV: ${smartLink}
+🔗 Abrir TareaMov: ${smartLink}
 
 ---
 💡 Consejos de seguridad:
@@ -1716,7 +1716,7 @@ Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respue
 - Nunca compartimos datos completos por email
 - Siempre verifica tu identidad en la app antes de ver respuestas
 
-Este es un mensaje automático de CourseV.`;
+Este es un mensaje automático de TareaMov.`;
 
         // Enviar email usando la función existente
         await sendEmailNotification(userId, emailSubject, emailBody);
@@ -1797,7 +1797,7 @@ app.post('/send-push-notification', async(req, res) => {
                             defaultSound: true,
                             defaultVibrateTimings: true,
                             defaultLightSettings: true,
-                            color: '#6366f1', // Indigo color (CourseV brand)
+                            color: '#6366f1', // Indigo color (TareaMov brand)
                             icon: 'ic_notification',
                             clickAction: 'OPEN_CHAT'
                         }
@@ -2145,7 +2145,7 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                     if (targetUserId) {
                         // Enviar correo
                         console.log(`📧 Enviando correo a ID: ${targetUserId}`);
-                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de CourseV', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
+                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de TareaMov', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
                         
                         // Responder al usuario
                         const respuestaExito = `✅ Correo enviado exitosamente a ${cmd.target_type === 'me' ? 'tu dirección de email' : cmd.target_name}.\n\n**Asunto:** ${cmd.subject}\n**Mensaje:** ${cmd.body}`;
@@ -2845,7 +2845,7 @@ app.get('/health', async(req, res) => {
 
         res.json({
             status: 'ok',
-            server: 'CourseV-mcp-server',
+            server: 'tareamov-mcp-server',
             version: '1.0.0',
             timestamp: new Date().toISOString(),
             services: {
@@ -2887,7 +2887,7 @@ app.post('/initialize', async(req, res) => {
                     }
                 },
                 serverInfo: {
-                    name: 'CourseV-mcp-server',
+                    name: 'tareamov-mcp-server',
                     version: '1.0.0'
                 }
             }
@@ -2918,7 +2918,7 @@ app.post('/tools/list', async(req, res) => {
         result: {
             tools: [{
                     name: 'query_database',
-                    description: `Execute queries on the CourseV Supabase database. Returns real-time data.
+                    description: `Execute queries on the TareaMov Supabase database. Returns real-time data.
 
 **CAPABILITIES:**
 - Execute RAW PostgreSQL/SQL queries directly (SELECT, INSERT, UPDATE, DELETE)
