@@ -458,6 +458,9 @@ async function sendEmailNotification(userId, subject, text) {
             .single();
         
         const userName = userData?.username || 'Usuario';
+        
+        // URL del app link para redirección
+        const appLinkUrl = `${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/app-link?userId=${userId}&action=chat`;
 
         const htmlContent = `
 <!DOCTYPE html>
@@ -465,183 +468,204 @@ async function sendEmailNotification(userId, subject, text) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nueva respuesta del Asistente de IA</title>
+    <title>Tu mensaje está listo - CourseV</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #0d1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+<body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
     <!--[if mso]>
     <style type="text/css">
         body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
     </style>
     <![endif]-->
     
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #0d1117; min-height: 100vh;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f5f5f5;">
         <tr>
-            <td align="center" style="padding: 40px 16px;">
+            <td align="center" style="padding: 20px 10px;">
                 
-                <!-- Container Principal con Borde Gradiente -->
-                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 480px; background: linear-gradient(135deg, #00d4ff 0%, #ff00ff 50%, #00d4ff 100%); border-radius: 24px; padding: 3px;">
+                <!-- Container Principal -->
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    
+                    <!-- Header con Logo - CLICKEABLE -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 25px 20px; text-align: center;">
+                            <a href="${appLinkUrl}" target="_blank" style="text-decoration: none;">
+                                <table cellpadding="0" cellspacing="0" border="0" align="center">
+                                    <tr>
+                                        <td style="padding-right: 12px;">
+                                            <img src="${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/ghost-image" 
+                                                 alt="CourseV" 
+                                                 width="45" 
+                                                 height="45"
+                                                 style="display: block; border-radius: 10px;">
+                                        </td>
+                                        <td>
+                                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 800; letter-spacing: 2px;">COURSEV</h1>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </a>
+                        </td>
+                    </tr>
+                    
+                    <!-- Banner Principal - CLICKEABLE -->
                     <tr>
                         <td>
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #0a0e1a; border-radius: 22px;">
+                            <a href="${appLinkUrl}" target="_blank" style="text-decoration: none; display: block;">
+                                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                    <tr>
+                                        <td style="padding: 40px 30px; text-align: center;">
+                                            <p style="margin: 0 0 8px 0; color: rgba(255,255,255,0.9); font-size: 14px; text-transform: uppercase; letter-spacing: 3px;">
+                                                🎉 ¡NOTIFICACIÓN!
+                                            </p>
+                                            <h2 style="margin: 0 0 15px 0; color: #ffffff; font-size: 26px; font-weight: 700; line-height: 1.3;">
+                                                Tu Mensaje Está Listo
+                                            </h2>
+                                            <p style="margin: 0; color: rgba(255,255,255,0.85); font-size: 15px;">
+                                                El asistente IA ha procesado tu consulta
+                                            </p>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </a>
+                        </td>
+                    </tr>
+                    
+                    <!-- Contenido Principal -->
+                    <tr>
+                        <td style="padding: 35px 30px;">
+                            
+                            <!-- Saludo -->
+                            <p style="margin: 0 0 20px 0; color: #1a1a2e; font-size: 18px; font-weight: 600;">
+                                ¡Hola, ${userName}! 👋
+                            </p>
+                            
+                            <!-- Mensaje -->
+                            <p style="margin: 0 0 25px 0; color: #4a4a4a; font-size: 15px; line-height: 1.7;">
+                                Tu consulta ha sido procesada exitosamente por nuestro asistente de inteligencia artificial. 
+                                La respuesta completa te está esperando en la aplicación.
+                            </p>
+                            
+                            <!-- Card de Estado -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8f9fa; border-radius: 12px; margin-bottom: 25px;">
                                 <tr>
-                                    <td style="padding: 32px 28px;">
-                                        
-                                        <!-- Header: Fantasma + Título -->
+                                    <td style="padding: 20px;">
                                         <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                             <tr>
-                                                <td width="70" valign="top">
-                                                    <!-- Fantasma Pixel Art -->
-                                                    <div style="width: 60px; height: 60px; position: relative;">
-                                                        <img src="${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/ghost-image" 
-                                                             alt="AI Ghost" 
-                                                             width="60" 
-                                                             height="60"
-                                                             style="display: block; border-radius: 8px;">
+                                                <td width="50" valign="top">
+                                                    <div style="width: 45px; height: 45px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; text-align: center; line-height: 45px;">
+                                                        <span style="color: #ffffff; font-size: 20px;">✓</span>
                                                     </div>
                                                 </td>
-                                                <td valign="middle" style="padding-left: 16px;">
-                                                    <h1 style="margin: 0 0 4px 0; color: #00d4ff; font-size: 20px; font-weight: 700; line-height: 1.3;">
-                                                        Nueva respuesta del Asistente<br>de IA
-                                                    </h1>
-                                                    <p style="margin: 0; color: #00ffcc; font-size: 13px; font-weight: 500; letter-spacing: 1px;">
-                                                        DeepSeek-V3.2
+                                                <td style="padding-left: 15px;">
+                                                    <p style="margin: 0 0 5px 0; color: #10b981; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">
+                                                        ESTADO
+                                                    </p>
+                                                    <p style="margin: 0; color: #1a1a2e; font-size: 16px; font-weight: 600;">
+                                                        Respuesta Lista para Ver
                                                     </p>
                                                 </td>
                                             </tr>
                                         </table>
-                                        
-                                        <!-- Mensaje Principal -->
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px;">
-                                            <tr>
-                                                <td style="background-color: rgba(30, 41, 59, 0.5); border-radius: 12px; padding: 20px;">
-                                                    <p style="margin: 0 0 12px 0; color: #e2e8f0; font-size: 15px; line-height: 1.5;">
-                                                        Hola <span style="color: #00d4ff; font-weight: 600;">${userName}</span>,
-                                                    </p>
-                                                    <p style="margin: 0; color: #94a3b8; font-size: 14px; line-height: 1.6;">
-                                                        Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respuesta está lista.
-                                                    </p>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                        
-                                        <!-- Aviso de Seguridad -->
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 16px;">
-                                            <tr>
-                                                <td style="background: linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, rgba(236, 72, 153, 0.15) 100%); border-left: 3px solid #a855f7; border-radius: 8px; padding: 14px 16px;">
-                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                                                        <tr>
-                                                            <td width="28" valign="top">
-                                                                <span style="font-size: 16px;">🔒</span>
-                                                            </td>
-                                                            <td>
-                                                                <p style="margin: 0; color: #e879f9; font-size: 13px; line-height: 1.5;">
-                                                                    Por seguridad, la respuesta completa solo está disponible dentro de la aplicación.
-                                                                </p>
-                                                            </td>
-                                                        </tr>
-                                                    </table>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                        
-                                        <!-- Instrucción de Acceso -->
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 16px;">
-                                            <tr>
-                                                <td style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(14, 165, 233, 0.15) 100%); border-left: 3px solid #06b6d4; border-radius: 8px; padding: 14px 16px;">
-                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                                                        <tr>
-                                                            <td width="28" valign="top">
-                                                                <span style="font-size: 16px;">📱</span>
-                                                            </td>
-                                                            <td>
-                                                                <p style="margin: 0; color: #67e8f9; font-size: 13px; line-height: 1.5;">
-                                                                    Haz clic en el enlace para abrir la app o descargarla si aún no la tienes:
-                                                                </p>
-                                                            </td>
-                                                        </tr>
-                                                    </table>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                        
-                                        <!-- Botón CTA -->
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 24px;">
-                                            <tr>
-                                                <td align="center">
-                                                    <a href="${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/app-link?userId=${userId}&action=chat"
-                                                       target="_blank"
-                                                       style="display: inline-block; width: 100%; max-width: 320px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 16px 32px; border-radius: 12px; font-size: 16px; font-weight: 700; text-align: center; box-shadow: 0 8px 24px rgba(99, 102, 241, 0.4);">
-                                                        🔗 Abrir TareaMov
-                                                    </a>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                        
-                                        <!-- Indicador de carga decorativo -->
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px;">
-                                            <tr>
-                                                <td align="center">
-                                                    <div style="width: 8px; height: 8px; background-color: rgba(255,255,255,0.3); border-radius: 50%; display: inline-block;"></div>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                        
-                                        <!-- Consejos de Seguridad -->
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 24px;">
-                                            <tr>
-                                                <td style="background-color: rgba(15, 23, 42, 0.6); border: 1px solid rgba(71, 85, 105, 0.3); border-radius: 10px; padding: 18px;">
-                                                    <p style="margin: 0 0 12px 0; color: #f1f5f9; font-size: 13px; font-weight: 600;">
-                                                        <span style="color: #ef4444;">•</span> Consejos de seguridad:
-                                                    </p>
-                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                                                        <tr>
-                                                            <td style="padding: 4px 0; color: #64748b; font-size: 12px;">
-                                                                <span style="color: #475569; margin-right: 8px;">›</span>
-                                                                Las respuestas del IA pueden contener información sensible
-                                                            </td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style="padding: 4px 0; color: #64748b; font-size: 12px;">
-                                                                <span style="color: #475569; margin-right: 8px;">›</span>
-                                                                Nunca compartimos datos completos por email
-                                                            </td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style="padding: 4px 0; color: #64748b; font-size: 12px;">
-                                                                <span style="color: #475569; margin-right: 8px;">›</span>
-                                                                Siempre verifica tu identidad en la app antes de ver respuestas
-                                                            </td>
-                                                        </tr>
-                                                    </table>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                        
-                                        <!-- Footer -->
-                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px; border-top: 1px solid rgba(99, 102, 241, 0.2); padding-top: 20px;">
-                                            <tr>
-                                                <td align="center">
-                                                    <p style="margin: 0 0 8px 0; color: #475569; font-size: 11px;">
-                                                        Este es un mensaje automático de <span style="color: #00d4ff;">TareaMov</span>
-                                                    </p>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                        
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Botón CTA Principal -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td align="center" style="padding: 10px 0 30px 0;">
+                                        <a href="${appLinkUrl}" 
+                                           target="_blank"
+                                           style="display: inline-block; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #ffffff; text-decoration: none; padding: 18px 50px; border-radius: 30px; font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 15px rgba(26, 26, 46, 0.3);">
+                                            VER MENSAJE →
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Divider -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="border-top: 1px solid #e5e5e5; padding-top: 25px;">
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Info de Seguridad -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #fff8e6; border-left: 4px solid #f59e0b; border-radius: 0 8px 8px 0;">
+                                <tr>
+                                    <td style="padding: 15px 20px;">
+                                        <p style="margin: 0 0 8px 0; color: #92400e; font-size: 13px; font-weight: 700;">
+                                            🔒 AVISO DE SEGURIDAD
+                                        </p>
+                                        <p style="margin: 0; color: #78716c; font-size: 13px; line-height: 1.5;">
+                                            Por tu seguridad, el contenido completo solo está disponible dentro de la app. 
+                                            Nunca compartimos información sensible por correo electrónico.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                        </td>
+                    </tr>
+                    
+                    <!-- Sección de Acciones Rápidas -->
+                    <tr>
+                        <td style="background-color: #f8f9fa; padding: 25px 30px;">
+                            <p style="margin: 0 0 15px 0; color: #6b7280; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; text-align: center;">
+                                ACCIONES RÁPIDAS
+                            </p>
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td width="50%" style="padding-right: 10px;">
+                                        <a href="${appLinkUrl}" target="_blank" style="display: block; background-color: #ffffff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 15px; text-align: center; text-decoration: none;">
+                                            <span style="display: block; font-size: 24px; margin-bottom: 5px;">💬</span>
+                                            <span style="color: #1a1a2e; font-size: 13px; font-weight: 600;">Ver Chat</span>
+                                        </a>
+                                    </td>
+                                    <td width="50%" style="padding-left: 10px;">
+                                        <a href="${appLinkUrl}" target="_blank" style="display: block; background-color: #ffffff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 15px; text-align: center; text-decoration: none;">
+                                            <span style="display: block; font-size: 24px; margin-bottom: 5px;">📚</span>
+                                            <span style="color: #1a1a2e; font-size: 13px; font-weight: 600;">Mis Cursos</span>
+                                        </a>
                                     </td>
                                 </tr>
                             </table>
                         </td>
                     </tr>
-                </table>
-                
-                <!-- Gradiente inferior decorativo -->
-                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 480px; margin-top: -4px;">
+                    
+                    <!-- Footer -->
                     <tr>
-                        <td align="center">
-                            <div style="width: 80%; height: 4px; background: linear-gradient(90deg, transparent 0%, #00d4ff 20%, #ff00ff 50%, #00d4ff 80%, transparent 100%); border-radius: 2px;"></div>
+                        <td style="background-color: #1a1a2e; padding: 30px; text-align: center;">
+                            <a href="${appLinkUrl}" target="_blank" style="text-decoration: none;">
+                                <p style="margin: 0 0 15px 0; color: #ffffff; font-size: 20px; font-weight: 800; letter-spacing: 2px;">
+                                    COURSEV
+                                </p>
+                            </a>
+                            <p style="margin: 0 0 15px 0; color: rgba(255,255,255,0.6); font-size: 12px; line-height: 1.6;">
+                                Tu plataforma de aprendizaje inteligente<br>
+                                Impulsado por IA
+                            </p>
+                            <table cellpadding="0" cellspacing="0" border="0" align="center" style="margin-bottom: 15px;">
+                                <tr>
+                                    <td style="padding: 0 8px;">
+                                        <a href="${appLinkUrl}" style="color: rgba(255,255,255,0.5); font-size: 11px; text-decoration: none;">Abrir App</a>
+                                    </td>
+                                    <td style="color: rgba(255,255,255,0.3);">|</td>
+                                    <td style="padding: 0 8px;">
+                                        <a href="${appLinkUrl}" style="color: rgba(255,255,255,0.5); font-size: 11px; text-decoration: none;">Ayuda</a>
+                                    </td>
+                                    <td style="color: rgba(255,255,255,0.3);">|</td>
+                                    <td style="padding: 0 8px;">
+                                        <a href="${appLinkUrl}" style="color: rgba(255,255,255,0.5); font-size: 11px; text-decoration: none;">Configuración</a>
+                                    </td>
+                                </tr>
+                            </table>
+                            <p style="margin: 0; color: rgba(255,255,255,0.4); font-size: 11px;">
+                                © 2025 CourseV. Todos los derechos reservados.
+                            </p>
                         </td>
                     </tr>
+                    
                 </table>
                 
             </td>
@@ -661,8 +685,8 @@ async function sendEmailNotification(userId, subject, text) {
             // - MX send: feedback-smtp.us-east-1.amazonses.com
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
-            const fromEmail = 'Chiv0@yisuscompany.com'; // ✅ Dominio verificado en Resend
-            const fromName = 'TareaMov AI Assistant';
+            const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            const fromName = 'CourseV AI Assistant';
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
