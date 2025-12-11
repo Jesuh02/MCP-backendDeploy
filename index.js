@@ -346,6 +346,13 @@ async function updateTaskSubmissionSupabase(submissionId, grade, feedback) {
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
 
+// Servir archivos estáticos (imágenes para emails)
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+app.use('/public', express.static(path.join(__dirname, 'public')));
+
 /**
  * Envía una notificación push a un usuario específico vía FCM
  */
@@ -435,46 +442,200 @@ async function sendEmailNotification(userId, subject, text) {
             return;
         }
 
+        // Obtener nombre del usuario desde Supabase
+        const { data: userData, error: userError } = await supabaseService.client
+            .from('usuarios')
+            .select('usuario')
+            .eq('id', userId)
+            .single();
+        
+        const userName = userData?.usuario || 'Usuario';
+
         const htmlContent = `
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${subject}</title>
+    <title>Nueva respuesta del Asistente de IA</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+<body style="margin: 0; padding: 0; background-color: #0d1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
+    </style>
+    <![endif]-->
+    
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #0d1117; min-height: 100vh;">
         <tr>
-            <td align="center">
-                <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); overflow: hidden;">
-                    <!-- Content -->
+            <td align="center" style="padding: 40px 16px;">
+                
+                <!-- Container Principal con Borde Gradiente -->
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 480px; background: linear-gradient(135deg, #00d4ff 0%, #ff00ff 50%, #00d4ff 100%); border-radius: 24px; padding: 3px;">
                     <tr>
-                        <td style="padding: 40px 30px;">
-                            <h2 style="margin: 0 0 20px 0; color: #1a202c; font-size: 24px; font-weight: 600;">
-                                ${subject}
-                            </h2>
-                            <div style="color: #4a5568; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">
-                                ${text.replace(/\n/g, '<br>')}
-                            </div>
-                        </td>
-                    </tr>
-                    
-                    <!-- Footer -->
-                    <tr>
-                        <td style="background-color: #f7fafc; padding: 30px; border-top: 1px solid #e2e8f0;">
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                        <td>
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #0a0e1a; border-radius: 22px;">
                                 <tr>
-                                    <td style="text-align: center;">
-                                        <p style="margin: 0; color: #a0aec0; font-size: 12px;">
-                                            © ${new Date().getFullYear()} Todos los derechos reservados.
-                                        </p>
+                                    <td style="padding: 32px 28px;">
+                                        
+                                        <!-- Header: Fantasma + Título -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td width="70" valign="top">
+                                                    <!-- Fantasma Pixel Art -->
+                                                    <div style="width: 60px; height: 60px; position: relative;">
+                                                        <img src="${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/ghost-image" 
+                                                             alt="AI Ghost" 
+                                                             width="60" 
+                                                             height="60"
+                                                             style="display: block; border-radius: 8px;">
+                                                    </div>
+                                                </td>
+                                                <td valign="middle" style="padding-left: 16px;">
+                                                    <h1 style="margin: 0 0 4px 0; color: #00d4ff; font-size: 20px; font-weight: 700; line-height: 1.3;">
+                                                        Nueva respuesta del Asistente<br>de IA
+                                                    </h1>
+                                                    <p style="margin: 0; color: #00ffcc; font-size: 13px; font-weight: 500; letter-spacing: 1px;">
+                                                        DeepSeek-V3.2
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        <!-- Mensaje Principal -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px;">
+                                            <tr>
+                                                <td style="background-color: rgba(30, 41, 59, 0.5); border-radius: 12px; padding: 20px;">
+                                                    <p style="margin: 0 0 12px 0; color: #e2e8f0; font-size: 15px; line-height: 1.5;">
+                                                        Hola <span style="color: #00d4ff; font-weight: 600;">${userName}</span>,
+                                                    </p>
+                                                    <p style="margin: 0; color: #94a3b8; font-size: 14px; line-height: 1.6;">
+                                                        Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respuesta está lista.
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        <!-- Aviso de Seguridad -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 16px;">
+                                            <tr>
+                                                <td style="background: linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, rgba(236, 72, 153, 0.15) 100%); border-left: 3px solid #a855f7; border-radius: 8px; padding: 14px 16px;">
+                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                                        <tr>
+                                                            <td width="28" valign="top">
+                                                                <span style="font-size: 16px;">🔒</span>
+                                                            </td>
+                                                            <td>
+                                                                <p style="margin: 0; color: #e879f9; font-size: 13px; line-height: 1.5;">
+                                                                    Por seguridad, la respuesta completa solo está disponible dentro de la aplicación.
+                                                                </p>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        <!-- Instrucción de Acceso -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 16px;">
+                                            <tr>
+                                                <td style="background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(14, 165, 233, 0.15) 100%); border-left: 3px solid #06b6d4; border-radius: 8px; padding: 14px 16px;">
+                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                                        <tr>
+                                                            <td width="28" valign="top">
+                                                                <span style="font-size: 16px;">📱</span>
+                                                            </td>
+                                                            <td>
+                                                                <p style="margin: 0; color: #67e8f9; font-size: 13px; line-height: 1.5;">
+                                                                    Haz clic en el enlace para abrir la app o descargarla si aún no la tienes:
+                                                                </p>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        <!-- Botón CTA -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 24px;">
+                                            <tr>
+                                                <td align="center">
+                                                    <a href="${process.env.BASE_URL || 'https://mcp-backenddeploy-production.up.railway.app'}/app-link?userId=${userId}&action=chat"
+                                                       target="_blank"
+                                                       style="display: inline-block; width: 100%; max-width: 320px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); color: #ffffff; text-decoration: none; padding: 16px 32px; border-radius: 12px; font-size: 16px; font-weight: 700; text-align: center; box-shadow: 0 8px 24px rgba(99, 102, 241, 0.4);">
+                                                        🔗 Abrir TareaMov
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        <!-- Indicador de carga decorativo -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px;">
+                                            <tr>
+                                                <td align="center">
+                                                    <div style="width: 8px; height: 8px; background-color: rgba(255,255,255,0.3); border-radius: 50%; display: inline-block;"></div>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        <!-- Consejos de Seguridad -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 24px;">
+                                            <tr>
+                                                <td style="background-color: rgba(15, 23, 42, 0.6); border: 1px solid rgba(71, 85, 105, 0.3); border-radius: 10px; padding: 18px;">
+                                                    <p style="margin: 0 0 12px 0; color: #f1f5f9; font-size: 13px; font-weight: 600;">
+                                                        <span style="color: #ef4444;">•</span> Consejos de seguridad:
+                                                    </p>
+                                                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                                                        <tr>
+                                                            <td style="padding: 4px 0; color: #64748b; font-size: 12px;">
+                                                                <span style="color: #475569; margin-right: 8px;">›</span>
+                                                                Las respuestas del IA pueden contener información sensible
+                                                            </td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td style="padding: 4px 0; color: #64748b; font-size: 12px;">
+                                                                <span style="color: #475569; margin-right: 8px;">›</span>
+                                                                Nunca compartimos datos completos por email
+                                                            </td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td style="padding: 4px 0; color: #64748b; font-size: 12px;">
+                                                                <span style="color: #475569; margin-right: 8px;">›</span>
+                                                                Siempre verifica tu identidad en la app antes de ver respuestas
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        <!-- Footer -->
+                                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px; border-top: 1px solid rgba(99, 102, 241, 0.2); padding-top: 20px;">
+                                            <tr>
+                                                <td align="center">
+                                                    <p style="margin: 0 0 8px 0; color: #475569; font-size: 11px;">
+                                                        Este es un mensaje automático de <span style="color: #00d4ff;">TareaMov</span>
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
                                     </td>
                                 </tr>
                             </table>
                         </td>
                     </tr>
                 </table>
+                
+                <!-- Gradiente inferior decorativo -->
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 480px; margin-top: -4px;">
+                    <tr>
+                        <td align="center">
+                            <div style="width: 80%; height: 4px; background: linear-gradient(90deg, transparent 0%, #00d4ff 20%, #ff00ff 50%, #00d4ff 80%, transparent 100%); border-radius: 2px;"></div>
+                        </td>
+                    </tr>
+                </table>
+                
             </td>
         </tr>
     </table>
@@ -492,11 +653,12 @@ async function sendEmailNotification(userId, subject, text) {
             // - MX send: feedback-smtp.us-east-1.amazonses.com
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
-            const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            const fromEmail = 'Chiv0@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            const fromName = 'TareaMov AI Assistant';
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
-                    from: fromEmail,
+                    from: `${fromName} <${fromEmail}>`,
                     to: [user.email],
                     subject: subject,
                     html: htmlContent
@@ -1175,6 +1337,28 @@ La respuesta debe ser educativa, constructiva y MUY CLARA sobre por qué se asig
 // Ruta de prueba para verificar que el microservicio está activo
 app.get('/', (req, res) => {
     res.json({ status: 'ok', message: 'Microservicio activo', timestamp: new Date().toISOString() });
+});
+
+/**
+ * Endpoint para servir la imagen del fantasma pixel art para emails
+ * GET /ghost-image
+ * Devuelve una imagen PNG del fantasma cyberpunk
+ */
+app.get('/ghost-image', (req, res) => {
+    // Imagen del fantasma pixel art en base64 (60x60 PNG)
+    // Esta es una imagen pequeña que se carga rápidamente en emails
+    const ghostImageBase64 = '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';
+    
+    // Convertir base64 a buffer
+    const imageBuffer = Buffer.from(ghostImageBase64, 'base64');
+    
+    // Enviar imagen
+    res.set({
+        'Content-Type': 'image/png',
+        'Content-Length': imageBuffer.length,
+        'Cache-Control': 'public, max-age=31536000'  // Cache por 1 año
+    });
+    res.send(imageBuffer);
 });
 
 /**
