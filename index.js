@@ -435,6 +435,17 @@ async function sendEmailNotification(userId, subject, text) {
             return;
         }
 
+        // 🔒 VALIDACIÓN: Verificar que el email tenga formato válido
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const userEmail = user.email.trim();
+        
+        if (!userEmail || !emailRegex.test(userEmail)) {
+            console.warn(`⚠️ Email inválido para userId ${userId}: "${user.email}"`);
+            return;
+        }
+        
+        console.log(`📧 Preparando email para: ${userEmail}`);
+
         const htmlContent = `
 <!DOCTYPE html>
 <html>
@@ -528,7 +539,7 @@ async function sendEmailNotification(userId, subject, text) {
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
                     from: fromEmail,
-                    to: [user.email],
+                    to: [userEmail],
                     subject: subject,
                     html: htmlContent
                 }, {
@@ -538,7 +549,7 @@ async function sendEmailNotification(userId, subject, text) {
                     }
                 });
 
-                console.log(`✅ Email enviado a ${user.email} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
+                console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
                 console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
@@ -547,7 +558,7 @@ async function sendEmailNotification(userId, subject, text) {
                 try {
                     const fallbackResponse = await axios.post('https://api.resend.com/emails', {
                         from: 'onboarding@resend.dev',
-                        to: [user.email],
+                        to: [userEmail],
                         subject: subject,
                         html: htmlContent
                     }, {
@@ -556,7 +567,7 @@ async function sendEmailNotification(userId, subject, text) {
                             'Content-Type': 'application/json'
                         }
                     });
-                    console.log(`✅ Email enviado a ${user.email} via fallback: ${fallbackResponse.data.id}`);
+                    console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
                     console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
@@ -570,7 +581,7 @@ async function sendEmailNotification(userId, subject, text) {
             
             const sgResponse = await axios.post('https://api.sendgrid.com/v3/mail/send', {
                 personalizations: [{
-                    to: [{ email: user.email }],
+                    to: [{ email: userEmail }],
                     subject: subject
                 }],
                 from: { 
@@ -588,7 +599,7 @@ async function sendEmailNotification(userId, subject, text) {
                 }
             });
 
-            console.log(`✅ Email enviado a ${user.email} via SendGrid: ${sgResponse.status}`);
+            console.log(`✅ Email enviado a ${userEmail} via SendGrid: ${sgResponse.status}`);
             return;
         }
 
@@ -606,13 +617,13 @@ async function sendEmailNotification(userId, subject, text) {
 
             const info = await transporter.sendMail({
                 from: `"TareaMov AI" <${process.env.GMAIL_USER}>`,
-                to: user.email,
+                to: userEmail,
                 subject: subject,
                 text: text,
                 html: htmlContent
             });
 
-            console.log(`✅ Email enviado a ${user.email}: ${info.messageId}`);
+            console.log(`✅ Email enviado a ${userEmail}: ${info.messageId}`);
             return;
         }
 
