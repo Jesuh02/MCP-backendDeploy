@@ -472,10 +472,10 @@ async function sendEmailNotification(userId, subject, text) {
                     <tr>
                         <td style="background-color: #667eea; padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
                             <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">
-                                TareaMov
+                                CourseV
                             </h1>
                             <p style="margin: 8px 0 0 0; color: #ffffff; font-size: 13px; opacity: 0.9;">
-                                Plataforma de Aprendizaje
+                                Plataforma Educativa
                             </p>
                         </td>
                     </tr>
@@ -499,10 +499,10 @@ async function sendEmailNotification(userId, subject, text) {
                                 <tr>
                                     <td style="text-align: center;">
                                         <p style="margin: 0 0 12px 0; color: #718096; font-size: 13px;">
-                                            Este es un mensaje de notificación de TareaMov
+                                            Notificación oficial de CourseV
                                         </p>
                                         <p style="margin: 0 0 15px 0; color: #a0aec0; font-size: 11px;">
-                                            © ${new Date().getFullYear()} TareaMov. Todos los derechos reservados.
+                                            © ${new Date().getFullYear()} CourseV. Todos los derechos reservados.
                                         </p>
                                         <div style="margin-top: 15px;">
                                             <a href="https://yisuscompany.com" style="color: #667eea; text-decoration: none; font-size: 12px;">
@@ -521,7 +521,10 @@ async function sendEmailNotification(userId, subject, text) {
                     <tr>
                         <td style="text-align: center; color: #a0aec0; font-size: 11px;">
                             <p style="margin: 0;">
-                                Has recibido este correo porque tienes una cuenta en TareaMov
+                                Has recibido este correo porque tienes una cuenta activa en CourseV
+                            </p>
+                            <p style="margin: 8px 0 0 0;">
+                                Si deseas dejar de recibir notificaciones, <a href="mailto:unsubscribe@yisuscompany.com" style="color: #667eea; text-decoration: none;">haz clic aquí</a>
                             </p>
                         </td>
                     </tr>
@@ -544,13 +547,26 @@ async function sendEmailNotification(userId, subject, text) {
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
             const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            const fromName = 'CourseV - Plataforma Educativa'; // Nombre profesional del remitente
 
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
-                    from: fromEmail,
+                    from: `${fromName} <${fromEmail}>`, // Formato: "Nombre <email@domain.com>"
                     to: [userEmail],
                     subject: subject,
-                    html: htmlContent
+                    html: htmlContent,
+                    // Headers adicionales para evitar spam
+                    headers: {
+                        'X-Entity-Ref-ID': `coursev-${Date.now()}`,
+                        'X-Mailer': 'CourseV Education Platform v1.0',
+                        'List-Unsubscribe': `<mailto:unsubscribe@yisuscompany.com?subject=Unsubscribe>`,
+                        'Precedence': 'bulk'
+                    },
+                    // Tags para tracking en Resend
+                    tags: [
+                        { name: 'category', value: 'notification' },
+                        { name: 'app', value: 'coursev' }
+                    ]
                 }, {
                     headers: {
                         'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
@@ -1701,7 +1717,7 @@ app.post('/notify-chat-response', async(req, res) => {
 
         // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
         // Solo notificar que hay una respuesta disponible
-        const emailSubject = 'Nueva respuesta disponible - TareaMov';
+        const emailSubject = 'Nueva respuesta disponible - CourseV';
 
         // Smart link que detecta si la app está instalada o descarga el APK
         const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
@@ -1712,7 +1728,7 @@ Tu consulta ha sido procesada por nuestro asistente de inteligencia artificial y
 
 Por razones de seguridad, la respuesta completa solo está disponible dentro de la aplicación móvil.
 
-Para ver tu respuesta, accede a la aplicación TareaMov:
+Para ver tu respuesta, accede a la aplicación CourseV:
 ${smartLink}
 
 Información de seguridad:
@@ -1722,8 +1738,9 @@ Información de seguridad:
 
 Si no solicitaste esta consulta, por favor ignora este mensaje.
 
-Saludos,
-Equipo TareaMov`;
+Saludos cordiales,
+Equipo CourseV
+Plataforma Educativa`;
 
         // Enviar email usando la función existente
         await sendEmailNotification(userId, emailSubject, emailBody);
