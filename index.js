@@ -446,73 +446,368 @@ async function sendEmailNotification(userId, subject, text) {
         
         console.log(`📧 Preparando email para: ${userEmail}`);
 
+        // 🎬 Template de email con animación Lottie y diseño moderno CourseV
         const htmlContent = `
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>${subject}</title>
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings>
+                <o:PixelsPerInch>96</o:PixelsPerInch>
+            </o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #0f172a;
+            color: #e2e8f0;
+        }
+        
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+            padding: 40px 30px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            animation: pulse 4s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+        }
+        
+        .logo-container {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .brand-name {
+            font-size: 36px;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: -1px;
+            margin-bottom: 8px;
+        }
+        
+        .brand-tagline {
+            font-size: 14px;
+            color: rgba(255,255,255,0.85);
+            font-weight: 500;
+        }
+        
+        .animation-container {
+            background: linear-gradient(180deg, #1e293b 0%, #334155 100%);
+            padding: 30px;
+            text-align: center;
+            border-bottom: 1px solid #475569;
+        }
+        
+        .lottie-wrapper {
+            width: 280px;
+            height: 200px;
+            margin: 0 auto;
+            border-radius: 16px;
+            overflow: hidden;
+            background: #1e293b;
+            box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2);
+        }
+        
+        .content {
+            padding: 40px 30px;
+        }
+        
+        .subject-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #f1f5f9;
+            margin-bottom: 20px;
+            line-height: 1.3;
+        }
+        
+        .message-box {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            border: 1px solid #475569;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 30px;
+        }
+        
+        .message-text {
+            font-size: 16px;
+            color: #cbd5e1;
+            line-height: 1.8;
+        }
+        
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 16px 40px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 16px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+            transition: all 0.3s ease;
+        }
+        
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 24px rgba(99, 102, 241, 0.5);
+        }
+        
+        .features {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .feature-item {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 12px;
+            padding: 16px 20px;
+            text-align: center;
+            min-width: 150px;
+        }
+        
+        .feature-icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        
+        .feature-text {
+            font-size: 13px;
+            color: #94a3b8;
+            font-weight: 500;
+        }
+        
+        .footer {
+            background: #0f172a;
+            padding: 30px;
+            border-top: 1px solid #1e293b;
+            text-align: center;
+        }
+        
+        .footer-brand {
+            font-size: 20px;
+            font-weight: 700;
+            color: #6366f1;
+            margin-bottom: 16px;
+        }
+        
+        .footer-text {
+            font-size: 13px;
+            color: #64748b;
+            margin-bottom: 8px;
+        }
+        
+        .footer-links {
+            margin-top: 20px;
+        }
+        
+        .footer-link {
+            color: #6366f1;
+            text-decoration: none;
+            font-size: 13px;
+            margin: 0 12px;
+        }
+        
+        .social-links {
+            margin-top: 20px;
+        }
+        
+        .social-icon {
+            display: inline-block;
+            width: 36px;
+            height: 36px;
+            background: #1e293b;
+            border-radius: 50%;
+            margin: 0 8px;
+            line-height: 36px;
+            font-size: 16px;
+        }
+        
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, #475569 50%, transparent 100%);
+            margin: 30px 0;
+        }
+        
+        @media only screen and (max-width: 600px) {
+            .email-container { width: 100% !important; }
+            .content { padding: 30px 20px; }
+            .header { padding: 30px 20px; }
+            .brand-name { font-size: 28px; }
+            .subject-title { font-size: 20px; }
+            .lottie-wrapper { width: 240px; height: 170px; }
+        }
+    </style>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+<body style="margin: 0; padding: 0; background-color: #0f172a;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #0f172a; padding: 40px 20px;">
         <tr>
             <td align="center">
-                <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); overflow: hidden;">
-                    <!-- Header with gradient -->
-                    <tr>
-                        <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
-                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">
-                                TareaMov
-                            </h1>
-                            <p style="margin: 10px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">
-                                Tu plataforma de aprendizaje
-                            </p>
-                        </td>
-                    </tr>
+                <!-- Main Container -->
+                <table class="email-container" width="600" cellpadding="0" cellspacing="0" border="0" style="background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); border-radius: 24px; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
                     
-                    <!-- Content -->
+                    <!-- Header with Gradient -->
                     <tr>
-                        <td style="padding: 40px 30px;">
-                            <h2 style="margin: 0 0 20px 0; color: #1a202c; font-size: 24px; font-weight: 600;">
-                                ${subject}
-                            </h2>
-                            <div style="color: #4a5568; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">
-                                ${text.replace(/\n/g, '<br>')}
+                        <td class="header" style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); padding: 40px 30px; text-align: center;">
+                            <div class="logo-container">
+                                <h1 class="brand-name" style="font-size: 36px; font-weight: 700; color: #ffffff; letter-spacing: -1px; margin: 0 0 8px 0;">
+                                    📚 CourseV
+                                </h1>
+                                <p class="brand-tagline" style="font-size: 14px; color: rgba(255,255,255,0.9); margin: 0; font-weight: 500;">
+                                    Tu plataforma de aprendizaje inteligente
+                                </p>
                             </div>
                         </td>
                     </tr>
                     
-                    <!-- Footer -->
+                    <!-- Animated Lottie Section -->
                     <tr>
-                        <td style="background-color: #f7fafc; padding: 30px; border-top: 1px solid #e2e8f0;">
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                        <td class="animation-container" style="background: linear-gradient(180deg, #1e293b 0%, #334155 100%); padding: 30px; text-align: center; border-bottom: 1px solid #475569;">
+                            <div class="lottie-wrapper" style="width: 280px; height: 200px; margin: 0 auto; border-radius: 16px; overflow: hidden; background: #1e293b; box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2);">
+                                <!-- Lottie Animation Player -->
+                                <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
+                                <lottie-player 
+                                    src="https://lottie.host/4db68bbd-31f6-4cd8-84eb-189571f8e2c4/pVMKOCVAqS.json"
+                                    background="transparent"
+                                    speed="1"
+                                    style="width: 280px; height: 200px;"
+                                    loop
+                                    autoplay>
+                                </lottie-player>
+                            </div>
+                            <p style="margin-top: 16px; font-size: 13px; color: #94a3b8;">
+                                ✨ Aprendizaje interactivo con IA
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content Section -->
+                    <tr>
+                        <td class="content" style="padding: 40px 30px;">
+                            <h2 class="subject-title" style="font-size: 24px; font-weight: 700; color: #f1f5f9; margin: 0 0 20px 0; line-height: 1.3;">
+                                ${subject}
+                            </h2>
+                            
+                            <div class="message-box" style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border: 1px solid #475569; border-radius: 16px; padding: 24px; margin-bottom: 30px;">
+                                <p class="message-text" style="font-size: 16px; color: #cbd5e1; line-height: 1.8; margin: 0;">
+                                    ${text.replace(/\n/g, '<br>')}
+                                </p>
+                            </div>
+                            
+                            <!-- CTA Button -->
+                            <div style="text-align: center; margin: 30px 0;">
+                                <a href="https://coursev-app.yisuscompany.com/app-link?action=chat" class="cta-button" style="display: inline-block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 12px; font-weight: 600; font-size: 16px;">
+                                    🚀 Abrir CourseV
+                                </a>
+                            </div>
+                            
+                            <!-- Features -->
+                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 30px;">
                                 <tr>
-                                    <td style="text-align: center;">
-                                        <p style="margin: 0 0 15px 0; color: #718096; font-size: 14px;">
-                                            Este es un mensaje automático de TareaMov
-                                        </p>
-                                        <p style="margin: 0; color: #a0aec0; font-size: 12px;">
-                                            © ${new Date().getFullYear()} TareaMov. Todos los derechos reservados.
-                                        </p>
-                                        <div style="margin-top: 20px;">
-                                            <a href="https://yisuscompany.com" style="color: #667eea; text-decoration: none; font-size: 13px; margin: 0 10px;">
-                                                yisuscompany.com
-                                            </a>
-                                        </div>
+                                    <td align="center">
+                                        <table cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td style="background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 16px 20px; text-align: center; margin: 0 10px;">
+                                                    <div style="font-size: 24px; margin-bottom: 8px;">🤖</div>
+                                                    <div style="font-size: 13px; color: #94a3b8; font-weight: 500;">IA Avanzada</div>
+                                                </td>
+                                                <td width="20"></td>
+                                                <td style="background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 16px 20px; text-align: center; margin: 0 10px;">
+                                                    <div style="font-size: 24px; margin-bottom: 8px;">📱</div>
+                                                    <div style="font-size: 13px; color: #94a3b8; font-weight: 500;">App Móvil</div>
+                                                </td>
+                                                <td width="20"></td>
+                                                <td style="background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 16px 20px; text-align: center; margin: 0 10px;">
+                                                    <div style="font-size: 24px; margin-bottom: 8px;">🎓</div>
+                                                    <div style="font-size: 13px; color: #94a3b8; font-weight: 500;">Cursos Pro</div>
+                                                </td>
+                                            </tr>
+                                        </table>
                                     </td>
                                 </tr>
                             </table>
                         </td>
                     </tr>
+                    
+                    <!-- Divider -->
+                    <tr>
+                        <td>
+                            <div style="height: 1px; background: linear-gradient(90deg, transparent 0%, #475569 50%, transparent 100%); margin: 0 30px;"></div>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer" style="background: #0f172a; padding: 30px; text-align: center;">
+                            <div class="footer-brand" style="font-size: 20px; font-weight: 700; color: #6366f1; margin-bottom: 16px;">
+                                📚 CourseV
+                            </div>
+                            <p class="footer-text" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0;">
+                                Este es un mensaje automático de CourseV
+                            </p>
+                            <p style="font-size: 12px; color: #475569; margin: 0;">
+                                © ${new Date().getFullYear()} CourseV by YisusCompany. Todos los derechos reservados.
+                            </p>
+                            
+                            <div class="footer-links" style="margin-top: 20px;">
+                                <a href="https://yisuscompany.com" class="footer-link" style="color: #6366f1; text-decoration: none; font-size: 13px; margin: 0 12px;">
+                                    yisuscompany.com
+                                </a>
+                                <span style="color: #475569;">|</span>
+                                <a href="mailto:coursev@yisuscompany.com" class="footer-link" style="color: #6366f1; text-decoration: none; font-size: 13px; margin: 0 12px;">
+                                    Contacto
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
                 </table>
                 
-                <!-- Unsubscribe section -->
+                <!-- Unsubscribe Section -->
                 <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px;">
                     <tr>
-                        <td style="text-align: center; color: #a0aec0; font-size: 12px;">
+                        <td style="text-align: center; color: #475569; font-size: 11px; padding: 10px;">
                             <p style="margin: 0;">
-                                Recibiste este correo porque eres usuario de TareaMov
+                                Recibiste este correo porque eres usuario de CourseV.
+                            </p>
+                            <p style="margin: 8px 0 0 0;">
+                                <a href="#" style="color: #6366f1; text-decoration: none;">Cancelar suscripción</a>
                             </p>
                         </td>
                     </tr>
@@ -528,20 +823,20 @@ async function sendEmailNotification(userId, subject, text) {
             console.log('📧 Enviando email via Resend HTTP API...');
             
             // ✅ Dominio verificado: yisuscompany.com (IONOS DNS configurado)
-            // Registros DNS configurados en IONOS:
-            // - MX: inbound-smtp.us-east-1.amazonaws.com
-            // - TXT resend._domainkey: [DKIM key]
-            // - MX send: feedback-smtp.us-east-1.amazonses.com
-            // - TXT send: v=spf1 include:amazonses.com ~all
-            // - TXT _dmarc: v=DMARC1; p=none;
-            const fromEmail = 'notificaciones@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            // Usando CourseV como remitente para mejor branding
+            const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Branding CourseV
+            const fromName = 'CourseV'; // Nombre que aparece en el cliente de email
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
-                    from: fromEmail,
+                    from: `${fromName} <${fromEmail}>`,
                     to: [userEmail],
-                    subject: subject,
-                    html: htmlContent
+                    subject: `📚 ${subject}`,
+                    html: htmlContent,
+                    headers: {
+                        'X-Entity-Ref-ID': `coursev-${Date.now()}`,
+                        'List-Unsubscribe': '<mailto:unsubscribe@yisuscompany.com>'
+                    }
                 }, {
                     headers: {
                         'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
@@ -557,9 +852,9 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log('🔄 Reintentando con email por defecto de Resend...');
                 try {
                     const fallbackResponse = await axios.post('https://api.resend.com/emails', {
-                        from: 'onboarding@resend.dev',
+                        from: 'CourseV <onboarding@resend.dev>',
                         to: [userEmail],
-                        subject: subject,
+                        subject: `📚 ${subject}`,
                         html: htmlContent
                     }, {
                         headers: {
@@ -582,11 +877,11 @@ async function sendEmailNotification(userId, subject, text) {
             const sgResponse = await axios.post('https://api.sendgrid.com/v3/mail/send', {
                 personalizations: [{
                     to: [{ email: userEmail }],
-                    subject: subject
+                    subject: `📚 ${subject}`
                 }],
                 from: { 
-                    email: process.env.SENDGRID_FROM_EMAIL || 'noreply@example.com',
-                    name: 'TareaMov AI'
+                    email: process.env.SENDGRID_FROM_EMAIL || 'coursev@yisuscompany.com',
+                    name: 'CourseV'
                 },
                 content: [{
                     type: 'text/html',
@@ -616,9 +911,9 @@ async function sendEmailNotification(userId, subject, text) {
             });
 
             const info = await transporter.sendMail({
-                from: `"TareaMov AI" <${process.env.GMAIL_USER}>`,
+                from: `"CourseV" <${process.env.GMAIL_USER}>`,
                 to: userEmail,
-                subject: subject,
+                subject: `📚 ${subject}`,
                 text: text,
                 html: htmlContent
             });
