@@ -23,7 +23,7 @@ export class LLMService {
         const useDeepSeek = process.env.USE_LLM === 'true' && deepSeekApiKey;
 
         if (useDeepSeek) {
-            console.log("Initializing DeepSeek LLM...");
+            console.log("Initializing DeepSeek LLM (Optimized for Speed)...");
             this.provider = 'deepseek';
             this.model = new ChatOpenAI({
                 openAIApiKey: deepSeekApiKey,
@@ -31,20 +31,23 @@ export class LLMService {
                     baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
                 },
                 modelName: process.env.DEEPSEEK_MODEL || "deepseek-chat",
-                temperature: 0.3,
+                temperature: 0.8,
                 timeout: 30000,
-                maxRetries: 1
+                maxRetries: 0,
+                streaming: true,
+                maxTokens: 1024
             });
         } else {
-            console.log("Initializing Ollama LLM...");
+            console.log("Initializing Ollama LLM (Optimized for Speed)...");
             this.provider = 'ollama';
             // Initialize Ollama with Llama 3:8b
             this.model = new ChatOllama({
                 baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
                 model: "llama3:8b",
-                temperature: 0,
-                // Reduced timeout to 30s to prevent long hangs
-                timeout: 30000
+                temperature: 0.8,
+                // Aggressive timeout for faster responses
+                timeout: 30000,
+                numPredict: 1024
             });
         }
 
@@ -56,7 +59,7 @@ export class LLMService {
         try {
             // Simple test with timeout
             const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Connection test timeout')), 10000)
+                setTimeout(() => reject(new Error('Connection test timeout')), 5000)
             );
             await Promise.race([this.model.invoke("Hello"), timeoutPromise]);
             return {
@@ -111,6 +114,39 @@ export class LLMService {
                     throw retryError;
                 }
             }
+            throw error;
+        }
+    }
+
+    /**
+     * Generate a streaming response from the LLM (faster perceived response time).
+     * @param {Array} messages - History of messages
+     * @param {Function} onChunk - Callback for each chunk (optional)
+     * @returns {Promise<string>} - Complete response
+     */
+    async generateStreamingResponse(messages, onChunk = null) {
+        if (!this.model) throw new Error("LLM disabled");
+
+        try {
+            const sanitizedMessages = this.sanitizeMessages(messages);
+            let fullResponse = "";
+
+            // Use streaming for faster perceived response
+            const stream = await this.model.stream(sanitizedMessages);
+
+            for await (const chunk of stream) {
+                const content = chunk.content || chunk.text || "";
+                fullResponse += content;
+
+                // Call callback if provided
+                if (onChunk && content) {
+                    onChunk(content);
+                }
+            }
+
+            return fullResponse;
+        } catch (error) {
+            console.error("Error generating streaming LLM response:", error);
             throw error;
         }
     }
