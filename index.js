@@ -141,52 +141,23 @@ try {
 /**
  * Helper function to call DeepSeek via LLMService
  * Replaces all Ollama calls with DeepSeek API
- * Optimized for fast responses with streaming support
  */
-async function callDeepSeek(systemPrompt, userPrompt, maxTokens = 2048, useStreaming = false) {
+async function callDeepSeek(systemPrompt, userPrompt) {
     if (!llmService || !llmService.model) {
         throw new Error('LLMService not available - DeepSeek not configured');
     }
 
     const messages = [];
     if (systemPrompt) {
-        // Optimizar system prompt: solo primeros 500 caracteres si es muy largo
-        const optimizedSystemPrompt = systemPrompt.length > 500 ?
-            systemPrompt.substring(0, 500) + '...' :
-            systemPrompt;
-        messages.push(new SystemMessage(optimizedSystemPrompt));
+        messages.push(new SystemMessage(systemPrompt));
     }
+    messages.push(new HumanMessage(userPrompt));
 
-    // Optimizar user prompt: limitar a 3000 caracteres
-    const optimizedUserPrompt = userPrompt.length > 3000 ?
-        userPrompt.substring(0, 3000) + '...' :
-        userPrompt;
-    messages.push(new HumanMessage(optimizedUserPrompt));
+    console.log('🤖 Calling DeepSeek v2.3...');
+    const response = await llmService.generateResponse(messages);
 
-    console.log('🤖 Calling DeepSeek v2.3... (max tokens:', maxTokens, ', streaming:', useStreaming, ')');
-
-    // Configurar modelo con límite de tokens para respuestas más rápidas
-    const modelWithConfig = llmService.model.bind({
-        max_tokens: maxTokens,
-        temperature: 0.7
-    });
-
-    let content;
-
-    if (useStreaming) {
-        // Usar streaming para respuestas más rápidas (percepción)
-        try {
-            content = await llmService.generateStreamingResponse(messages);
-        } catch (streamError) {
-            console.warn('⚠️ Streaming failed, falling back to standard response:', streamError.message);
-            const response = await modelWithConfig.invoke(messages);
-            content = response.content || response.text || response.toString();
-        }
-    } else {
-        const response = await modelWithConfig.invoke(messages);
-        content = response.content || response.text || response.toString();
-    }
-
+    // Extract content from response
+    const content = response.content || response.text || response.toString();
     console.log('✅ DeepSeek response received:', content.length, 'characters');
 
     return content;
@@ -670,9 +641,9 @@ async function sendEmailNotification(userId, subject, text) {
 
 // Configurar timeouts globales para Express
 app.use((req, res, next) => {
-    // Timeout de 35 segundos para forzar respuestas rápidas
-    req.setTimeout(35000); // 35 segundos
-    res.setTimeout(35000); // 35 segundos
+    // Timeout de 25 minutos para todas las rutas
+    req.setTimeout(1500000); // 25 minutos
+    res.setTimeout(1500000); // 25 minutos
     next();
 });
 
@@ -2314,24 +2285,44 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 
         // Si NO es pregunta de nota/tarea/archivo, solo DeepSeek responde
         if (!esPreguntaNota) {
-            console.log('📊 PROCESANDO PREGUNTA SIMPLE CON DEEPSEEK V2.3 (FAST MODE)...');
+            console.log('📊 PROCESANDO PREGUNTA SIMPLE CON DEEPSEEK V2.3...');
             try {
-                // Si hay contexto académico disponible, incluirlo pero MUY limitado
-                let promptCompleto = `${prompt}\n\nResponde brevemente en español.`;
+                // Si hay contexto académico disponible, incluirlo para dar mejor respuesta
+                let promptCompleto = `INSTRUCCIONES CRÍTICAS:
+- RESPONDE SIEMPRE EN ESPAÑOL
+- USA TERMINOLOGÍA EN ESPAÑOL
+- NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
+- FORMATO EDUCATIVO Y PROFESIONAL
+- RESPUESTA CLARA Y COMPRENSIBLE
+
+PREGUNTA DEL USUARIO: ${prompt}`;
 
                 if (taskDescription && taskDescription.trim() && fileContent && fileContent.trim()) {
-                    // Limitar contexto AGRESIVAMENTE para máxima velocidad
-                    const taskLimit = taskDescription.length > 500 ? taskDescription.substring(0, 500) + '...' : taskDescription;
-                    const fileLimit = fileContent.length > 800 ? fileContent.substring(0, 800) + '...' : fileContent;
+                    promptCompleto = `INSTRUCCIONES CRÍTICAS:
+- RESPONDE SIEMPRE EN ESPAÑOL
+- USA TERMINOLOGÍA EN ESPAÑOL
+- NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
+- FORMATO EDUCATIVO Y PROFESIONAL
+- RESPUESTA CLARA Y COMPRENSIBLE
 
-                    promptCompleto = `Tarea: ${taskLimit}\nArchivo: ${fileLimit}\nPregunta: ${prompt}\n\nResponde breve en español.`;
+CONTEXTO ACADÉMICO DISPONIBLE:
+
+Descripción de la tarea: ${taskDescription}
+Contenido entregado: ${fileContent}
+
+Pregunta del usuario: ${prompt}
+
+Responde considerando el contexto académico disponible si es relevante para la pregunta. SIEMPRE EN ESPAÑOL.`;
                 }
 
                 const tokensPrompt = encode(promptCompleto).length;
-                console.log('[FAST MODE] TOKENS:', tokensPrompt);
+                console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
+                console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO:', promptCompleto.substring(0, 500) + '...');
 
-                // Call DeepSeek con límite de tokens reducido para velocidad
-                let respuestaFinal = await callDeepSeek(null, promptCompleto, 800, true); // Defensive fallback if model returns empty
+                // Call DeepSeek via LLMService
+                let respuestaFinal = await callDeepSeek(null, promptCompleto);
+
+                // Defensive fallback if model returns empty
                 if (!respuestaFinal || !respuestaFinal.trim()) {
                     console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA, aplicando mensaje por defecto');
                     respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
@@ -2486,29 +2477,55 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
             // Construir prompt contextualizado según el caso
             let promptContextualizado;
             if (archivoNoDisponible) {
-                const taskLimit = taskDescription.length > 500 ? taskDescription.substring(0, 500) + '...' : taskDescription;
-                promptContextualizado = `Archivo NO disponible.\nTarea: ${taskLimit}\nPregunta: ${prompt}\n\nResponde breve en español.`;
+                promptContextualizado = `CONTEXTO ACADÉMICO:
+El estudiante ha seleccionado una tarea pero el contenido del archivo NO está disponible para análisis.
+Solo puedo proporcionar información basada en la DESCRIPCIÓN de la tarea.
+
+${taskDescription}
+
+PREGUNTA DEL ESTUDIANTE: ${prompt}
+
+INSTRUCCIONES DE RESPUESTA:
+1. Si el estudiante pregunta por calificación o evaluación:
+   - Explica que NO puedes calificar porque no tienes acceso al contenido del archivo
+   - Describe qué se espera en base a la descripción de la tarea
+   - Sugiere que vuelva a subir el archivo o contacte al profesor
+
+2. Si el estudiante pregunta sobre la tarea:
+   - Proporciona información basada en la descripción disponible
+   - Explica los requisitos de la tarea
+   - Da orientación sobre cómo completarla
+
+RESPONDE EN ESPAÑOL de forma clara y educativa.`;
             } else {
-                const taskLimit = taskDescription.length > 600 ? taskDescription.substring(0, 600) + '...' : taskDescription;
-                promptContextualizado = `${taskLimit}\n\n${prompt}\n\nResponde breve en español.`;
+                promptContextualizado = `CONTEXTO ACADÉMICO:
+${taskDescription}
+
+PREGUNTA DEL ESTUDIANTE: ${prompt}
+
+INSTRUCCIONES: Responde en español de forma clara y educativa basándote en la información de la tarea proporcionada.`;
             }
 
             try {
                 const tokensPrompt = encode(promptContextualizado).length;
-                console.log('[FAST MODE - SIN ARCHIVO] TOKENS:', tokensPrompt);
+                console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS (SIN ARCHIVO):', tokensPrompt);
+                console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO (SIN ARCHIVO):', promptContextualizado.substring(0, 500) + '...');
 
-                // Call DeepSeek con streaming y tokens reducidos
-                let respuestaFinal = await callDeepSeek(null, promptContextualizado, 700, true);
+                // Call DeepSeek via LLMService
+                let respuestaFinal = await callDeepSeek(null, promptContextualizado);
 
                 const tokensRespuesta = encode(respuestaFinal).length;
-                console.log('[FAST MODE] TOKENS RESPUESTA:', tokensRespuesta);
+                console.log('[MODELO DeepSeek v2.3] TOKENS DE RESPUESTA (SIN ARCHIVO):', tokensRespuesta);
+                console.log('[MODELO DeepSeek v2.3] RESPUESTA RECIBIDA (SIN ARCHIVO):', respuestaFinal.substring(0, 300) + '...');
 
                 const tokensTotal = tokensPrompt + tokensRespuesta;
-                console.log('[FAST MODE] TOTAL:', tokensTotal, 'tokens');
+                console.log('📊 RESUMEN DE TOKENS - TOTAL CONSUMIDO (SIN ARCHIVO):', tokensTotal);
 
                 const endTime = new Date();
                 const duration = endTime - startTime;
-                console.log('⏱️ DURACIÓN:', Math.round(duration / 1000), 's');;
+                console.log('🕐 HORA DE RESPUESTA:', endTime.toLocaleString('es-ES'));
+                console.log('⏱️ DURACIÓN TOTAL:', Math.round(duration / 1000), 'segundos');
+                console.log('==============================================');
                 try {
                     const gradeMatch = respuestaFinal.match(/(\d+(?:\.\d+)?)\s*\/\s*10|nota\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
                     const gradeStr = gradeMatch ? (gradeMatch[1] || gradeMatch[2]) : null;
@@ -2557,20 +2574,70 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 
         // MODO ESPECIAL: DeepSeek para evaluaciones críticas (reemplaza gemma3n)
         if (esPreguntaEvaluacionCritica) {
-            console.log('🎯 MODO EVALUACIÓN CRÍTICA - DEEPSEEK V2.3 (FAST)');
+            console.log('🎯 MODO EVALUACIÓN CRÍTICA - DEEPSEEK V2.3');
+            const promptEvaluacionCritica = `EVALUADOR ACADÉMICO JUSTO Y EQUILIBRADO:
 
-            // Limitar contexto AGRESIVAMENTE para máxima velocidad
-            const taskLimit = taskDescriptionClean.length > 600 ? taskDescriptionClean.substring(0, 600) + '...' : taskDescriptionClean;
-            const fileLimit = fileContentClean.length > 1000 ? fileContentClean.substring(0, 1000) + '...' : fileContentClean;
+INSTRUCCIONES EDUCATIVAS:
+- RESPONDE SIEMPRE EN ESPAÑOL
+- EVALUACIÓN JUSTA Y CONSTRUCTIVA
+- RECONOCE CUANDO EL ESTUDIANTE CUMPLE CON LO SOLICITADO
+- FORMATO EDUCATIVO Y PROFESIONAL
 
-            const promptEvaluacionCritica = `EVALÚA EN ESPAÑOL:\n\nTAREA: ${taskLimit}\n\nARCHIVO: ${fileLimit}\n\nFORMATO:\n📊 CALIFICACIÓN: X/10\n⚖️ COMPATIBLE: SÍ/NO\n📝 RAZÓN: [breve]`;
+PRINCIPIO FUNDAMENTAL: 
+SER JUSTO - Si se pide "UN EJEMPLO" de algo, CUALQUIER ejemplo válido de esa categoría merece nota alta.
+
+CRITERIOS DE EVALUACIÓN INTELIGENTES:
+🟢 **CUMPLIMIENTO PERFECTO (9-10)**: Entrega exactamente lo pedido
+🟢 **CUMPLIMIENTO BUENO (7-8)**: Cumple bien, aunque sea más complejo
+🟡 **CUMPLIMIENTO PARCIAL (5-6)**: Relacionado pero no exacto
+🟠 **CUMPLIMIENTO MÍNIMO (3-4)**: Alguna relación pero se desvía
+🔴 **NO CUMPLE (1-2)**: Poca o ninguna relación
+⚫ **TOTALMENTE INCORRECTO (0)**: Sin relación alguna
+
+REGLAS ESPECÍFICAS DE EVALUACIÓN:
+
+📝 **SOLICITUDES GENERALES** (merecen nota alta si cumplen):
+- "ejemplo de algoritmo Python" → Cualquier script Python = 8-10
+- "ejemplo de programa" → Cualquier programa funcional = 8-10
+- "ejemplo de código" → Cualquier código válido = 8-10
+- "script Python" → Cualquier script Python = 8-10
+
+📝 **SOLICITUDES ESPECÍFICAS** (deben cumplir exactamente):
+- "base de datos de IA" → DEBE ser sobre IA, no películas = 0 si no es IA
+- "calculadora" → DEBE calcular, no ser un menú = 0 si no calcula
+- "algoritmo de ordenamiento" → DEBE ordenar = 0 si no ordena
+- "página de login" → DEBE tener login = 0 si no tiene login
+
+EJEMPLOS CONCRETOS:
+✅ "ejemplo algoritmo Python" + script Python complejo = 10/10 (CUMPLE)
+❌ "base de datos de IA" + base de datos de películas = 0/10 (NO CUMPLE)
+❌ "calculadora" + sistema de archivos = 0/10 (NO CUMPLE)
+✅ "ejemplo de programa" + cualquier programa = 9-10/10 (CUMPLE)
+
+FORMATO RESPUESTA OBLIGATORIO (EN ESPAÑOL):
+📊 **CALIFICACIÓN ACTUAL: [0-10]/10**
+🎯 **TEMA SOLICITADO:** [lo que pidió el profesor]
+📄 **TEMA ENTREGADO:** [lo que envió el estudiante]
+⚖️ **COMPATIBILIDAD:** [TU ANÁLISIS JUSTO]
+📝 **JUSTIFICACIÓN:** [Explicación educativa y justa]
+
+PREGUNTA: ${prompt}
+
+LO QUE SE PIDIÓ:
+${taskDescriptionClean}
+
+LO QUE SE ENTREGÓ:
+${fileContentClean}
+
+EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CALIFICACIÓN ACTUAL: X/10**" AL INICIO.`;
 
             try {
                 const tokensEvaluacion = encode(promptEvaluacionCritica).length;
-                console.log('[FAST EVAL] TOKENS:', tokensEvaluacion);
+                console.log('[MODO CRÍTICO - DEEPSEEK v2.3] TOKENS CONSUMIDOS:', tokensEvaluacion);
 
-                // Call DeepSeek con límite de tokens reducido y streaming
-                let respuestaEvaluacion = await callDeepSeek(null, promptEvaluacionCritica, 600, true);
+                // Call DeepSeek via LLMService
+                let respuestaEvaluacion = await callDeepSeek(null, promptEvaluacionCritica);
+
                 const tokensRespuesta = encode(respuestaEvaluacion).length;
                 console.log('[MODO CRÍTICO - DEEPSEEK v2.3] TOKENS DE RESPUESTA:', tokensRespuesta);
                 console.log('[MODO CRÍTICO - DEEPSEEK v2.3] RESPUESTA:', respuestaEvaluacion.substring(0, 500) + '...');
@@ -2579,7 +2646,7 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                 const duration = endTime - startTime;
                 console.log('🕐 EVALUACIÓN CRÍTICA COMPLETADA:', endTime.toLocaleString('es-ES'));
                 console.log('⏱️ DURACIÓN:', Math.round(duration / 1000), 'segundos');
-                console.log('==============================================');;
+                console.log('==============================================');
 
                 // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
                 if (userId) {
