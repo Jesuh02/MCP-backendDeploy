@@ -447,57 +447,65 @@ async function sendEmailNotification(userId, subject, text) {
 
         console.log(`📧 Preparando email para: ${userEmail}`);
 
+        // Limpiar el texto de caracteres que pueden parecer spam
+        const cleanText = text
+            .replace(/🔥|💥|⚡|🚀|💰|💸|🎁|🎉/g, '') // Eliminar emojis promocionales
+            .replace(/!!!+/g, '!') // Reducir múltiples signos de exclamación
+            .replace(/\*\*\*/g, '') // Eliminar énfasis excesivo
+            .trim();
+
         const htmlContent = `
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>${subject}</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+<body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f5f5f5; padding: 20px 10px;">
         <tr>
             <td align="center">
-                <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); overflow: hidden;">
-                    <!-- Header with gradient -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); max-width: 600px;">
+                    <!-- Header -->
                     <tr>
-                        <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
-                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">
+                        <td style="background-color: #667eea; padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">
                                 TareaMov
                             </h1>
-                            <p style="margin: 10px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">
-                                Tu plataforma de aprendizaje
+                            <p style="margin: 8px 0 0 0; color: #ffffff; font-size: 13px; opacity: 0.9;">
+                                Plataforma de Aprendizaje
                             </p>
                         </td>
                     </tr>
                     
                     <!-- Content -->
                     <tr>
-                        <td style="padding: 40px 30px;">
-                            <h2 style="margin: 0 0 20px 0; color: #1a202c; font-size: 24px; font-weight: 600;">
+                        <td style="padding: 35px 30px;">
+                            <h2 style="margin: 0 0 18px 0; color: #2d3748; font-size: 20px; font-weight: 600;">
                                 ${subject}
                             </h2>
-                            <div style="color: #4a5568; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">
-                                ${text.replace(/\n/g, '<br>')}
+                            <div style="color: #4a5568; font-size: 15px; line-height: 1.6; margin-bottom: 25px;">
+                                ${cleanText.replace(/\n/g, '<br>')}
                             </div>
                         </td>
                     </tr>
                     
                     <!-- Footer -->
                     <tr>
-                        <td style="background-color: #f7fafc; padding: 30px; border-top: 1px solid #e2e8f0;">
-                            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                        <td style="background-color: #f7fafc; padding: 25px 30px; border-top: 1px solid #e2e8f0; border-radius: 0 0 8px 8px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
                                     <td style="text-align: center;">
-                                        <p style="margin: 0 0 15px 0; color: #718096; font-size: 14px;">
-                                            Este es un mensaje automático de TareaMov
+                                        <p style="margin: 0 0 12px 0; color: #718096; font-size: 13px;">
+                                            Este es un mensaje de notificación de TareaMov
                                         </p>
-                                        <p style="margin: 0; color: #a0aec0; font-size: 12px;">
+                                        <p style="margin: 0 0 15px 0; color: #a0aec0; font-size: 11px;">
                                             © ${new Date().getFullYear()} TareaMov. Todos los derechos reservados.
                                         </p>
-                                        <div style="margin-top: 20px;">
-                                            <a href="https://yisuscompany.com" style="color: #667eea; text-decoration: none; font-size: 13px; margin: 0 10px;">
+                                        <div style="margin-top: 15px;">
+                                            <a href="https://yisuscompany.com" style="color: #667eea; text-decoration: none; font-size: 12px;">
                                                 yisuscompany.com
                                             </a>
                                         </div>
@@ -508,12 +516,12 @@ async function sendEmailNotification(userId, subject, text) {
                     </tr>
                 </table>
                 
-                <!-- Unsubscribe section -->
-                <table width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top: 20px;">
+                <!-- Unsubscribe -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top: 15px; max-width: 600px;">
                     <tr>
-                        <td style="text-align: center; color: #a0aec0; font-size: 12px;">
+                        <td style="text-align: center; color: #a0aec0; font-size: 11px;">
                             <p style="margin: 0;">
-                                Recibiste este correo porque eres usuario de TareaMov
+                                Has recibido este correo porque tienes una cuenta en TareaMov
                             </p>
                         </td>
                     </tr>
@@ -535,7 +543,7 @@ async function sendEmailNotification(userId, subject, text) {
             // - MX send: feedback-smtp.us-east-1.amazonses.com
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
-            const fromEmail = 'notificaciones@yisuscompany.com'; // ✅ Dominio verificado en Resend
+            const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Dominio verificado en Resend
 
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
@@ -1693,28 +1701,29 @@ app.post('/notify-chat-response', async(req, res) => {
 
         // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
         // Solo notificar que hay una respuesta disponible
-        const emailSubject = '🤖 Nueva respuesta del Asistente de IA';
+        const emailSubject = 'Nueva respuesta disponible - TareaMov';
 
         // Smart link que detecta si la app está instalada o descarga el APK
         const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
 
         const emailBody = `Hola ${user.username || 'Usuario'},
 
-Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respuesta está lista.
+Tu consulta ha sido procesada por nuestro asistente de inteligencia artificial y tu respuesta está disponible.
 
-🔒 Por seguridad, la respuesta completa solo está disponible dentro de la aplicación.
+Por razones de seguridad, la respuesta completa solo está disponible dentro de la aplicación móvil.
 
-📱 Haz clic en el enlace para abrir la app o descargarla si aún no la tienes:
+Para ver tu respuesta, accede a la aplicación TareaMov:
+${smartLink}
 
-🔗 Abrir TareaMov: ${smartLink}
+Información de seguridad:
+- Las respuestas pueden contener información personal
+- No compartimos datos completos por correo electrónico
+- Verifica tu identidad en la aplicación antes de acceder
 
----
-💡 Consejos de seguridad:
-- Las respuestas del IA pueden contener información sensible
-- Nunca compartimos datos completos por email
-- Siempre verifica tu identidad en la app antes de ver respuestas
+Si no solicitaste esta consulta, por favor ignora este mensaje.
 
-Este es un mensaje automático de TareaMov.`;
+Saludos,
+Equipo TareaMov`;
 
         // Enviar email usando la función existente
         await sendEmailNotification(userId, emailSubject, emailBody);
