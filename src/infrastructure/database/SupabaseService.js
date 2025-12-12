@@ -68,9 +68,9 @@ export class SupabaseService {
      * Get database schema information dynamically (Cached)
      */
     async getDatabaseSchema() {
-        // Return cached schema if available (valid for 1 hour)
-        if (this.schemaCache && this.schemaCacheTime && (Date.now() - this.schemaCacheTime < 3600000)) {
-            logger.info('⚡ Using cached database schema');
+        // Return cached schema if available (valid for 6 hours - optimized for speed)
+        if (this.schemaCache && this.schemaCacheTime && (Date.now() - this.schemaCacheTime < 21600000)) {
+            logger.info('⚡ Using cached database schema (fast)');
             return this.schemaCache;
         }
 
