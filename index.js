@@ -462,31 +462,131 @@ async function sendEmailNotification(userId, subject, text) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>${subject}</title>
+    <style>
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-15px); }
+        }
+        @keyframes wave {
+            0%, 100% { transform: rotate(-5deg); }
+            50% { transform: rotate(5deg); }
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        @keyframes shine {
+            0% { background-position: -200% center; }
+            100% { background-position: 200% center; }
+        }
+        .animated-illustration {
+            animation: float 3s ease-in-out infinite;
+        }
+        .hand {
+            animation: wave 2s ease-in-out infinite;
+            transform-origin: bottom right;
+        }
+        .coffee-machine {
+            animation: pulse 2s ease-in-out infinite;
+        }
+        .shine-effect {
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            background-size: 200% 100%;
+            animation: shine 3s linear infinite;
+        }
+    </style>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f5f5f5; padding: 20px 10px;">
+<body style="margin: 0; padding: 0; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="padding: 40px 20px;">
         <tr>
             <td align="center">
-                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); max-width: 600px;">
-                    <!-- Header -->
+                <!-- Animated Illustration Header -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; margin-bottom: 20px;">
                     <tr>
-                        <td style="background-color: #667eea; padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
-                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">
-                                CourseV
-                            </h1>
-                            <p style="margin: 8px 0 0 0; color: #ffffff; font-size: 13px; opacity: 0.9;">
-                                Plataforma Educativa
-                            </p>
+                        <td align="center" style="padding: 30px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px 16px 0 0; position: relative; overflow: hidden;">
+                            <div style="position: relative; z-index: 2;">
+                                <!-- SVG Animated Illustration -->
+                                <svg width="280" height="200" viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" style="margin-bottom: 20px;">
+                                    <!-- Desk -->
+                                    <rect x="40" y="140" width="200" height="15" rx="5" fill="#2d5016" opacity="0.8"/>
+                                    <rect x="35" y="155" width="210" height="8" rx="4" fill="#1a3a0f"/>
+                                    
+                                    <!-- Coffee Machine (animated) -->
+                                    <g class="coffee-machine">
+                                        <rect x="165" y="100" width="50" height="40" rx="5" fill="#FFD93D"/>
+                                        <rect x="170" y="105" width="15" height="8" rx="2" fill="#4a4a4a"/>
+                                        <rect x="195" y="105" width="15" height="8" rx="2" fill="#4a4a4a"/>
+                                        <circle cx="190" cy="125" r="6" fill="#FF6B6B"/>
+                                        <rect x="175" y="135" width="10" height="5" rx="1" fill="#6c5ce7"/>
+                                    </g>
+                                    
+                                    <!-- Plant -->
+                                    <ellipse cx="230" cy="135" rx="8" ry="5" fill="#8B4513"/>
+                                    <path d="M230,135 Q220,125 225,115 T230,105" stroke="#27ae60" stroke-width="3" fill="none"/>
+                                    <path d="M230,135 Q240,125 235,115 T230,105" stroke="#27ae60" stroke-width="3" fill="none"/>
+                                    <circle cx="225" cy="110" r="8" fill="#2ecc71"/>
+                                    <circle cx="235" cy="110" r="8" fill="#2ecc71"/>
+                                    
+                                    <!-- Person (animated) -->
+                                    <g class="animated-illustration">
+                                        <!-- Body -->
+                                        <ellipse cx="120" cy="135" rx="25" ry="20" fill="#6c5ce7"/>
+                                        <rect x="95" y="125" width="50" height="35" rx="8" fill="#6c5ce7"/>
+                                        
+                                        <!-- Neck -->
+                                        <rect x="110" y="95" width="20" height="12" rx="3" fill="#ffd1a3"/>
+                                        
+                                        <!-- Head -->
+                                        <circle cx="120" cy="80" r="20" fill="#ffd1a3"/>
+                                        
+                                        <!-- Hair -->
+                                        <path d="M105,75 Q100,65 110,60 Q120,55 130,60 Q140,65 135,75" fill="#2c3e50"/>
+                                        <ellipse cx="108" cy="82" rx="8" ry="15" fill="#2c3e50"/>
+                                        <ellipse cx="132" cy="82" rx="8" ry="15" fill="#2c3e50"/>
+                                        
+                                        <!-- Eyes -->
+                                        <circle cx="113" cy="78" r="2" fill="#2c3e50"/>
+                                        <circle cx="127" cy="78" r="2" fill="#2c3e50"/>
+                                        
+                                        <!-- Smile -->
+                                        <path d="M113,88 Q120,92 127,88" stroke="#2c3e50" stroke-width="2" fill="none" stroke-linecap="round"/>
+                                        
+                                        <!-- Arm with wave animation -->
+                                        <g class="hand">
+                                            <path d="M145,120 Q155,115 160,125" stroke="#ffd1a3" stroke-width="8" fill="none" stroke-linecap="round"/>
+                                            <circle cx="162" cy="128" r="6" fill="#ffd1a3"/>
+                                        </g>
+                                        
+                                        <!-- Book -->
+                                        <rect x="75" y="125" width="20" height="15" rx="2" fill="#e74c3c"/>
+                                        <line x1="85" y1="125" x2="85" y2="140" stroke="#c0392b" stroke-width="1"/>
+                                    </g>
+                                </svg>
+                                
+                                <h1 style="margin: 0; color: #ffffff; font-size: 32px; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                    CourseV
+                                </h1>
+                                <p style="margin: 8px 0 0 0; color: #ffffff; font-size: 14px; opacity: 0.95; font-weight: 500;">
+                                    Plataforma Educativa Inteligente
+                                </p>
+                            </div>
+                            
+                            <!-- Decorative circles -->
+                            <div style="position: absolute; top: 20px; left: 20px; width: 60px; height: 60px; border-radius: 50%; background: rgba(255,255,255,0.1);"></div>
+                            <div style="position: absolute; bottom: 20px; right: 20px; width: 80px; height: 80px; border-radius: 50%; background: rgba(255,255,255,0.1);"></div>
                         </td>
                     </tr>
-                    
+                </table>
+                
+                <!-- Main Content Card -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 0 0 16px 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); max-width: 600px;">
                     <!-- Content -->
                     <tr>
-                        <td style="padding: 35px 30px;">
-                            <h2 style="margin: 0 0 18px 0; color: #2d3748; font-size: 20px; font-weight: 600;">
+                        <td style="padding: 40px 35px;">
+                            <h2 style="margin: 0 0 20px 0; color: #2d3748; font-size: 24px; font-weight: 700; line-height: 1.3;">
                                 ${subject}
                             </h2>
-                            <div style="color: #4a5568; font-size: 15px; line-height: 1.6; margin-bottom: 25px;">
+                            <div style="color: #4a5568; font-size: 16px; line-height: 1.8; margin-bottom: 30px;">
                                 ${cleanText.replace(/\n/g, '<br>')}
                             </div>
                         </td>
@@ -494,19 +594,19 @@ async function sendEmailNotification(userId, subject, text) {
                     
                     <!-- Footer -->
                     <tr>
-                        <td style="background-color: #f7fafc; padding: 25px 30px; border-top: 1px solid #e2e8f0; border-radius: 0 0 8px 8px;">
+                        <td style="background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%); padding: 30px 35px; border-top: 2px solid #e2e8f0; border-radius: 0 0 16px 16px;">
                             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
                                     <td style="text-align: center;">
-                                        <p style="margin: 0 0 12px 0; color: #718096; font-size: 13px;">
-                                            Notificación oficial de CourseV
+                                        <p style="margin: 0 0 12px 0; color: #718096; font-size: 14px; font-weight: 500;">
+                                            📚 Notificación oficial de CourseV
                                         </p>
-                                        <p style="margin: 0 0 15px 0; color: #a0aec0; font-size: 11px;">
+                                        <p style="margin: 0 0 15px 0; color: #a0aec0; font-size: 12px;">
                                             © ${new Date().getFullYear()} CourseV. Todos los derechos reservados.
                                         </p>
-                                        <div style="margin-top: 15px;">
-                                            <a href="https://yisuscompany.com" style="color: #667eea; text-decoration: none; font-size: 12px;">
-                                                yisuscompany.com
+                                        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+                                            <a href="https://yisuscompany.com" style="display: inline-block; padding: 10px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);">
+                                                Visitar yisuscompany.com
                                             </a>
                                         </div>
                                     </td>
@@ -516,15 +616,17 @@ async function sendEmailNotification(userId, subject, text) {
                     </tr>
                 </table>
                 
-                <!-- Unsubscribe -->
-                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top: 15px; max-width: 600px;">
+                <!-- Unsubscribe Section -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top: 25px; max-width: 600px;">
                     <tr>
-                        <td style="text-align: center; color: #a0aec0; font-size: 11px;">
-                            <p style="margin: 0;">
+                        <td style="text-align: center; padding: 20px; background-color: rgba(255,255,255,0.7); border-radius: 8px;">
+                            <p style="margin: 0 0 8px 0; color: #718096; font-size: 12px;">
                                 Has recibido este correo porque tienes una cuenta activa en CourseV
                             </p>
-                            <p style="margin: 8px 0 0 0;">
-                                Si deseas dejar de recibir notificaciones, <a href="mailto:unsubscribe@yisuscompany.com" style="color: #667eea; text-decoration: none;">haz clic aquí</a>
+                            <p style="margin: 0; font-size: 12px;">
+                                <a href="mailto:unsubscribe@yisuscompany.com?subject=Unsubscribe" style="color: #667eea; text-decoration: none; font-weight: 500;">
+                                    ✉️ Cancelar suscripción
+                                </a>
                             </p>
                         </td>
                     </tr>
