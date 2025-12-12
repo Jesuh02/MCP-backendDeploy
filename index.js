@@ -17,7 +17,8 @@ import { MCPService } from './src/domain/services/MCPService.js';
 import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
 
 import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+const require = createRequire(
+    import.meta.url);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -46,80 +47,80 @@ if (admin) {
         // OPTION 1: Use individual environment variables (RECOMMENDED for Railway)
         if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
             console.log('🔧 Using individual Firebase environment variables');
-            
-            let privateKey = process.env.FIREBASE_PRIVATE_KEY;
-        
-        // Fix escaped newlines if present
-        if (privateKey.includes('\\n')) {
-            privateKey = privateKey.replace(/\\n/g, '\n');
-        }
-        
-        const serviceAccount = {
-            type: 'service_account',
-            project_id: process.env.FIREBASE_PROJECT_ID,
-            private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-            private_key: privateKey,
-            client_email: process.env.FIREBASE_CLIENT_EMAIL,
-            client_id: process.env.FIREBASE_CLIENT_ID || '',
-            auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-            token_uri: 'https://oauth2.googleapis.com/token',
-            auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
-            client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL || ''
-        };
-        
-        console.log('🔑 Private key info:', {
-            length: privateKey.length,
-            startsCorrect: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
-            endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----')
-        });
-        
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
-        });
-        console.log('✅ Firebase Admin initialized from individual environment variables');
-    }
-    // OPTION 2: Try to load from FIREBASE_SERVICE_ACCOUNT JSON (legacy)
-    else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-        console.log('🔧 Using FIREBASE_SERVICE_ACCOUNT JSON');
-        let serviceAccount;
-        try {
-            serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        } catch (error) {
-            console.warn('⚠️ Error parsing FIREBASE_SERVICE_ACCOUNT JSON:', error.message);
-            // Attempt to fix common copy-paste issues with escaped quotes
-            const cleaned = process.env.FIREBASE_SERVICE_ACCOUNT.toString().replace(/\\"/g, '"');
-            serviceAccount = JSON.parse(cleaned);
-        }
 
-        // Fix private_key newlines
-        if (serviceAccount.private_key) {
-            let privateKey = serviceAccount.private_key;
+            let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+            // Fix escaped newlines if present
             if (privateKey.includes('\\n')) {
                 privateKey = privateKey.replace(/\\n/g, '\n');
             }
-            serviceAccount.private_key = privateKey;
-            
-            console.log('🔑 Private key processed:', {
+
+            const serviceAccount = {
+                type: 'service_account',
+                project_id: process.env.FIREBASE_PROJECT_ID,
+                private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+                private_key: privateKey,
+                client_email: process.env.FIREBASE_CLIENT_EMAIL,
+                client_id: process.env.FIREBASE_CLIENT_ID || '',
+                auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+                token_uri: 'https://oauth2.googleapis.com/token',
+                auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+                client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL || ''
+            };
+
+            console.log('🔑 Private key info:', {
                 length: privateKey.length,
                 startsCorrect: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
                 endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----')
             });
-        }
 
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
-        });
-        console.log('✅ Firebase Admin initialized from FIREBASE_SERVICE_ACCOUNT JSON');
-    } 
-    // OPTION 3: Fallback to local file
-    else {
-        console.log('🔧 Using local serviceAccountKey.json file');
-        const serviceAccount = require('./serviceAccountKey.json');
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
-        });
-        console.log('✅ Firebase Admin initialized from file');
-    }
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount)
+            });
+            console.log('✅ Firebase Admin initialized from individual environment variables');
+        }
+        // OPTION 2: Try to load from FIREBASE_SERVICE_ACCOUNT JSON (legacy)
+        else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+            console.log('🔧 Using FIREBASE_SERVICE_ACCOUNT JSON');
+            let serviceAccount;
+            try {
+                serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+            } catch (error) {
+                console.warn('⚠️ Error parsing FIREBASE_SERVICE_ACCOUNT JSON:', error.message);
+                // Attempt to fix common copy-paste issues with escaped quotes
+                const cleaned = process.env.FIREBASE_SERVICE_ACCOUNT.toString().replace(/\\"/g, '"');
+                serviceAccount = JSON.parse(cleaned);
+            }
+
+            // Fix private_key newlines
+            if (serviceAccount.private_key) {
+                let privateKey = serviceAccount.private_key;
+                if (privateKey.includes('\\n')) {
+                    privateKey = privateKey.replace(/\\n/g, '\n');
+                }
+                serviceAccount.private_key = privateKey;
+
+                console.log('🔑 Private key processed:', {
+                    length: privateKey.length,
+                    startsCorrect: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
+                    endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----')
+                });
+            }
+
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount)
+            });
+            console.log('✅ Firebase Admin initialized from FIREBASE_SERVICE_ACCOUNT JSON');
+        }
+        // OPTION 3: Fallback to local file
+        else {
+            console.log('🔧 Using local serviceAccountKey.json file');
+            const serviceAccount = require('./serviceAccountKey.json');
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount)
+            });
+            console.log('✅ Firebase Admin initialized from file');
+        }
     } catch (error) {
         console.warn('⚠️ Firebase Admin not initialized:', error.message);
         console.warn('💡 Use individual env vars: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL');
@@ -140,23 +141,52 @@ try {
 /**
  * Helper function to call DeepSeek via LLMService
  * Replaces all Ollama calls with DeepSeek API
+ * Optimized for fast responses with streaming support
  */
-async function callDeepSeek(systemPrompt, userPrompt) {
+async function callDeepSeek(systemPrompt, userPrompt, maxTokens = 2048, useStreaming = false) {
     if (!llmService || !llmService.model) {
         throw new Error('LLMService not available - DeepSeek not configured');
     }
 
     const messages = [];
     if (systemPrompt) {
-        messages.push(new SystemMessage(systemPrompt));
+        // Optimizar system prompt: solo primeros 500 caracteres si es muy largo
+        const optimizedSystemPrompt = systemPrompt.length > 500 ?
+            systemPrompt.substring(0, 500) + '...' :
+            systemPrompt;
+        messages.push(new SystemMessage(optimizedSystemPrompt));
     }
-    messages.push(new HumanMessage(userPrompt));
 
-    console.log('🤖 Calling DeepSeek v2.3...');
-    const response = await llmService.generateResponse(messages);
+    // Optimizar user prompt: limitar a 3000 caracteres
+    const optimizedUserPrompt = userPrompt.length > 3000 ?
+        userPrompt.substring(0, 3000) + '...' :
+        userPrompt;
+    messages.push(new HumanMessage(optimizedUserPrompt));
 
-    // Extract content from response
-    const content = response.content || response.text || response.toString();
+    console.log('🤖 Calling DeepSeek v2.3... (max tokens:', maxTokens, ', streaming:', useStreaming, ')');
+
+    // Configurar modelo con límite de tokens para respuestas más rápidas
+    const modelWithConfig = llmService.model.bind({
+        max_tokens: maxTokens,
+        temperature: 0.7
+    });
+
+    let content;
+
+    if (useStreaming) {
+        // Usar streaming para respuestas más rápidas (percepción)
+        try {
+            content = await llmService.generateStreamingResponse(messages);
+        } catch (streamError) {
+            console.warn('⚠️ Streaming failed, falling back to standard response:', streamError.message);
+            const response = await modelWithConfig.invoke(messages);
+            content = response.content || response.text || response.toString();
+        }
+    } else {
+        const response = await modelWithConfig.invoke(messages);
+        content = response.content || response.text || response.toString();
+    }
+
     console.log('✅ DeepSeek response received:', content.length, 'characters');
 
     return content;
@@ -220,7 +250,7 @@ function extractGitHubUrl(fileName) {
 async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('🐙 INICIANDO ANÁLISIS DE REPOSITORIO GITHUB...');
     console.log('   📦 URL:', repoUrl);
-    console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
+    console.log('   📋 Tarea:', taskDescription ? .substring(0, 100) || 'Sin descripción');
 
     if (!mcpService) {
         throw new Error('MCPService no está disponible');
@@ -235,7 +265,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
 
         return result;
     } catch (error) {
@@ -373,7 +403,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
         }
 
         const registrationTokens = tokens.map(t => t.token);
-        
+
         // Eliminar duplicados si los hay
         const uniqueTokens = [...new Set(registrationTokens)];
 
@@ -402,7 +432,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
                     failedTokens.push(uniqueTokens[idx]);
                 }
             });
-            
+
             if (failedTokens.length > 0) {
                 console.log('🧹 Limpiando tokens inválidos:', failedTokens.length);
                 await supabaseService.client
@@ -438,12 +468,12 @@ async function sendEmailNotification(userId, subject, text) {
         // 🔒 VALIDACIÓN: Verificar que el email tenga formato válido
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         const userEmail = user.email.trim();
-        
+
         if (!userEmail || !emailRegex.test(userEmail)) {
             console.warn(`⚠️ Email inválido para userId ${userId}: "${user.email}"`);
             return;
         }
-        
+
         console.log(`📧 Preparando email para: ${userEmail}`);
 
         const htmlContent = `
@@ -526,7 +556,7 @@ async function sendEmailNotification(userId, subject, text) {
         // 2. OPCIÓN 1: Resend HTTP API (RECOMENDADO para Railway)
         if (process.env.RESEND_API_KEY) {
             console.log('📧 Enviando email via Resend HTTP API...');
-            
+
             // ✅ Dominio verificado: yisuscompany.com (IONOS DNS configurado)
             // Registros DNS configurados en IONOS:
             // - MX: inbound-smtp.us-east-1.amazonaws.com
@@ -535,7 +565,7 @@ async function sendEmailNotification(userId, subject, text) {
             // - TXT send: v=spf1 include:amazonses.com ~all
             // - TXT _dmarc: v=DMARC1; p=none;
             const fromEmail = 'notificaciones@yisuscompany.com'; // ✅ Dominio verificado en Resend
-            
+
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
                     from: fromEmail,
@@ -552,7 +582,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
+                console.error('❌ Error con Resend:', resendError.response ? .data || resendError.message);
                 // Fallback a onboarding@resend.dev si falla el dominio personalizado
                 console.log('🔄 Reintentando con email por defecto de Resend...');
                 try {
@@ -570,7 +600,7 @@ async function sendEmailNotification(userId, subject, text) {
                     console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
+                    console.error('❌ Fallback también falló:', fallbackError.response ? .data || fallbackError.message);
                 }
             }
         }
@@ -578,13 +608,13 @@ async function sendEmailNotification(userId, subject, text) {
         // 3. OPCIÓN 2: SendGrid HTTP API
         if (process.env.SENDGRID_API_KEY) {
             console.log('📧 Enviando email via SendGrid HTTP API...');
-            
+
             const sgResponse = await axios.post('https://api.sendgrid.com/v3/mail/send', {
                 personalizations: [{
                     to: [{ email: userEmail }],
                     subject: subject
                 }],
-                from: { 
+                from: {
                     email: process.env.SENDGRID_FROM_EMAIL || 'noreply@example.com',
                     name: 'TareaMov AI'
                 },
@@ -606,7 +636,7 @@ async function sendEmailNotification(userId, subject, text) {
         // 4. FALLBACK: Gmail SMTP (⚠️ NO funciona en Railway, solo desarrollo local)
         if (nodemailer && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
             console.warn('⚠️ Usando Gmail SMTP - Solo funciona en desarrollo local, NO en Railway');
-            
+
             const transporter = nodemailer.createTransport({
                 service: 'gmail',
                 auth: {
@@ -640,9 +670,9 @@ async function sendEmailNotification(userId, subject, text) {
 
 // Configurar timeouts globales para Express
 app.use((req, res, next) => {
-    // Timeout de 25 minutos para todas las rutas
-    req.setTimeout(1500000); // 25 minutos
-    res.setTimeout(1500000); // 25 minutos
+    // Timeout de 35 segundos para forzar respuestas rápidas
+    req.setTimeout(35000); // 35 segundos
+    res.setTimeout(35000); // 35 segundos
     next();
 });
 
@@ -1225,7 +1255,7 @@ app.get('/', (req, res) => {
  * - Si el usuario tiene la app instalada: redirige al deep link (tareamov://...)
  * - Si NO tiene la app: descarga automáticamente el APK
  */
-app.get('/app-link', async (req, res) => {
+app.get('/app-link', async(req, res) => {
     const { userId, action = 'chat' } = req.query;
 
     if (!userId) {
@@ -1377,7 +1407,7 @@ app.get('/app-link', async (req, res) => {
 app.get('/download-apk', (req, res) => {
     const apkPath = './app-debug.apk';
     const fs = require('fs');
-    
+
     // Verificar si el APK existe
     if (!fs.existsSync(apkPath)) {
         return res.status(404).send(`
@@ -1416,11 +1446,11 @@ app.get('/download-apk', (req, res) => {
 </html>
         `);
     }
-    
+
     // Configurar headers para descarga
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     res.setHeader('Content-Disposition', 'attachment; filename="TareaMov.apk"');
-    
+
     // Enviar el archivo
     res.sendFile(apkPath, { root: __dirname }, (err) => {
         if (err) {
@@ -1450,8 +1480,7 @@ app.post('/notify-course-creation', async(req, res) => {
 
         // 1. Fetch subscribers from Supabase
         const subscribersResponse = await axios.get(
-            `${process.env.SUPABASE_URL}/rest/v1/subscriptions?subscriber_id=eq.${creatorUserId}&select=subscribed_to_id`,
-            {
+            `${process.env.SUPABASE_URL}/rest/v1/subscriptions?subscriber_id=eq.${creatorUserId}&select=subscribed_to_id`, {
                 headers: {
                     'apikey': process.env.SUPABASE_KEY,
                     'Authorization': `Bearer ${process.env.SUPABASE_KEY}`
@@ -1469,8 +1498,7 @@ app.post('/notify-course-creation', async(req, res) => {
         // 2. Get subscriber details (username, email)
         const subscriberIds = subscribers.map(s => s.subscribed_to_id);
         const usersResponse = await axios.get(
-            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,usuario,email`,
-            {
+            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,usuario,email`, {
                 headers: {
                     'apikey': process.env.SUPABASE_KEY,
                     'Authorization': `Bearer ${process.env.SUPABASE_KEY}`
@@ -1482,7 +1510,7 @@ app.post('/notify-course-creation', async(req, res) => {
 
         // 3. Create notification records + send emails
         let successCount = 0;
-        
+
         for (const user of users) {
             try {
                 // Create in-app notification
@@ -1500,8 +1528,7 @@ app.post('/notify-course-creation', async(req, res) => {
 
                 await axios.post(
                     `${process.env.SUPABASE_URL}/rest/v1/notifications`,
-                    notification,
-                    {
+                    notification, {
                         headers: {
                             'apikey': process.env.SUPABASE_KEY,
                             'Authorization': `Bearer ${process.env.SUPABASE_KEY}`,
@@ -1543,7 +1570,7 @@ app.post('/notify-course-creation', async(req, res) => {
             }
         }
 
-        res.json({ 
+        res.json({
             message: 'Notifications sent',
             notificationsSent: successCount,
             totalSubscribers: users.length
@@ -1696,10 +1723,10 @@ app.post('/notify-chat-response', async(req, res) => {
         // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
         // Solo notificar que hay una respuesta disponible
         const emailSubject = '🤖 Nueva respuesta del Asistente de IA';
-        
+
         // Smart link que detecta si la app está instalada o descarga el APK
         const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
-        
+
         const emailBody = `Hola ${user.username || 'Usuario'},
 
 Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respuesta está lista.
@@ -1722,8 +1749,8 @@ Este es un mensaje automático de TareaMov.`;
         await sendEmailNotification(userId, emailSubject, emailBody);
 
         console.log(`✅ Notificación de chat enviada a ${user.email} (sin datos sensibles)`);
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: 'Notificación enviada',
             email: user.email,
             securityNote: 'Response preview not included for security'
@@ -1756,7 +1783,7 @@ app.post('/send-push-notification', async(req, res) => {
         // Verificar que Firebase Admin esté disponible
         if (!admin || !admin.messaging) {
             console.warn('⚠️ Firebase Admin no disponible - push notifications desactivadas');
-            return res.status(503).json({ 
+            return res.status(503).json({
                 error: 'Push notifications no disponibles',
                 reason: 'Firebase Admin not configured'
             });
@@ -1775,7 +1802,7 @@ app.post('/send-push-notification', async(req, res) => {
         }
 
         // Intentar enviar a todos los tokens del usuario (puede tener múltiples dispositivos)
-        const sendPromises = tokens.map(async ({ token }) => {
+        const sendPromises = tokens.map(async({ token }) => {
             try {
                 const message = {
                     notification: {
@@ -1810,9 +1837,9 @@ app.post('/send-push-notification', async(req, res) => {
                 return { success: true, token, messageId: response };
             } catch (error) {
                 console.error(`❌ Error enviando push a token ${token.substring(0, 10)}...`, error.message);
-                
+
                 // Si el token es inválido, eliminarlo de la base de datos
-                if (error.code === 'messaging/invalid-registration-token' || 
+                if (error.code === 'messaging/invalid-registration-token' ||
                     error.code === 'messaging/registration-token-not-registered') {
                     await supabaseService.client
                         .from('user_fcm_tokens')
@@ -1820,7 +1847,7 @@ app.post('/send-push-notification', async(req, res) => {
                         .eq('token', token);
                     console.log(`🗑️ Token inválido eliminado de la base de datos`);
                 }
-                
+
                 return { success: false, token, error: error.message };
             }
         });
@@ -1829,8 +1856,8 @@ app.post('/send-push-notification', async(req, res) => {
         const successCount = results.filter(r => r.success).length;
 
         console.log(`📊 Notificaciones enviadas: ${successCount}/${tokens.length}`);
-        
-        res.json({ 
+
+        res.json({
             success: successCount > 0,
             message: `Push notifications sent to ${successCount} device(s)`,
             results
@@ -2037,7 +2064,7 @@ El archivo que enviaste no pudo ser procesado correctamente por el sistema. Esto
                             return res.json({ respuesta_texto: respuestaFormateada });
                         } else {
                             // Si el análisis falló pero tenemos información del error
-                            console.log('⚠️ Análisis de GitHub falló:', analysisResult?.error || 'Error desconocido');
+                            console.log('⚠️ Análisis de GitHub falló:', analysisResult ? .error || 'Error desconocido');
 
                             const respuestaError = `⚠️ **ERROR AL ANALIZAR REPOSITORIO**
 
@@ -2088,10 +2115,10 @@ No se pudo analizar el repositorio: ${gitHubUrl}
 
         // 📧 DETECCIÓN DE SOLICITUD DE NOTIFICACIÓN/CORREO
         const esSolicitudCorreo = /envi(ar|a|e)\s+(un\s+)?(correo|email|mail)|notific(ar|a|e)\s+a|mand(ar|a|e)\s+(un\s+)?(correo|email)/i.test(prompt);
-        
+
         if (esSolicitudCorreo) {
             console.log('📧 SOLICITUD DE CORREO DETECTADA');
-            
+
             try {
                 // 1. Extraer intención y datos con LLM
                 const extractionPrompt = `ACTÚA COMO UN PARSER DE COMANDOS.
@@ -2111,13 +2138,13 @@ No se pudo analizar el repositorio: ${gitHubUrl}
 
                 const extractionResponse = await callDeepSeek(null, extractionPrompt);
                 const jsonMatch = extractionResponse.match(/\{[\s\S]*\}/);
-                
+
                 if (jsonMatch) {
                     const cmd = JSON.parse(jsonMatch[0]);
                     console.log('📧 DATOS EXTRAÍDOS:', cmd);
-                    
+
                     let targetUserId = null;
-                    
+
                     if (cmd.target_type === 'me') {
                         targetUserId = userId;
                         if (!targetUserId) {
@@ -2133,7 +2160,7 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                                 .select('id, email')
                                 .ilike('usuario', cmd.target_name)
                                 .limit(1);
-                                
+
                             if (users && users.length > 0) {
                                 targetUserId = users[0].id;
                             } else {
@@ -2141,18 +2168,18 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                             }
                         }
                     }
-                    
+
                     if (targetUserId) {
                         // Enviar correo
                         console.log(`📧 Enviando correo a ID: ${targetUserId}`);
                         await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de TareaMov', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
-                        
+
                         // Responder al usuario
                         const respuestaExito = `✅ Correo enviado exitosamente a ${cmd.target_type === 'me' ? 'tu dirección de email' : cmd.target_name}.\n\n**Asunto:** ${cmd.subject}\n**Mensaje:** ${cmd.body}`;
-                        
+
                         return res.json({ respuesta_texto: respuestaExito });
                     } else if (cmd.target_type === 'me' && !userId) {
-                         return res.json({ respuesta_texto: "⚠️ No puedo enviarte un correo porque no detecto tu ID de usuario. Asegúrate de haber iniciado sesión." });
+                        return res.json({ respuesta_texto: "⚠️ No puedo enviarte un correo porque no detecto tu ID de usuario. Asegúrate de haber iniciado sesión." });
                     }
                 }
             } catch (err) {
@@ -2265,10 +2292,9 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                 sendPushNotification(
                     userId,
                     notifTitle,
-                    notifBody,
-                    { 
-                        type: "DEEPSEEK_RESPONSE", 
-                        fragment: "ChatBotFragment" 
+                    notifBody, {
+                        type: "DEEPSEEK_RESPONSE",
+                        fragment: "ChatBotFragment"
                     }
                 ).catch(err => console.error('Error enviando push:', err));
 
@@ -2288,44 +2314,24 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 
         // Si NO es pregunta de nota/tarea/archivo, solo DeepSeek responde
         if (!esPreguntaNota) {
-            console.log('📊 PROCESANDO PREGUNTA SIMPLE CON DEEPSEEK V2.3...');
+            console.log('📊 PROCESANDO PREGUNTA SIMPLE CON DEEPSEEK V2.3 (FAST MODE)...');
             try {
-                // Si hay contexto académico disponible, incluirlo para dar mejor respuesta
-                let promptCompleto = `INSTRUCCIONES CRÍTICAS:
-- RESPONDE SIEMPRE EN ESPAÑOL
-- USA TERMINOLOGÍA EN ESPAÑOL
-- NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
-- FORMATO EDUCATIVO Y PROFESIONAL
-- RESPUESTA CLARA Y COMPRENSIBLE
-
-PREGUNTA DEL USUARIO: ${prompt}`;
+                // Si hay contexto académico disponible, incluirlo pero MUY limitado
+                let promptCompleto = `${prompt}\n\nResponde brevemente en español.`;
 
                 if (taskDescription && taskDescription.trim() && fileContent && fileContent.trim()) {
-                    promptCompleto = `INSTRUCCIONES CRÍTICAS:
-- RESPONDE SIEMPRE EN ESPAÑOL
-- USA TERMINOLOGÍA EN ESPAÑOL
-- NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
-- FORMATO EDUCATIVO Y PROFESIONAL
-- RESPUESTA CLARA Y COMPRENSIBLE
+                    // Limitar contexto AGRESIVAMENTE para máxima velocidad
+                    const taskLimit = taskDescription.length > 500 ? taskDescription.substring(0, 500) + '...' : taskDescription;
+                    const fileLimit = fileContent.length > 800 ? fileContent.substring(0, 800) + '...' : fileContent;
 
-CONTEXTO ACADÉMICO DISPONIBLE:
-
-Descripción de la tarea: ${taskDescription}
-Contenido entregado: ${fileContent}
-
-Pregunta del usuario: ${prompt}
-
-Responde considerando el contexto académico disponible si es relevante para la pregunta. SIEMPRE EN ESPAÑOL.`;
+                    promptCompleto = `Tarea: ${taskLimit}\nArchivo: ${fileLimit}\nPregunta: ${prompt}\n\nResponde breve en español.`;
                 }
 
                 const tokensPrompt = encode(promptCompleto).length;
-                console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
-                console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO:', promptCompleto.substring(0, 500) + '...');
+                console.log('[FAST MODE] TOKENS:', tokensPrompt);
 
-                // Call DeepSeek via LLMService
-                let respuestaFinal = await callDeepSeek(null, promptCompleto);
-
-                // Defensive fallback if model returns empty
+                // Call DeepSeek con límite de tokens reducido para velocidad
+                let respuestaFinal = await callDeepSeek(null, promptCompleto, 800, true); // Defensive fallback if model returns empty
                 if (!respuestaFinal || !respuestaFinal.trim()) {
                     console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA, aplicando mensaje por defecto');
                     respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
@@ -2335,15 +2341,14 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 if (userId) {
                     const notifTitle = "Respuesta Lista 🤖";
                     const notifBody = "DeepSeek ha respondido a tu consulta.";
-                    
+
                     // Push Notification
                     sendPushNotification(
                         userId,
                         notifTitle,
-                        notifBody,
-                        { 
-                            type: "DEEPSEEK_RESPONSE", 
-                            fragment: "ChatBotFragment" 
+                        notifBody, {
+                            type: "DEEPSEEK_RESPONSE",
+                            fragment: "ChatBotFragment"
                         }
                     ).catch(err => console.error('Error enviando push:', err));
 
@@ -2439,15 +2444,14 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 if (userId) {
                     const notifTitle = "Respuesta Lista 🤖";
                     const notifBody = "DeepSeek ha respondido a tu consulta.";
-                    
+
                     // Push Notification
                     sendPushNotification(
                         userId,
                         notifTitle,
-                        notifBody,
-                        { 
-                            type: "DEEPSEEK_RESPONSE", 
-                            fragment: "ChatBotFragment" 
+                        notifBody, {
+                            type: "DEEPSEEK_RESPONSE",
+                            fragment: "ChatBotFragment"
                         }
                     ).catch(err => console.error('Error enviando push:', err));
 
@@ -2482,55 +2486,29 @@ Responde considerando el contexto académico disponible si es relevante para la 
             // Construir prompt contextualizado según el caso
             let promptContextualizado;
             if (archivoNoDisponible) {
-                promptContextualizado = `CONTEXTO ACADÉMICO:
-El estudiante ha seleccionado una tarea pero el contenido del archivo NO está disponible para análisis.
-Solo puedo proporcionar información basada en la DESCRIPCIÓN de la tarea.
-
-${taskDescription}
-
-PREGUNTA DEL ESTUDIANTE: ${prompt}
-
-INSTRUCCIONES DE RESPUESTA:
-1. Si el estudiante pregunta por calificación o evaluación:
-   - Explica que NO puedes calificar porque no tienes acceso al contenido del archivo
-   - Describe qué se espera en base a la descripción de la tarea
-   - Sugiere que vuelva a subir el archivo o contacte al profesor
-
-2. Si el estudiante pregunta sobre la tarea:
-   - Proporciona información basada en la descripción disponible
-   - Explica los requisitos de la tarea
-   - Da orientación sobre cómo completarla
-
-RESPONDE EN ESPAÑOL de forma clara y educativa.`;
+                const taskLimit = taskDescription.length > 500 ? taskDescription.substring(0, 500) + '...' : taskDescription;
+                promptContextualizado = `Archivo NO disponible.\nTarea: ${taskLimit}\nPregunta: ${prompt}\n\nResponde breve en español.`;
             } else {
-                promptContextualizado = `CONTEXTO ACADÉMICO:
-${taskDescription}
-
-PREGUNTA DEL ESTUDIANTE: ${prompt}
-
-INSTRUCCIONES: Responde en español de forma clara y educativa basándote en la información de la tarea proporcionada.`;
+                const taskLimit = taskDescription.length > 600 ? taskDescription.substring(0, 600) + '...' : taskDescription;
+                promptContextualizado = `${taskLimit}\n\n${prompt}\n\nResponde breve en español.`;
             }
 
             try {
                 const tokensPrompt = encode(promptContextualizado).length;
-                console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS (SIN ARCHIVO):', tokensPrompt);
-                console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO (SIN ARCHIVO):', promptContextualizado.substring(0, 500) + '...');
+                console.log('[FAST MODE - SIN ARCHIVO] TOKENS:', tokensPrompt);
 
-                // Call DeepSeek via LLMService
-                let respuestaFinal = await callDeepSeek(null, promptContextualizado);
+                // Call DeepSeek con streaming y tokens reducidos
+                let respuestaFinal = await callDeepSeek(null, promptContextualizado, 700, true);
 
                 const tokensRespuesta = encode(respuestaFinal).length;
-                console.log('[MODELO DeepSeek v2.3] TOKENS DE RESPUESTA (SIN ARCHIVO):', tokensRespuesta);
-                console.log('[MODELO DeepSeek v2.3] RESPUESTA RECIBIDA (SIN ARCHIVO):', respuestaFinal.substring(0, 300) + '...');
+                console.log('[FAST MODE] TOKENS RESPUESTA:', tokensRespuesta);
 
                 const tokensTotal = tokensPrompt + tokensRespuesta;
-                console.log('📊 RESUMEN DE TOKENS - TOTAL CONSUMIDO (SIN ARCHIVO):', tokensTotal);
+                console.log('[FAST MODE] TOTAL:', tokensTotal, 'tokens');
 
                 const endTime = new Date();
                 const duration = endTime - startTime;
-                console.log('🕐 HORA DE RESPUESTA:', endTime.toLocaleString('es-ES'));
-                console.log('⏱️ DURACIÓN TOTAL:', Math.round(duration / 1000), 'segundos');
-                console.log('==============================================');
+                console.log('⏱️ DURACIÓN:', Math.round(duration / 1000), 's');;
                 try {
                     const gradeMatch = respuestaFinal.match(/(\d+(?:\.\d+)?)\s*\/\s*10|nota\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
                     const gradeStr = gradeMatch ? (gradeMatch[1] || gradeMatch[2]) : null;
@@ -2552,10 +2530,9 @@ INSTRUCCIONES: Responde en español de forma clara y educativa basándote en la 
                     sendPushNotification(
                         userId,
                         notifTitle,
-                        notifBody,
-                        { 
-                            type: "DEEPSEEK_RESPONSE", 
-                            fragment: "ChatBotFragment" 
+                        notifBody, {
+                            type: "DEEPSEEK_RESPONSE",
+                            fragment: "ChatBotFragment"
                         }
                     ).catch(err => console.error('Error enviando push:', err));
 
@@ -2580,70 +2557,20 @@ INSTRUCCIONES: Responde en español de forma clara y educativa basándote en la 
 
         // MODO ESPECIAL: DeepSeek para evaluaciones críticas (reemplaza gemma3n)
         if (esPreguntaEvaluacionCritica) {
-            console.log('🎯 MODO EVALUACIÓN CRÍTICA - DEEPSEEK V2.3');
-            const promptEvaluacionCritica = `EVALUADOR ACADÉMICO JUSTO Y EQUILIBRADO:
+            console.log('🎯 MODO EVALUACIÓN CRÍTICA - DEEPSEEK V2.3 (FAST)');
 
-INSTRUCCIONES EDUCATIVAS:
-- RESPONDE SIEMPRE EN ESPAÑOL
-- EVALUACIÓN JUSTA Y CONSTRUCTIVA
-- RECONOCE CUANDO EL ESTUDIANTE CUMPLE CON LO SOLICITADO
-- FORMATO EDUCATIVO Y PROFESIONAL
+            // Limitar contexto AGRESIVAMENTE para máxima velocidad
+            const taskLimit = taskDescriptionClean.length > 600 ? taskDescriptionClean.substring(0, 600) + '...' : taskDescriptionClean;
+            const fileLimit = fileContentClean.length > 1000 ? fileContentClean.substring(0, 1000) + '...' : fileContentClean;
 
-PRINCIPIO FUNDAMENTAL: 
-SER JUSTO - Si se pide "UN EJEMPLO" de algo, CUALQUIER ejemplo válido de esa categoría merece nota alta.
-
-CRITERIOS DE EVALUACIÓN INTELIGENTES:
-🟢 **CUMPLIMIENTO PERFECTO (9-10)**: Entrega exactamente lo pedido
-🟢 **CUMPLIMIENTO BUENO (7-8)**: Cumple bien, aunque sea más complejo
-🟡 **CUMPLIMIENTO PARCIAL (5-6)**: Relacionado pero no exacto
-🟠 **CUMPLIMIENTO MÍNIMO (3-4)**: Alguna relación pero se desvía
-🔴 **NO CUMPLE (1-2)**: Poca o ninguna relación
-⚫ **TOTALMENTE INCORRECTO (0)**: Sin relación alguna
-
-REGLAS ESPECÍFICAS DE EVALUACIÓN:
-
-📝 **SOLICITUDES GENERALES** (merecen nota alta si cumplen):
-- "ejemplo de algoritmo Python" → Cualquier script Python = 8-10
-- "ejemplo de programa" → Cualquier programa funcional = 8-10
-- "ejemplo de código" → Cualquier código válido = 8-10
-- "script Python" → Cualquier script Python = 8-10
-
-📝 **SOLICITUDES ESPECÍFICAS** (deben cumplir exactamente):
-- "base de datos de IA" → DEBE ser sobre IA, no películas = 0 si no es IA
-- "calculadora" → DEBE calcular, no ser un menú = 0 si no calcula
-- "algoritmo de ordenamiento" → DEBE ordenar = 0 si no ordena
-- "página de login" → DEBE tener login = 0 si no tiene login
-
-EJEMPLOS CONCRETOS:
-✅ "ejemplo algoritmo Python" + script Python complejo = 10/10 (CUMPLE)
-❌ "base de datos de IA" + base de datos de películas = 0/10 (NO CUMPLE)
-❌ "calculadora" + sistema de archivos = 0/10 (NO CUMPLE)
-✅ "ejemplo de programa" + cualquier programa = 9-10/10 (CUMPLE)
-
-FORMATO RESPUESTA OBLIGATORIO (EN ESPAÑOL):
-📊 **CALIFICACIÓN ACTUAL: [0-10]/10**
-🎯 **TEMA SOLICITADO:** [lo que pidió el profesor]
-📄 **TEMA ENTREGADO:** [lo que envió el estudiante]
-⚖️ **COMPATIBILIDAD:** [TU ANÁLISIS JUSTO]
-📝 **JUSTIFICACIÓN:** [Explicación educativa y justa]
-
-PREGUNTA: ${prompt}
-
-LO QUE SE PIDIÓ:
-${taskDescriptionClean}
-
-LO QUE SE ENTREGÓ:
-${fileContentClean}
-
-EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CALIFICACIÓN ACTUAL: X/10**" AL INICIO.`;
+            const promptEvaluacionCritica = `EVALÚA EN ESPAÑOL:\n\nTAREA: ${taskLimit}\n\nARCHIVO: ${fileLimit}\n\nFORMATO:\n📊 CALIFICACIÓN: X/10\n⚖️ COMPATIBLE: SÍ/NO\n📝 RAZÓN: [breve]`;
 
             try {
                 const tokensEvaluacion = encode(promptEvaluacionCritica).length;
-                console.log('[MODO CRÍTICO - DEEPSEEK v2.3] TOKENS CONSUMIDOS:', tokensEvaluacion);
+                console.log('[FAST EVAL] TOKENS:', tokensEvaluacion);
 
-                // Call DeepSeek via LLMService
-                let respuestaEvaluacion = await callDeepSeek(null, promptEvaluacionCritica);
-
+                // Call DeepSeek con límite de tokens reducido y streaming
+                let respuestaEvaluacion = await callDeepSeek(null, promptEvaluacionCritica, 600, true);
                 const tokensRespuesta = encode(respuestaEvaluacion).length;
                 console.log('[MODO CRÍTICO - DEEPSEEK v2.3] TOKENS DE RESPUESTA:', tokensRespuesta);
                 console.log('[MODO CRÍTICO - DEEPSEEK v2.3] RESPUESTA:', respuestaEvaluacion.substring(0, 500) + '...');
@@ -2652,7 +2579,7 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
                 const duration = endTime - startTime;
                 console.log('🕐 EVALUACIÓN CRÍTICA COMPLETADA:', endTime.toLocaleString('es-ES'));
                 console.log('⏱️ DURACIÓN:', Math.round(duration / 1000), 'segundos');
-                console.log('==============================================');
+                console.log('==============================================');;
 
                 // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
                 if (userId) {
@@ -2663,10 +2590,9 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
                     sendPushNotification(
                         userId,
                         notifTitle,
-                        notifBody,
-                        { 
-                            type: "DEEPSEEK_RESPONSE", 
-                            fragment: "ChatBotFragment" 
+                        notifBody, {
+                            type: "DEEPSEEK_RESPONSE",
+                            fragment: "ChatBotFragment"
                         }
                     ).catch(err => console.error('Error enviando push:', err));
 
@@ -2769,10 +2695,9 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
                 sendPushNotification(
                     userId,
                     notifTitle,
-                    notifBody,
-                    { 
-                        type: "DEEPSEEK_RESPONSE", 
-                        fragment: "ChatBotFragment" 
+                    notifBody, {
+                        type: "DEEPSEEK_RESPONSE",
+                        fragment: "ChatBotFragment"
                     }
                 ).catch(err => console.error('Error enviando push:', err));
 
@@ -3008,7 +2933,7 @@ You can send to specific users by their ID.`,
  */
 app.post('/tools/call', async(req, res) => {
     const { params } = req.body;
-    console.log('🔧 Tool call request:', params?.name);
+    console.log('🔧 Tool call request:', params ? .name);
 
     try {
         const { name, arguments: args } = params;
