@@ -17,7 +17,8 @@ import { MCPService } from './src/domain/services/MCPService.js';
 import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
 
 import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+const require = createRequire(
+    import.meta.url);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -46,80 +47,80 @@ if (admin) {
         // OPTION 1: Use individual environment variables (RECOMMENDED for Railway)
         if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
             console.log('🔧 Using individual Firebase environment variables');
-            
-            let privateKey = process.env.FIREBASE_PRIVATE_KEY;
-        
-        // Fix escaped newlines if present
-        if (privateKey.includes('\\n')) {
-            privateKey = privateKey.replace(/\\n/g, '\n');
-        }
-        
-        const serviceAccount = {
-            type: 'service_account',
-            project_id: process.env.FIREBASE_PROJECT_ID,
-            private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-            private_key: privateKey,
-            client_email: process.env.FIREBASE_CLIENT_EMAIL,
-            client_id: process.env.FIREBASE_CLIENT_ID || '',
-            auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-            token_uri: 'https://oauth2.googleapis.com/token',
-            auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
-            client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL || ''
-        };
-        
-        console.log('🔑 Private key info:', {
-            length: privateKey.length,
-            startsCorrect: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
-            endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----')
-        });
-        
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
-        });
-        console.log('✅ Firebase Admin initialized from individual environment variables');
-    }
-    // OPTION 2: Try to load from FIREBASE_SERVICE_ACCOUNT JSON (legacy)
-    else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-        console.log('🔧 Using FIREBASE_SERVICE_ACCOUNT JSON');
-        let serviceAccount;
-        try {
-            serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        } catch (error) {
-            console.warn('⚠️ Error parsing FIREBASE_SERVICE_ACCOUNT JSON:', error.message);
-            // Attempt to fix common copy-paste issues with escaped quotes
-            const cleaned = process.env.FIREBASE_SERVICE_ACCOUNT.toString().replace(/\\"/g, '"');
-            serviceAccount = JSON.parse(cleaned);
-        }
 
-        // Fix private_key newlines
-        if (serviceAccount.private_key) {
-            let privateKey = serviceAccount.private_key;
+            let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+            // Fix escaped newlines if present
             if (privateKey.includes('\\n')) {
                 privateKey = privateKey.replace(/\\n/g, '\n');
             }
-            serviceAccount.private_key = privateKey;
-            
-            console.log('🔑 Private key processed:', {
+
+            const serviceAccount = {
+                type: 'service_account',
+                project_id: process.env.FIREBASE_PROJECT_ID,
+                private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+                private_key: privateKey,
+                client_email: process.env.FIREBASE_CLIENT_EMAIL,
+                client_id: process.env.FIREBASE_CLIENT_ID || '',
+                auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+                token_uri: 'https://oauth2.googleapis.com/token',
+                auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+                client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL || ''
+            };
+
+            console.log('🔑 Private key info:', {
                 length: privateKey.length,
                 startsCorrect: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
                 endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----')
             });
-        }
 
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
-        });
-        console.log('✅ Firebase Admin initialized from FIREBASE_SERVICE_ACCOUNT JSON');
-    } 
-    // OPTION 3: Fallback to local file
-    else {
-        console.log('🔧 Using local serviceAccountKey.json file');
-        const serviceAccount = require('./serviceAccountKey.json');
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
-        });
-        console.log('✅ Firebase Admin initialized from file');
-    }
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount)
+            });
+            console.log('✅ Firebase Admin initialized from individual environment variables');
+        }
+        // OPTION 2: Try to load from FIREBASE_SERVICE_ACCOUNT JSON (legacy)
+        else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+            console.log('🔧 Using FIREBASE_SERVICE_ACCOUNT JSON');
+            let serviceAccount;
+            try {
+                serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+            } catch (error) {
+                console.warn('⚠️ Error parsing FIREBASE_SERVICE_ACCOUNT JSON:', error.message);
+                // Attempt to fix common copy-paste issues with escaped quotes
+                const cleaned = process.env.FIREBASE_SERVICE_ACCOUNT.toString().replace(/\\"/g, '"');
+                serviceAccount = JSON.parse(cleaned);
+            }
+
+            // Fix private_key newlines
+            if (serviceAccount.private_key) {
+                let privateKey = serviceAccount.private_key;
+                if (privateKey.includes('\\n')) {
+                    privateKey = privateKey.replace(/\\n/g, '\n');
+                }
+                serviceAccount.private_key = privateKey;
+
+                console.log('🔑 Private key processed:', {
+                    length: privateKey.length,
+                    startsCorrect: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
+                    endsCorrect: privateKey.trim().endsWith('-----END PRIVATE KEY-----')
+                });
+            }
+
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount)
+            });
+            console.log('✅ Firebase Admin initialized from FIREBASE_SERVICE_ACCOUNT JSON');
+        }
+        // OPTION 3: Fallback to local file
+        else {
+            console.log('🔧 Using local serviceAccountKey.json file');
+            const serviceAccount = require('./serviceAccountKey.json');
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount)
+            });
+            console.log('✅ Firebase Admin initialized from file');
+        }
     } catch (error) {
         console.warn('⚠️ Firebase Admin not initialized:', error.message);
         console.warn('💡 Use individual env vars: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL');
@@ -220,7 +221,7 @@ function extractGitHubUrl(fileName) {
 async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('🐙 INICIANDO ANÁLISIS DE REPOSITORIO GITHUB...');
     console.log('   📦 URL:', repoUrl);
-    console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
+    console.log('   📋 Tarea:', taskDescription ? .substring(0, 100) || 'Sin descripción');
 
     if (!mcpService) {
         throw new Error('MCPService no está disponible');
@@ -235,7 +236,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
 
         return result;
     } catch (error) {
@@ -373,7 +374,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
         }
 
         const registrationTokens = tokens.map(t => t.token);
-        
+
         // Eliminar duplicados si los hay
         const uniqueTokens = [...new Set(registrationTokens)];
 
@@ -402,7 +403,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
                     failedTokens.push(uniqueTokens[idx]);
                 }
             });
-            
+
             if (failedTokens.length > 0) {
                 console.log('🧹 Limpiando tokens inválidos:', failedTokens.length);
                 await supabaseService.client
@@ -438,21 +439,23 @@ async function sendEmailNotification(userId, subject, text) {
         // 🔒 VALIDACIÓN: Verificar que el email tenga formato válido
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         const userEmail = user.email.trim();
-        
+
         if (!userEmail || !emailRegex.test(userEmail)) {
             console.warn(`⚠️ Email inválido para userId ${userId}: "${user.email}"`);
             return;
         }
-        
+
         console.log(`📧 Preparando email para: ${userEmail}`);
 
         // 🎬 Template de email con animación Lottie y diseño moderno CourseV
         const htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>${subject}</title>
     <!--[if mso]>
@@ -821,7 +824,7 @@ async function sendEmailNotification(userId, subject, text) {
         // 2. OPCIÓN 1: Resend HTTP API (RECOMENDADO para Railway)
         if (process.env.RESEND_API_KEY) {
             console.log('📧 Enviando email via Resend HTTP API...');
-            
+
             // ✅ Dominio verificado: yisuscompany.com (IONOS DNS configurado)
             // Usando CourseV como remitente para mejor branding
             const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Branding CourseV
@@ -847,7 +850,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
+                console.error('❌ Error con Resend:', resendError.response ? .data || resendError.message);
                 // Fallback a onboarding@resend.dev si falla el dominio personalizado
                 console.log('🔄 Reintentando con email por defecto de Resend...');
                 try {
@@ -865,7 +868,7 @@ async function sendEmailNotification(userId, subject, text) {
                     console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
+                    console.error('❌ Fallback también falló:', fallbackError.response ? .data || fallbackError.message);
                 }
             }
         }
@@ -873,7 +876,7 @@ async function sendEmailNotification(userId, subject, text) {
         // 3. OPCIÓN 2: SendGrid HTTP API
         if (process.env.SENDGRID_API_KEY) {
             console.log('📧 Enviando email via SendGrid HTTP API...');
-            
+
             const sgResponse = await axios.post('https://api.sendgrid.com/v3/mail/send', {
                 personalizations: [{
                     to: [{ email: userEmail }],
@@ -901,7 +904,7 @@ async function sendEmailNotification(userId, subject, text) {
         // 4. FALLBACK: Gmail SMTP (⚠️ NO funciona en Railway, solo desarrollo local)
         if (nodemailer && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
             console.warn('⚠️ Usando Gmail SMTP - Solo funciona en desarrollo local, NO en Railway');
-            
+
             const transporter = nodemailer.createTransport({
                 service: 'gmail',
                 auth: {
@@ -1520,7 +1523,7 @@ app.get('/', (req, res) => {
  * - Si el usuario tiene la app instalada: redirige al deep link (tareamov://...)
  * - Si NO tiene la app: descarga automáticamente el APK
  */
-app.get('/app-link', async (req, res) => {
+app.get('/app-link', async(req, res) => {
     const { userId, action = 'chat' } = req.query;
 
     if (!userId) {
@@ -1672,7 +1675,7 @@ app.get('/app-link', async (req, res) => {
 app.get('/download-apk', (req, res) => {
     const apkPath = './app-debug.apk';
     const fs = require('fs');
-    
+
     // Verificar si el APK existe
     if (!fs.existsSync(apkPath)) {
         return res.status(404).send(`
@@ -1711,11 +1714,11 @@ app.get('/download-apk', (req, res) => {
 </html>
         `);
     }
-    
+
     // Configurar headers para descarga
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     res.setHeader('Content-Disposition', 'attachment; filename="TareaMov.apk"');
-    
+
     // Enviar el archivo
     res.sendFile(apkPath, { root: __dirname }, (err) => {
         if (err) {
@@ -1745,8 +1748,7 @@ app.post('/notify-course-creation', async(req, res) => {
 
         // 1. Fetch subscribers from Supabase
         const subscribersResponse = await axios.get(
-            `${process.env.SUPABASE_URL}/rest/v1/subscriptions?subscriber_id=eq.${creatorUserId}&select=subscribed_to_id`,
-            {
+            `${process.env.SUPABASE_URL}/rest/v1/subscriptions?subscriber_id=eq.${creatorUserId}&select=subscribed_to_id`, {
                 headers: {
                     'apikey': process.env.SUPABASE_KEY,
                     'Authorization': `Bearer ${process.env.SUPABASE_KEY}`
@@ -1764,8 +1766,7 @@ app.post('/notify-course-creation', async(req, res) => {
         // 2. Get subscriber details (username, email)
         const subscriberIds = subscribers.map(s => s.subscribed_to_id);
         const usersResponse = await axios.get(
-            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,usuario,email`,
-            {
+            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,usuario,email`, {
                 headers: {
                     'apikey': process.env.SUPABASE_KEY,
                     'Authorization': `Bearer ${process.env.SUPABASE_KEY}`
@@ -1777,7 +1778,7 @@ app.post('/notify-course-creation', async(req, res) => {
 
         // 3. Create notification records + send emails
         let successCount = 0;
-        
+
         for (const user of users) {
             try {
                 // Create in-app notification
@@ -1795,8 +1796,7 @@ app.post('/notify-course-creation', async(req, res) => {
 
                 await axios.post(
                     `${process.env.SUPABASE_URL}/rest/v1/notifications`,
-                    notification,
-                    {
+                    notification, {
                         headers: {
                             'apikey': process.env.SUPABASE_KEY,
                             'Authorization': `Bearer ${process.env.SUPABASE_KEY}`,
@@ -1838,7 +1838,7 @@ app.post('/notify-course-creation', async(req, res) => {
             }
         }
 
-        res.json({ 
+        res.json({
             message: 'Notifications sent',
             notificationsSent: successCount,
             totalSubscribers: users.length
@@ -1990,35 +1990,37 @@ app.post('/notify-chat-response', async(req, res) => {
 
         // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
         // Solo notificar que hay una respuesta disponible
-        const emailSubject = '🤖 Nueva respuesta del Asistente de IA';
-        
+        const emailSubject = 'Nueva respuesta disponible - CourseV';
+
         // Smart link que detecta si la app está instalada o descarga el APK
         const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
-        
+
         const emailBody = `Hola ${user.username || 'Usuario'},
 
-Tu consulta ha sido procesada por el asistente de IA (DeepSeek-V3.2) y tu respuesta está lista.
+Tu consulta ha sido procesada por nuestro asistente de inteligencia artificial y tu respuesta está disponible.
 
-🔒 Por seguridad, la respuesta completa solo está disponible dentro de la aplicación.
+Por razones de seguridad, la respuesta completa solo está disponible dentro de la aplicación móvil.
 
-📱 Haz clic en el enlace para abrir la app o descargarla si aún no la tienes:
+Para ver tu respuesta, accede a la aplicación CourseV:
+${smartLink}
 
-🔗 Abrir TareaMov: ${smartLink}
+Información de seguridad:
+- Las respuestas pueden contener información personal
+- No compartimos datos completos por correo electrónico
+- Verifica tu identidad en la aplicación antes de acceder
 
----
-💡 Consejos de seguridad:
-- Las respuestas del IA pueden contener información sensible
-- Nunca compartimos datos completos por email
-- Siempre verifica tu identidad en la app antes de ver respuestas
+Si no solicitaste esta consulta, por favor ignora este mensaje.
 
-Este es un mensaje automático de TareaMov.`;
+Saludos cordiales,
+Equipo CourseV
+Plataforma Educativa`;
 
         // Enviar email usando la función existente
         await sendEmailNotification(userId, emailSubject, emailBody);
 
         console.log(`✅ Notificación de chat enviada a ${user.email} (sin datos sensibles)`);
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: 'Notificación enviada',
             email: user.email,
             securityNote: 'Response preview not included for security'
@@ -2051,7 +2053,7 @@ app.post('/send-push-notification', async(req, res) => {
         // Verificar que Firebase Admin esté disponible
         if (!admin || !admin.messaging) {
             console.warn('⚠️ Firebase Admin no disponible - push notifications desactivadas');
-            return res.status(503).json({ 
+            return res.status(503).json({
                 error: 'Push notifications no disponibles',
                 reason: 'Firebase Admin not configured'
             });
@@ -2070,7 +2072,7 @@ app.post('/send-push-notification', async(req, res) => {
         }
 
         // Intentar enviar a todos los tokens del usuario (puede tener múltiples dispositivos)
-        const sendPromises = tokens.map(async ({ token }) => {
+        const sendPromises = tokens.map(async({ token }) => {
             try {
                 const message = {
                     notification: {
@@ -2105,9 +2107,9 @@ app.post('/send-push-notification', async(req, res) => {
                 return { success: true, token, messageId: response };
             } catch (error) {
                 console.error(`❌ Error enviando push a token ${token.substring(0, 10)}...`, error.message);
-                
+
                 // Si el token es inválido, eliminarlo de la base de datos
-                if (error.code === 'messaging/invalid-registration-token' || 
+                if (error.code === 'messaging/invalid-registration-token' ||
                     error.code === 'messaging/registration-token-not-registered') {
                     await supabaseService.client
                         .from('user_fcm_tokens')
@@ -2115,7 +2117,7 @@ app.post('/send-push-notification', async(req, res) => {
                         .eq('token', token);
                     console.log(`🗑️ Token inválido eliminado de la base de datos`);
                 }
-                
+
                 return { success: false, token, error: error.message };
             }
         });
@@ -2124,8 +2126,8 @@ app.post('/send-push-notification', async(req, res) => {
         const successCount = results.filter(r => r.success).length;
 
         console.log(`📊 Notificaciones enviadas: ${successCount}/${tokens.length}`);
-        
-        res.json({ 
+
+        res.json({
             success: successCount > 0,
             message: `Push notifications sent to ${successCount} device(s)`,
             results
@@ -2332,7 +2334,7 @@ El archivo que enviaste no pudo ser procesado correctamente por el sistema. Esto
                             return res.json({ respuesta_texto: respuestaFormateada });
                         } else {
                             // Si el análisis falló pero tenemos información del error
-                            console.log('⚠️ Análisis de GitHub falló:', analysisResult?.error || 'Error desconocido');
+                            console.log('⚠️ Análisis de GitHub falló:', analysisResult ? .error || 'Error desconocido');
 
                             const respuestaError = `⚠️ **ERROR AL ANALIZAR REPOSITORIO**
 
@@ -2383,10 +2385,10 @@ No se pudo analizar el repositorio: ${gitHubUrl}
 
         // 📧 DETECCIÓN DE SOLICITUD DE NOTIFICACIÓN/CORREO
         const esSolicitudCorreo = /envi(ar|a|e)\s+(un\s+)?(correo|email|mail)|notific(ar|a|e)\s+a|mand(ar|a|e)\s+(un\s+)?(correo|email)/i.test(prompt);
-        
+
         if (esSolicitudCorreo) {
             console.log('📧 SOLICITUD DE CORREO DETECTADA');
-            
+
             try {
                 // 1. Extraer intención y datos con LLM
                 const extractionPrompt = `ACTÚA COMO UN PARSER DE COMANDOS.
@@ -2406,13 +2408,13 @@ No se pudo analizar el repositorio: ${gitHubUrl}
 
                 const extractionResponse = await callDeepSeek(null, extractionPrompt);
                 const jsonMatch = extractionResponse.match(/\{[\s\S]*\}/);
-                
+
                 if (jsonMatch) {
                     const cmd = JSON.parse(jsonMatch[0]);
                     console.log('📧 DATOS EXTRAÍDOS:', cmd);
-                    
+
                     let targetUserId = null;
-                    
+
                     if (cmd.target_type === 'me') {
                         targetUserId = userId;
                         if (!targetUserId) {
@@ -2428,7 +2430,7 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                                 .select('id, email')
                                 .ilike('usuario', cmd.target_name)
                                 .limit(1);
-                                
+
                             if (users && users.length > 0) {
                                 targetUserId = users[0].id;
                             } else {
@@ -2436,18 +2438,18 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                             }
                         }
                     }
-                    
+
                     if (targetUserId) {
                         // Enviar correo
                         console.log(`📧 Enviando correo a ID: ${targetUserId}`);
                         await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de TareaMov', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
-                        
+
                         // Responder al usuario
                         const respuestaExito = `✅ Correo enviado exitosamente a ${cmd.target_type === 'me' ? 'tu dirección de email' : cmd.target_name}.\n\n**Asunto:** ${cmd.subject}\n**Mensaje:** ${cmd.body}`;
-                        
+
                         return res.json({ respuesta_texto: respuestaExito });
                     } else if (cmd.target_type === 'me' && !userId) {
-                         return res.json({ respuesta_texto: "⚠️ No puedo enviarte un correo porque no detecto tu ID de usuario. Asegúrate de haber iniciado sesión." });
+                        return res.json({ respuesta_texto: "⚠️ No puedo enviarte un correo porque no detecto tu ID de usuario. Asegúrate de haber iniciado sesión." });
                     }
                 }
             } catch (err) {
@@ -2560,10 +2562,9 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                 sendPushNotification(
                     userId,
                     notifTitle,
-                    notifBody,
-                    { 
-                        type: "DEEPSEEK_RESPONSE", 
-                        fragment: "ChatBotFragment" 
+                    notifBody, {
+                        type: "DEEPSEEK_RESPONSE",
+                        fragment: "ChatBotFragment"
                     }
                 ).catch(err => console.error('Error enviando push:', err));
 
@@ -2630,15 +2631,14 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 if (userId) {
                     const notifTitle = "Respuesta Lista 🤖";
                     const notifBody = "DeepSeek ha respondido a tu consulta.";
-                    
+
                     // Push Notification
                     sendPushNotification(
                         userId,
                         notifTitle,
-                        notifBody,
-                        { 
-                            type: "DEEPSEEK_RESPONSE", 
-                            fragment: "ChatBotFragment" 
+                        notifBody, {
+                            type: "DEEPSEEK_RESPONSE",
+                            fragment: "ChatBotFragment"
                         }
                     ).catch(err => console.error('Error enviando push:', err));
 
@@ -2734,15 +2734,14 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 if (userId) {
                     const notifTitle = "Respuesta Lista 🤖";
                     const notifBody = "DeepSeek ha respondido a tu consulta.";
-                    
+
                     // Push Notification
                     sendPushNotification(
                         userId,
                         notifTitle,
-                        notifBody,
-                        { 
-                            type: "DEEPSEEK_RESPONSE", 
-                            fragment: "ChatBotFragment" 
+                        notifBody, {
+                            type: "DEEPSEEK_RESPONSE",
+                            fragment: "ChatBotFragment"
                         }
                     ).catch(err => console.error('Error enviando push:', err));
 
@@ -2847,10 +2846,9 @@ INSTRUCCIONES: Responde en español de forma clara y educativa basándote en la 
                     sendPushNotification(
                         userId,
                         notifTitle,
-                        notifBody,
-                        { 
-                            type: "DEEPSEEK_RESPONSE", 
-                            fragment: "ChatBotFragment" 
+                        notifBody, {
+                            type: "DEEPSEEK_RESPONSE",
+                            fragment: "ChatBotFragment"
                         }
                     ).catch(err => console.error('Error enviando push:', err));
 
@@ -2958,10 +2956,9 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
                     sendPushNotification(
                         userId,
                         notifTitle,
-                        notifBody,
-                        { 
-                            type: "DEEPSEEK_RESPONSE", 
-                            fragment: "ChatBotFragment" 
+                        notifBody, {
+                            type: "DEEPSEEK_RESPONSE",
+                            fragment: "ChatBotFragment"
                         }
                     ).catch(err => console.error('Error enviando push:', err));
 
@@ -3064,10 +3061,9 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
                 sendPushNotification(
                     userId,
                     notifTitle,
-                    notifBody,
-                    { 
-                        type: "DEEPSEEK_RESPONSE", 
-                        fragment: "ChatBotFragment" 
+                    notifBody, {
+                        type: "DEEPSEEK_RESPONSE",
+                        fragment: "ChatBotFragment"
                     }
                 ).catch(err => console.error('Error enviando push:', err));
 
@@ -3303,7 +3299,7 @@ You can send to specific users by their ID.`,
  */
 app.post('/tools/call', async(req, res) => {
     const { params } = req.body;
-    console.log('🔧 Tool call request:', params?.name);
+    console.log('🔧 Tool call request:', params ? .name);
 
     try {
         const { name, arguments: args } = params;
