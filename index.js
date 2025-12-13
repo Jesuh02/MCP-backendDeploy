@@ -2682,6 +2682,27 @@ app.post('/procesar-prompt', async(req, res) => {
                     }
                 }
                 
+                // Estrategia 4: Buscar ÚLTIMA submission del usuario (fallback si no hay taskId)
+                // Esto es útil cuando el usuario pregunta sobre su última tarea enviada
+                if (!submission && (userId || studentId)) {
+                    const searchUserId = userId || studentId;
+                    console.log(`📡 Buscando ÚLTIMA submission del usuario ${searchUserId}...`);
+                    const { data, error } = await supabaseService.client
+                        .from('task_submissions')
+                        .select('*')
+                        .eq('student_id', searchUserId)
+                        .order('submission_date', { ascending: false })
+                        .limit(1)
+                        .single();
+                    
+                    if (!error && data) {
+                        submission = data;
+                        console.log(`✅ Última submission encontrada: ID=${data.id}, file_uri=${data.file_uri}, taskId=${data.task_id}`);
+                    } else {
+                        console.log(`⚠️ No se encontró ninguna submission para el usuario ${searchUserId}`);
+                    }
+                }
+                
                 // Si encontramos la submission, obtener el contenido del archivo
                 if (submission && submission.file_uri) {
                     console.log(`📥 Obteniendo contenido del archivo desde: ${submission.file_uri}`);
@@ -2776,6 +2797,25 @@ app.post('/procesar-prompt', async(req, res) => {
             console.log('   - Descripción profesor:', extractedProfessorDescription ? extractedProfessorDescription.substring(0, 100) + '...' : '(no encontrado)');
             console.log('   - Archivo:', extractedFileName || '(no encontrado)');
             console.log('   - Resumen:', extractedSummary ? extractedSummary.substring(0, 100) + '...' : '(no encontrado)');
+            
+            // 🔥 NUEVO: Intentar extraer URL de R2 del taskDescription si hay una
+            if ((!fileContent || fileContent.trim().length < 50)) {
+                const r2UrlMatch = taskDescription.match(/(https?:\/\/[^\s]*\.r2\.dev[^\s]*)/);
+                if (r2UrlMatch) {
+                    const r2Url = r2UrlMatch[1];
+                    console.log(`🔗 URL de R2 detectada en taskDescription: ${r2Url}`);
+                    
+                    try {
+                        const fileData = await getSubmissionFileContent(r2Url, extractedFileName || 'archivo.txt', null);
+                        if (fileData && fileData.content) {
+                            fileContent = fileData.content;
+                            console.log(`✅ Contenido descargado desde URL en taskDescription: ${fileContent.length} caracteres`);
+                        }
+                    } catch (urlError) {
+                        console.log(`⚠️ Error descargando desde URL en taskDescription: ${urlError.message}`);
+                    }
+                }
+            }
         }
 
         // ============================================================
