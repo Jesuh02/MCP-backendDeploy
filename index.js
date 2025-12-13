@@ -2617,7 +2617,99 @@ app.post('/procesar-prompt', async(req, res) => {
         console.log('==============================================');
 
         // Recibe prompt del usuario, url de ollama y contexto del archivo (descripcionTarea)
-        let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent, userId } = req.body;
+        // 🔥 NUEVO: También recibimos submissionId, taskId, fileUri para poder obtener el contenido desde R2/Supabase
+        let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent, userId, submissionId, taskId, fileUri, studentId } = req.body;
+
+        // ============================================================
+        // 🔥 NUEVO: OBTENER CONTENIDO DESDE R2/SUPABASE SI NO VIENE EN EL REQUEST
+        // Si fileContent está vacío pero tenemos información de la submission,
+        // intentar obtener el contenido directamente desde el servidor
+        // ============================================================
+        if ((!fileContent || fileContent.trim().length < 50) && supabaseService) {
+            console.log('🔍 FileContent vacío o muy corto, intentando obtener desde servidor...');
+            
+            try {
+                let submission = null;
+                
+                // Estrategia 1: Buscar por submissionId directo
+                if (submissionId) {
+                    console.log(`📡 Buscando submission por ID: ${submissionId}`);
+                    const { data, error } = await supabaseService.client
+                        .from('task_submissions')
+                        .select('*')
+                        .eq('id', submissionId)
+                        .single();
+                    
+                    if (!error && data) {
+                        submission = data;
+                        console.log(`✅ Submission encontrada: ID=${data.id}, file_uri=${data.file_uri}`);
+                    }
+                }
+                
+                // Estrategia 2: Buscar por taskId + studentId
+                if (!submission && taskId && studentId) {
+                    console.log(`📡 Buscando submission por taskId=${taskId} y studentId=${studentId}`);
+                    const { data, error } = await supabaseService.client
+                        .from('task_submissions')
+                        .select('*')
+                        .eq('task_id', taskId)
+                        .eq('student_id', studentId)
+                        .order('submission_date', { ascending: false })
+                        .limit(1)
+                        .single();
+                    
+                    if (!error && data) {
+                        submission = data;
+                        console.log(`✅ Submission encontrada: ID=${data.id}, file_uri=${data.file_uri}`);
+                    }
+                }
+                
+                // Estrategia 3: Buscar por taskId + userId
+                if (!submission && taskId && userId) {
+                    console.log(`📡 Buscando submission por taskId=${taskId} y userId=${userId}`);
+                    const { data, error } = await supabaseService.client
+                        .from('task_submissions')
+                        .select('*')
+                        .eq('task_id', taskId)
+                        .eq('student_id', userId)
+                        .order('submission_date', { ascending: false })
+                        .limit(1)
+                        .single();
+                    
+                    if (!error && data) {
+                        submission = data;
+                        console.log(`✅ Submission encontrada: ID=${data.id}, file_uri=${data.file_uri}`);
+                    }
+                }
+                
+                // Si encontramos la submission, obtener el contenido del archivo
+                if (submission && submission.file_uri) {
+                    console.log(`📥 Obteniendo contenido del archivo desde: ${submission.file_uri}`);
+                    
+                    try {
+                        const fileData = await getSubmissionFileContent(
+                            submission.file_uri,
+                            submission.file_name || 'archivo',
+                            submission.id
+                        );
+                        
+                        if (fileData && fileData.content) {
+                            fileContent = fileData.content;
+                            fileUri = submission.file_uri;
+                            submissionId = submission.id;
+                            
+                            console.log(`✅ Contenido obtenido exitosamente: ${fileContent.length} caracteres`);
+                            console.log(`📄 Fuente: ${fileData.source || 'desconocida'}`);
+                            console.log(`📋 Primeros 200 chars: ${fileContent.substring(0, 200)}...`);
+                        }
+                    } catch (fetchError) {
+                        console.error(`❌ Error obteniendo contenido del archivo: ${fetchError.message}`);
+                    }
+                }
+            } catch (dbError) {
+                console.error(`❌ Error buscando submission en base de datos: ${dbError.message}`);
+            }
+        }
 
         // CORRECCIÓN AUTOMÁTICA: Si ollamaUrl usa cualquier IP del servidor, cambiarla a localhost
         // Esto es necesario porque el móvil envía la IP del host, pero Ollama está en localhost del servidor
@@ -2651,6 +2743,8 @@ app.post('/procesar-prompt', async(req, res) => {
         console.log('🌐 OllamaUrl:', ollamaUrl);
         console.log('📋 TaskDescription:', taskDescription || 'NO PROPORCIONADO');
         console.log('📄 FileContent length:', (fileContent || '').length);
+        console.log('🔑 SubmissionId:', submissionId || 'NO PROPORCIONADO');
+        console.log('📋 TaskId:', taskId || 'NO PROPORCIONADO');
 
         // 🔥 MEJORA: Extraer información estructurada del taskDescription si tiene formato con emojis
         // El cliente Android envía taskDescription en formato:
@@ -2746,7 +2840,7 @@ El archivo enviado (${extractedFileName || 'sin nombre'}) no tiene contenido sig
 📝 **Feedback:** Una entrega vacía o sin contenido siempre recibirá calificación de 0. Por favor, sube tu trabajo para poder evaluarlo correctamente.`;
 
             return res.json({
-                respuesta: respuestaVacio,
+                respuesta_texto: respuestaVacio,
                 nota: 0,
                 esCalificacion: true,
                 contenidoVacio: true
@@ -2800,7 +2894,8 @@ El archivo que enviaste no pudo ser procesado correctamente por el sistema. Esto
 
             console.log('📤 ENVIANDO RESPUESTA DE ARCHIVO NO PROCESABLE');
             return res.json({
-                respuesta: respuestaError,
+                respuesta_texto: respuestaError,
+                nota: 0,
                 esError: true,
                 archivoNoProcesable: true
             });
@@ -4196,6 +4291,175 @@ app.post('/tools/call', async(req, res) => {
 // END OF MCP ENDPOINTS
 // ============================================================
 
+// ============================================================
+// 📥 ENDPOINT PARA OBTENER CONTENIDO DE UNA SUBMISSION
+// Permite al cliente Android obtener el contenido de un archivo
+// enviado como tarea, directamente desde R2/Supabase
+// ============================================================
+app.post('/obtener-contenido-submission', async(req, res) => {
+    console.log('📥 Solicitud de contenido de submission recibida');
+    
+    try {
+        const { submissionId, taskId, studentId, fileUri } = req.body;
+        
+        console.log(`   submissionId: ${submissionId}`);
+        console.log(`   taskId: ${taskId}`);
+        console.log(`   studentId: ${studentId}`);
+        console.log(`   fileUri: ${fileUri}`);
+        
+        if (!supabaseService) {
+            return res.status(500).json({
+                error: 'Supabase no está configurado',
+                success: false
+            });
+        }
+        
+        let submission = null;
+        
+        // Estrategia 1: Buscar por submissionId
+        if (submissionId) {
+            const { data, error } = await supabaseService.client
+                .from('task_submissions')
+                .select('*')
+                .eq('id', submissionId)
+                .single();
+            
+            if (!error && data) {
+                submission = data;
+            }
+        }
+        
+        // Estrategia 2: Buscar por taskId + studentId
+        if (!submission && taskId && studentId) {
+            const { data, error } = await supabaseService.client
+                .from('task_submissions')
+                .select('*')
+                .eq('task_id', taskId)
+                .eq('student_id', studentId)
+                .order('submission_date', { ascending: false })
+                .limit(1)
+                .single();
+            
+            if (!error && data) {
+                submission = data;
+            }
+        }
+        
+        if (!submission) {
+            return res.status(404).json({
+                error: 'Submission no encontrada',
+                success: false
+            });
+        }
+        
+        console.log(`✅ Submission encontrada: ID=${submission.id}, file_uri=${submission.file_uri}`);
+        
+        // Obtener el contenido del archivo
+        try {
+            const fileData = await getSubmissionFileContent(
+                submission.file_uri,
+                submission.file_name || 'archivo',
+                submission.id
+            );
+            
+            if (fileData && fileData.content) {
+                console.log(`✅ Contenido obtenido: ${fileData.content.length} caracteres`);
+                
+                return res.json({
+                    success: true,
+                    submissionId: submission.id,
+                    taskId: submission.task_id,
+                    studentId: submission.student_id,
+                    fileName: submission.file_name,
+                    fileUri: submission.file_uri,
+                    submissionDate: submission.submission_date,
+                    grade: submission.grade,
+                    feedback: submission.feedback,
+                    content: fileData.content,
+                    contentType: fileData.contentType,
+                    fileType: fileData.fileType,
+                    source: fileData.source,
+                    metadata: fileData.metadata,
+                    summary: fileData.summary
+                });
+            } else {
+                return res.status(404).json({
+                    error: 'No se pudo obtener el contenido del archivo',
+                    success: false,
+                    submission: {
+                        id: submission.id,
+                        fileName: submission.file_name,
+                        fileUri: submission.file_uri
+                    }
+                });
+            }
+        } catch (fetchError) {
+            console.error(`❌ Error obteniendo contenido: ${fetchError.message}`);
+            return res.status(500).json({
+                error: `Error obteniendo contenido: ${fetchError.message}`,
+                success: false,
+                submission: {
+                    id: submission.id,
+                    fileName: submission.file_name,
+                    fileUri: submission.file_uri
+                }
+            });
+        }
+    } catch (error) {
+        console.error(`❌ Error general: ${error.message}`);
+        return res.status(500).json({
+            error: error.message,
+            success: false
+        });
+    }
+});
+
+// ============================================================
+// 📋 ENDPOINT PARA LISTAR SUBMISSIONS DE UNA TAREA
+// Permite obtener todas las entregas de una tarea específica
+// ============================================================
+app.get('/listar-submissions/:taskId', async(req, res) => {
+    const { taskId } = req.params;
+    console.log(`📋 Listando submissions para taskId: ${taskId}`);
+    
+    try {
+        if (!supabaseService) {
+            return res.status(500).json({
+                error: 'Supabase no está configurado',
+                success: false
+            });
+        }
+        
+        const { data, error } = await supabaseService.client
+            .from('task_submissions')
+            .select('id, task_id, student_id, file_uri, file_name, submission_date, grade, feedback')
+            .eq('task_id', taskId)
+            .order('submission_date', { ascending: false });
+        
+        if (error) {
+            return res.status(500).json({
+                error: error.message,
+                success: false
+            });
+        }
+        
+        console.log(`✅ Encontradas ${data.length} submissions`);
+        
+        return res.json({
+            success: true,
+            taskId: taskId,
+            count: data.length,
+            submissions: data
+        });
+    } catch (error) {
+        console.error(`❌ Error: ${error.message}`);
+        return res.status(500).json({
+            error: error.message,
+            success: false
+        });
+    }
+});
+
 // Listen on all interfaces so the service is reachable from other devices on the LAN
 app.listen(PORT, '0.0.0.0', () => {
     const localIPs = getLocalIPAddress();
@@ -4223,6 +4487,8 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`   • POST /analizar-entrega`);
     console.log(`   • POST /feedback-entrega`);
     console.log(`   • POST /procesar-prompt`);
+    console.log(`   • POST /obtener-contenido-submission`);
+    console.log(`   • GET  /listar-submissions/:taskId`);
     console.log(`   • GET  / (health check)`);
     console.log(`   • GET  /health (Railway healthcheck - fast)`);
     console.log(`   • GET  /health/detailed (full diagnostics)`);
