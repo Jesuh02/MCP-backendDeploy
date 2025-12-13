@@ -1085,20 +1085,18 @@ async function sendEmailNotification(userId, subject, text) {
                         </td>
                     </tr>
                     
-                    <!-- Animated Lottie Section -->
+                    <!-- Image Section -->
                     <tr>
                         <td class="animation-container" style="background: linear-gradient(180deg, #1e293b 0%, #334155 100%); padding: 30px; text-align: center; border-bottom: 1px solid #475569;">
-                            <div class="lottie-wrapper" style="width: 280px; height: 200px; margin: 0 auto; border-radius: 16px; overflow: hidden; background: #1e293b; box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2);">
-                                <!-- Lottie Animation Player -->
-                                <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
-                                <lottie-player 
-                                    src="https://lottie.host/4db68bbd-31f6-4cd8-84eb-189571f8e2c4/pVMKOCVAqS.json"
-                                    background="transparent"
-                                    speed="1"
-                                    style="width: 280px; height: 200px;"
-                                    loop
-                                    autoplay>
-                                </lottie-player>
+                            <div style="width: 280px; height: 200px; margin: 0 auto; border-radius: 16px; overflow: hidden; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2); display: flex; align-items: center; justify-content: center;">
+                                <!-- Imagen desde Cloudflare R2 con fallback a emoji -->
+                                <img 
+                                    src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/email-assets/coursev-notification.png"
+                                    alt="CourseV"
+                                    width="280"
+                                    height="200"
+                                    style="width: 280px; height: 200px; object-fit: cover; display: block; border-radius: 16px;"
+                                />
                             </div>
                             <p style="margin-top: 16px; font-size: 13px; color: #94a3b8;">
                                 ✨ Aprendizaje interactivo con IA
