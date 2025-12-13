@@ -368,36 +368,120 @@ async function listR2Files(prefix) {
 }
 
 /**
- * Obtiene el contenido de un archivo de entrega desde R2 o URL directa
+ * Obtiene el contenido de un archivo de entrega desde R2, URL directa, o file_contexts
  * @param {string} fileUri - URI del archivo (puede ser URL de R2 o URL directa)
  * @param {string} fileName - Nombre del archivo para determinar el tipo
+ * @param {number} submissionId - ID de la submission para buscar en file_contexts
  * @returns {Promise<{content: string, contentType: string, fileType: string}>}
  */
-async function getSubmissionFileContent(fileUri, fileName) {
+async function getSubmissionFileContent(fileUri, fileName, submissionId = null) {
     console.log(`📄 Getting submission file content: ${fileName}`);
     console.log(`   URI: ${fileUri}`);
+    console.log(`   SubmissionId: ${submissionId}`);
 
-    // Determinar si es una URL de R2
-    const isR2Url = fileUri && (
-        fileUri.includes('.r2.dev') || 
-        fileUri.includes('.r2.cloudflarestorage.com')
-    );
+    // OPCIÓN 1: Intentar obtener el contenido desde file_contexts (más confiable)
+    if (submissionId && supabaseService) {
+        try {
+            console.log(`🔍 Buscando contenido en file_contexts para submission ${submissionId}...`);
+            const { data: fileContext, error } = await supabaseService.client
+                .from('file_contexts')
+                .select('file_content, file_type, file_name, extracted_text, metadata, content_summary')
+                .eq('submission_id', submissionId)
+                .order('id', { ascending: false })
+                .limit(1)
+                .single();
 
-    if (isR2Url && r2Client) {
-        // Extraer la key del objeto de la URL
-        const objectKey = extractR2ObjectKey(fileUri);
-        if (objectKey) {
-            const result = await fetchR2File(objectKey);
-            return {
-                ...result,
-                fileType: getFileTypeFromName(fileName)
-            };
+            if (!error && fileContext) {
+                // El contenido puede estar en file_content o extracted_text
+                const content = fileContext.file_content || fileContext.extracted_text;
+                if (content) {
+                    console.log(`✅ Contenido encontrado en file_contexts (${content.length} chars)`);
+                    return {
+                        content: content,
+                        contentType: 'text/plain',
+                        size: content.length,
+                        isBase64: false,
+                        fileType: fileContext.file_type || getFileTypeFromName(fileName || fileContext.file_name),
+                        fileName: fileContext.file_name || fileName,
+                        metadata: fileContext.metadata,
+                        summary: fileContext.content_summary,
+                        extractedText: fileContext.extracted_text,
+                        source: 'file_contexts'
+                    };
+                }
+            }
+            console.log(`⚠️ No se encontró contenido en file_contexts: ${error?.message || 'sin datos o contenido vacío'}`);
+        } catch (fcError) {
+            console.log(`⚠️ Error buscando en file_contexts: ${fcError.message}`);
         }
     }
 
-    // Si es una URL HTTP/HTTPS normal, descargar directamente
+    // OPCIÓN 2: Determinar si es una URL de R2 e intentar descargar
+    const isR2Url = fileUri && (
+        fileUri.includes('.r2.dev') || 
+        fileUri.includes('.r2.cloudflarestorage.com') ||
+        fileUri.includes('pub-')
+    );
+
+    // OPCIÓN 2a: Usar cliente R2 autenticado si está disponible
+    if (isR2Url && r2Client) {
+        try {
+            console.log(`🔐 Intentando acceso autenticado a R2...`);
+            const objectKey = extractR2ObjectKey(fileUri);
+            if (objectKey) {
+                const result = await fetchR2File(objectKey);
+                return {
+                    ...result,
+                    fileType: getFileTypeFromName(fileName),
+                    source: 'r2_authenticated'
+                };
+            }
+        } catch (r2Error) {
+            console.log(`⚠️ Error con R2 autenticado: ${r2Error.message}`);
+        }
+    }
+
+    // OPCIÓN 2b: Intentar descarga directa desde URL pública de R2
+    if (isR2Url) {
+        try {
+            console.log(`🌐 Intentando descarga desde URL pública de R2: ${fileUri}`);
+            const response = await axios.get(fileUri, {
+                responseType: 'arraybuffer',
+                timeout: 60000,
+                headers: {
+                    'User-Agent': 'CourseV-MCP-Server/1.0',
+                    'Accept': '*/*'
+                }
+            });
+
+            const buffer = Buffer.from(response.data);
+            const contentType = response.headers['content-type'] || 'application/octet-stream';
+            
+            let content;
+            if (contentType.includes('text') || isTextFile(fileName)) {
+                content = buffer.toString('utf-8');
+            } else {
+                content = buffer.toString('base64');
+            }
+
+            console.log(`✅ Archivo descargado desde R2 público: ${buffer.length} bytes`);
+            return {
+                content,
+                contentType,
+                size: buffer.length,
+                isBase64: !contentType.includes('text') && !isTextFile(fileName),
+                fileType: getFileTypeFromName(fileName),
+                source: 'r2_public'
+            };
+        } catch (publicError) {
+            console.log(`⚠️ Error descargando desde R2 público: ${publicError.message}`);
+        }
+    }
+
+    // OPCIÓN 3: Si es una URL HTTP/HTTPS normal, descargar directamente
     if (fileUri && (fileUri.startsWith('http://') || fileUri.startsWith('https://'))) {
         try {
+            console.log(`🌐 Intentando descarga HTTP directa: ${fileUri}`);
             const response = await axios.get(fileUri, {
                 responseType: 'arraybuffer',
                 timeout: 30000,
@@ -421,15 +505,16 @@ async function getSubmissionFileContent(fileUri, fileName) {
                 contentType,
                 size: buffer.length,
                 isBase64: !contentType.includes('text') && !isTextFile(fileName),
-                fileType: getFileTypeFromName(fileName)
+                fileType: getFileTypeFromName(fileName),
+                source: 'http_direct'
             };
         } catch (error) {
             console.error(`❌ Error downloading file: ${error.message}`);
-            throw new Error(`No se pudo descargar el archivo: ${error.message}`);
         }
     }
 
-    throw new Error(`URI de archivo no soportada: ${fileUri}`);
+    // Si llegamos aquí, no pudimos obtener el contenido
+    throw new Error(`No se pudo obtener el contenido del archivo. URI: ${fileUri}, SubmissionId: ${submissionId}`);
 }
 
 /**
@@ -1255,6 +1340,72 @@ app.post('/analizar-entrega', async(req, res) => {
         return res.status(400).json({ error: 'Faltan datos requeridos.' });
     }
 
+    // ============================================================
+    // 🔍 VALIDACIÓN DE CONTENIDO VACÍO O SIN CONTENIDO REAL
+    // Si la tarea no tiene contenido, automáticamente calificación = 0
+    // ============================================================
+    
+    // Función para verificar si el contenido está realmente vacío o es inválido
+    const esContenidoVacio = (content) => {
+        if (!content) return true;
+        
+        // Limpiar espacios, saltos de línea y caracteres especiales
+        const contenidoLimpio = content
+            .replace(/\s+/g, '') // Eliminar espacios y saltos de línea
+            .replace(/[\r\n\t]/g, '') // Eliminar caracteres de control
+            .replace(/[^\w\u00C0-\u024F]/g, '') // Solo letras y números (incluye acentos)
+            .trim();
+        
+        // Verificar si está vacío o tiene muy poco contenido significativo
+        if (contenidoLimpio.length < 20) return true;
+        
+        // Verificar patrones de contenido vacío o placeholder
+        const patronesVacios = [
+            /^[\s\n\r\t]*$/,  // Solo espacios
+            /^(null|undefined|none|empty|vacío|vacio)$/i,
+            /^\[\s*\]$/,  // Array vacío
+            /^\{\s*\}$/,  // Objeto vacío
+            /^""$/,  // String vacío
+            /^''$/,  // String vacío
+            /^sin\s*contenido/i,
+            /^no\s*content/i,
+            /^empty\s*file/i,
+            /^archivo\s*vacío/i,
+            /^archivo\s*vacio/i
+        ];
+        
+        for (const patron of patronesVacios) {
+            if (patron.test(content.trim())) return true;
+        }
+        
+        return false;
+    };
+    
+    // Verificar si el contenido está vacío
+    if (esContenidoVacio(fileContent)) {
+        console.log(`⚠️ Submission ${submissionId}: Contenido vacío detectado - Calificación: 0`);
+        const nota = 0;
+        const cumplimiento = 'La entrega no contiene contenido válido.';
+        const resumen = `❌ **CALIFICACIÓN: 0/100**
+
+📋 **DESCRIPCIÓN DE LA TAREA:** ${contentSummary}
+
+⚠️ **PROBLEMA:** La entrega está vacía o no contiene contenido significativo.
+
+El archivo enviado (${fileName || 'sin nombre'}) no tiene contenido que pueda ser evaluado.
+
+💡 **PARA OBTENER CALIFICACIÓN:**
+1. Asegúrate de que el archivo contenga tu trabajo
+2. Verifica que el contenido sea visible y legible
+3. Si usaste un formato especial, conviértelo a PDF o TXT
+4. Vuelve a subir la tarea con el contenido completo
+
+**Nota:** Una entrega sin contenido siempre recibirá calificación de 0.`;
+
+        ragCache[submissionId] = { nota, resumen, cumplimiento };
+        return res.json({ nota, resumen, cumplimiento });
+    }
+
     // Detectar si el archivo no pudo ser procesado correctamente
     const esArchivoNoProcessable = fileContent.includes('Tipo de archivo no soportado') ||
         fileContent.includes('ESTADO DEL ANÁLISIS') ||
@@ -1521,12 +1672,20 @@ Para poder calificar esta tarea, necesito poder leer y analizar el contenido del
 
 ALERTA MÁXIMA: CERO TOLERANCIA para incompatibilidades temáticas. Si el estudiante entrega algo diferente a lo solicitado = NOTA 0 OBLIGATORIO.
 
+⚠️ REGLA CRÍTICA #1: ENTREGAS VACÍAS = NOTA 0 AUTOMÁTICO
+- Si el archivo está vacío o no tiene contenido: NOTA 0 INMEDIATO
+- Si el contenido es solo espacios en blanco: NOTA 0 INMEDIATO  
+- Si no hay código/texto significativo: NOTA 0 INMEDIATO
+- Si el archivo solo contiene placeholders como "null", "empty", "vacío": NOTA 0 INMEDIATO
+
 CRITERIOS DE EVALUACIÓN ABSOLUTOS:
-1. COMPATIBILIDAD TECNOLÓGICA: ¿El archivo contiene EXACTAMENTE el lenguaje/tecnología solicitada?
-2. COHERENCIA TEMÁTICA CRÍTICA: ¿El contenido responde EXACTAMENTE al tema/proyecto solicitado?
-3. CUMPLIMIENTO DE REQUISITOS: ¿Se cumplen TODOS los requisitos especificados?
+1. CONTENIDO VACÍO O INEXISTENTE: ¿El archivo tiene contenido real? Si NO: nota 0 OBLIGATORIO
+2. COMPATIBILIDAD TECNOLÓGICA: ¿El archivo contiene EXACTAMENTE el lenguaje/tecnología solicitada?
+3. COHERENCIA TEMÁTICA CRÍTICA: ¿El contenido responde EXACTAMENTE al tema/proyecto solicitado?
+4. CUMPLIMIENTO DE REQUISITOS: ¿Se cumplen TODOS los requisitos especificados?
 
 REGLAS DE CALIFICACIÓN INFLEXIBLES:
+- Si el archivo está VACÍO o sin contenido: nota 0 OBLIGATORIO (NO NEGOCIABLE)
 - Si el lenguaje/tecnología NO coincide: nota 0 OBLIGATORIO
 - Si el tema/proyecto NO coincide: nota 0 OBLIGATORIO  
 - Si se pide BANCO y se entrega PELÍCULAS: nota 0 OBLIGATORIO
@@ -1537,6 +1696,7 @@ REGLAS DE CALIFICACIÓN INFLEXIBLES:
 - Si cumple totalmente: nota 8-10
 
 CASOS CRÍTICOS INCOMPATIBLES (SIEMPRE nota 0):
+- ARCHIVO VACÍO o sin contenido significativo
 - Se pide Python pero se envía SQL
 - Se pide calculadora pero se envía base de datos
 - Se pide HTML pero se envía Java
@@ -1562,7 +1722,9 @@ Descripción de la tarea (LO QUE SE SOLICITÓ): ${contentSummary}
 Archivo entregado (LO QUE SE ENVIÓ):
 ${resumenArchivo}
 
-CRÍTICO: Si detectas CUALQUIER incompatibilidad temática (ej: banco vs películas), asigna nota 0 inmediatamente y explica la incompatibilidad específica.`;
+CRÍTICO: 
+1. Si el archivo está VACÍO o no tiene contenido significativo: asigna nota 0 inmediatamente
+2. Si detectas CUALQUIER incompatibilidad temática (ej: banco vs películas), asigna nota 0 inmediatamente y explica la incompatibilidad específica.`;
 
             const tokensGemma = encode(promptGemma).length;
             console.log('[MODELO gemma3n:latest] TOKENS CONSUMIDOS:', tokensGemma);
@@ -2522,6 +2684,75 @@ app.post('/procesar-prompt', async(req, res) => {
             console.log('   - Resumen:', extractedSummary ? extractedSummary.substring(0, 100) + '...' : '(no encontrado)');
         }
 
+        // ============================================================
+        // 🔍 VALIDACIÓN DE CONTENIDO VACÍO O SIN CONTENIDO REAL
+        // Si la tarea no tiene contenido, automáticamente calificación = 0
+        // ============================================================
+        const esContenidoVacioPrompt = (content) => {
+            if (!content) return true;
+            
+            // Limpiar espacios, saltos de línea y caracteres especiales
+            const contenidoLimpio = content
+                .replace(/\s+/g, '')
+                .replace(/[\r\n\t]/g, '')
+                .replace(/[^\w\u00C0-\u024F]/g, '')
+                .trim();
+            
+            // Verificar si está vacío o tiene muy poco contenido significativo
+            if (contenidoLimpio.length < 20) return true;
+            
+            // Verificar patrones de contenido vacío
+            const patronesVacios = [
+                /^[\s\n\r\t]*$/,
+                /^(null|undefined|none|empty|vacío|vacio)$/i,
+                /^\[\s*\]$/,
+                /^\{\s*\}$/,
+                /^sin\s*contenido/i,
+                /^no\s*content/i,
+                /^empty\s*file/i,
+                /^archivo\s*vac(í|i)o/i
+            ];
+            
+            for (const patron of patronesVacios) {
+                if (patron.test(content.trim())) return true;
+            }
+            
+            return false;
+        };
+
+        // Si el archivo tiene contenido vacío y se pide calificación, dar 0
+        const preguntaLowerVacio = (prompt || '').toLowerCase();
+        const esPreguntaCalificacion = /nota|calificaci(ó|o)n|puntaje|evaluaci(ó|o)n|califica|eval(ú|u)a|analiza|revisa/.test(preguntaLowerVacio);
+        
+        if (esPreguntaCalificacion && esContenidoVacioPrompt(fileContent)) {
+            console.log('⚠️ CONTENIDO VACÍO DETECTADO EN /procesar-prompt - Calificación: 0');
+            const respuestaVacio = `📊 **CALIFICACIÓN: 0/100**
+
+❌ **RESULTADO:** No aprobado
+
+📋 **Tarea:** ${extractedTaskName || taskDescription || 'Sin nombre'}
+
+⚠️ **MOTIVO DE LA CALIFICACIÓN:**
+La entrega está vacía o no contiene contenido que pueda ser evaluado.
+
+El archivo enviado (${extractedFileName || 'sin nombre'}) no tiene contenido significativo para analizar.
+
+💡 **PARA MEJORAR TU CALIFICACIÓN:**
+1. Asegúrate de que el archivo contenga tu trabajo completo
+2. Verifica que el contenido sea visible y legible
+3. Si usaste un formato especial, conviértelo a PDF o TXT
+4. Vuelve a subir la tarea con el contenido completo
+
+📝 **Feedback:** Una entrega vacía o sin contenido siempre recibirá calificación de 0. Por favor, sube tu trabajo para poder evaluarlo correctamente.`;
+
+            return res.json({
+                respuesta: respuestaVacio,
+                nota: 0,
+                esCalificacion: true,
+                contenidoVacio: true
+            });
+        }
+
         // Detectar archivos no procesables y responder inmediatamente
         // LÓGICA MEJORADA: Un archivo es no procesable solo si tiene indicadores de error específicos
         const esArchivoNoProcessable = fileContent && (
@@ -3182,16 +3413,25 @@ INSTRUCCIONES EDUCATIVAS:
 - RECONOCE CUANDO EL ESTUDIANTE CUMPLE CON LO SOLICITADO
 - FORMATO EDUCATIVO Y PROFESIONAL
 
+⚠️ REGLA CRÍTICA #1: ENTREGAS VACÍAS = NOTA 0 AUTOMÁTICO
+- Si el archivo/entrega está VACÍO o no tiene contenido: NOTA 0 INMEDIATO
+- Si el contenido es solo espacios en blanco o caracteres sin sentido: NOTA 0 INMEDIATO
+- Si no hay código/texto/trabajo significativo: NOTA 0 INMEDIATO
+- Si el archivo solo contiene placeholders como "null", "empty", "vacío", "test": NOTA 0 INMEDIATO
+- Si la longitud del contenido real es menor a 50 caracteres: NOTA 0 INMEDIATO
+
 PRINCIPIO FUNDAMENTAL: 
 SER JUSTO - Si se pide "UN EJEMPLO" de algo, CUALQUIER ejemplo válido de esa categoría merece nota alta.
+PERO: Un archivo VACÍO o sin trabajo SIEMPRE es NOTA 0, sin excepciones.
 
 CRITERIOS DE EVALUACIÓN INTELIGENTES:
+⚫ **SIN CONTENIDO (0)**: Archivo vacío o sin trabajo real
 🟢 **CUMPLIMIENTO PERFECTO (9-10)**: Entrega exactamente lo pedido
 🟢 **CUMPLIMIENTO BUENO (7-8)**: Cumple bien, aunque sea más complejo
 🟡 **CUMPLIMIENTO PARCIAL (5-6)**: Relacionado pero no exacto
 🟠 **CUMPLIMIENTO MÍNIMO (3-4)**: Alguna relación pero se desvía
 🔴 **NO CUMPLE (1-2)**: Poca o ninguna relación
-⚫ **TOTALMENTE INCORRECTO (0)**: Sin relación alguna
+⚫ **TOTALMENTE INCORRECTO (0)**: Sin relación alguna O archivo vacío
 
 REGLAS ESPECÍFICAS DE EVALUACIÓN:
 
@@ -3208,6 +3448,7 @@ REGLAS ESPECÍFICAS DE EVALUACIÓN:
 - "página de login" → DEBE tener login = 0 si no tiene login
 
 EJEMPLOS CONCRETOS:
+⚫ ARCHIVO VACÍO o sin contenido = 0/10 (SIEMPRE)
 ✅ "ejemplo algoritmo Python" + script Python complejo = 10/10 (CUMPLE)
 ❌ "base de datos de IA" + base de datos de películas = 0/10 (NO CUMPLE)
 ❌ "calculadora" + sistema de archivos = 0/10 (NO CUMPLE)
@@ -3228,7 +3469,8 @@ ${taskDescriptionClean}
 LO QUE SE ENTREGÓ:
 ${fileContentClean}
 
-EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CALIFICACIÓN ACTUAL: X/10**" AL INICIO.`;
+EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CALIFICACIÓN ACTUAL: X/10**" AL INICIO.
+IMPORTANTE: Si el contenido entregado está vacío o no tiene trabajo real, la calificación DEBE ser 0/10.`;
 
             try {
                 const tokensEvaluacion = encode(promptEvaluacionCritica).length;
@@ -3790,6 +4032,7 @@ app.post('/tools/call', async(req, res) => {
             try {
                 let fileUri = args.fileUri;
                 let fileName = args.fileName;
+                const submissionId = args.submissionId;
 
                 // Si no se proporcionan fileUri o fileName, buscar en la base de datos
                 if (!fileUri || !fileName) {
@@ -3797,11 +4040,11 @@ app.post('/tools/call', async(req, res) => {
                     const { data: submission, error } = await supabaseService.client
                         .from('task_submissions')
                         .select('file_uri, file_name, task_id, student_id')
-                        .eq('id', args.submissionId)
+                        .eq('id', submissionId)
                         .single();
 
                     if (error || !submission) {
-                        throw new Error(`Submission ${args.submissionId} not found: ${error?.message || 'No data'}`);
+                        throw new Error(`Submission ${submissionId} not found: ${error?.message || 'No data'}`);
                     }
 
                     fileUri = submission.file_uri;
@@ -3809,27 +4052,27 @@ app.post('/tools/call', async(req, res) => {
                     console.log(`📋 Found submission: ${fileName} -> ${fileUri}`);
                 }
 
-                if (!fileUri) {
-                    throw new Error('No file URI found for this submission');
-                }
-
-                // Obtener el contenido del archivo
-                const fileData = await getSubmissionFileContent(fileUri, fileName);
+                // Obtener el contenido del archivo (pasando submissionId para buscar en file_contexts)
+                const fileData = await getSubmissionFileContent(fileUri, fileName, submissionId);
 
                 // Preparar respuesta con metadata
                 const response = {
                     success: true,
-                    submissionId: args.submissionId,
+                    submissionId: submissionId,
                     fileName: fileName,
                     fileType: fileData.fileType,
                     contentType: fileData.contentType,
                     size: fileData.size,
                     isBase64: fileData.isBase64,
+                    source: fileData.source || 'unknown',
                     content: fileData.isBase64 
                         ? `[Base64 content - ${fileData.size} bytes. Use appropriate decoder for ${fileData.fileType} files]`
                         : fileData.content,
                     // Si es texto, incluir el contenido completo
-                    ...(fileData.isBase64 ? {} : { fullContent: fileData.content })
+                    ...(fileData.isBase64 ? {} : { fullContent: fileData.content }),
+                    // Incluir metadata adicional si está disponible
+                    ...(fileData.metadata ? { metadata: fileData.metadata } : {}),
+                    ...(fileData.summary ? { summary: fileData.summary } : {})
                 };
 
                 // Si es un archivo de texto, incluir análisis básico
