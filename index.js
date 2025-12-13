@@ -2854,6 +2854,43 @@ app.post('/procesar-prompt', async(req, res) => {
             return false;
         };
 
+        // ============================================================
+        // 🔍 FUNCIÓN PARA EXTRAER LA NOTA DEL TEXTO DE RESPUESTA DEL LLM
+        // ============================================================
+        const extraerNotaDeRespuesta = (respuesta) => {
+            if (!respuesta) return 0;
+            
+            // Patrones para extraer la nota del formato de respuesta del LLM
+            const patrones = [
+                /📊\s*\*?\*?CALIFICACIÓN(?:\s+ACTUAL)?[:\s]*(\d+(?:\.\d+)?)\s*\/\s*10/i,
+                /📊\s*\*?\*?CALIFICACIÓN(?:\s+ACTUAL)?[:\s]*(\d+(?:\.\d+)?)\s*\/\s*100/i,
+                /calificación(?:\s+actual)?[:\s]*\*?\*?\s*(\d+(?:\.\d+)?)\s*\/\s*10/i,
+                /calificación(?:\s+actual)?[:\s]*\*?\*?\s*(\d+(?:\.\d+)?)\s*\/\s*100/i,
+                /nota[:\s]*\*?\*?\s*(\d+(?:\.\d+)?)\s*\/\s*10/i,
+                /nota[:\s]*\*?\*?\s*(\d+(?:\.\d+)?)\s*\/\s*100/i,
+                /(\d+(?:\.\d+)?)\s*\/\s*10\s*\*?\*?/i,
+                /(\d+(?:\.\d+)?)\s*\/\s*100\s*\*?\*?/i
+            ];
+            
+            for (const patron of patrones) {
+                const match = respuesta.match(patron);
+                if (match) {
+                    let nota = parseFloat(match[1]);
+                    // Si el patrón es sobre 100, convertir a 10
+                    if (patron.source.includes('100')) {
+                        nota = Math.round(nota / 10 * 10) / 10; // Redondear a 1 decimal
+                    }
+                    // Asegurar que está en el rango 0-10
+                    nota = Math.max(0, Math.min(10, nota));
+                    console.log(`📊 Nota extraída del LLM: ${nota}/10 (patrón: ${patron.source})`);
+                    return nota;
+                }
+            }
+            
+            console.log('⚠️ No se pudo extraer nota del texto de respuesta del LLM');
+            return 0;
+        };
+
         // Si el archivo tiene contenido vacío y se pide calificación, dar 0
         const preguntaLowerVacio = (prompt || '').toLowerCase();
         const esPreguntaCalificacion = /nota|calificaci(ó|o)n|puntaje|evaluaci(ó|o)n|califica|eval(ú|u)a|analiza|revisa/.test(preguntaLowerVacio);
@@ -3647,8 +3684,27 @@ IMPORTANTE: Si el contenido entregado está vacío o no tiene trabajo real, la c
                     ).catch(err => console.error('Error enviando email:', err));
                 }
 
+                // Extraer nota del texto de respuesta del LLM
+                const notaExtraida = extraerNotaDeRespuesta(respuestaEvaluacion);
+                console.log(`📊 NOTA EXTRAÍDA DE EVALUACIÓN CRÍTICA: ${notaExtraida}/10`);
+                
+                // Persistir la nota en Supabase si hay submissionId
+                if (submissionId) {
+                    try {
+                        console.log(`🔁 Intentando persistir nota ${notaExtraida} para submissionId=${submissionId} en Supabase`);
+                        const ok = await updateTaskSubmissionSupabase(submissionId, notaExtraida, respuestaEvaluacion);
+                        if (!ok) console.log('⚠️ Persistencia en Supabase fallida o no confirmada');
+                    } catch (err) {
+                        console.log('❌ Error al persistir nota en Supabase:', err.message);
+                    }
+                }
+
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
-                return res.json({ respuesta_texto: respuestaEvaluacion });
+                return res.json({ 
+                    respuesta_texto: respuestaEvaluacion,
+                    nota: notaExtraida,
+                    esCalificacion: true
+                });
 
             } catch (err) {
                 console.log('❌ ERROR EN EVALUACIÓN CRÍTICA:', err.message);
@@ -3752,8 +3808,27 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
                 ).catch(err => console.error('Error enviando email:', err));
             }
 
+            // Extraer nota del texto de respuesta del LLM
+            const notaExtraida = extraerNotaDeRespuesta(respuestaFinal);
+            console.log(`📊 NOTA EXTRAÍDA DE RESPUESTA FINAL: ${notaExtraida}/10`);
+            
+            // Persistir la nota en Supabase si hay submissionId
+            if (submissionId) {
+                try {
+                    console.log(`🔁 Intentando persistir nota ${notaExtraida} para submissionId=${submissionId} en Supabase`);
+                    const ok = await updateTaskSubmissionSupabase(submissionId, notaExtraida, respuestaFinal);
+                    if (!ok) console.log('⚠️ Persistencia en Supabase fallida o no confirmada');
+                } catch (err) {
+                    console.log('❌ Error al persistir nota en Supabase:', err.message);
+                }
+            }
+
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            return res.json({ respuesta_texto: respuestaFinal });
+            return res.json({ 
+                respuesta_texto: respuestaFinal,
+                nota: notaExtraida,
+                esCalificacion: true
+            });
         } catch (err) {
             console.log('❌ ERROR EN DEEPSEEK:', err.message);
             return res.status(500).json({ error: 'Error en DeepSeek', detalle: err.message });
