@@ -24,6 +24,7 @@
     "ai"
   ],
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.679.0",
     "@langchain/community": "^0.0.35",
     "@langchain/openai": "^0.0.19",
     "@supabase/supabase-js": "^2.39.3",

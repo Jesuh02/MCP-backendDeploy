@@ -16,6 +16,9 @@ import { LLMService } from './src/infrastructure/ai/LLMService.js';
 import { MCPService } from './src/domain/services/MCPService.js';
 import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
 
+// AWS SDK for Cloudflare R2 (S3-compatible)
+import { S3Client, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+
 import { createRequire } from 'module';
 const require = createRequire(
     import.meta.url);
@@ -23,6 +26,28 @@ const require = createRequire(
 const app = express();
 const PORT = process.env.PORT || 3001;
 const MAX_TOKENS = 4096;
+
+// ============================================================
+// 🏥 CRITICAL: Healthcheck endpoint MUST be defined FIRST
+// This ensures Railway can verify the container is healthy
+// even before all other services are initialized
+// ============================================================
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        server: 'coursev-mcp-server',
+        version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
+});
+
+// Also respond to / for basic health checks
+app.get('/_health', (req, res) => {
+    res.status(200).send('OK');
+});
+
+console.log('🏥 Healthcheck endpoints registered (/health, /_health)');
 
 // Initialize Firebase Admin (with error handling)
 let admin;
@@ -181,6 +206,281 @@ try {
     console.error('❌ Failed to initialize SupabaseService:', error.message);
 }
 
+// ============================================================
+// CLOUDFLARE R2 SERVICE (S3-Compatible Storage)
+// ============================================================
+
+// Initialize S3 Client for Cloudflare R2
+let r2Client = null;
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '';
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '';
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'coursev-files';
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || 'https://pub-9f393625246c4018b5613be60b01bda1.r2.dev';
+
+if (R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY) {
+    try {
+        r2Client = new S3Client({
+            region: 'auto',
+            endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+            credentials: {
+                accessKeyId: R2_ACCESS_KEY_ID,
+                secretAccessKey: R2_SECRET_ACCESS_KEY,
+            },
+        });
+        console.log('✅ Cloudflare R2 Client initialized');
+    } catch (error) {
+        console.error('❌ Failed to initialize R2 Client:', error.message);
+    }
+} else {
+    console.warn('⚠️ Cloudflare R2 not configured - file access will be limited');
+}
+
+/**
+ * Descarga y lee un archivo desde Cloudflare R2
+ * @param {string} objectKey - La key del objeto en R2 (ej: "submissions/task_1/user_123.pdf")
+ * @returns {Promise<{content: string, contentType: string, size: number}>}
+ */
+async function fetchR2File(objectKey) {
+    if (!r2Client) {
+        throw new Error('R2 Client not configured');
+    }
+
+    console.log(`📥 Fetching file from R2: ${objectKey}`);
+
+    try {
+        const command = new GetObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            Key: objectKey,
+        });
+
+        const response = await r2Client.send(command);
+        const contentType = response.ContentType || 'application/octet-stream';
+        const size = response.ContentLength || 0;
+
+        // Convertir el stream a buffer
+        const chunks = [];
+        for await (const chunk of response.Body) {
+            chunks.push(chunk);
+        }
+        const buffer = Buffer.concat(chunks);
+
+        console.log(`✅ File fetched: ${size} bytes, type: ${contentType}`);
+
+        // Procesar según tipo de contenido
+        let content;
+        if (contentType.includes('text') || 
+            contentType.includes('json') || 
+            contentType.includes('javascript') ||
+            contentType.includes('xml') ||
+            objectKey.endsWith('.txt') ||
+            objectKey.endsWith('.sql') ||
+            objectKey.endsWith('.py') ||
+            objectKey.endsWith('.js') ||
+            objectKey.endsWith('.java') ||
+            objectKey.endsWith('.kt') ||
+            objectKey.endsWith('.html') ||
+            objectKey.endsWith('.css') ||
+            objectKey.endsWith('.md')) {
+            // Archivos de texto - devolver como string
+            content = buffer.toString('utf-8');
+        } else if (contentType.includes('pdf')) {
+            // PDF - devolver como base64 para procesamiento posterior
+            content = buffer.toString('base64');
+        } else {
+            // Otros archivos - devolver como base64
+            content = buffer.toString('base64');
+        }
+
+        return {
+            content,
+            contentType,
+            size,
+            isBase64: !contentType.includes('text') && !contentType.includes('json')
+        };
+    } catch (error) {
+        console.error(`❌ Error fetching R2 file: ${error.message}`);
+        throw error;
+    }
+}
+
+/**
+ * Extrae la key del objeto de una URL de R2
+ * @param {string} url - URL completa de R2 (ej: "https://pub-xxx.r2.dev/submissions/task_1/file.pdf")
+ * @returns {string|null} - La key del objeto o null
+ */
+function extractR2ObjectKey(url) {
+    if (!url) return null;
+
+    // Patrones de URL de R2
+    const patterns = [
+        // URL pública: https://pub-xxx.r2.dev/folder/file.ext
+        /https?:\/\/pub-[^\/]+\.r2\.dev\/(.+)/,
+        // URL de endpoint: https://account.r2.cloudflarestorage.com/bucket/key
+        /https?:\/\/[^\/]+\.r2\.cloudflarestorage\.com\/[^\/]+\/(.+)/,
+        // URL directa con bucket: https://account.r2.cloudflarestorage.com/key
+        /https?:\/\/[^\/]+\.r2\.cloudflarestorage\.com\/(.+)/,
+    ];
+
+    for (const pattern of patterns) {
+        const match = url.match(pattern);
+        if (match) {
+            return decodeURIComponent(match[1]);
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Lista archivos en un directorio de R2
+ * @param {string} prefix - Prefijo/carpeta (ej: "submissions/task_1/")
+ * @returns {Promise<Array<{key: string, size: number, lastModified: Date}>>}
+ */
+async function listR2Files(prefix) {
+    if (!r2Client) {
+        throw new Error('R2 Client not configured');
+    }
+
+    console.log(`📂 Listing R2 files with prefix: ${prefix}`);
+
+    try {
+        const command = new ListObjectsV2Command({
+            Bucket: R2_BUCKET_NAME,
+            Prefix: prefix,
+            MaxKeys: 100,
+        });
+
+        const response = await r2Client.send(command);
+        const files = (response.Contents || []).map(obj => ({
+            key: obj.Key,
+            size: obj.Size,
+            lastModified: obj.LastModified,
+            url: `${R2_PUBLIC_URL}/${obj.Key}`
+        }));
+
+        console.log(`✅ Found ${files.length} files`);
+        return files;
+    } catch (error) {
+        console.error(`❌ Error listing R2 files: ${error.message}`);
+        throw error;
+    }
+}
+
+/**
+ * Obtiene el contenido de un archivo de entrega desde R2 o URL directa
+ * @param {string} fileUri - URI del archivo (puede ser URL de R2 o URL directa)
+ * @param {string} fileName - Nombre del archivo para determinar el tipo
+ * @returns {Promise<{content: string, contentType: string, fileType: string}>}
+ */
+async function getSubmissionFileContent(fileUri, fileName) {
+    console.log(`📄 Getting submission file content: ${fileName}`);
+    console.log(`   URI: ${fileUri}`);
+
+    // Determinar si es una URL de R2
+    const isR2Url = fileUri && (
+        fileUri.includes('.r2.dev') || 
+        fileUri.includes('.r2.cloudflarestorage.com')
+    );
+
+    if (isR2Url && r2Client) {
+        // Extraer la key del objeto de la URL
+        const objectKey = extractR2ObjectKey(fileUri);
+        if (objectKey) {
+            const result = await fetchR2File(objectKey);
+            return {
+                ...result,
+                fileType: getFileTypeFromName(fileName)
+            };
+        }
+    }
+
+    // Si es una URL HTTP/HTTPS normal, descargar directamente
+    if (fileUri && (fileUri.startsWith('http://') || fileUri.startsWith('https://'))) {
+        try {
+            const response = await axios.get(fileUri, {
+                responseType: 'arraybuffer',
+                timeout: 30000,
+                headers: {
+                    'User-Agent': 'CourseV-MCP-Server/1.0'
+                }
+            });
+
+            const buffer = Buffer.from(response.data);
+            const contentType = response.headers['content-type'] || 'application/octet-stream';
+            
+            let content;
+            if (contentType.includes('text') || isTextFile(fileName)) {
+                content = buffer.toString('utf-8');
+            } else {
+                content = buffer.toString('base64');
+            }
+
+            return {
+                content,
+                contentType,
+                size: buffer.length,
+                isBase64: !contentType.includes('text') && !isTextFile(fileName),
+                fileType: getFileTypeFromName(fileName)
+            };
+        } catch (error) {
+            console.error(`❌ Error downloading file: ${error.message}`);
+            throw new Error(`No se pudo descargar el archivo: ${error.message}`);
+        }
+    }
+
+    throw new Error(`URI de archivo no soportada: ${fileUri}`);
+}
+
+/**
+ * Determina si un archivo es de texto basándose en su nombre
+ */
+function isTextFile(fileName) {
+    const textExtensions = [
+        '.txt', '.sql', '.py', '.js', '.ts', '.java', '.kt', '.swift',
+        '.html', '.css', '.json', '.xml', '.md', '.csv', '.yaml', '.yml',
+        '.sh', '.bat', '.ps1', '.c', '.cpp', '.h', '.hpp', '.cs', '.php',
+        '.rb', '.go', '.rs', '.scala', '.r', '.m', '.lua', '.pl'
+    ];
+    const lowerName = fileName.toLowerCase();
+    return textExtensions.some(ext => lowerName.endsWith(ext));
+}
+
+/**
+ * Determina el tipo de archivo basándose en su nombre
+ */
+function getFileTypeFromName(fileName) {
+    const lowerName = (fileName || '').toLowerCase();
+    
+    if (lowerName.endsWith('.pdf')) return 'pdf';
+    if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) return 'docx';
+    if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) return 'excel';
+    if (lowerName.endsWith('.pptx') || lowerName.endsWith('.ppt')) return 'powerpoint';
+    if (lowerName.endsWith('.txt')) return 'text';
+    if (lowerName.endsWith('.sql')) return 'sql';
+    if (lowerName.endsWith('.py')) return 'python';
+    if (lowerName.endsWith('.js') || lowerName.endsWith('.ts')) return 'javascript';
+    if (lowerName.endsWith('.java')) return 'java';
+    if (lowerName.endsWith('.kt')) return 'kotlin';
+    if (lowerName.endsWith('.html') || lowerName.endsWith('.htm')) return 'html';
+    if (lowerName.endsWith('.css')) return 'css';
+    if (lowerName.endsWith('.json')) return 'json';
+    if (lowerName.endsWith('.xml')) return 'xml';
+    if (lowerName.endsWith('.md')) return 'markdown';
+    if (lowerName.endsWith('.csv')) return 'csv';
+    if (lowerName.endsWith('.zip') || lowerName.endsWith('.rar')) return 'archive';
+    if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') || 
+        lowerName.endsWith('.png') || lowerName.endsWith('.gif')) return 'image';
+    if (lowerName.endsWith('.mp4') || lowerName.endsWith('.avi') || 
+        lowerName.endsWith('.mov')) return 'video';
+    
+    return 'unknown';
+}
+
+// ============================================================
+// END CLOUDFLARE R2 SERVICE
+// ============================================================
+
 /**
  * Detecta si el nombre de archivo indica un repositorio de GitHub
  * Formato: github_OWNER_REPO o github_OWNER_REPO_BRANCH
@@ -221,7 +521,7 @@ function extractGitHubUrl(fileName) {
 async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('🐙 INICIANDO ANÁLISIS DE REPOSITORIO GITHUB...');
     console.log('   📦 URL:', repoUrl);
-    console.log('   📋 Tarea:', taskDescription ? .substring(0, 100) || 'Sin descripción');
+    console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
 
     if (!mcpService) {
         throw new Error('MCPService no está disponible');
@@ -236,7 +536,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
 
         return result;
     } catch (error) {
@@ -850,7 +1150,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response ? .data || resendError.message);
+                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
                 // Fallback a onboarding@resend.dev si falla el dominio personalizado
                 console.log('🔄 Reintentando con email por defecto de Resend...');
                 try {
@@ -868,7 +1168,7 @@ async function sendEmailNotification(userId, subject, text) {
                     console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response ? .data || fallbackError.message);
+                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
                 }
             }
         }
@@ -2334,7 +2634,7 @@ El archivo que enviaste no pudo ser procesado correctamente por el sistema. Esto
                             return res.json({ respuesta_texto: respuestaFormateada });
                         } else {
                             // Si el análisis falló pero tenemos información del error
-                            console.log('⚠️ Análisis de GitHub falló:', analysisResult ? .error || 'Error desconocido');
+                            console.log('⚠️ Análisis de GitHub falló:', analysisResult?.error || 'Error desconocido');
 
                             const respuestaError = `⚠️ **ERROR AL ANALIZAR REPOSITORIO**
 
@@ -3116,9 +3416,11 @@ function getLocalIPAddress() {
 // const supabaseService = SupabaseService.getInstance(); // Already initialized at top level
 
 /**
- * MCP Health check endpoint
+ * 🔍 DETAILED Health check endpoint for monitoring services
+ * This checks all dependencies (DB, LLM, etc.)
+ * Use /health for simple healthchecks (defined at top of file)
  */
-app.get('/health', async(req, res) => {
+app.get('/health/detailed', async(req, res) => {
     try {
         const dbHealth = await supabaseService.healthCheck();
 
@@ -3136,9 +3438,10 @@ app.get('/health', async(req, res) => {
 
         res.json({
             status: 'ok',
-            server: 'tareamov-mcp-server',
+            server: 'coursev-mcp-server',
             version: '1.0.0',
             timestamp: new Date().toISOString(),
+            uptime: process.uptime(),
             services: {
                 database: dbHealth,
                 llm: llmHealth
@@ -3288,6 +3591,62 @@ You can send to specific users by their ID.`,
                         },
                         required: ['repoUrl']
                     }
+                },
+                {
+                    name: 'get_submission_file',
+                    description: `Retrieve the content of a file submitted by a student for a task. 
+This tool downloads and reads files stored in Cloudflare R2 cloud storage.
+
+**USE CASES:**
+- Read the content of a student's submission file to analyze or grade it
+- Extract code, text, or data from submitted files (PDF, DOCX, TXT, SQL, Python, Java, etc.)
+- Verify what a student submitted for a specific task
+
+**SUPPORTED FILE TYPES:**
+- Text files: .txt, .sql, .py, .js, .java, .kt, .html, .css, .json, .xml, .md, .csv
+- Documents: .pdf, .docx (returns base64 for binary files)
+- Code files: All common programming languages
+
+**HOW TO USE:**
+1. First query the task_submissions table to get submissionId, fileUri, and fileName
+2. Then call this tool with that information to get the file content`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            submissionId: {
+                                type: 'number',
+                                description: 'The ID of the submission (from task_submissions table)'
+                            },
+                            fileUri: {
+                                type: 'string',
+                                description: 'The file URI/URL from the submission (fileUri field from task_submissions)'
+                            },
+                            fileName: {
+                                type: 'string',
+                                description: 'The name of the file (fileName field from task_submissions)'
+                            }
+                        },
+                        required: ['submissionId']
+                    }
+                },
+                {
+                    name: 'list_submission_files',
+                    description: `List all files in a submission folder in Cloudflare R2.
+Useful to see what files are available for a specific task.`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            taskId: {
+                                type: 'number',
+                                description: 'The task ID to list submissions for'
+                            },
+                            prefix: {
+                                type: 'string',
+                                description: 'Optional custom prefix/folder path in R2'
+                            }
+                        },
+                        required: []
+                    }
                 }
             ]
         }
@@ -3299,7 +3658,7 @@ You can send to specific users by their ID.`,
  */
 app.post('/tools/call', async(req, res) => {
     const { params } = req.body;
-    console.log('🔧 Tool call request:', params ? .name);
+    console.log('🔧 Tool call request:', params?.name);
 
     try {
         const { name, arguments: args } = params;
@@ -3425,6 +3784,146 @@ app.post('/tools/call', async(req, res) => {
                     }
                 });
             }
+        } else if (name === 'get_submission_file') {
+            console.log('📄 Getting submission file:', args.submissionId);
+
+            try {
+                let fileUri = args.fileUri;
+                let fileName = args.fileName;
+
+                // Si no se proporcionan fileUri o fileName, buscar en la base de datos
+                if (!fileUri || !fileName) {
+                    console.log('🔍 Fetching submission details from database...');
+                    const { data: submission, error } = await supabaseService.client
+                        .from('task_submissions')
+                        .select('file_uri, file_name, task_id, student_id')
+                        .eq('id', args.submissionId)
+                        .single();
+
+                    if (error || !submission) {
+                        throw new Error(`Submission ${args.submissionId} not found: ${error?.message || 'No data'}`);
+                    }
+
+                    fileUri = submission.file_uri;
+                    fileName = submission.file_name;
+                    console.log(`📋 Found submission: ${fileName} -> ${fileUri}`);
+                }
+
+                if (!fileUri) {
+                    throw new Error('No file URI found for this submission');
+                }
+
+                // Obtener el contenido del archivo
+                const fileData = await getSubmissionFileContent(fileUri, fileName);
+
+                // Preparar respuesta con metadata
+                const response = {
+                    success: true,
+                    submissionId: args.submissionId,
+                    fileName: fileName,
+                    fileType: fileData.fileType,
+                    contentType: fileData.contentType,
+                    size: fileData.size,
+                    isBase64: fileData.isBase64,
+                    content: fileData.isBase64 
+                        ? `[Base64 content - ${fileData.size} bytes. Use appropriate decoder for ${fileData.fileType} files]`
+                        : fileData.content,
+                    // Si es texto, incluir el contenido completo
+                    ...(fileData.isBase64 ? {} : { fullContent: fileData.content })
+                };
+
+                // Si es un archivo de texto, incluir análisis básico
+                if (!fileData.isBase64 && fileData.content) {
+                    response.analysis = {
+                        lineCount: fileData.content.split('\n').length,
+                        charCount: fileData.content.length,
+                        preview: fileData.content.substring(0, 500) + (fileData.content.length > 500 ? '...' : '')
+                    };
+                }
+
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify(response, null, 2)
+                        }]
+                    }
+                });
+            } catch (fileError) {
+                console.error('❌ Get submission file error:', fileError);
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                error: true,
+                                message: `Error obteniendo archivo: ${fileError.message}`,
+                                hint: 'Verifica que el submissionId existe y el archivo está disponible en R2'
+                            }, null, 2)
+                        }]
+                    }
+                });
+            }
+        } else if (name === 'list_submission_files') {
+            console.log('📂 Listing submission files');
+
+            try {
+                let prefix = args.prefix;
+                
+                // Si se proporciona taskId, construir el prefijo
+                if (args.taskId) {
+                    prefix = `submissions/task_${args.taskId}/`;
+                } else if (!prefix) {
+                    prefix = 'submissions/';
+                }
+
+                if (!r2Client) {
+                    throw new Error('Cloudflare R2 not configured on server');
+                }
+
+                const files = await listR2Files(prefix);
+
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                success: true,
+                                prefix: prefix,
+                                fileCount: files.length,
+                                files: files.map(f => ({
+                                    name: f.key.split('/').pop(),
+                                    path: f.key,
+                                    size: f.size,
+                                    url: f.url,
+                                    lastModified: f.lastModified
+                                }))
+                            }, null, 2)
+                        }]
+                    }
+                });
+            } catch (listError) {
+                console.error('❌ List files error:', listError);
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                error: true,
+                                message: `Error listando archivos: ${listError.message}`
+                            }, null, 2)
+                        }]
+                    }
+                });
+            }
         } else {
             res.status(404).json({
                 jsonrpc: '2.0',
@@ -3482,7 +3981,8 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`   • POST /feedback-entrega`);
     console.log(`   • POST /procesar-prompt`);
     console.log(`   • GET  / (health check)`);
-    console.log(`   • GET  /health (MCP health)`);
+    console.log(`   • GET  /health (Railway healthcheck - fast)`);
+    console.log(`   • GET  /health/detailed (full diagnostics)`);
     console.log(`   • POST /initialize (MCP)`);
     console.log(`   • POST /tools/list (MCP)`);
     console.log(`   • POST /tools/call (MCP)`);
