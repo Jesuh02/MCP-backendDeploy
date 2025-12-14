@@ -405,9 +405,11 @@ export class MCPService {
                 logger.info("✅ Schema fetched");
 
                 // STEP 2: Generate SQL (with retry logic for errors)
-                const maxRetries = 2;
+                const maxRetries = 3; // Increased from 2 to 3 for better error recovery
                 let attempt = 0;
                 let lastError = null;
+                let lastSQL = null; // Track the SQL that failed
+                let errorHistory = []; // Track all errors for comprehensive feedback
                 let result = null;
                 let finalSQL = null;
 
@@ -438,25 +440,38 @@ SELECT ...
                             new HumanMessage(`SQL for: ${query}`)
                         ];
                     } else {
-                        // Retry - include error feedback
+                        // Retry - include comprehensive error feedback
+                        const errorFeedback = this.buildErrorFeedback(lastError, lastSQL, errorHistory);
                         sqlGenMessages = [
-                            new SystemMessage(`Previous SQL FAILED with error:
+                            new SystemMessage(`🚨 **SQL CORRECTION REQUIRED** 🚨
+
+**FAILED SQL:**
+\`\`\`sql
+${lastSQL || 'N/A'}
+\`\`\`
+
+**ERROR MESSAGE:**
 ${lastError}
 
-Database schema:
+**ERROR ANALYSIS:**
+${errorFeedback.analysis}
+
+**SUGGESTED FIX:**
+${errorFeedback.suggestion}
+
+**Database Schema (verified):**
 ${schemaText}
 
-ANALYZE THE ERROR:
-- Missing column? Check schema for correct name
-- Missing table alias? Add it to FROM clause
-- Wrong alias reference? Use alias defined in FROM
-- Missing FROM clause? Define table alias first
+**CRITICAL RULES FOR CORRECTION:**
+1. ${errorFeedback.rules.join('\n2. ')}
 
-Generate CORRECTED SQL:
+**IMPORTANT:** Generate a SIMPLER, more direct SQL query. Avoid complex JOINs, UNIONs, or subqueries unless absolutely necessary.
+
+Generate CORRECTED SQL (must be different from previous attempt):
 \`\`\`sql
 SELECT ...
 \`\`\``),
-                            new HumanMessage(`Fix SQL for: ${query}`)
+                            new HumanMessage(`CORRIGE el SQL para esta consulta: ${query}\n\nIntento ${attempt} de ${maxRetries}. El SQL anterior falló, genera una versión DIFERENTE y más SIMPLE.`)
                         ];
                     }
 
@@ -488,15 +503,26 @@ SELECT ...
                         break; // Success - exit retry loop
                     } catch (sqlError) {
                         logger.error(`❌ SQL execution failed (attempt ${attempt}):`, sqlError.message);
+                        
+                        // Store error details for comprehensive feedback
                         lastError = sqlError.message;
+                        lastSQL = finalSQL;
+                        errorHistory.push({
+                            attempt,
+                            sql: finalSQL,
+                            error: sqlError.message,
+                            errorType: this.classifyError(sqlError.message)
+                        });
 
                         if (attempt === maxRetries) {
-                            // Final attempt failed - return error
-                            return `Error ejecutando la consulta después de ${maxRetries} intentos:\n\n**Error:**\n\`\`\`\n${lastError}\n\`\`\`\n\n**SQL generado:**\n\`\`\`sql\n${finalSQL}\n\`\`\`\n\n**Sugerencia:** Verifica la sintaxis SQL o reformula tu pregunta.`;
+                            // Final attempt failed - return detailed error report
+                            const errorReport = this.generateErrorReport(errorHistory, query);
+                            return errorReport;
                         }
 
-                        // Continue to retry
-                        logger.warn(`🔄 Will retry with error feedback...`);
+                        // Continue to retry with feedback
+                        logger.warn(`🔄 Will retry with error feedback (attempt ${attempt + 1}/${maxRetries})...`);
+                        logger.info(`📝 Error history: ${errorHistory.length} errors tracked for feedback`);
                     }
                 }
 
@@ -1217,6 +1243,276 @@ A continuación se muestra el contenido del repositorio para análisis:`;
         lines.push('- "Dame el plan detallado de implementación del dashboard BI"');
         lines.push('- "¿Cómo configuro el tracking de eventos en mi app?"');
 
+        return lines.join('\n');
+    }
+
+    // ============================================================
+    // 🔄 ERROR FEEDBACK SYSTEM - Self-correcting SQL generation
+    // ============================================================
+
+    /**
+     * Classify SQL error type for better feedback
+     * @param {string} errorMessage - The error message from SQL execution
+     * @returns {string} - Error classification
+     */
+    classifyError(errorMessage) {
+        const lower = errorMessage.toLowerCase();
+        
+        // Timeout errors
+        if (lower.includes('timeout') || lower.includes('statement timeout') || lower.includes('canceling statement')) {
+            return 'TIMEOUT';
+        }
+        
+        // UNION/INTERSECT/EXCEPT errors
+        if (lower.includes('union') || lower.includes('intersect') || lower.includes('except')) {
+            return 'UNION_ERROR';
+        }
+        
+        // Column not found
+        if (lower.includes('column') && (lower.includes('not exist') || lower.includes('does not exist') || lower.includes('unknown'))) {
+            return 'COLUMN_NOT_FOUND';
+        }
+        
+        // Table not found
+        if (lower.includes('relation') && (lower.includes('not exist') || lower.includes('does not exist'))) {
+            return 'TABLE_NOT_FOUND';
+        }
+        
+        // Syntax error
+        if (lower.includes('syntax error') || lower.includes('parse error')) {
+            return 'SYNTAX_ERROR';
+        }
+        
+        // Ambiguous column
+        if (lower.includes('ambiguous')) {
+            return 'AMBIGUOUS_COLUMN';
+        }
+        
+        // Permission/access error
+        if (lower.includes('permission') || lower.includes('denied') || lower.includes('access')) {
+            return 'PERMISSION_ERROR';
+        }
+        
+        // GROUP BY errors
+        if (lower.includes('group by') || lower.includes('aggregate')) {
+            return 'GROUP_BY_ERROR';
+        }
+        
+        // ORDER BY errors
+        if (lower.includes('order by')) {
+            return 'ORDER_BY_ERROR';
+        }
+        
+        // JOIN errors
+        if (lower.includes('join') || lower.includes('foreign key')) {
+            return 'JOIN_ERROR';
+        }
+        
+        return 'UNKNOWN';
+    }
+
+    /**
+     * Build comprehensive error feedback for LLM retry
+     * @param {string} lastError - The last error message
+     * @param {string} lastSQL - The SQL that caused the error
+     * @param {Array} errorHistory - History of all errors
+     * @returns {Object} - Feedback object with analysis, suggestion, and rules
+     */
+    buildErrorFeedback(lastError, lastSQL, errorHistory) {
+        const errorType = this.classifyError(lastError);
+        
+        const feedback = {
+            analysis: '',
+            suggestion: '',
+            rules: []
+        };
+        
+        switch (errorType) {
+            case 'TIMEOUT':
+                feedback.analysis = `La consulta tardó demasiado tiempo en ejecutarse. Esto generalmente ocurre con:
+                - Queries con muchos JOINs sin índices
+                - Queries que escanean tablas muy grandes sin LIMIT
+                - Queries con subconsultas complejas anidadas
+                - UNION/INTERSECT sin optimización`;
+                feedback.suggestion = `SIMPLIFICA la query:
+                1. Agrega LIMIT (máximo 50 filas)
+                2. Evita múltiples JOINs - haz queries separadas si es necesario
+                3. Evita UNION - usa una sola tabla con WHERE
+                4. No uses subconsultas - usa JOINs simples`;
+                feedback.rules = [
+                    'SIEMPRE agrega LIMIT 20 o LIMIT 50 al final',
+                    'NO uses UNION, INTERSECT o EXCEPT - simplifica la lógica',
+                    'Máximo 1 JOIN por query',
+                    'NO uses subconsultas (SELECT dentro de SELECT)',
+                    'Usa filtros WHERE específicos para reducir datos'
+                ];
+                break;
+                
+            case 'UNION_ERROR':
+                feedback.analysis = `Error con UNION/INTERSECT/EXCEPT. Problemas comunes:
+                - ORDER BY solo puede ir al final de todo el UNION, no en las subqueries
+                - Todas las subqueries deben tener el mismo número de columnas
+                - Los tipos de datos deben coincidir entre las subqueries`;
+                feedback.suggestion = `EVITA UNION completamente. Alternativas:
+                1. Usa una sola query con CASE WHEN
+                2. Haz queries separadas
+                3. Si necesitas ORDER BY, ponlo solo al final después del último UNION`;
+                feedback.rules = [
+                    'NO uses UNION/INTERSECT/EXCEPT - busca alternativas más simples',
+                    'Si absolutamente necesitas UNION, el ORDER BY va SOLO al final',
+                    'Ejemplo correcto: (SELECT ...) UNION (SELECT ...) ORDER BY col',
+                    'Mejor: usa una sola tabla con WHERE y CASE WHEN'
+                ];
+                break;
+                
+            case 'COLUMN_NOT_FOUND':
+                feedback.analysis = `La columna referenciada no existe en la tabla. Verifica:
+                - El nombre exacto de la columna en el schema
+                - Que estés usando el alias correcto de la tabla
+                - Que la columna pertenece a la tabla que estás consultando`;
+                feedback.suggestion = `Revisa el schema y usa los nombres EXACTOS de las columnas. 
+                Nota: username en usuarios, title en courses, etc.`;
+                feedback.rules = [
+                    'Verifica el nombre exacto de la columna en el schema proporcionado',
+                    'Si usas alias (ej: FROM usuarios u), usa u.columna',
+                    'NO inventes columnas - usa solo las del schema'
+                ];
+                break;
+                
+            case 'TABLE_NOT_FOUND':
+                feedback.analysis = `La tabla referenciada no existe. Tablas disponibles:
+                usuarios, courses, videos, tasks, task_submissions, subscriptions, notifications, chat_messages, topics, content_items`;
+                feedback.suggestion = `Usa solo tablas del schema. Tablas principales:
+                - usuarios (NO users)
+                - courses (NO cursos)
+                - task_submissions (NO submissions)`;
+                feedback.rules = [
+                    'Usa SOLO tablas que existen en el schema',
+                    'Tabla de usuarios es "usuarios" (NO "users")',
+                    'Tabla de cursos es "courses" (NO "cursos")'
+                ];
+                break;
+                
+            case 'AMBIGUOUS_COLUMN':
+                feedback.analysis = `Una columna se usa sin especificar de qué tabla proviene cuando hay múltiples tablas con esa columna.`;
+                feedback.suggestion = `SIEMPRE usa prefijos de tabla: tabla.columna o alias.columna`;
+                feedback.rules = [
+                    'SIEMPRE usa alias de tabla (FROM usuarios u)',
+                    'SIEMPRE referencia columnas con el alias (u.id, NOT id)',
+                    'Cada columna debe tener prefijo de tabla'
+                ];
+                break;
+                
+            case 'GROUP_BY_ERROR':
+                feedback.analysis = `Error con GROUP BY. Reglas de PostgreSQL:
+                - Todas las columnas en SELECT que no son agregadas deben estar en GROUP BY
+                - No puedes usar alias del SELECT en GROUP BY`;
+                feedback.suggestion = `Incluye TODAS las columnas no-agregadas en GROUP BY`;
+                feedback.rules = [
+                    'Cada columna en SELECT que NO es COUNT/SUM/AVG debe estar en GROUP BY',
+                    'Usa números en GROUP BY: GROUP BY 1, 2 (refiere a posiciones del SELECT)',
+                    'No uses alias del SELECT en GROUP BY'
+                ];
+                break;
+                
+            case 'ORDER_BY_ERROR':
+                feedback.analysis = `Error con ORDER BY. Problemas comunes:
+                - En UNION, ORDER BY solo va al final
+                - La columna debe existir en el SELECT o ser válida`;
+                feedback.suggestion = `Verifica que ORDER BY usa columnas válidas`;
+                feedback.rules = [
+                    'ORDER BY debe usar columnas del SELECT o alias válidos',
+                    'En UNION: ORDER BY va SOLO al final, después de todas las subqueries',
+                    'Puedes usar números: ORDER BY 1 DESC'
+                ];
+                break;
+                
+            case 'SYNTAX_ERROR':
+                feedback.analysis = `Error de sintaxis SQL. Revisa:
+                - Comas entre columnas
+                - Paréntesis balanceados
+                - Palabras clave correctas`;
+                feedback.suggestion = `Simplifica la query y verifica la sintaxis básica`;
+                feedback.rules = [
+                    'Verifica que hay comas entre columnas en SELECT',
+                    'Verifica paréntesis balanceados',
+                    'Verifica que no hay errores de tipeo en palabras clave'
+                ];
+                break;
+                
+            default:
+                feedback.analysis = `Error no clasificado: ${lastError}`;
+                feedback.suggestion = `Simplifica la query al máximo y usa solo las estructuras más básicas`;
+                feedback.rules = [
+                    'Usa queries simples: SELECT col1, col2 FROM tabla LIMIT 20',
+                    'Evita JOINs, UNIONs y subconsultas',
+                    'Verifica nombres de tablas y columnas en el schema'
+                ];
+        }
+        
+        // Add history context if there are multiple errors
+        if (errorHistory.length > 1) {
+            const previousErrors = errorHistory.slice(0, -1).map(e => 
+                `- Intento ${e.attempt}: ${e.errorType} - ${e.error.substring(0, 100)}`
+            ).join('\n');
+            feedback.analysis += `\n\n**Errores anteriores en esta sesión:**\n${previousErrors}`;
+            feedback.rules.push('NO repitas los mismos errores - genera una query DIFERENTE');
+        }
+        
+        return feedback;
+    }
+
+    /**
+     * Generate a comprehensive error report when all retries fail
+     * @param {Array} errorHistory - History of all errors
+     * @param {string} originalQuery - The original user query
+     * @returns {string} - Formatted error report
+     */
+    generateErrorReport(errorHistory, originalQuery) {
+        const lines = [];
+        
+        lines.push(`## ❌ No se pudo ejecutar la consulta después de ${errorHistory.length} intentos\n`);
+        lines.push(`**Tu pregunta:** "${originalQuery}"\n`);
+        
+        lines.push('### 📋 Historial de errores:\n');
+        
+        for (const entry of errorHistory) {
+            lines.push(`#### Intento ${entry.attempt}:`);
+            lines.push('```sql');
+            lines.push(entry.sql || 'N/A');
+            lines.push('```');
+            lines.push(`**Error (${entry.errorType}):** ${entry.error}\n`);
+        }
+        
+        // Analyze patterns
+        const errorTypes = errorHistory.map(e => e.errorType);
+        const hasTimeout = errorTypes.includes('TIMEOUT');
+        const hasUnion = errorTypes.includes('UNION_ERROR');
+        
+        lines.push('### 💡 Sugerencias:\n');
+        
+        if (hasTimeout) {
+            lines.push('- **Timeout detectado:** Tu consulta es muy compleja. Intenta preguntar algo más específico.');
+            lines.push('  - En lugar de "dame todos los mensajes", prueba "dame los últimos 10 mensajes"');
+        }
+        
+        if (hasUnion) {
+            lines.push('- **Error de UNION:** La consulta intentó combinar datos de múltiples fuentes.');
+            lines.push('  - Intenta preguntar por una sola tabla a la vez');
+        }
+        
+        lines.push('\n### 🔄 Alternativas:\n');
+        lines.push('1. **Reformula tu pregunta** de manera más específica');
+        lines.push('2. **Pregunta por una tabla a la vez** (ej: "¿cuántos usuarios hay?")');
+        lines.push('3. **Usa límites explícitos** (ej: "dame los últimos 10 cursos")');
+        lines.push('4. **Pregunta consultas simples** como conteos o listas cortas\n');
+        
+        lines.push('### 📊 Consultas que funcionan bien:\n');
+        lines.push('- "¿Cuántos usuarios hay?"');
+        lines.push('- "Dame los últimos 10 cursos"');
+        lines.push('- "Lista los usuarios registrados"');
+        lines.push('- "¿Cuántas tareas hay?"');
+        
         return lines.join('\n');
     }
 }
