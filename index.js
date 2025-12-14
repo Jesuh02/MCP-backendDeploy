@@ -4223,35 +4223,88 @@ const mcpSseConnections = new Map();
  * 
  * GET /mcp/sse - Establishes SSE connection
  * POST /mcp/message - Send messages to the server
+ * 
+ * IMPROVED: Better keep-alive handling for Railway's 5-minute connection timeout
  */
 app.get('/mcp/sse', (req, res) => {
-    console.log('🔌 MCP SSE Connection established');
+    console.log('🔌 MCP SSE Connection request received');
 
-    // Set SSE headers
+    // Set SSE headers with additional keep-alive settings
     res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx/proxy buffering
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    
+    // Disable request timeout for SSE connections
+    res.setTimeout(0);
+    req.setTimeout(0);
+    
+    if (req.socket) {
+        req.socket.setTimeout(0);
+        req.socket.setNoDelay(true);
+        req.socket.setKeepAlive(true, 5000); // Keep-alive every 5 seconds
+    }
+    
+    // Flush headers immediately
     res.flushHeaders();
 
     // Generate unique session ID
     const sessionId = `mcp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    mcpSseConnections.set(sessionId, res);
+    
+    // Store connection with metadata
+    mcpSseConnections.set(sessionId, {
+        response: res,
+        createdAt: Date.now(),
+        lastActivity: Date.now()
+    });
 
-    // Send endpoint info to client
+    // Send endpoint info to client (this is the URL where VS Code sends messages)
     const endpointUrl = `https://mcp-backenddeploy-production.up.railway.app/mcp/message?sessionId=${sessionId}`;
     res.write(`event: endpoint\ndata: ${endpointUrl}\n\n`);
 
-    console.log(`📡 MCP SSE Session: ${sessionId}`);
+    console.log(`📡 MCP SSE Session established: ${sessionId}`);
 
-    // Send ping every 30 seconds to keep connection alive
+    // Send ping every 10 seconds to keep connection alive (Railway has ~5 min timeout)
     const pingInterval = setInterval(() => {
-        if (!res.writableEnded) {
-            res.write(`: ping\n\n`);
+        try {
+            const conn = mcpSseConnections.get(sessionId);
+            if (conn && !res.writableEnded && res.writable) {
+                res.write(`: ping ${Date.now()}\n\n`);
+                conn.lastActivity = Date.now();
+            } else {
+                console.log(`🔌 SSE Connection no longer writable: ${sessionId}`);
+                clearInterval(pingInterval);
+                mcpSseConnections.delete(sessionId);
+            }
+        } catch (err) {
+            console.error(`❌ Ping error for ${sessionId}:`, err.message);
+            clearInterval(pingInterval);
+            mcpSseConnections.delete(sessionId);
         }
-    }, 30000);
+    }, 10000);
 
-    // Cleanup on close
+    // Handle connection errors
+    res.on('error', (err) => {
+        console.error(`❌ SSE Response error (${sessionId}): ${err.message}`);
+        clearInterval(pingInterval);
+        mcpSseConnections.delete(sessionId);
+    });
+
+    req.on('error', (err) => {
+        console.error(`❌ SSE Request error (${sessionId}): ${err.message}`);
+        clearInterval(pingInterval);
+        mcpSseConnections.delete(sessionId);
+    });
+
+    res.on('close', () => {
+        console.log(`🔌 SSE Response closed: ${sessionId}`);
+        clearInterval(pingInterval);
+        mcpSseConnections.delete(sessionId);
+    });
+
+    // Cleanup on request close
     req.on('close', () => {
         console.log(`🔌 MCP SSE Connection closed: ${sessionId}`);
         clearInterval(pingInterval);
@@ -4269,7 +4322,14 @@ app.post('/mcp/message', async(req, res) => {
 
     console.log(`🔌 MCP Message: ${method} (session: ${sessionId})`);
 
-    const sseConnection = mcpSseConnections.get(sessionId);
+    // Get SSE connection object (contains response and metadata)
+    const sseConn = mcpSseConnections.get(sessionId);
+    const sseResponse = sseConn?.response;
+    
+    // Update last activity timestamp
+    if (sseConn) {
+        sseConn.lastActivity = Date.now();
+    }
 
     try {
         let result;
@@ -4387,17 +4447,30 @@ app.post('/mcp/message', async(req, res) => {
         }
 
         const response = { jsonrpc: '2.0', id, result };
-        if (sseConnection && !sseConnection.writableEnded) {
-            sseConnection.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
+        
+        // Send via SSE if connection exists and is still open
+        if (sseResponse && !sseResponse.writableEnded && sseResponse.writable) {
+            try {
+                sseResponse.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
+            } catch (sseErr) {
+                console.warn(`⚠️ Could not write to SSE: ${sseErr.message}`);
+            }
         }
+        
         res.json(response);
 
     } catch (error) {
         console.error(`❌ MCP Error (${method}):`, error);
         const errorResponse = { jsonrpc: '2.0', id, error: { code: -32603, message: error.message } };
-        if (sseConnection && !sseConnection.writableEnded) {
-            sseConnection.write(`event: message\ndata: ${JSON.stringify(errorResponse)}\n\n`);
+        
+        if (sseResponse && !sseResponse.writableEnded && sseResponse.writable) {
+            try {
+                sseResponse.write(`event: message\ndata: ${JSON.stringify(errorResponse)}\n\n`);
+            } catch (sseErr) {
+                console.warn(`⚠️ Could not write error to SSE: ${sseErr.message}`);
+            }
         }
+        
         res.json(errorResponse);
     }
 });
