@@ -3506,14 +3506,20 @@ app.post('/send-notification', async(req, res) => {
 
         // 2. ENVIAR EMAIL
         try {
+            // Convertir userId a número para asegurar compatibilidad con Supabase
+            const userIdNumber = parseInt(userId, 10);
+            console.log(`🔍 Buscando email para userId: ${userId} (parseado: ${userIdNumber})`);
+            
             // Obtener email del usuario desde Supabase
             const { data: userData, error: userError } = await supabaseService.client
                 .from('usuarios')
                 .select('email, usuario')
-                .eq('id', userId)
+                .eq('id', userIdNumber)
                 .single();
 
-            if (!userError && userData && userData.email) {
+            console.log(`🔍 Resultado consulta usuario:`, { userData, userError });
+
+            if (!userError && userData && userData.email && userData.email !== '.' && !userData.email.startsWith('missing_email_')) {
                 const userEmail = userData.email;
                 const userName = userData.usuario || 'Usuario';
                 console.log(`📧 Enviando email a: ${userEmail}`);
@@ -3577,8 +3583,24 @@ app.post('/send-notification', async(req, res) => {
                     console.warn('⚠️ Resend API key no configurada');
                 }
             } else {
-                results.email.error = 'User email not found';
-                console.warn(`⚠️ No se encontró email para usuario ${userId}`);
+                // Detallar la razón por la que no se envió email
+                let reason = 'Unknown';
+                if (userError) {
+                    reason = `DB error: ${userError.message || JSON.stringify(userError)}`;
+                } else if (!userData) {
+                    reason = 'Usuario no encontrado en base de datos';
+                } else if (!userData.email) {
+                    reason = 'Campo email vacío o nulo';
+                } else if (userData.email === '.') {
+                    reason = 'Email placeholder "." (no configurado)';
+                } else if (userData.email.startsWith('missing_email_')) {
+                    reason = `Email placeholder temporal: ${userData.email}`;
+                }
+                results.email.error = reason;
+                console.warn(`⚠️ No se pudo enviar email para usuario ${userId}: ${reason}`);
+                if (userData) {
+                    console.warn(`   Datos del usuario: email="${userData.email}", usuario="${userData.usuario}"`);
+                }
             }
         } catch (emailError) {
             results.email.error = emailError.message;
