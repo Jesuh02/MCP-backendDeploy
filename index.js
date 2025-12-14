@@ -2751,6 +2751,204 @@ app.post('/send-push-notification', async(req, res) => {
 });
 
 /**
+ * 🔔 Endpoint genérico para enviar notificaciones por push y email
+ * Endpoint: POST /send-notification
+ * Body: { userId, title, message, type, relatedId, senderUsername }
+ * 
+ * Este endpoint envía notificaciones por:
+ * 1. Push notification (Firebase Cloud Messaging)
+ * 2. Email (Resend API)
+ */
+app.post('/send-notification', async(req, res) => {
+    const { userId, title, message, type, relatedId, senderUsername } = req.body;
+
+    if (!userId) {
+        return res.status(400).json({ error: 'userId es requerido' });
+    }
+
+    console.log(`🔔 Enviando notificación completa para usuario ${userId}`);
+    console.log(`   Tipo: ${type}, Título: ${title}`);
+
+    const results = {
+        push: { success: false, error: null },
+        email: { success: false, error: null }
+    };
+
+    try {
+        // 1. ENVIAR PUSH NOTIFICATION
+        try {
+            if (admin && admin.messaging) {
+                // Obtener FCM token del usuario desde Supabase
+                const { data: tokens, error: tokenError } = await supabaseService.client
+                    .from('user_fcm_tokens')
+                    .select('token')
+                    .eq('user_id', userId)
+                    .order('last_updated', { ascending: false });
+
+                if (!tokenError && tokens && tokens.length > 0) {
+                    const sendPromises = tokens.map(async({ token }) => {
+                        try {
+                            const pushMessage = {
+                                notification: {
+                                    title: title || '📢 Nueva notificación',
+                                    body: message || 'Tienes una nueva notificación',
+                                },
+                                data: {
+                                    userId: userId.toString(),
+                                    type: type || 'generic',
+                                    relatedId: relatedId ? relatedId.toString() : '',
+                                    senderUsername: senderUsername || '',
+                                    timestamp: new Date().toISOString()
+                                },
+                                android: {
+                                    priority: 'high',
+                                    notification: {
+                                        channelId: 'deepseek_updates',
+                                        sound: 'default',
+                                        priority: 'high',
+                                        defaultSound: true,
+                                        color: '#6366f1'
+                                    }
+                                },
+                                token: token
+                            };
+
+                            const response = await admin.messaging().send(pushMessage);
+                            console.log(`✅ Push enviado a token: ${token.substring(0, 15)}...`);
+                            return { success: true, messageId: response };
+                        } catch (error) {
+                            console.error(`❌ Error push token ${token.substring(0, 10)}...`, error.message);
+                            
+                            // Eliminar token inválido
+                            if (error.code === 'messaging/invalid-registration-token' ||
+                                error.code === 'messaging/registration-token-not-registered') {
+                                await supabaseService.client
+                                    .from('user_fcm_tokens')
+                                    .delete()
+                                    .eq('token', token);
+                            }
+                            return { success: false, error: error.message };
+                        }
+                    });
+
+                    const pushResults = await Promise.all(sendPromises);
+                    const successCount = pushResults.filter(r => r.success).length;
+                    results.push.success = successCount > 0;
+                    results.push.sentCount = successCount;
+                    console.log(`📱 Push notifications: ${successCount}/${tokens.length} enviadas`);
+                } else {
+                    results.push.error = 'No FCM tokens found';
+                    console.warn(`⚠️ No se encontraron tokens FCM para usuario ${userId}`);
+                }
+            } else {
+                results.push.error = 'Firebase Admin not configured';
+                console.warn('⚠️ Firebase Admin no disponible');
+            }
+        } catch (pushError) {
+            results.push.error = pushError.message;
+            console.error('❌ Error en push notification:', pushError.message);
+        }
+
+        // 2. ENVIAR EMAIL
+        try {
+            // Obtener email del usuario desde Supabase
+            const { data: userData, error: userError } = await supabaseService.client
+                .from('usuarios')
+                .select('email')
+                .eq('id', userId)
+                .single();
+
+            if (!userError && userData && userData.email) {
+                const userEmail = userData.email;
+                console.log(`📧 Enviando email a: ${userEmail}`);
+
+                // Crear contenido del email basado en el tipo de notificación
+                let emailSubject = title || '📢 Nueva notificación en TareaMov';
+                let emailBody = `
+                    <h2 style="color: #6366f1;">${title}</h2>
+                    <p>${message}</p>
+                    ${senderUsername ? `<p><strong>De:</strong> ${senderUsername}</p>` : ''}
+                    <hr>
+                    <p style="color: #888; font-size: 12px;">
+                        Abre la app TareaMov para ver más detalles.
+                    </p>
+                `;
+
+                // Personalizar según el tipo
+                switch(type) {
+                    case 'new_course':
+                        emailSubject = `📚 ${title}`;
+                        break;
+                    case 'new_video':
+                        emailSubject = `🎬 ${title}`;
+                        break;
+                    case 'task_graded':
+                        emailSubject = `📊 ${title}`;
+                        break;
+                    case 'task_submission':
+                        emailSubject = `📝 ${title}`;
+                        break;
+                    case 'new_task':
+                        emailSubject = `📋 ${title}`;
+                        break;
+                }
+
+                // Enviar con Resend API
+                const RESEND_API_KEY = process.env.RESEND_API_KEY;
+                if (RESEND_API_KEY) {
+                    // Usar dominio verificado o el de sandbox para pruebas
+                    const fromEmail = process.env.RESEND_FROM_EMAIL || 'TareaMov <onboarding@resend.dev>';
+                    
+                    const emailResponse = await fetch('https://api.resend.com/emails', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${RESEND_API_KEY}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            from: fromEmail,
+                            to: [userEmail],
+                            subject: emailSubject,
+                            html: emailBody
+                        })
+                    });
+
+                    if (emailResponse.ok) {
+                        results.email.success = true;
+                        console.log(`✅ Email enviado a ${userEmail}`);
+                    } else {
+                        const errorData = await emailResponse.json();
+                        results.email.error = errorData.message || 'Email send failed';
+                        console.error(`❌ Error enviando email:`, errorData);
+                    }
+                } else {
+                    results.email.error = 'Resend API key not configured';
+                    console.warn('⚠️ Resend API key no configurada');
+                }
+            } else {
+                results.email.error = 'User email not found';
+                console.warn(`⚠️ No se encontró email para usuario ${userId}`);
+            }
+        } catch (emailError) {
+            results.email.error = emailError.message;
+            console.error('❌ Error en email:', emailError.message);
+        }
+
+        // Responder con resultados
+        const overallSuccess = results.push.success || results.email.success;
+        res.json({
+            success: overallSuccess,
+            message: `Notificación enviada: Push=${results.push.success}, Email=${results.email.success}`,
+            results
+        });
+
+    } catch (error) {
+        console.error('❌ Error general en /send-notification:', error);
+        res.status(500).json({ error: error.message, results });
+    }
+});
+
+/**
  * Recibe un prompt, lo divide o resume si supera el límite de tokens,
  * y lo envía al modelo Granite/Ollama.
  */
