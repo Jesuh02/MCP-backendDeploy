@@ -1241,10 +1241,9 @@ async function sendEmailNotification(userId, subject, text) {
         if (process.env.RESEND_API_KEY) {
             console.log('📧 Enviando email via Resend HTTP API...');
 
-            // ✅ Usar variable de entorno o fallback a onboarding@resend.dev (siempre funciona)
-            // Para usar dominio personalizado: configurar RESEND_FROM_EMAIL en Railway
-            // y verificar el dominio en https://resend.com/domains
-            const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+            // ✅ Usar dominio verificado yisuscompany.com
+            // Dominio verificado en https://resend.com/domains
+            const fromEmail = 'CourseV@yisuscompany.com';
             const fromName = 'CourseV'; // Nombre que aparece en el cliente de email
             
             try {
@@ -1268,11 +1267,11 @@ async function sendEmailNotification(userId, subject, text) {
                 return;
             } catch (resendError) {
                 console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
-                // Fallback a onboarding@resend.dev si falla el dominio personalizado
-                console.log('🔄 Reintentando con email por defecto de Resend...');
+                // Fallback - reintentar con el mismo dominio verificado
+                console.log('🔄 Reintentando envío de email...');
                 try {
                     const fallbackResponse = await axios.post('https://api.resend.com/emails', {
-                        from: 'CourseV <onboarding@resend.dev>',
+                        from: 'CourseV <CourseV@yisuscompany.com>',
                         to: [userEmail],
                         subject: `📚 ${subject}`,
                         html: htmlContent
@@ -2302,9 +2301,8 @@ app.post('/notify-course-creation', async(req, res) => {
                 // Send email with Resend
                 if (user.email) {
                     try {
-                        // ✅ SIEMPRE usar onboarding@resend.dev (sandbox) por defecto
-                        // El dominio personalizado requiere verificación en https://resend.com/domains
-                        const senderEmail = 'onboarding@resend.dev';
+                        // ✅ Usar dominio verificado yisuscompany.com
+                        const senderEmail = 'CourseV@yisuscompany.com';
                         await axios.post('https://api.resend.com/emails', {
                             from: `CourseV <${senderEmail}>`,
                             to: user.email,
@@ -2902,7 +2900,7 @@ app.post('/send-notification', async(req, res) => {
                 if (RESEND_API_KEY) {
                     // ✅ SIEMPRE usar sandbox de Resend (no requiere verificación de dominio)
                     // Para usar dominio propio: verificar en https://resend.com/domains
-                    const fromEmail = 'CourseV <onboarding@resend.dev>';
+                    const fromEmail = 'CourseV <CourseV@yisuscompany.com>';
                     
                     const emailResponse = await fetch('https://api.resend.com/emails', {
                         method: 'POST',
