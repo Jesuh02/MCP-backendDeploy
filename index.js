@@ -1241,9 +1241,10 @@ async function sendEmailNotification(userId, subject, text) {
         if (process.env.RESEND_API_KEY) {
             console.log('📧 Enviando email via Resend HTTP API...');
 
-            // ✅ Dominio verificado: yisuscompany.com (IONOS DNS configurado)
-            // Usando CourseV como remitente para mejor branding
-            const fromEmail = 'CourseV@yisuscompany.com'; // ✅ Branding CourseV
+            // ✅ Usar variable de entorno o fallback a onboarding@resend.dev (siempre funciona)
+            // Para usar dominio personalizado: configurar RESEND_FROM_EMAIL en Railway
+            // y verificar el dominio en https://resend.com/domains
+            const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
             const fromName = 'CourseV'; // Nombre que aparece en el cliente de email
             
             try {
@@ -2301,8 +2302,9 @@ app.post('/notify-course-creation', async(req, res) => {
                 // Send email with Resend
                 if (user.email) {
                     try {
+                        const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
                         await axios.post('https://api.resend.com/emails', {
-                            from: 'Notificaciones <notificaciones@yisuscompany.com>',
+                            from: `CourseV <${fromEmail}>`,
                             to: user.email,
                             subject: `¡${creatorUsername} subió un nuevo curso!`,
                             html: `
