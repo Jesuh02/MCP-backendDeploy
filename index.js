@@ -2344,6 +2344,124 @@ app.post('/notify-course-creation', async(req, res) => {
 });
 
 /**
+ * 📊 Notifica al ESTUDIANTE cuando recibe una calificación en su tarea
+ * Endpoint: POST /notify-grade
+ * Body: { studentId, taskName, grade, feedback, gradedByUsername }
+ * 
+ * IMPORTANTE: La notificación va al ESTUDIANTE (dueño de la entrega),
+ * NO al creador del curso.
+ */
+app.post('/notify-grade', async(req, res) => {
+    const { studentId, taskName, grade, feedback, gradedByUsername } = req.body;
+
+    if (!studentId || !taskName || grade === undefined) {
+        return res.status(400).json({ error: 'studentId, taskName y grade son requeridos' });
+    }
+
+    console.log(`📊 Notificando calificación al estudiante ${studentId}`);
+    console.log(`   📝 Tarea: ${taskName}`);
+    console.log(`   📈 Nota: ${grade}/10`);
+    console.log(`   👤 Calificado por: ${gradedByUsername || 'Profesor'}`);
+
+    try {
+        // 1. Obtener información del estudiante
+        const { data: student, error: studentError } = await supabaseService.client
+            .from('usuarios')
+            .select('id, email, usuario')
+            .eq('id', studentId)
+            .single();
+
+        if (studentError || !student) {
+            console.error(`❌ Estudiante ${studentId} no encontrado:`, studentError?.message);
+            return res.status(404).json({ error: 'Estudiante no encontrado' });
+        }
+
+        console.log(`✅ Estudiante encontrado: ${student.usuario} (${student.email})`);
+
+        // 2. Preparar contenido de la notificación
+        const gradeFormatted = typeof grade === 'number' ? grade.toFixed(1) : grade;
+        const gradeEmoji = grade >= 9 ? '🏆' : grade >= 7 ? '⭐' : grade >= 5 ? '✅' : '📚';
+        
+        const emailSubject = `${gradeEmoji} ¡Tu tarea "${taskName}" ha sido calificada!`;
+        
+        const feedbackSection = feedback 
+            ? `\n📝 Feedback del profesor:\n"${feedback}"\n`
+            : '';
+        
+        const emailBody = `¡Hola ${student.usuario}! 👋
+
+Tu tarea ha sido evaluada y ya puedes ver tu calificación.
+
+📚 Tarea: ${taskName}
+📊 Calificación: ${gradeFormatted}/10 ${gradeEmoji}
+👨‍🏫 Calificado por: ${gradedByUsername || 'Tu profesor'}
+${feedbackSection}
+${grade >= 7 
+    ? '¡Felicidades por tu buen desempeño! 🎉' 
+    : grade >= 5 
+        ? 'Buen trabajo, sigue mejorando. 💪' 
+        : 'No te desanimes, revisa el feedback y sigue practicando. 📖'}
+
+Abre la app CourseV para ver más detalles y seguir aprendiendo.
+
+¡Sigue adelante! 🚀
+
+Equipo CourseV`;
+
+        // 3. Enviar Email al estudiante
+        if (student.email) {
+            await sendEmailNotification(studentId, emailSubject, emailBody);
+            console.log(`📧 Email de calificación enviado a ${student.email}`);
+        }
+
+        // 4. Enviar Push Notification al estudiante
+        await sendPushNotification(
+            studentId,
+            `${gradeEmoji} Tarea calificada: ${gradeFormatted}/10`,
+            `Tu tarea "${taskName}" ha sido evaluada${gradedByUsername ? ` por ${gradedByUsername}` : ''}`,
+            {
+                type: 'grade_notification',
+                taskName: taskName,
+                grade: gradeFormatted.toString(),
+                action: 'OPEN_GRADES'
+            }
+        );
+        console.log(`📱 Push notification de calificación enviada al estudiante ${studentId}`);
+
+        // 5. Guardar notificación en la base de datos (opcional)
+        try {
+            await supabaseService.client
+                .from('notifications')
+                .insert({
+                    user_id: studentId,
+                    title: emailSubject,
+                    message: `Tu tarea "${taskName}" ha sido calificada con ${gradeFormatted}/10`,
+                    type: 'grade',
+                    read: false,
+                    created_at: new Date().toISOString()
+                });
+            console.log(`💾 Notificación guardada en BD para estudiante ${studentId}`);
+        } catch (dbError) {
+            console.warn(`⚠️ No se pudo guardar notificación en BD:`, dbError.message);
+        }
+
+        res.json({
+            success: true,
+            message: 'Notificación de calificación enviada al estudiante',
+            studentId: studentId,
+            studentUsername: student.usuario,
+            studentEmail: student.email,
+            taskName: taskName,
+            grade: gradeFormatted
+        });
+
+    } catch (error) {
+        console.error('❌ Error en /notify-grade:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * Notifica a los suscriptores cuando un creador sube un nuevo video.
  * 1. Busca los suscriptores del creador.
  * 2. Guarda la notificación en la base de datos (tabla 'notifications').
