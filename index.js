@@ -4214,6 +4214,663 @@ function getLocalIPAddress() {
 // Initialize Supabase service for MCP endpoints
 // const supabaseService = SupabaseService.getInstance(); // Already initialized at top level
 
+// Store active SSE connections for MCP
+const mcpSseConnections = new Map();
+
+/**
+ * 🔌 MCP SSE Endpoint - Server-Sent Events for VS Code MCP clients
+ * This allows VS Code from ANY machine to connect to this MCP server
+ * 
+ * GET /mcp/sse - Establishes SSE connection
+ * POST /mcp/message - Send messages to the server
+ */
+app.get('/mcp/sse', (req, res) => {
+    console.log('🔌 MCP SSE Connection established');
+
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders();
+
+    // Generate unique session ID
+    const sessionId = `mcp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    mcpSseConnections.set(sessionId, res);
+
+    // Send endpoint info to client
+    const endpointUrl = `https://mcp-backenddeploy-production.up.railway.app/mcp/message?sessionId=${sessionId}`;
+    res.write(`event: endpoint\ndata: ${endpointUrl}\n\n`);
+
+    console.log(`📡 MCP SSE Session: ${sessionId}`);
+
+    // Send ping every 30 seconds to keep connection alive
+    const pingInterval = setInterval(() => {
+        if (!res.writableEnded) {
+            res.write(`: ping\n\n`);
+        }
+    }, 30000);
+
+    // Cleanup on close
+    req.on('close', () => {
+        console.log(`🔌 MCP SSE Connection closed: ${sessionId}`);
+        clearInterval(pingInterval);
+        mcpSseConnections.delete(sessionId);
+    });
+});
+
+/**
+ * 🔌 MCP Message Endpoint - Receives JSON-RPC messages from VS Code
+ * POST /mcp/message?sessionId=xxx
+ */
+app.post('/mcp/message', async(req, res) => {
+    const { sessionId } = req.query;
+    const { method, params, id } = req.body;
+
+    console.log(`🔌 MCP Message: ${method} (session: ${sessionId})`);
+
+    const sseConnection = mcpSseConnections.get(sessionId);
+
+    try {
+        let result;
+
+        switch (method) {
+            case 'initialize':
+                await supabaseService.testConnection();
+                result = {
+                    protocolVersion: '2024-11-05',
+                    capabilities: {
+                        tools: { listChanged: true },
+                        resources: { subscribe: true, listChanged: true }
+                    },
+                    serverInfo: {
+                        name: 'tareamov-mcp-server',
+                        version: '1.0.0',
+                        description: 'MCP Server for TareaMov - Course Management Platform'
+                    }
+                };
+                break;
+
+            case 'notifications/initialized':
+            case 'initialized':
+                result = {};
+                break;
+
+            case 'tools/list':
+                result = {
+                    tools: [
+                        {
+                            name: 'query_database',
+                            description: 'Execute queries on TareaMov Supabase database. Returns real-time data.',
+                            inputSchema: {
+                                type: 'object',
+                                properties: { query: { type: 'string', description: 'SQL or natural language query' } },
+                                required: ['query']
+                            }
+                        },
+                        {
+                            name: 'get_database_schema',
+                            description: 'Get the complete database schema with all tables and columns',
+                            inputSchema: { type: 'object', properties: {}, required: [] }
+                        },
+                        {
+                            name: 'get_user_info',
+                            description: 'Get detailed information about a specific user',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {
+                                    userId: { type: 'number', description: 'User ID' },
+                                    username: { type: 'string', description: 'Username' }
+                                }
+                            }
+                        },
+                        {
+                            name: 'get_course_info',
+                            description: 'Get detailed information about a course including videos and tasks',
+                            inputSchema: {
+                                type: 'object',
+                                properties: { courseId: { type: 'number', description: 'Course ID' } },
+                                required: ['courseId']
+                            }
+                        },
+                        {
+                            name: 'get_task_submissions',
+                            description: 'Get all submissions for a specific task',
+                            inputSchema: {
+                                type: 'object',
+                                properties: { taskId: { type: 'number', description: 'Task ID' } },
+                                required: ['taskId']
+                            }
+                        },
+                        {
+                            name: 'send_notification',
+                            description: 'Send push notification and email to a user',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {
+                                    userId: { type: 'number', description: 'Target user ID' },
+                                    title: { type: 'string', description: 'Notification title' },
+                                    message: { type: 'string', description: 'Notification message' },
+                                    type: { type: 'string', description: 'Notification type' }
+                                },
+                                required: ['userId', 'title', 'message']
+                            }
+                        }
+                    ]
+                };
+                break;
+
+            case 'tools/call':
+                const toolName = params?.name;
+                const toolArgs = params?.arguments || {};
+                result = await handleMCPToolCall(toolName, toolArgs);
+                break;
+
+            case 'resources/list':
+                result = {
+                    resources: [
+                        { uri: 'tareamov://database/schema', name: 'Database Schema', mimeType: 'application/json' },
+                        { uri: 'tareamov://database/stats', name: 'Database Statistics', mimeType: 'application/json' }
+                    ]
+                };
+                break;
+
+            case 'resources/read':
+                result = await handleMCPResourceRead(params?.uri);
+                break;
+
+            default:
+                if (method.startsWith('notifications/')) {
+                    return res.json({ jsonrpc: '2.0', id, result: {} });
+                }
+                return res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } });
+        }
+
+        const response = { jsonrpc: '2.0', id, result };
+        if (sseConnection && !sseConnection.writableEnded) {
+            sseConnection.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
+        }
+        res.json(response);
+
+    } catch (error) {
+        console.error(`❌ MCP Error (${method}):`, error);
+        const errorResponse = { jsonrpc: '2.0', id, error: { code: -32603, message: error.message } };
+        if (sseConnection && !sseConnection.writableEnded) {
+            sseConnection.write(`event: message\ndata: ${JSON.stringify(errorResponse)}\n\n`);
+        }
+        res.json(errorResponse);
+    }
+});
+
+/**
+ * � MCP Unified Endpoint - Handles all MCP protocol requests
+ * This endpoint allows VS Code from ANY machine to connect to this MCP server
+ * Supports: initialize, tools/list, tools/call, resources/list, resources/read
+ * 
+ * URL: POST /mcp
+ * Body: { jsonrpc: "2.0", method: "...", params: {...}, id: 1 }
+ */
+app.post('/mcp', async(req, res) => {
+    const { method, params, id } = req.body;
+    console.log(`🔌 MCP Request: ${method}`);
+
+    try {
+        let result;
+
+        switch (method) {
+            case 'initialize':
+                await supabaseService.testConnection();
+                result = {
+                    protocolVersion: '2024-11-05',
+                    capabilities: {
+                        tools: { listChanged: true },
+                        resources: { subscribe: true, listChanged: true }
+                    },
+                    serverInfo: {
+                        name: 'tareamov-mcp-server',
+                        version: '1.0.0',
+                        description: 'MCP Server for TareaMov - Course Management Platform'
+                    }
+                };
+                break;
+
+            case 'tools/list':
+                result = {
+                    tools: [
+                        {
+                            name: 'query_database',
+                            description: 'Execute queries on TareaMov Supabase database. Returns real-time data from usuarios, courses, videos, tasks, subscriptions, etc.',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {
+                                    query: {
+                                        type: 'string',
+                                        description: 'SQL query or natural language query to execute'
+                                    }
+                                },
+                                required: ['query']
+                            }
+                        },
+                        {
+                            name: 'get_database_schema',
+                            description: 'Get the complete database schema with all tables and columns',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {},
+                                required: []
+                            }
+                        },
+                        {
+                            name: 'get_user_info',
+                            description: 'Get detailed information about a specific user',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {
+                                    userId: { type: 'number', description: 'User ID' },
+                                    username: { type: 'string', description: 'Username' }
+                                }
+                            }
+                        },
+                        {
+                            name: 'get_course_info',
+                            description: 'Get detailed information about a course including videos and tasks',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {
+                                    courseId: { type: 'number', description: 'Course ID' }
+                                },
+                                required: ['courseId']
+                            }
+                        },
+                        {
+                            name: 'get_task_submissions',
+                            description: 'Get all submissions for a specific task',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {
+                                    taskId: { type: 'number', description: 'Task ID' }
+                                },
+                                required: ['taskId']
+                            }
+                        },
+                        {
+                            name: 'send_notification',
+                            description: 'Send push notification and email to a user',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {
+                                    userId: { type: 'number', description: 'Target user ID' },
+                                    title: { type: 'string', description: 'Notification title' },
+                                    message: { type: 'string', description: 'Notification message' },
+                                    type: { type: 'string', description: 'Notification type (new_course, new_video, task_graded, etc.)' }
+                                },
+                                required: ['userId', 'title', 'message']
+                            }
+                        },
+                        {
+                            name: 'analyze_repository',
+                            description: 'Analyze a GitHub repository submitted as a task',
+                            inputSchema: {
+                                type: 'object',
+                                properties: {
+                                    repoUrl: { type: 'string', description: 'GitHub repository URL' },
+                                    taskDescription: { type: 'string', description: 'Task description for context' }
+                                },
+                                required: ['repoUrl']
+                            }
+                        }
+                    ]
+                };
+                break;
+
+            case 'tools/call':
+                const toolName = params?.name;
+                const toolArgs = params?.arguments || {};
+                result = await handleMCPToolCall(toolName, toolArgs);
+                break;
+
+            case 'resources/list':
+                result = {
+                    resources: [
+                        {
+                            uri: 'tareamov://database/schema',
+                            name: 'Database Schema',
+                            description: 'Complete TareaMov database schema',
+                            mimeType: 'application/json'
+                        },
+                        {
+                            uri: 'tareamov://database/stats',
+                            name: 'Database Statistics',
+                            description: 'Current database statistics (users, courses, tasks, etc.)',
+                            mimeType: 'application/json'
+                        }
+                    ]
+                };
+                break;
+
+            case 'resources/read':
+                const resourceUri = params?.uri;
+                result = await handleMCPResourceRead(resourceUri);
+                break;
+
+            case 'notifications/initialized':
+            case 'initialized':
+                result = {};
+                break;
+
+            default:
+                return res.json({
+                    jsonrpc: '2.0',
+                    id,
+                    error: {
+                        code: -32601,
+                        message: `Method not found: ${method}`
+                    }
+                });
+        }
+
+        res.json({
+            jsonrpc: '2.0',
+            id,
+            result
+        });
+
+    } catch (error) {
+        console.error(`❌ MCP Error (${method}):`, error);
+        res.json({
+            jsonrpc: '2.0',
+            id,
+            error: {
+                code: -32603,
+                message: error.message
+            }
+        });
+    }
+});
+
+/**
+ * Handle MCP tool calls
+ */
+async function handleMCPToolCall(toolName, args) {
+    console.log(`🔧 MCP Tool Call: ${toolName}`, args);
+
+    switch (toolName) {
+        case 'query_database':
+            return await executeDatabaseQuery(args.query);
+
+        case 'get_database_schema':
+            return await getDatabaseSchema();
+
+        case 'get_user_info':
+            return await getUserInfo(args.userId, args.username);
+
+        case 'get_course_info':
+            return await getCourseInfo(args.courseId);
+
+        case 'get_task_submissions':
+            return await getTaskSubmissions(args.taskId);
+
+        case 'send_notification':
+            return await sendMCPNotification(args);
+
+        case 'analyze_repository':
+            if (mcpService) {
+                const analysis = await mcpService.analyzeRepository(args.repoUrl, args.taskDescription || '');
+                return { content: [{ type: 'text', text: JSON.stringify(analysis, null, 2) }] };
+            }
+            return { content: [{ type: 'text', text: 'GitHub analysis not available' }] };
+
+        default:
+            throw new Error(`Unknown tool: ${toolName}`);
+    }
+}
+
+/**
+ * Handle MCP resource reads
+ */
+async function handleMCPResourceRead(uri) {
+    console.log(`📖 MCP Resource Read: ${uri}`);
+
+    if (uri === 'tareamov://database/schema') {
+        const schema = await getDatabaseSchema();
+        return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(schema, null, 2) }] };
+    }
+
+    if (uri === 'tareamov://database/stats') {
+        const stats = await getDatabaseStats();
+        return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(stats, null, 2) }] };
+    }
+
+    throw new Error(`Unknown resource: ${uri}`);
+}
+
+/**
+ * Execute database query (SQL or natural language)
+ */
+async function executeDatabaseQuery(query) {
+    try {
+        // Detect if it's natural language or SQL
+        const isSQL = /^(SELECT|INSERT|UPDATE|DELETE|WITH)\s/i.test(query.trim());
+        
+        let sqlQuery = query;
+        if (!isSQL) {
+            // Convert natural language to SQL using simple patterns
+            sqlQuery = convertNaturalLanguageToSQL(query);
+        }
+
+        // Execute via Supabase RPC or direct query
+        const { data, error } = await supabaseService.client.rpc('execute_sql', { query: sqlQuery });
+        
+        if (error) {
+            // Fallback: try direct table query for simple cases
+            const tableMatch = sqlQuery.match(/FROM\s+(\w+)/i);
+            if (tableMatch) {
+                const tableName = tableMatch[1];
+                const { data: tableData, error: tableError } = await supabaseService.client
+                    .from(tableName)
+                    .select('*')
+                    .limit(100);
+                
+                if (!tableError) {
+                    return {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify({ query: sqlQuery, results: tableData, count: tableData.length }, null, 2)
+                        }]
+                    };
+                }
+            }
+            throw error;
+        }
+
+        return {
+            content: [{
+                type: 'text',
+                text: JSON.stringify({ query: sqlQuery, results: data }, null, 2)
+            }]
+        };
+    } catch (error) {
+        return {
+            content: [{
+                type: 'text',
+                text: `Error executing query: ${error.message}`
+            }],
+            isError: true
+        };
+    }
+}
+
+/**
+ * Convert natural language query to SQL
+ */
+function convertNaturalLanguageToSQL(query) {
+    const lowerQuery = query.toLowerCase();
+
+    // Users queries
+    if (lowerQuery.includes('usuario') || lowerQuery.includes('user')) {
+        if (lowerQuery.includes('todos') || lowerQuery.includes('all')) {
+            return 'SELECT id, usuario, email, created_at FROM usuarios ORDER BY created_at DESC LIMIT 100';
+        }
+        if (lowerQuery.includes('contar') || lowerQuery.includes('count') || lowerQuery.includes('cuantos')) {
+            return 'SELECT COUNT(*) as total FROM usuarios';
+        }
+    }
+
+    // Courses queries
+    if (lowerQuery.includes('curso') || lowerQuery.includes('course')) {
+        if (lowerQuery.includes('todos') || lowerQuery.includes('all')) {
+            return 'SELECT id, name, description, creator_user_id, created_at FROM courses ORDER BY created_at DESC LIMIT 100';
+        }
+        if (lowerQuery.includes('contar') || lowerQuery.includes('count') || lowerQuery.includes('cuantos')) {
+            return 'SELECT COUNT(*) as total FROM courses';
+        }
+    }
+
+    // Tasks queries
+    if (lowerQuery.includes('tarea') || lowerQuery.includes('task')) {
+        if (lowerQuery.includes('todos') || lowerQuery.includes('all')) {
+            return 'SELECT id, name, description, course_id, due_date FROM tasks ORDER BY created_at DESC LIMIT 100';
+        }
+    }
+
+    // Submissions queries
+    if (lowerQuery.includes('entrega') || lowerQuery.includes('submission')) {
+        return 'SELECT id, task_id, student_username, grade, created_at FROM task_submissions ORDER BY created_at DESC LIMIT 100';
+    }
+
+    // Default: return as-is (might be SQL already)
+    return query;
+}
+
+/**
+ * Get database schema
+ */
+async function getDatabaseSchema() {
+    const tables = [
+        'usuarios', 'personas', 'courses', 'videos', 'topics', 'content_items',
+        'tasks', 'task_submissions', 'subscriptions', 'chat_messages',
+        'file_contexts', 'roles', 'recursos', 'rol_recursos', 'notifications'
+    ];
+
+    const schema = {};
+    for (const table of tables) {
+        try {
+            const { data } = await supabaseService.client.from(table).select('*').limit(1);
+            if (data && data.length > 0) {
+                schema[table] = Object.keys(data[0]);
+            } else {
+                schema[table] = ['(empty table)'];
+            }
+        } catch (e) {
+            schema[table] = ['(error reading table)'];
+        }
+    }
+
+    return { content: [{ type: 'text', text: JSON.stringify(schema, null, 2) }] };
+}
+
+/**
+ * Get database statistics
+ */
+async function getDatabaseStats() {
+    const stats = {};
+    const tables = ['usuarios', 'courses', 'videos', 'tasks', 'task_submissions', 'subscriptions', 'notifications'];
+
+    for (const table of tables) {
+        try {
+            const { count } = await supabaseService.client.from(table).select('*', { count: 'exact', head: true });
+            stats[table] = count || 0;
+        } catch (e) {
+            stats[table] = 'error';
+        }
+    }
+
+    return stats;
+}
+
+/**
+ * Get user information
+ */
+async function getUserInfo(userId, username) {
+    try {
+        let query = supabaseService.client.from('usuarios').select('*');
+        
+        if (userId) {
+            query = query.eq('id', userId);
+        } else if (username) {
+            query = query.eq('usuario', username);
+        } else {
+            return { content: [{ type: 'text', text: 'Please provide userId or username' }] };
+        }
+
+        const { data, error } = await query.single();
+        if (error) throw error;
+
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    } catch (error) {
+        return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
+    }
+}
+
+/**
+ * Get course information
+ */
+async function getCourseInfo(courseId) {
+    try {
+        const { data: course, error } = await supabaseService.client
+            .from('courses')
+            .select('*, videos(*), tasks(*)')
+            .eq('id', courseId)
+            .single();
+
+        if (error) throw error;
+
+        return { content: [{ type: 'text', text: JSON.stringify(course, null, 2) }] };
+    } catch (error) {
+        return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
+    }
+}
+
+/**
+ * Get task submissions
+ */
+async function getTaskSubmissions(taskId) {
+    try {
+        const { data, error } = await supabaseService.client
+            .from('task_submissions')
+            .select('*')
+            .eq('task_id', taskId)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+    } catch (error) {
+        return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
+    }
+}
+
+/**
+ * Send notification via MCP
+ */
+async function sendMCPNotification(args) {
+    const { userId, title, message, type = 'generic' } = args;
+
+    try {
+        // Call the existing send-notification logic
+        const response = await fetch(`http://localhost:${PORT}/send-notification`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, title, message, type })
+        });
+
+        const result = await response.json();
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+        return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
+    }
+}
+
 /**
  * 🔍 DETAILED Health check endpoint for monitoring services
  * This checks all dependencies (DB, LLM, etc.)
@@ -4222,6 +4879,7 @@ function getLocalIPAddress() {
 app.get('/health/detailed', async(req, res) => {
     try {
         const dbHealth = await supabaseService.healthCheck();
+
 
         // Test LLM connection
         let llmHealth = { status: 'not_tested' };
