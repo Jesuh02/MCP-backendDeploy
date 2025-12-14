@@ -776,38 +776,50 @@ async function sendPushNotification(userId, title, body, data = {}) {
             }
         };
 
-        // 3. Enviar vía FCM usando sendEach (API v1 individual, evita /batch deprecado)
-        // Construimos un array de mensajes, cada uno con su token
-        const messages = uniqueTokens.map(token => ({
-            ...baseMessage,
-            token: token  // sendEach usa 'token' singular, no 'tokens'
-        }));
+        // 3. Enviar vía FCM usando send() individual para cada token
+        // IMPORTANTE: Google deprecó /batch API el 20 junio 2024
+        // sendEach y sendEachForMulticast fallan con 404 en versiones antiguas
+        // Solución: enviar uno por uno con send() que siempre funciona
+        console.log(`📨 Enviando ${uniqueTokens.length} notificaciones push individualmente...`);
         
-        const response = await admin.messaging().sendEach(messages);
-        console.log(`📨 Notificaciones enviadas a usuario ${userId}: ${response.successCount} éxitos, ${response.failureCount} fallos`);
+        const results = [];
+        const failedTokens = [];
+        
+        for (let i = 0; i < uniqueTokens.length; i++) {
+            const token = uniqueTokens[i];
+            try {
+                const message = {
+                    ...baseMessage,
+                    token: token
+                };
+                const messageId = await admin.messaging().send(message);
+                results.push({ success: true, messageId });
+                console.log(`   ✅ Token ${i + 1}/${uniqueTokens.length}: Enviado (${messageId})`);
+            } catch (sendError) {
+                results.push({ success: false, error: sendError });
+                console.warn(`   ⚠️ Token ${i + 1}/${uniqueTokens.length} falló: ${sendError.code || sendError.message}`);
+                
+                // Solo eliminar tokens con errores de registro inválido
+                const errorCode = sendError.code;
+                if (errorCode === 'messaging/invalid-registration-token' ||
+                    errorCode === 'messaging/registration-token-not-registered' ||
+                    errorCode === 'messaging/unregistered') {
+                    failedTokens.push(token);
+                }
+            }
+        }
+        
+        const successCount = results.filter(r => r.success).length;
+        const failureCount = results.filter(r => !r.success).length;
+        console.log(`📨 Notificaciones enviadas a usuario ${userId}: ${successCount} éxitos, ${failureCount} fallos`);
 
         // Limpiar tokens inválidos
-        if (response.failureCount > 0) {
-            const failedTokens = [];
-            response.responses.forEach((resp, idx) => {
-                if (!resp.success) {
-                    // Solo eliminar tokens con errores de registro inválido
-                    const errorCode = resp.error?.code;
-                    if (errorCode === 'messaging/invalid-registration-token' ||
-                        errorCode === 'messaging/registration-token-not-registered') {
-                        failedTokens.push(uniqueTokens[idx]);
-                    }
-                    console.warn(`   ⚠️ Token ${idx} falló: ${resp.error?.message || 'Unknown error'}`);
-                }
-            });
-
-            if (failedTokens.length > 0) {
-                console.log('🧹 Limpiando tokens inválidos:', failedTokens.length);
-                await supabaseService.client
-                    .from('user_fcm_tokens')
-                    .delete()
-                    .in('token', failedTokens);
-            }
+        if (failedTokens.length > 0) {
+            console.log('🧹 Limpiando tokens inválidos:', failedTokens.length);
+            await supabaseService.client
+                .from('user_fcm_tokens')
+                .delete()
+                .in('token', failedTokens);
         }
 
     } catch (error) {
