@@ -2870,7 +2870,7 @@ app.post('/notify-course-creation', async(req, res) => {
         // 2. Get subscriber details (username, email)
         const subscriberIds = subscribers.map(s => s.subscribed_to_id);
         const usersResponse = await axios.get(
-            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,usuario,email`, {
+            `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,username,email`, {
                 headers: {
                     'apikey': process.env.SUPABASE_KEY,
                     'Authorization': `Bearer ${process.env.SUPABASE_KEY}`
@@ -2914,7 +2914,7 @@ app.post('/notify-course-creation', async(req, res) => {
                     try {
                         const senderEmail = 'CourseV@yisuscompany.com';
                         const emailHTML = generateNewCourseEmailHTML(
-                            user.usuario,
+                            user.username,
                             creatorUsername,
                             courseTitle,
                             courseThumbnailUrl
@@ -2983,7 +2983,7 @@ app.post('/notify-grade', async(req, res) => {
         // 1. Obtener información del estudiante
         const { data: student, error: studentError } = await supabaseService.client
             .from('usuarios')
-            .select('id, email, usuario')
+            .select('id, email, username')
             .eq('id', studentId)
             .single();
 
@@ -2992,7 +2992,7 @@ app.post('/notify-grade', async(req, res) => {
             return res.status(404).json({ error: 'Estudiante no encontrado' });
         }
 
-        console.log(`✅ Estudiante encontrado: ${student.usuario} (${student.email})`);
+        console.log(`✅ Estudiante encontrado: ${student.username} (${student.email})`);
 
         // 2. Preparar contenido de la notificación
         const gradeFormatted = typeof grade === 'number' ? grade.toFixed(1) : grade;
@@ -3009,7 +3009,7 @@ app.post('/notify-grade', async(req, res) => {
             
             emailSubject = `${changeEmoji} Tu calificación en "${taskName}" ha sido actualizada`;
             emailHTML = generateGradeModifiedEmailHTML(
-                student.usuario,
+                student.username,
                 taskName,
                 oldGrade,
                 grade,
@@ -3026,7 +3026,7 @@ app.post('/notify-grade', async(req, res) => {
             // Nueva calificación
             emailSubject = `${gradeEmoji} ¡Tu tarea "${taskName}" ha sido calificada!`;
             emailHTML = generateGradeEmailHTML(
-                student.usuario,
+                student.username,
                 taskName,
                 grade,
                 feedback,
@@ -3101,7 +3101,7 @@ app.post('/notify-grade', async(req, res) => {
                 : 'Notificación de calificación enviada al estudiante',
             isModification: isUpdate,
             studentId: studentId,
-            studentUsername: student.usuario,
+            studentUsername: student.username,
             studentEmail: student.email,
             taskName: taskName,
             grade: gradeFormatted,
@@ -3135,7 +3135,7 @@ app.post('/notify-video-upload', async(req, res) => {
         // 1. Obtener información del creador (nombre)
         const { data: creator, error: creatorError } = await supabaseService.client
             .from('usuarios')
-            .select('usuario')
+            .select('username')
             .eq('id', creatorId)
             .single();
 
@@ -3165,7 +3165,7 @@ app.post('/notify-video-upload', async(req, res) => {
         const notificationsToInsert = subscriberIds.map(subId => ({
             user_id: subId,
             title: 'Nuevo video disponible',
-            message: `${creator.usuario} ha subido: ${videoTitle}`,
+            message: `${creator.username} ha subido: ${videoTitle}`,
             type: 'video_upload',
             related_id: videoId,
             is_read: false,
@@ -3193,7 +3193,7 @@ app.post('/notify-video-upload', async(req, res) => {
             await sendPushNotification(
                 subId,
                 '¡Nuevo Video!',
-                `${creator.usuario} acaba de subir un nuevo video: ${videoTitle}`, {
+                `${creator.username} acaba de subir un nuevo video: ${videoTitle}`, {
                     type: 'video_upload',
                     videoId: videoId.toString(),
                     creatorId: creatorId.toString()
@@ -3205,7 +3205,7 @@ app.post('/notify-video-upload', async(req, res) => {
             await sendEmailNotification(
                 subId,
                 '¡Nuevo Video Disponible! 🎥',
-                `Hola,\n\n${creator.usuario} acaba de subir un nuevo video titulado: "${videoTitle}".\n\n¡Entra a la app para verlo ahora!`
+                `Hola,\n\n${creator.username} acaba de subir un nuevo video titulado: "${videoTitle}".\n\n¡Entra a la app para verlo ahora!`
             );
             emailCount++;
         }
@@ -3511,9 +3511,10 @@ app.post('/send-notification', async(req, res) => {
             console.log(`🔍 Buscando email para userId: ${userId} (parseado: ${userIdNumber})`);
             
             // Obtener email del usuario desde Supabase
+            // NOTA: El campo es 'username', no 'usuario'
             const { data: userData, error: userError } = await supabaseService.client
                 .from('usuarios')
-                .select('email, usuario')
+                .select('email, username')
                 .eq('id', userIdNumber)
                 .single();
 
@@ -3521,7 +3522,7 @@ app.post('/send-notification', async(req, res) => {
 
             if (!userError && userData && userData.email && userData.email !== '.' && !userData.email.startsWith('missing_email_')) {
                 const userEmail = userData.email;
-                const userName = userData.usuario || 'Usuario';
+                const userName = userData.username || 'Usuario';
                 console.log(`📧 Enviando email a: ${userEmail}`);
 
                 // Crear contenido del email usando plantilla profesional
@@ -3599,7 +3600,7 @@ app.post('/send-notification', async(req, res) => {
                 results.email.error = reason;
                 console.warn(`⚠️ No se pudo enviar email para usuario ${userId}: ${reason}`);
                 if (userData) {
-                    console.warn(`   Datos del usuario: email="${userData.email}", usuario="${userData.usuario}"`);
+                    console.warn(`   Datos del usuario: email="${userData.email}", username="${userData.username}"`);
                 }
             }
         } catch (emailError) {
