@@ -545,7 +545,9 @@ CREATE TABLE public.videos (
      */
     async executeRawSQL(sqlQuery) {
         try {
-            logger.info(`Executing raw SQL: ${sqlQuery.substring(0, 100)}...`);
+            // Log the full query being executed
+            logger.info(`🔍 Executing raw SQL...`);
+            logger.info('📥 INPUT:', JSON.stringify({ query: sqlQuery }, null, 2));
 
             // Remove trailing semicolon if present (common issue with RPC)
             if (sqlQuery.trim().endsWith(';')) {
@@ -556,6 +558,12 @@ CREATE TABLE public.videos (
             try {
                 const { data, error } = await this.client.rpc('execute_sql', { query: sqlQuery });
                 if (!error) {
+                    // Log the full output with query and results
+                    logger.info('📤 OUTPUT:', JSON.stringify({ 
+                        query: sqlQuery, 
+                        results: data,
+                        rowCount: data?.length || 0
+                    }, null, 2));
                     logger.info('✅ Executed via RPC execute_sql');
                     return data;
                 }
@@ -684,6 +692,13 @@ CREATE TABLE public.videos (
                     logger.error('SQL execution error:', error);
                     throw error;
                 }
+
+                // Log output for fallback parser
+                logger.info('📤 OUTPUT (fallback parser):', JSON.stringify({ 
+                    query: sqlQuery, 
+                    results: data,
+                    rowCount: data?.length || 0
+                }, null, 2));
 
                 return data;
             }
