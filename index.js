@@ -734,6 +734,7 @@ app.use(bodyParser.json({ limit: '50mb' }));
 
 /**
  * Envía una notificación push a un usuario específico vía FCM
+ * ACTUALIZADO: Usa sendEachForMulticast en lugar de sendMulticast (deprecado)
  */
 async function sendPushNotification(userId, title, body, data = {}) {
     if (!admin || !admin.apps || !admin.apps.length) {
@@ -763,11 +764,10 @@ async function sendPushNotification(userId, title, body, data = {}) {
         // Eliminar duplicados si los hay
         const uniqueTokens = [...new Set(registrationTokens)];
 
-        // 2. Construir el mensaje
-        const message = {
+        // 2. Construir el mensaje base (sin tokens, se agregan individualmente)
+        const baseMessage = {
             notification: { title, body },
             data: data,
-            tokens: uniqueTokens,
             android: {
                 priority: 'high',
                 notification: {
@@ -776,8 +776,14 @@ async function sendPushNotification(userId, title, body, data = {}) {
             }
         };
 
-        // 3. Enviar vía FCM Multicast
-        const response = await admin.messaging().sendMulticast(message);
+        // 3. Enviar vía FCM usando sendEach (API v1 individual, evita /batch deprecado)
+        // Construimos un array de mensajes, cada uno con su token
+        const messages = uniqueTokens.map(token => ({
+            ...baseMessage,
+            token: token  // sendEach usa 'token' singular, no 'tokens'
+        }));
+        
+        const response = await admin.messaging().sendEach(messages);
         console.log(`📨 Notificaciones enviadas a usuario ${userId}: ${response.successCount} éxitos, ${response.failureCount} fallos`);
 
         // Limpiar tokens inválidos
@@ -785,7 +791,13 @@ async function sendPushNotification(userId, title, body, data = {}) {
             const failedTokens = [];
             response.responses.forEach((resp, idx) => {
                 if (!resp.success) {
-                    failedTokens.push(uniqueTokens[idx]);
+                    // Solo eliminar tokens con errores de registro inválido
+                    const errorCode = resp.error?.code;
+                    if (errorCode === 'messaging/invalid-registration-token' ||
+                        errorCode === 'messaging/registration-token-not-registered') {
+                        failedTokens.push(uniqueTokens[idx]);
+                    }
+                    console.warn(`   ⚠️ Token ${idx} falló: ${resp.error?.message || 'Unknown error'}`);
                 }
             });
 
@@ -799,7 +811,8 @@ async function sendPushNotification(userId, title, body, data = {}) {
         }
 
     } catch (error) {
-        console.error('❌ Error enviando notificación:', error);
+        console.error('❌ Error enviando notificación push:', error.message);
+        // No re-lanzar el error para evitar que falle toda la operación
     }
 }
 
@@ -1085,19 +1098,28 @@ async function sendEmailNotification(userId, subject, text) {
                         </td>
                     </tr>
                     
-                    <!-- Image Section -->
+                    <!-- Image Section - Responsive con VML fallback para Outlook -->
                     <tr>
                         <td class="animation-container" style="background: linear-gradient(180deg, #1e293b 0%, #334155 100%); padding: 30px; text-align: center; border-bottom: 1px solid #475569;">
-                            <div style="width: 280px; height: 200px; margin: 0 auto; border-radius: 16px; overflow: hidden; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2); display: flex; align-items: center; justify-content: center;">
-                                <!-- Imagen desde Cloudflare R2 con fallback a emoji -->
+                            <!--[if mso]>
+                            <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:540px;height:300px;">
+                            <v:fill type="frame" src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/email-assets/coursev-notification.png" />
+                            <v:textbox inset="0,0,0,0">
+                            <![endif]-->
+                            <div style="max-width: 540px; width: 100%; margin: 0 auto; border-radius: 16px; overflow: hidden; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2);">
+                                <!-- Imagen 100% responsive - Intentar R2, fallback a imagen de educación -->
                                 <img 
                                     src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/email-assets/coursev-notification.png"
-                                    alt="CourseV"
-                                    width="280"
-                                    height="200"
-                                    style="width: 280px; height: 200px; object-fit: cover; display: block; border-radius: 16px;"
+                                    alt="CourseV - Plataforma de Aprendizaje"
+                                    width="540"
+                                    style="width: 100%; max-width: 540px; height: auto; min-height: 200px; display: block; border-radius: 16px; border: 0; object-fit: cover;"
+                                    onerror="this.onerror=null; this.src='https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=540&h=300&fit=crop&q=80';"
                                 />
                             </div>
+                            <!--[if mso]>
+                            </v:textbox>
+                            </v:rect>
+                            <![endif]-->
                             <p style="margin-top: 16px; font-size: 13px; color: #94a3b8;">
                                 ✨ Aprendizaje interactivo con IA
                             </p>
