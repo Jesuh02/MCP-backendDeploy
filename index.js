@@ -1115,17 +1115,16 @@ async function sendEmailNotification(userId, subject, text) {
                         <td class="animation-container" style="background: linear-gradient(180deg, #1e293b 0%, #334155 100%); padding: 30px; text-align: center; border-bottom: 1px solid #475569;">
                             <!--[if mso]>
                             <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:540px;height:300px;">
-                            <v:fill type="frame" src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/email-assets/coursev-notification.png" />
+                            <v:fill type="frame" src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/88a385d4fe0ce2a8dfea2d0ae4677174.gif" />
                             <v:textbox inset="0,0,0,0">
                             <![endif]-->
-                            <div style="max-width: 540px; width: 100%; margin: 0 auto; border-radius: 16px; overflow: hidden; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2);">
-                                <!-- Imagen 100% responsive - Intentar R2, fallback a imagen de educación -->
+                            <div style="max-width: 540px; width: 100%; margin: 0 auto; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2);">
+                                <!-- GIF animado de CourseV desde R2 -->
                                 <img 
-                                    src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/email-assets/coursev-notification.png"
+                                    src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/88a385d4fe0ce2a8dfea2d0ae4677174.gif"
                                     alt="CourseV - Plataforma de Aprendizaje"
                                     width="540"
-                                    style="width: 100%; max-width: 540px; height: auto; min-height: 200px; display: block; border-radius: 16px; border: 0; object-fit: cover;"
-                                    onerror="this.onerror=null; this.src='https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=540&h=300&fit=crop&q=80';"
+                                    style="width: 100%; max-width: 540px; height: auto; display: block; border-radius: 16px; border: 0;"
                                 />
                             </div>
                             <!--[if mso]>
