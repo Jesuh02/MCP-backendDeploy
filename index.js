@@ -728,6 +728,617 @@ async function updateTaskSubmissionSupabase(submissionId, grade, feedback) {
     }
 }
 
+// ============================================================
+// 📧 PLANTILLAS HTML PROFESIONALES PARA EMAILS
+// Diseño minimalista, elegante y profesional
+// ============================================================
+
+/**
+ * Genera el CSS base para todas las plantillas de email
+ */
+function getEmailBaseStyles() {
+    return `
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #f8fafc; 
+            margin: 0; 
+            padding: 20px;
+            color: #1e293b;
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: #ffffff; 
+            border-radius: 16px; 
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .header { 
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); 
+            padding: 32px 24px; 
+            text-align: center;
+        }
+        .header-icon { 
+            font-size: 48px; 
+            margin-bottom: 8px;
+        }
+        .header h1 { 
+            color: white; 
+            margin: 0; 
+            font-size: 24px; 
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+        .header p { 
+            color: rgba(255,255,255,0.85); 
+            margin: 8px 0 0 0; 
+            font-size: 14px;
+        }
+        .content { 
+            padding: 32px 24px;
+        }
+        .greeting { 
+            font-size: 18px; 
+            color: #334155; 
+            margin-bottom: 24px;
+        }
+        .greeting strong { 
+            color: #6366f1;
+        }
+        .card { 
+            background: #f8fafc; 
+            border-radius: 12px; 
+            padding: 20px; 
+            margin: 16px 0;
+            border-left: 4px solid #6366f1;
+        }
+        .card-title { 
+            font-size: 12px; 
+            text-transform: uppercase; 
+            letter-spacing: 1px; 
+            color: #64748b; 
+            margin: 0 0 8px 0;
+            font-weight: 600;
+        }
+        .card-value { 
+            font-size: 20px; 
+            font-weight: 700; 
+            color: #1e293b; 
+            margin: 0;
+        }
+        .grade-display { 
+            text-align: center; 
+            padding: 24px; 
+            background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); 
+            border-radius: 12px; 
+            margin: 20px 0;
+        }
+        .grade-display.low { 
+            background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%);
+        }
+        .grade-display.medium { 
+            background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+        }
+        .grade-number { 
+            font-size: 48px; 
+            font-weight: 800; 
+            color: #16a34a; 
+            line-height: 1;
+        }
+        .grade-display.low .grade-number { 
+            color: #dc2626;
+        }
+        .grade-display.medium .grade-number { 
+            color: #d97706;
+        }
+        .grade-label { 
+            font-size: 14px; 
+            color: #64748b; 
+            margin-top: 4px;
+        }
+        .comparison-grid { 
+            display: table; 
+            width: 100%; 
+            margin: 20px 0;
+        }
+        .comparison-row { 
+            display: table-row;
+        }
+        .comparison-cell { 
+            display: table-cell; 
+            width: 50%; 
+            padding: 12px; 
+            vertical-align: top;
+        }
+        .comparison-box { 
+            background: #f8fafc; 
+            border-radius: 12px; 
+            padding: 16px; 
+            height: 100%;
+        }
+        .comparison-box.old { 
+            border: 2px solid #e2e8f0;
+        }
+        .comparison-box.new { 
+            border: 2px solid #6366f1; 
+            background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+        }
+        .comparison-label { 
+            font-size: 11px; 
+            text-transform: uppercase; 
+            letter-spacing: 1px; 
+            color: #94a3b8; 
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        .comparison-box.new .comparison-label { 
+            color: #6366f1;
+        }
+        .comparison-value { 
+            font-size: 28px; 
+            font-weight: 700; 
+            color: #94a3b8;
+        }
+        .comparison-box.new .comparison-value { 
+            color: #6366f1;
+        }
+        .feedback-box { 
+            background: #f8fafc; 
+            border-radius: 12px; 
+            padding: 20px; 
+            margin: 16px 0;
+            border: 1px solid #e2e8f0;
+        }
+        .feedback-box.old { 
+            opacity: 0.7;
+        }
+        .feedback-box.new { 
+            border-color: #6366f1; 
+            background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+        }
+        .feedback-label { 
+            font-size: 11px; 
+            text-transform: uppercase; 
+            letter-spacing: 1px; 
+            color: #64748b; 
+            margin-bottom: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .feedback-box.new .feedback-label { 
+            color: #6366f1;
+        }
+        .feedback-text { 
+            font-size: 15px; 
+            line-height: 1.6; 
+            color: #334155;
+            margin: 0;
+            font-style: italic;
+        }
+        .message { 
+            font-size: 15px; 
+            line-height: 1.7; 
+            color: #475569; 
+            margin: 16px 0;
+        }
+        .cta-button { 
+            display: inline-block; 
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); 
+            color: white !important; 
+            padding: 14px 32px; 
+            border-radius: 10px; 
+            text-decoration: none; 
+            font-weight: 600; 
+            font-size: 15px;
+            margin: 24px 0;
+            transition: transform 0.2s;
+        }
+        .divider { 
+            height: 1px; 
+            background: linear-gradient(to right, transparent, #e2e8f0, transparent); 
+            margin: 24px 0;
+        }
+        .footer { 
+            background: #f8fafc; 
+            padding: 24px; 
+            text-align: center; 
+            border-top: 1px solid #e2e8f0;
+        }
+        .footer p { 
+            margin: 0; 
+            color: #94a3b8; 
+            font-size: 13px;
+        }
+        .footer .brand { 
+            font-weight: 600; 
+            color: #6366f1;
+        }
+        .badge { 
+            display: inline-block; 
+            padding: 4px 12px; 
+            border-radius: 20px; 
+            font-size: 12px; 
+            font-weight: 600;
+        }
+        .badge-success { 
+            background: #dcfce7; 
+            color: #16a34a;
+        }
+        .badge-warning { 
+            background: #fef3c7; 
+            color: #d97706;
+        }
+        .badge-info { 
+            background: #e0e7ff; 
+            color: #6366f1;
+        }
+        .info-row { 
+            display: flex; 
+            justify-content: space-between; 
+            padding: 12px 0; 
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .info-row:last-child { 
+            border-bottom: none;
+        }
+        .info-label { 
+            color: #64748b; 
+            font-size: 14px;
+        }
+        .info-value { 
+            color: #1e293b; 
+            font-weight: 600; 
+            font-size: 14px;
+        }
+        .arrow-icon { 
+            color: #6366f1; 
+            font-size: 24px; 
+            margin: 0 12px;
+        }
+    `;
+}
+
+/**
+ * Plantilla: Notificación de nueva calificación
+ */
+function generateGradeEmailHTML(studentName, taskName, grade, feedback, gradedByUsername) {
+    const gradeNum = parseFloat(grade);
+    const gradeClass = gradeNum >= 7 ? '' : gradeNum >= 5 ? 'medium' : 'low';
+    const gradeEmoji = gradeNum >= 9 ? '🏆' : gradeNum >= 7 ? '⭐' : gradeNum >= 5 ? '📝' : '📚';
+    const motivationalText = gradeNum >= 7 
+        ? '¡Excelente trabajo! Sigue así.' 
+        : gradeNum >= 5 
+            ? 'Buen esfuerzo. ¡Puedes mejorar!' 
+            : 'No te desanimes. ¡Sigue practicando!';
+    
+    const gradeFormatted = typeof grade === 'number' ? grade.toFixed(1) : grade;
+    
+    const feedbackSection = feedback ? `
+            <div class="feedback-box new">
+                <div class="feedback-label">💬 Feedback del profesor</div>
+                <p class="feedback-text">"${feedback}"</p>
+            </div>
+            ` : '';
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>${getEmailBaseStyles()}</style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-icon">${gradeEmoji}</div>
+            <h1>¡Tu tarea ha sido calificada!</h1>
+            <p>Ya puedes ver tu calificación</p>
+        </div>
+        
+        <div class="content">
+            <p class="greeting">¡Hola <strong>${studentName}</strong>! 👋</p>
+            
+            <div class="card">
+                <p class="card-title">📚 Tarea evaluada</p>
+                <p class="card-value">${taskName}</p>
+            </div>
+            
+            <div class="grade-display ${gradeClass}">
+                <div class="grade-number">${gradeFormatted}</div>
+                <div class="grade-label">de 10 puntos</div>
+            </div>
+            
+            ${feedbackSection}
+            
+            <div class="card">
+                <p class="card-title">👨‍🏫 Calificado por</p>
+                <p class="card-value">${gradedByUsername || 'Tu profesor'}</p>
+            </div>
+            
+            <p class="message" style="text-align: center; margin-top: 24px;">
+                ${motivationalText}
+            </p>
+            
+            <div style="text-align: center;">
+                <a href="#" class="cta-button">Ver detalles en CourseV</a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
+/**
+ * Plantilla: Notificación de calificación MODIFICADA
+ */
+function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, newGrade, oldFeedback, newFeedback, gradedByUsername) {
+    const newGradeNum = parseFloat(newGrade);
+    const oldGradeNum = parseFloat(oldGrade);
+    const gradeImproved = newGradeNum > oldGradeNum;
+    const changeEmoji = gradeImproved ? '📈' : newGradeNum < oldGradeNum ? '📉' : '🔄';
+    const changeText = gradeImproved 
+        ? '¡Tu calificación ha mejorado!' 
+        : newGradeNum < oldGradeNum 
+            ? 'Tu calificación ha sido ajustada' 
+            : 'Tu calificación ha sido actualizada';
+    
+    const oldGradeFormatted = typeof oldGrade === 'number' ? oldGrade.toFixed(1) : oldGrade;
+    const newGradeFormatted = typeof newGrade === 'number' ? newGrade.toFixed(1) : newGrade;
+    const dateFormatted = new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+    
+    // Secciones condicionales
+    let feedbackSection = '';
+    if (oldFeedback || newFeedback) {
+        let oldFeedbackHTML = oldFeedback ? `
+                <div class="feedback-box old">
+                    <div class="feedback-label">
+                        <span>📝</span> Feedback anterior
+                    </div>
+                    <p class="feedback-text" style="text-decoration: line-through; color: #94a3b8;">"${oldFeedback}"</p>
+                </div>
+                ` : '';
+        
+        let newFeedbackHTML = newFeedback ? `
+                <div class="feedback-box new">
+                    <div class="feedback-label">
+                        <span>✨</span> Nuevo feedback
+                    </div>
+                    <p class="feedback-text">"${newFeedback}"</p>
+                </div>
+                ` : '';
+        
+        feedbackSection = `
+            <div style="margin: 24px 0;">
+                <p style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-bottom: 16px; font-weight: 600; text-align: center;">
+                    💬 Feedback
+                </p>
+                ${oldFeedbackHTML}
+                ${newFeedbackHTML}
+            </div>
+            `;
+    }
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>${getEmailBaseStyles()}</style>
+</head>
+<body>
+    <div class="container">
+        <div class="header" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+            <div class="header-icon">${changeEmoji}</div>
+            <h1>Calificación Actualizada</h1>
+            <p>${changeText}</p>
+        </div>
+        
+        <div class="content">
+            <p class="greeting">¡Hola <strong>${studentName}</strong>!</p>
+            
+            <div class="card">
+                <p class="card-title">📚 Tarea</p>
+                <p class="card-value">${taskName}</p>
+            </div>
+            
+            <!-- Comparación de Notas -->
+            <div style="text-align: center; margin: 24px 0;">
+                <p style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-bottom: 16px; font-weight: 600;">
+                    📊 Cambio en la calificación
+                </p>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                        <td style="width: 45%; padding: 12px; vertical-align: middle;">
+                            <div class="comparison-box old" style="text-align: center;">
+                                <div class="comparison-label">Nota anterior</div>
+                                <div class="comparison-value" style="text-decoration: line-through;">${oldGradeFormatted}</div>
+                            </div>
+                        </td>
+                        <td style="width: 10%; text-align: center; vertical-align: middle;">
+                            <span style="font-size: 24px; color: #6366f1;">→</span>
+                        </td>
+                        <td style="width: 45%; padding: 12px; vertical-align: middle;">
+                            <div class="comparison-box new" style="text-align: center;">
+                                <div class="comparison-label">Nueva nota</div>
+                                <div class="comparison-value">${newGradeFormatted}</div>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            
+            <!-- Comparación de Feedback -->
+            ${feedbackSection}
+            
+            <div class="divider"></div>
+            
+            <div style="background: #f8fafc; border-radius: 12px; padding: 16px;">
+                <div class="info-row">
+                    <span class="info-label">👨‍🏫 Modificado por</span>
+                    <span class="info-value">${gradedByUsername || 'Tu profesor'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">📅 Fecha</span>
+                    <span class="info-value">${dateFormatted}</span>
+                </div>
+            </div>
+            
+            <div style="text-align: center; margin-top: 24px;">
+                <a href="#" class="cta-button">Ver detalles en CourseV</a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
+/**
+ * Plantilla: Notificación de nuevo curso
+ */
+function generateNewCourseEmailHTML(userName, creatorUsername, courseTitle, thumbnailUrl) {
+    const thumbnailSection = thumbnailUrl ? `
+            <div style="text-align: center; margin: 24px 0;">
+                <img src="${thumbnailUrl}" alt="Thumbnail del curso" style="max-width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+            </div>
+            ` : '';
+    
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>${getEmailBaseStyles()}</style>
+</head>
+<body>
+    <div class="container">
+        <div class="header" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+            <div class="header-icon">📚</div>
+            <h1>¡Nuevo Curso Disponible!</h1>
+            <p>De un creador que sigues</p>
+        </div>
+        
+        <div class="content">
+            <p class="greeting">¡Hola <strong>${userName || 'estudiante'}</strong>! 👋</p>
+            
+            <p class="message">
+                <strong>${creatorUsername}</strong> acaba de publicar un nuevo curso que podría interesarte.
+            </p>
+            
+            ${thumbnailSection}
+            
+            <div class="card" style="border-left-color: #10b981;">
+                <p class="card-title">🎓 Nuevo curso</p>
+                <p class="card-value">${courseTitle}</p>
+            </div>
+            
+            <div style="background: #f0fdf4; border-radius: 12px; padding: 16px; margin: 20px 0; text-align: center;">
+                <p style="margin: 0; color: #166534; font-size: 15px;">
+                    ¡No te pierdas este nuevo contenido!<br>
+                    Entra ahora y comienza a aprender.
+                </p>
+            </div>
+            
+            <div style="text-align: center;">
+                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                    Ver curso ahora
+                </a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
+/**
+ * Plantilla: Notificación genérica profesional
+ */
+function generateGenericEmailHTML(title, message, type, senderUsername) {
+    const typeConfig = {
+        'new_course': { icon: '📚', color: '#10b981', gradient: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' },
+        'new_video': { icon: '🎬', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' },
+        'task_graded': { icon: '📊', color: '#6366f1', gradient: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' },
+        'task_submission': { icon: '📝', color: '#0ea5e9', gradient: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)' },
+        'new_task': { icon: '📋', color: '#8b5cf6', gradient: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)' },
+        'default': { icon: '🔔', color: '#6366f1', gradient: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' }
+    };
+    
+    const config = typeConfig[type] || typeConfig['default'];
+    
+    const senderSection = senderUsername ? `
+            <div class="card" style="border-left-color: ${config.color};">
+                <p class="card-title">👤 De</p>
+                <p class="card-value">${senderUsername}</p>
+            </div>
+            ` : '';
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>${getEmailBaseStyles()}</style>
+</head>
+<body>
+    <div class="container">
+        <div class="header" style="background: ${config.gradient};">
+            <div class="header-icon">${config.icon}</div>
+            <h1>${title || 'Nueva Notificación'}</h1>
+        </div>
+        
+        <div class="content">
+            ${senderSection}
+            
+            <div class="message" style="font-size: 16px; line-height: 1.8; padding: 20px 0;">
+                ${message}
+            </div>
+            
+            <div class="divider"></div>
+            
+            <div style="text-align: center;">
+                <a href="#" class="cta-button" style="background: ${config.gradient};">
+                    Abrir en CourseV
+                </a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
+// ============================================================
+// FIN PLANTILLAS HTML
+// ============================================================
+
 // Configurar bodyParser.json() ANTES de las rutas
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
@@ -2298,23 +2909,22 @@ app.post('/notify-course-creation', async(req, res) => {
                     }
                 );
 
-                // Send email with Resend
+                // Send email with Resend - Plantilla profesional
                 if (user.email) {
                     try {
-                        // ✅ Usar dominio verificado yisuscompany.com
                         const senderEmail = 'CourseV@yisuscompany.com';
+                        const emailHTML = generateNewCourseEmailHTML(
+                            user.usuario,
+                            creatorUsername,
+                            courseTitle,
+                            courseThumbnailUrl
+                        );
+                        
                         await axios.post('https://api.resend.com/emails', {
                             from: `CourseV <${senderEmail}>`,
                             to: user.email,
-                            subject: `¡${creatorUsername} subió un nuevo curso!`,
-                            html: `
-                                <h2>Nuevo curso disponible</h2>
-                                <p><strong>${creatorUsername}</strong> acaba de publicar un nuevo curso:</p>
-                                <h3>${courseTitle}</h3>
-                                <p>¡Entra a la app para verlo ahora!</p>
-                                <br>
-                                <p>Saludos,<br>El equipo de YisusCompany</p>
-                            `
+                            subject: `📚 ¡${creatorUsername} publicó un nuevo curso!`,
+                            html: emailHTML
                         }, {
                             headers: {
                                 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
@@ -2348,21 +2958,25 @@ app.post('/notify-course-creation', async(req, res) => {
 /**
  * 📊 Notifica al ESTUDIANTE cuando recibe una calificación en su tarea
  * Endpoint: POST /notify-grade
- * Body: { studentId, taskName, grade, feedback, gradedByUsername }
+ * Body: { studentId, taskName, grade, feedback, gradedByUsername, oldGrade, oldFeedback, isModification }
  * 
  * IMPORTANTE: La notificación va al ESTUDIANTE (dueño de la entrega),
  * NO al creador del curso.
+ * 
+ * Si isModification=true, muestra comparación entre nota/feedback anterior y nuevo
  */
 app.post('/notify-grade', async(req, res) => {
-    const { studentId, taskName, grade, feedback, gradedByUsername } = req.body;
+    const { studentId, taskName, grade, feedback, gradedByUsername, oldGrade, oldFeedback, isModification } = req.body;
 
     if (!studentId || !taskName || grade === undefined) {
         return res.status(400).json({ error: 'studentId, taskName y grade son requeridos' });
     }
 
+    const isUpdate = isModification === true || (oldGrade !== undefined && oldGrade !== null);
+    
     console.log(`📊 Notificando calificación al estudiante ${studentId}`);
     console.log(`   📝 Tarea: ${taskName}`);
-    console.log(`   📈 Nota: ${grade}/10`);
+    console.log(`   📈 Nota: ${grade}/10 ${isUpdate ? `(anterior: ${oldGrade}/10)` : '(nueva)'}`);
     console.log(`   👤 Calificado por: ${gradedByUsername || 'Profesor'}`);
 
     try {
@@ -2384,61 +2998,94 @@ app.post('/notify-grade', async(req, res) => {
         const gradeFormatted = typeof grade === 'number' ? grade.toFixed(1) : grade;
         const gradeEmoji = grade >= 9 ? '🏆' : grade >= 7 ? '⭐' : grade >= 5 ? '✅' : '📚';
         
-        const emailSubject = `${gradeEmoji} ¡Tu tarea "${taskName}" ha sido calificada!`;
+        // Determinar si es modificación o nueva calificación
+        let emailSubject, emailHTML, pushTitle, pushBody, notificationType;
         
-        const feedbackSection = feedback 
-            ? `\n📝 Feedback del profesor:\n"${feedback}"\n`
-            : '';
-        
-        const emailBody = `¡Hola ${student.usuario}! 👋
+        if (isUpdate) {
+            // Calificación MODIFICADA - usar plantilla de comparación
+            const oldGradeFormatted = typeof oldGrade === 'number' ? oldGrade.toFixed(1) : oldGrade;
+            const gradeImproved = parseFloat(grade) > parseFloat(oldGrade);
+            const changeEmoji = gradeImproved ? '📈' : parseFloat(grade) < parseFloat(oldGrade) ? '📉' : '🔄';
+            
+            emailSubject = `${changeEmoji} Tu calificación en "${taskName}" ha sido actualizada`;
+            emailHTML = generateGradeModifiedEmailHTML(
+                student.usuario,
+                taskName,
+                oldGrade,
+                grade,
+                oldFeedback,
+                feedback,
+                gradedByUsername
+            );
+            pushTitle = `${changeEmoji} Calificación actualizada: ${oldGradeFormatted} → ${gradeFormatted}`;
+            pushBody = `Tu nota en "${taskName}" cambió de ${oldGradeFormatted} a ${gradeFormatted}`;
+            notificationType = 'grade_modified';
+            
+            console.log(`   🔄 Modificación: ${oldGradeFormatted} → ${gradeFormatted}`);
+        } else {
+            // Nueva calificación
+            emailSubject = `${gradeEmoji} ¡Tu tarea "${taskName}" ha sido calificada!`;
+            emailHTML = generateGradeEmailHTML(
+                student.usuario,
+                taskName,
+                grade,
+                feedback,
+                gradedByUsername
+            );
+            pushTitle = `${gradeEmoji} Tarea calificada: ${gradeFormatted}/10`;
+            pushBody = `Tu tarea "${taskName}" ha sido evaluada${gradedByUsername ? ` por ${gradedByUsername}` : ''}`;
+            notificationType = 'grade';
+        }
 
-Tu tarea ha sido evaluada y ya puedes ver tu calificación.
-
-📚 Tarea: ${taskName}
-📊 Calificación: ${gradeFormatted}/10 ${gradeEmoji}
-👨‍🏫 Calificado por: ${gradedByUsername || 'Tu profesor'}
-${feedbackSection}
-${grade >= 7 
-    ? '¡Felicidades por tu buen desempeño! 🎉' 
-    : grade >= 5 
-        ? 'Buen trabajo, sigue mejorando. 💪' 
-        : 'No te desanimes, revisa el feedback y sigue practicando. 📖'}
-
-Abre la app CourseV para ver más detalles y seguir aprendiendo.
-
-¡Sigue adelante! 🚀
-
-Equipo CourseV`;
-
-        // 3. Enviar Email al estudiante
+        // 3. Enviar Email al estudiante con plantilla HTML profesional
         if (student.email) {
-            await sendEmailNotification(studentId, emailSubject, emailBody);
-            console.log(`📧 Email de calificación enviado a ${student.email}`);
+            try {
+                const RESEND_API_KEY = process.env.RESEND_API_KEY;
+                if (RESEND_API_KEY) {
+                    await axios.post('https://api.resend.com/emails', {
+                        from: 'CourseV <CourseV@yisuscompany.com>',
+                        to: student.email,
+                        subject: emailSubject,
+                        html: emailHTML
+                    }, {
+                        headers: {
+                            'Authorization': `Bearer ${RESEND_API_KEY}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    console.log(`📧 Email de calificación enviado a ${student.email}`);
+                }
+            } catch (emailError) {
+                console.warn(`⚠️ Error enviando email:`, emailError.response?.data || emailError.message);
+            }
         }
 
         // 4. Enviar Push Notification al estudiante
         await sendPushNotification(
             studentId,
-            `${gradeEmoji} Tarea calificada: ${gradeFormatted}/10`,
-            `Tu tarea "${taskName}" ha sido evaluada${gradedByUsername ? ` por ${gradedByUsername}` : ''}`,
+            pushTitle,
+            pushBody,
             {
-                type: 'grade_notification',
+                type: notificationType,
                 taskName: taskName,
                 grade: gradeFormatted.toString(),
+                oldGrade: isUpdate ? String(oldGrade) : null,
                 action: 'OPEN_GRADES'
             }
         );
         console.log(`📱 Push notification de calificación enviada al estudiante ${studentId}`);
 
-        // 5. Guardar notificación en la base de datos (opcional)
+        // 5. Guardar notificación en la base de datos
         try {
             await supabaseService.client
                 .from('notifications')
                 .insert({
                     user_id: studentId,
                     title: emailSubject,
-                    message: `Tu tarea "${taskName}" ha sido calificada con ${gradeFormatted}/10`,
-                    type: 'grade',
+                    message: isUpdate 
+                        ? `Tu calificación en "${taskName}" cambió de ${oldGrade} a ${gradeFormatted}/10`
+                        : `Tu tarea "${taskName}" ha sido calificada con ${gradeFormatted}/10`,
+                    type: notificationType,
                     read: false,
                     created_at: new Date().toISOString()
                 });
@@ -2449,12 +3096,18 @@ Equipo CourseV`;
 
         res.json({
             success: true,
-            message: 'Notificación de calificación enviada al estudiante',
+            message: isUpdate 
+                ? 'Notificación de calificación MODIFICADA enviada al estudiante'
+                : 'Notificación de calificación enviada al estudiante',
+            isModification: isUpdate,
             studentId: studentId,
             studentUsername: student.usuario,
             studentEmail: student.email,
             taskName: taskName,
-            grade: gradeFormatted
+            grade: gradeFormatted,
+            oldGrade: isUpdate ? oldGrade : null,
+            oldFeedback: isUpdate ? oldFeedback : null,
+            newFeedback: feedback
         });
 
     } catch (error) {
@@ -2856,27 +3509,22 @@ app.post('/send-notification', async(req, res) => {
             // Obtener email del usuario desde Supabase
             const { data: userData, error: userError } = await supabaseService.client
                 .from('usuarios')
-                .select('email')
+                .select('email, usuario')
                 .eq('id', userId)
                 .single();
 
             if (!userError && userData && userData.email) {
                 const userEmail = userData.email;
+                const userName = userData.usuario || 'Usuario';
                 console.log(`📧 Enviando email a: ${userEmail}`);
 
-                // Crear contenido del email basado en el tipo de notificación
-                let emailSubject = title || '📢 Nueva notificación en TareaMov';
-                let emailBody = `
-                    <h2 style="color: #6366f1;">${title}</h2>
-                    <p>${message}</p>
-                    ${senderUsername ? `<p><strong>De:</strong> ${senderUsername}</p>` : ''}
-                    <hr>
-                    <p style="color: #888; font-size: 12px;">
-                        Abre la app TareaMov para ver más detalles.
-                    </p>
-                `;
+                // Crear contenido del email usando plantilla profesional
+                let emailSubject = title || '📢 Nueva notificación en CourseV';
+                
+                // Generar HTML profesional usando la plantilla genérica
+                const emailHTML = generateGenericEmailHTML(title, message, type, senderUsername);
 
-                // Personalizar según el tipo
+                // Personalizar subject según el tipo
                 switch(type) {
                     case 'new_course':
                         emailSubject = `📚 ${title}`;
@@ -2885,6 +3533,8 @@ app.post('/send-notification', async(req, res) => {
                         emailSubject = `🎬 ${title}`;
                         break;
                     case 'task_graded':
+                    case 'grade':
+                    case 'grade_modified':
                         emailSubject = `📊 ${title}`;
                         break;
                     case 'task_submission':
@@ -2898,8 +3548,6 @@ app.post('/send-notification', async(req, res) => {
                 // Enviar con Resend API
                 const RESEND_API_KEY = process.env.RESEND_API_KEY;
                 if (RESEND_API_KEY) {
-                    // ✅ SIEMPRE usar sandbox de Resend (no requiere verificación de dominio)
-                    // Para usar dominio propio: verificar en https://resend.com/domains
                     const fromEmail = 'CourseV <CourseV@yisuscompany.com>';
                     
                     const emailResponse = await fetch('https://api.resend.com/emails', {
@@ -2912,7 +3560,7 @@ app.post('/send-notification', async(req, res) => {
                             from: fromEmail,
                             to: [userEmail],
                             subject: emailSubject,
-                            html: emailBody
+                            html: emailHTML
                         })
                     });
 
