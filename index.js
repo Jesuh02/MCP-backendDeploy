@@ -4224,7 +4224,9 @@ const mcpSseConnections = new Map();
  * GET /mcp/sse - Establishes SSE connection
  * POST /mcp/message - Send messages to the server
  * 
- * IMPROVED: Better keep-alive handling for Railway's 5-minute connection timeout
+ * FIXED: Correct SSE format for MCP protocol compliance
+ * - Uses proper event format with data-only messages for JSON-RPC responses
+ * - Sends endpoint URL immediately upon connection
  */
 app.get('/mcp/sse', (req, res) => {
     console.log('🔌 MCP SSE Connection request received');
@@ -4260,18 +4262,26 @@ app.get('/mcp/sse', (req, res) => {
         lastActivity: Date.now()
     });
 
-    // Send endpoint info to client (this is the URL where VS Code sends messages)
-    const endpointUrl = `https://mcp-backenddeploy-production.up.railway.app/mcp/message?sessionId=${sessionId}`;
+    // CRITICAL: Send endpoint info to client using the correct MCP SSE format
+    // VS Code expects: event: endpoint\ndata: <URL>\n\n
+    const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
+        ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+        : 'https://mcp-backenddeploy-production.up.railway.app';
+    const endpointUrl = `${baseUrl}/mcp/message?sessionId=${sessionId}`;
+    
+    // Send the endpoint event - this tells VS Code where to POST messages
     res.write(`event: endpoint\ndata: ${endpointUrl}\n\n`);
 
     console.log(`📡 MCP SSE Session established: ${sessionId}`);
+    console.log(`   Endpoint URL: ${endpointUrl}`);
 
-    // Send ping every 10 seconds to keep connection alive (Railway has ~5 min timeout)
+    // Send ping every 15 seconds to keep connection alive (Railway has ~5 min timeout)
     const pingInterval = setInterval(() => {
         try {
             const conn = mcpSseConnections.get(sessionId);
             if (conn && !res.writableEnded && res.writable) {
-                res.write(`: ping ${Date.now()}\n\n`);
+                // SSE comment for keep-alive (starts with colon)
+                res.write(`: keep-alive ${Date.now()}\n\n`);
                 conn.lastActivity = Date.now();
             } else {
                 console.log(`🔌 SSE Connection no longer writable: ${sessionId}`);
@@ -4283,7 +4293,7 @@ app.get('/mcp/sse', (req, res) => {
             clearInterval(pingInterval);
             mcpSseConnections.delete(sessionId);
         }
-    }, 10000);
+    }, 15000);
 
     // Handle connection errors
     res.on('error', (err) => {
@@ -4315,20 +4325,51 @@ app.get('/mcp/sse', (req, res) => {
 /**
  * 🔌 MCP Message Endpoint - Receives JSON-RPC messages from VS Code
  * POST /mcp/message?sessionId=xxx
+ * 
+ * FIXED: MCP SSE protocol requires:
+ * - HTTP response: 202 Accepted (or 200 for notifications)
+ * - JSON-RPC response: sent via SSE stream ONLY
  */
 app.post('/mcp/message', async(req, res) => {
     const { sessionId } = req.query;
     const { method, params, id } = req.body;
 
-    console.log(`🔌 MCP Message: ${method} (session: ${sessionId})`);
+    console.log(`🔌 MCP Message: ${method} (session: ${sessionId}, id: ${id})`);
 
     // Get SSE connection object (contains response and metadata)
     const sseConn = mcpSseConnections.get(sessionId);
     const sseResponse = sseConn?.response;
     
+    // Verify session exists
+    if (!sseConn || !sseResponse) {
+        console.error(`❌ SSE session not found: ${sessionId}`);
+        return res.status(400).json({ 
+            jsonrpc: '2.0', 
+            id, 
+            error: { code: -32000, message: `Session not found: ${sessionId}. Please reconnect.` } 
+        });
+    }
+    
+    // Verify SSE connection is still open
+    if (sseResponse.writableEnded || !sseResponse.writable) {
+        console.error(`❌ SSE connection closed for session: ${sessionId}`);
+        mcpSseConnections.delete(sessionId);
+        return res.status(400).json({ 
+            jsonrpc: '2.0', 
+            id, 
+            error: { code: -32000, message: 'SSE connection closed. Please reconnect.' } 
+        });
+    }
+    
     // Update last activity timestamp
-    if (sseConn) {
-        sseConn.lastActivity = Date.now();
+    sseConn.lastActivity = Date.now();
+
+    // For notifications (no id), just acknowledge
+    if (id === undefined || id === null) {
+        if (method === 'notifications/initialized' || method === 'initialized') {
+            console.log(`📨 MCP Initialized notification received`);
+        }
+        return res.status(200).send('');
     }
 
     try {
@@ -4336,7 +4377,14 @@ app.post('/mcp/message', async(req, res) => {
 
         switch (method) {
             case 'initialize':
-                await supabaseService.testConnection();
+                // Test Supabase connection
+                try {
+                    await supabaseService.testConnection();
+                    console.log('✅ Supabase connection verified for MCP session');
+                } catch (dbErr) {
+                    console.error('❌ Supabase connection failed:', dbErr.message);
+                    // Continue anyway - some tools may still work
+                }
                 result = {
                     protocolVersion: '2024-11-05',
                     capabilities: {
@@ -4423,6 +4471,7 @@ app.post('/mcp/message', async(req, res) => {
             case 'tools/call':
                 const toolName = params?.name;
                 const toolArgs = params?.arguments || {};
+                console.log(`🔧 Tool call: ${toolName}`, JSON.stringify(toolArgs).substring(0, 100));
                 result = await handleMCPToolCall(toolName, toolArgs);
                 break;
 
@@ -4441,37 +4490,36 @@ app.post('/mcp/message', async(req, res) => {
 
             default:
                 if (method.startsWith('notifications/')) {
-                    return res.json({ jsonrpc: '2.0', id, result: {} });
+                    return res.status(200).send('');
                 }
-                return res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } });
+                // Send error via SSE
+                const notFoundError = { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
+                sseResponse.write(`event: message\ndata: ${JSON.stringify(notFoundError)}\n\n`);
+                return res.status(202).send('Accepted');
         }
 
+        // Build JSON-RPC response
         const response = { jsonrpc: '2.0', id, result };
         
-        // Send via SSE if connection exists and is still open
-        if (sseResponse && !sseResponse.writableEnded && sseResponse.writable) {
-            try {
-                sseResponse.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
-            } catch (sseErr) {
-                console.warn(`⚠️ Could not write to SSE: ${sseErr.message}`);
-            }
-        }
+        // Send response via SSE stream (this is the MCP protocol requirement)
+        sseResponse.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
+        console.log(`✅ MCP Response sent via SSE for: ${method}`);
         
-        res.json(response);
+        // Return 202 Accepted to acknowledge receipt
+        res.status(202).send('Accepted');
 
     } catch (error) {
         console.error(`❌ MCP Error (${method}):`, error);
         const errorResponse = { jsonrpc: '2.0', id, error: { code: -32603, message: error.message } };
         
-        if (sseResponse && !sseResponse.writableEnded && sseResponse.writable) {
-            try {
-                sseResponse.write(`event: message\ndata: ${JSON.stringify(errorResponse)}\n\n`);
-            } catch (sseErr) {
-                console.warn(`⚠️ Could not write error to SSE: ${sseErr.message}`);
-            }
+        // Send error via SSE
+        try {
+            sseResponse.write(`event: message\ndata: ${JSON.stringify(errorResponse)}\n\n`);
+        } catch (sseErr) {
+            console.error(`❌ Could not write error to SSE: ${sseErr.message}`);
         }
         
-        res.json(errorResponse);
+        res.status(202).send('Accepted');
     }
 });
 
