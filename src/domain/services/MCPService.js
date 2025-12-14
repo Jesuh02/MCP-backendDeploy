@@ -494,11 +494,22 @@ SELECT ...
                     }
 
                     finalSQL = sqlMatch[1].trim().replace(/;$/, '');
-                    logger.info(`✅ SQL extracted (attempt ${attempt}):`, finalSQL.substring(0, 150));
+                    logger.info(`✅ SQL extracted (attempt ${attempt})`);
+                    
+                    // Log INPUT: the query being sent
+                    logger.info('📥 SQL INPUT:', JSON.stringify({ query: finalSQL }, null, 2));
 
                     // Execute SQL
                     try {
                         result = await this.supabase.executeRawSQL(finalSQL);
+                        
+                        // Log OUTPUT: query + results
+                        const outputLog = {
+                            query: finalSQL,
+                            results: result,
+                            rowCount: result?.length || 0
+                        };
+                        logger.info('📤 SQL OUTPUT:', JSON.stringify(outputLog, null, 2));
                         logger.info(`✅ SQL executed successfully! Returned ${result?.length || 0} rows`);
                         break; // Success - exit retry loop
                     } catch (sqlError) {
