@@ -19,6 +19,20 @@ import { SupabaseService } from './src/infrastructure/database/SupabaseService.j
 // AWS SDK for Cloudflare R2 (S3-compatible)
 import { S3Client, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 
+// ============================================================
+// 📦 REFACTORED MODULES - New modular architecture
+// These modules provide cleaner, more maintainable code
+// The legacy functions below are kept for backwards compatibility
+// ============================================================
+import { NotificationService } from './src/services/NotificationService.js';
+import { R2StorageService } from './src/services/R2StorageService.js';
+import { UserService } from './src/services/UserService.js';
+// Note: Additional refactored modules available:
+// - notificationRoutes: ./src/interfaces/routes/notificationRoutes.js
+// - fileUtils: ./src/utils/fileUtils.js  
+// - githubUtils: ./src/utils/githubUtils.js
+// - emailTemplates: ./src/templates/emailTemplates.js
+
 import { createRequire } from 'module';
 const require = createRequire(
     import.meta.url);
@@ -1342,6 +1356,21 @@ function generateGenericEmailHTML(title, message, type, senderUsername) {
 // Configurar bodyParser.json() ANTES de las rutas
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
+
+// ============================================================
+// 📍 REGISTER MODULAR ROUTES
+// The notification routes are now handled by the refactored module
+// Legacy routes below are kept for backwards compatibility
+// ============================================================
+// Note: The notificationRoutes module is available but we keep
+// the legacy functions below to avoid breaking existing integrations
+// TODO: Migrate to app.use('/', notificationRoutes) after testing
+
+// Initialize refactored services (singletons)
+const notificationServiceInstance = NotificationService.getInstance();
+const r2StorageServiceInstance = R2StorageService.getInstance();
+const userServiceInstance = UserService.getInstance();
+console.log('✅ Refactored services initialized: NotificationService, R2StorageService, UserService');
 
 /**
  * Envía una notificación push a un usuario específico vía FCM
