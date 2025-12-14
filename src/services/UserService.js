@@ -230,11 +230,19 @@ class UserService {
 // Singleton instance
 let instance = null;
 
-export function getUserService() {
+/**
+ * Get singleton instance of UserService
+ * @returns {UserService}
+ */
+UserService.getInstance = function() {
     if (!instance) {
         instance = new UserService();
     }
     return instance;
+};
+
+export function getUserService() {
+    return UserService.getInstance();
 }
 
 export { UserService };
