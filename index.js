@@ -2302,9 +2302,11 @@ app.post('/notify-course-creation', async(req, res) => {
                 // Send email with Resend
                 if (user.email) {
                     try {
-                        const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+                        // ✅ SIEMPRE usar onboarding@resend.dev (sandbox) por defecto
+                        // El dominio personalizado requiere verificación en https://resend.com/domains
+                        const senderEmail = 'onboarding@resend.dev';
                         await axios.post('https://api.resend.com/emails', {
-                            from: `CourseV <${fromEmail}>`,
+                            from: `CourseV <${senderEmail}>`,
                             to: user.email,
                             subject: `¡${creatorUsername} subió un nuevo curso!`,
                             html: `
@@ -2898,8 +2900,9 @@ app.post('/send-notification', async(req, res) => {
                 // Enviar con Resend API
                 const RESEND_API_KEY = process.env.RESEND_API_KEY;
                 if (RESEND_API_KEY) {
-                    // Usar dominio verificado o el de sandbox para pruebas
-                    const fromEmail = process.env.RESEND_FROM_EMAIL || 'TareaMov <onboarding@resend.dev>';
+                    // ✅ SIEMPRE usar sandbox de Resend (no requiere verificación de dominio)
+                    // Para usar dominio propio: verificar en https://resend.com/domains
+                    const fromEmail = 'CourseV <onboarding@resend.dev>';
                     
                     const emailResponse = await fetch('https://api.resend.com/emails', {
                         method: 'POST',
