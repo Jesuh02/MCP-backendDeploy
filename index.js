@@ -2552,6 +2552,7 @@ app.post('/feedback-entrega', async(req, res) => {
         const promptLlama = `INSTRUCCIONES PARA RETROALIMENTACIÓN EDUCATIVA ESTRICTA:
 
 INSTRUCCIONES CRÍTICAS:
+- EL USUARIO ES UN DOCENTE REVISANDO LA ENTREGA DE UN ESTUDIANTE
 - RESPONDE SIEMPRE EN ESPAÑOL
 - USA TERMINOLOGÍA EN ESPAÑOL
 - NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
@@ -4341,6 +4342,7 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
             try {
                 // Si hay contexto académico disponible, incluirlo para dar mejor respuesta
                 let promptCompleto = `INSTRUCCIONES CRÍTICAS:
+- EL USUARIO ES UN DOCENTE REVISANDO LA ENTREGA DE UN ESTUDIANTE
 - RESPONDE SIEMPRE EN ESPAÑOL
 - USA TERMINOLOGÍA EN ESPAÑOL
 - NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
@@ -4351,6 +4353,7 @@ PREGUNTA DEL USUARIO: ${prompt}`;
 
                 if (taskDescription && taskDescription.trim() && fileContent && fileContent.trim()) {
                     promptCompleto = `INSTRUCCIONES CRÍTICAS:
+- EL USUARIO ES UN DOCENTE REVISANDO LA ENTREGA DE UN ESTUDIANTE
 - RESPONDE SIEMPRE EN ESPAÑOL
 - USA TERMINOLOGÍA EN ESPAÑOL
 - NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
