@@ -2549,7 +2549,23 @@ app.post('/feedback-entrega', async(req, res) => {
     }
     // Llamar a llama3 para generar feedback usando nota y resumen
     try {
-        const promptLlama = `INSTRUCCIONES PARA RETROALIMENTACIÓN EDUCATIVA ESTRICTA:
+        const preguntaLower = pregunta.toLowerCase();
+        const isGradingRequest = preguntaLower.includes('calific') || 
+                                 preguntaLower.includes('nota') || 
+                                 preguntaLower.includes('evalu') || 
+                                 preguntaLower.includes('puntaje') ||
+                                 preguntaLower.includes('grade') ||
+                                 preguntaLower.includes('score') ||
+                                 preguntaLower.includes('rate') ||
+                                 preguntaLower.includes('cuanto saque') ||
+                                 preguntaLower.includes('cuánto saqué') ||
+                                 preguntaLower.includes('como voy') ||
+                                 preguntaLower.includes('cómo voy');
+
+        let promptLlama;
+
+        if (isGradingRequest) {
+            promptLlama = `INSTRUCCIONES PARA RETROALIMENTACIÓN EDUCATIVA ESTRICTA:
 
 INSTRUCCIONES CRÍTICAS:
 - EL USUARIO ES UN DOCENTE REVISANDO LA ENTREGA DE UN ESTUDIANTE
@@ -2596,6 +2612,39 @@ FORMATO DE RESPUESTA REQUERIDO (EN ESPAÑOL):
 [Si incompatible: "Debes crear un proyecto que coincida exactamente con la descripción"]
 
 La respuesta debe ser educativa, constructiva y MUY CLARA sobre por qué se asignó esa calificación.`;
+        } else {
+            promptLlama = `INSTRUCCIONES PARA ASISTENTE EDUCATIVO (MODO CONSULTA):
+
+INSTRUCCIONES CRÍTICAS:
+- EL USUARIO ES UN DOCENTE REVISANDO LA ENTREGA DE UN ESTUDIANTE
+- EL USUARIO ESTÁ HACIENDO UNA PREGUNTA GENERAL O DE CONTEXTO
+- RESPONDE SIEMPRE EN ESPAÑOL
+- USA TERMINOLOGÍA EN ESPAÑOL
+- NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
+- NO INCLUYAS UNA CALIFICACIÓN NUMÉRICA (1-10) EN ESTA RESPUESTA A MENOS QUE SE PREGUNTE EXPLÍCITAMENTE
+- FORMATO EDUCATIVO Y PROFESIONAL
+
+Contexto de la entrega (para tu referencia):
+- Análisis previo: ${resultado.resumen}
+- Estado de cumplimiento: ${resultado.cumplimiento}
+
+Pregunta del usuario: ${pregunta}
+
+REGLAS PARA LA RESPUESTA:
+1. Responde directamente a la pregunta del usuario de manera útil y constructiva.
+2. Usa el contexto de la entrega para dar ejemplos relevantes, pero no te centres en la calificación.
+3. Si la pregunta es técnica, explica el concepto claramente.
+4. Si la pregunta es sobre el proceso, guía al usuario.
+
+FORMATO DE RESPUESTA REQUERIDO (EN ESPAÑOL):
+💬 **RESPUESTA:**
+[Respuesta directa, clara y educativa a la pregunta]
+
+💡 **CONTEXTO ADICIONAL:**
+[Información relevante basada en el análisis de la entrega, si aplica]
+
+(NO incluyas el bloque de "CALIFICACIÓN ACTUAL" ni "RECOMENDACIONES DE MEJORA" a menos que sea vital para la respuesta)`;
+        }
 
         const tokensLlama = encode(promptLlama).length;
         console.log('[MODELO llama3:latest] TOKENS CONSUMIDOS:', tokensLlama);
