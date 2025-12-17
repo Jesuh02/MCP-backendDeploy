@@ -2549,102 +2549,56 @@ app.post('/feedback-entrega', async(req, res) => {
     }
     // Llamar a llama3 para generar feedback usando nota y resumen
     try {
-        const preguntaLower = pregunta.toLowerCase();
-        const isGradingRequest = preguntaLower.includes('calific') || 
-                                 preguntaLower.includes('nota') || 
-                                 preguntaLower.includes('evalu') || 
-                                 preguntaLower.includes('puntaje') ||
-                                 preguntaLower.includes('grade') ||
-                                 preguntaLower.includes('score') ||
-                                 preguntaLower.includes('rate') ||
-                                 preguntaLower.includes('cuanto saque') ||
-                                 preguntaLower.includes('cuánto saqué') ||
-                                 preguntaLower.includes('como voy') ||
-                                 preguntaLower.includes('cómo voy');
-
-        let promptLlama;
-
-        if (isGradingRequest) {
-            promptLlama = `INSTRUCCIONES PARA RETROALIMENTACIÓN EDUCATIVA ESTRICTA:
+        // 🔥 LÓGICA DE DECISIÓN DE CALIFICACIÓN DELEGADA AL LLM:
+        // En lugar de usar reglas de lenguaje frágiles (regex), le pedimos al LLM que decida
+        // si la pregunta amerita una calificación o es solo una consulta.
+        // Esto se hace en el PROMPT.
+        
+        const promptLlama = `INSTRUCCIONES PARA ASISTENTE EDUCATIVO HÍBRIDO:
 
 INSTRUCCIONES CRÍTICAS:
 - EL USUARIO ES UN DOCENTE REVISANDO LA ENTREGA DE UN ESTUDIANTE
+- TU TAREA ES DETERMINAR SI EL USUARIO ESTÁ PIDIENDO UNA CALIFICACIÓN O SOLO INFORMACIÓN
 - RESPONDE SIEMPRE EN ESPAÑOL
-- USA TERMINOLOGÍA EN ESPAÑOL
-- NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
 - FORMATO EDUCATIVO Y PROFESIONAL
 
-IMPORTANTE: Mantén consistencia con la evaluación previa. Si la nota fue 0 por incompatibilidad temática, REFUERZA este mensaje claramente.
-
-Información de la evaluación:
-- Nota recibida: ${resultado.nota}/10
+Información de la evaluación previa:
+- Nota calculada previamente: ${resultado.nota}/10
 - Análisis previo: ${resultado.resumen}
 - Estado de cumplimiento: ${resultado.cumplimiento}
 
-Pregunta del usuario: ${pregunta}
+Pregunta del usuario: "${pregunta}"
 
-REGLAS PARA RETROALIMENTACIÓN (EN ESPAÑOL):
-1. Si la nota fue 0 por incompatibilidad temática (ej: banco vs películas): EXPLICA claramente que no cumple con el tema solicitado
-2. Si la nota fue 0 por incompatibilidad tecnológica: EXPLICA que debe usar la tecnología correcta
-3. Si la nota es baja (1-3): Señala errores específicos y cómo corregirlos
-4. Si la nota es media (4-7): Reconoce aspectos positivos pero indica mejoras necesarias
-5. Si la nota es alta (8-10): Felicita pero sugiere refinamientos opcionales
+REGLAS DE DECISIÓN (Sigue esto estrictamente):
+1. SI el usuario pide explícitamente una nota, calificación, evaluación, puntaje, o pregunta "¿cuánto saqué?", "¿cómo voy?":
+   -> DEBES incluir el bloque de "CALIFICACIÓN ACTUAL" con la nota numérica.
+   -> Usa el Formato A (Evaluación).
 
-CASOS CRÍTICOS A REFORZAR:
-- "Se solicitó sistema bancario pero entregaste base de datos de películas - incompatibilidad total"
-- "Se pidió calculadora pero enviaste base de datos - no coincide con el tema"
-- "Se requería HTML pero enviaste Java - tecnología incorrecta"
+2. SI el usuario hace preguntas generales como "¿qué envié?", "¿cuál es el contenido?", "¿por qué está mal?", "¿cómo mejoro?", o preguntas técnicas sobre el tema:
+   -> NO incluyas una calificación numérica.
+   -> Responde solo a la duda.
+   -> Usa el Formato B (Consulta).
 
-FORMATO DE RESPUESTA REQUERIDO (EN ESPAÑOL):
+FORMATO A (Evaluación - Solo si se pide nota):
 📊 **CALIFICACIÓN ACTUAL: ${resultado.nota}/10**
 
 🔍 **ANÁLISIS DE TU ENTREGA:**
 [Explicación detallada basada en el análisis previo]
 
 💬 **RETROALIMENTACIÓN:**
-[Responder a la pregunta específica del usuario]
-[Si nota = 0 por incompatibilidad: REFORZAR que debe entregar exactamente lo solicitado]
-[Sugerencias constructivas para mejorar]
-[Aspectos positivos identificados si los hay]
+[Responder a la pregunta]
 
 ⭐ **RECOMENDACIONES:**
-[Pasos concretos para mejorar en futuras entregas]
-[Si incompatible: "Debes crear un proyecto que coincida exactamente con la descripción"]
+[Pasos para mejorar]
 
-La respuesta debe ser educativa, constructiva y MUY CLARA sobre por qué se asignó esa calificación.`;
-        } else {
-            promptLlama = `INSTRUCCIONES PARA ASISTENTE EDUCATIVO (MODO CONSULTA):
-
-INSTRUCCIONES CRÍTICAS:
-- EL USUARIO ES UN DOCENTE REVISANDO LA ENTREGA DE UN ESTUDIANTE
-- EL USUARIO ESTÁ HACIENDO UNA PREGUNTA GENERAL O DE CONTEXTO
-- RESPONDE SIEMPRE EN ESPAÑOL
-- USA TERMINOLOGÍA EN ESPAÑOL
-- NO USES PALABRAS EN INGLÉS SALVO TÉRMINOS TÉCNICOS NECESARIOS
-- NO INCLUYAS UNA CALIFICACIÓN NUMÉRICA (1-10) EN ESTA RESPUESTA A MENOS QUE SE PREGUNTE EXPLÍCITAMENTE
-- FORMATO EDUCATIVO Y PROFESIONAL
-
-Contexto de la entrega (para tu referencia):
-- Análisis previo: ${resultado.resumen}
-- Estado de cumplimiento: ${resultado.cumplimiento}
-
-Pregunta del usuario: ${pregunta}
-
-REGLAS PARA LA RESPUESTA:
-1. Responde directamente a la pregunta del usuario de manera útil y constructiva.
-2. Usa el contexto de la entrega para dar ejemplos relevantes, pero no te centres en la calificación.
-3. Si la pregunta es técnica, explica el concepto claramente.
-4. Si la pregunta es sobre el proceso, guía al usuario.
-
-FORMATO DE RESPUESTA REQUERIDO (EN ESPAÑOL):
+FORMATO B (Consulta - Preguntas generales):
 💬 **RESPUESTA:**
-[Respuesta directa, clara y educativa a la pregunta]
+[Responde directamente a la pregunta del usuario de manera útil]
 
 💡 **CONTEXTO ADICIONAL:**
-[Información relevante basada en el análisis de la entrega, si aplica]
+[Información relevante del análisis previo sin dar la nota numérica]
 
-(NO incluyas el bloque de "CALIFICACIÓN ACTUAL" ni "RECOMENDACIONES DE MEJORA" a menos que sea vital para la respuesta)`;
-        }
+(IMPORTANTE: TÚ decides qué formato usar basándote en la intención de la pregunta del usuario)`;
 
         const tokensLlama = encode(promptLlama).length;
         console.log('[MODELO llama3:latest] TOKENS CONSUMIDOS:', tokensLlama);
@@ -4270,15 +4224,12 @@ No se pudo analizar el repositorio: ${gitHubUrl}
             (extractedProfessorDescription && extractedProfessorDescription.length > 0);
 
         const esPreguntaNota =
-            /nota|calificaci(ó|o)n|puntaje|puntuaci(ó|o)n|evaluaci(ó|o)n|score|grade|calif(í|i)ca(me|la|el)|eval(ú|u)a(me|la|el)/.test(preguntaLower) ||
-            /archivo|documento|contenido|trata|tema|enviado|subido|entregado|analiza|analizar/.test(preguntaLower) ||
-            /tarea|trabajo|ejercicio|descripci(ó|o)n|requisito|solicita|pide|especifica/.test(preguntaLower) ||
+            (/nota|calificaci(ó|o)n|puntaje|puntuaci(ó|o)n|evaluaci(ó|o)n|score|grade|calif(í|i)ca(me|la|el)|eval(ú|u)a(me|la|el)/.test(preguntaLower) &&
+            !/contenido|que envie|qué envié|archivo|resumen/.test(preguntaLower)) ||
             (
                 /(revisa|corrige|ver|dime|cu(á|a)l|qu(é|e))/.test(preguntaLower) &&
-                /(nota|calificaci(ó|o)n|puntaje|archivo|documento|tarea|descripci(ó|o)n)/.test(preguntaLower)
-            ) ||
-            // 🔥 Si hay contexto de tarea y el usuario hace cualquier pregunta relacionada
-            (hayContextoTarea && /mi|esta|la|el|sobre|de|cumpl|bien|mal|falta|mejora|problema/.test(preguntaLower));
+                /(nota|calificaci(ó|o)n|puntaje)/.test(preguntaLower)
+            );
 
         // Configuración especial: usar solo gemma3n para evaluaciones críticas
         // 🔥 MEJORA: También activar evaluación crítica si hay descripción del profesor aunque fileContent esté vacío
@@ -4471,12 +4422,22 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 console.log('==============================================');
                 // If possible, extract a numeric grade from the respuestaFinal and persist it
                 try {
-                    const gradeMatch = respuestaFinal.match(/(\d+(?:\.\d+)?)\s*\/\s*10|nota\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
-                    const gradeStr = gradeMatch ? (gradeMatch[1] || gradeMatch[2]) : null;
-                    const gradeVal = gradeStr ? parseFloat(gradeStr.replace(',', '.')) : null;
-                    if (gradeVal !== null && submissionId) {
-                        console.log(`🔁 Persistiendo calificación detectada ${gradeVal} para submissionId=${submissionId}`);
-                        await updateTaskSubmissionSupabase(submissionId, gradeVal, respuestaFinal);
+                    // 🔥 LÓGICA REFORZADA: Solo persistir nota si es una pregunta explícita de calificación
+                    // y la nota es válida. Si es "0/10" por "archivo no disponible", NO PERSISTIR a menos que sea explícito.
+                    const isGradingRequestStrict = /nota|calificaci(ó|o)n|puntaje|evaluaci(ó|o)n|score|grade/.test(prompt.toLowerCase()) &&
+                                                  !/contenido|que envie|qué envié|archivo|resumen/.test(prompt.toLowerCase());
+
+                    if (isGradingRequestStrict && submissionId) {
+                        const gradeMatch = respuestaFinal.match(/(\d+(?:\.\d+)?)\s*\/\s*10|nota\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
+                        const gradeStr = gradeMatch ? (gradeMatch[1] || gradeMatch[2]) : null;
+                        const gradeVal = gradeStr ? parseFloat(gradeStr.replace(',', '.')) : null;
+                        
+                        if (gradeVal !== null) {
+                            console.log(`🔁 Persistiendo calificación detectada ${gradeVal} para submissionId=${submissionId} (simple path)`);
+                            await updateTaskSubmissionSupabase(submissionId, gradeVal, respuestaFinal);
+                        }
+                    } else {
+                        console.log('ℹ️ No se persiste calificación (no es pregunta de evaluación estricta)');
                     }
                 } catch (err) {
                     console.log('⚠️ Error extrayendo/persistiendo calificación (silent):', err.message);
