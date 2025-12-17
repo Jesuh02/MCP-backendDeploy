@@ -5954,7 +5954,26 @@ app.post('/tools/call', async(req, res) => {
             } else {
                 console.log('🤖 Processing Natural Language Query via Agent...');
                 try {
-                    const agentResponse = await mcpService.processQueryWithAgent(args.query);
+                    // 🔥 CRITICAL MODIFICATION: Enforce "Only Grade If Requested" logic
+                    // Check if the query explicitly asks for grading/evaluation
+                    const lowerQuery = args.query.toLowerCase();
+                    const isGradingRequest = lowerQuery.includes('calific') || 
+                                            lowerQuery.includes('nota') || 
+                                            lowerQuery.includes('evalu') || 
+                                            lowerQuery.includes('puntaje') ||
+                                            lowerQuery.includes('grade') ||
+                                            lowerQuery.includes('score') ||
+                                            lowerQuery.includes('rate');
+                    
+                    let modifiedQuery = args.query;
+                    if (!isGradingRequest) {
+                        modifiedQuery = `SYSTEM INSTRUCTION: The user is asking a general question. Do NOT provide a grade (1-10) or formal evaluation. Answer helpfully based on context. USER QUERY: ${args.query}`;
+                        console.log('🛡️ Q&A Mode enforced (No grading)');
+                    } else {
+                        console.log('📝 Grading Mode enabled');
+                    }
+
+                    const agentResponse = await mcpService.processQueryWithAgent(modifiedQuery);
                     result = {
                         data: agentResponse,
                         sqlScript: "-- Executed via LLM Agent with tool calling"
@@ -6032,8 +6051,22 @@ app.post('/tools/call', async(req, res) => {
             console.log('🐙 Analyzing GitHub repository:', args.repoUrl);
 
             try {
+                // 🔥 CRITICAL MODIFICATION: Enforce "Only Grade If Requested" logic for Repo Analysis
+                // If the user didn't provide specific criteria, inject the "No Grade" instruction by default
+                // unless the task description itself asks for it.
+                let modifiedTaskDesc = args.taskDescription || '';
+                
+                // Simple heuristic: if task description doesn't explicitly mention grading terms, add safety instruction
+                const lowerDesc = modifiedTaskDesc.toLowerCase();
+                const isExplicitGrading = lowerDesc.includes('calific') || lowerDesc.includes('grade') || lowerDesc.includes('rubric');
+                
+                if (!isExplicitGrading) {
+                    modifiedTaskDesc += "\n\nSYSTEM INSTRUCTION: Unless the user explicitly asks for a grade/score in their request, provide a qualitative analysis only. Do not assign a numerical score (1-10) if not requested.";
+                    console.log('🛡️ Repo Analysis: Qualitative mode hint added');
+                }
+
                 const result = await mcpService.analyzeGitHubRepo(args.repoUrl, {
-                    taskDescription: args.taskDescription,
+                    taskDescription: modifiedTaskDesc,
                     gradingCriteria: args.gradingCriteria,
                     focusAreas: args.focusAreas,
                     maxFiles: args.maxFiles
