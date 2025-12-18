@@ -26,15 +26,20 @@ router.post('/procesar-prompt', async (req, res) => {
                             try {
                                 // Use getSubmissionFileContent which handles various sources (R2, HTTP)
                                 const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name);
-                                
-                                if (fileData && fileData.content) {
-                                    // Limit content size per file to avoid context window overflow
-                                    const contentSnippet = fileData.content.substring(0, 8000); 
-                                    augmentedPrompt += `\n\n--- Contenido del archivo: ${file.name} (${fileData.contentType}) ---\n${contentSnippet}`;
-                                    if (fileData.content.length > 8000) {
-                                        augmentedPrompt += `\n...(contenido truncado)...`;
-                                    }
-                                }
+                                 
+                                 if (fileData && fileData.content) {
+                                     // Only include text content. Skip binary/base64 to avoid confusing text-only models.
+                                     if (!fileData.isBase64) {
+                                         // Limit content size per file to avoid context window overflow
+                                         const contentSnippet = fileData.content.substring(0, 8000); 
+                                         augmentedPrompt += `\n\n--- Contenido del archivo: ${file.name} (${fileData.contentType}) ---\n${contentSnippet}`;
+                                         if (fileData.content.length > 8000) {
+                                             augmentedPrompt += `\n...(contenido truncado)...`;
+                                         }
+                                     } else {
+                                         augmentedPrompt += `\n\n--- Archivo adjunto: ${file.name} (${fileData.contentType}) [Contenido binario no incluido] ---`;
+                                     }
+                                 }
                             } catch (e) {
                                 console.warn(`⚠️ Failed to fetch file ${file.name}: ${e.message}`);
                             }
