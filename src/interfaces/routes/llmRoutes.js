@@ -11,17 +11,11 @@ const router = Router();
 
 router.post('/procesar-prompt', async (req, res) => {
     try {
-        const { prompt, ollamaUrl, model, jsonContent, requestNonce } = req.body;
+        const { prompt, ollamaUrl, model, jsonContent } = req.body;
         
         console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl}`);
 
         let augmentedPrompt = prompt;
-
-        // If a nonce/request id is provided, include it to ensure the model receives a unique prompt
-        if (requestNonce) {
-            augmentedPrompt = `Request-Nonce: ${requestNonce}\n\n` + augmentedPrompt;
-            console.log(`🔐 Using requestNonce: ${requestNonce}`);
-        }
 
         // Process jsonContent to fetch files from R2
         if (jsonContent) {
@@ -122,14 +116,6 @@ router.post('/procesar-prompt', async (req, res) => {
         // If files were processed, we move them to the TOP of the prompt context
         // This helps the LLM focus on the files more than the task titles
         
-        // Determine temperature based on task type
-        // Higher temperature for quizzes to ensure variety (0.85), lower for code analysis (0.2)
-        let temperature = 0.7;
-        if (augmentedPrompt.includes("PREGUNTAS PROHIBIDAS") || augmentedPrompt.includes("Request ID")) {
-            console.log("🎲 Quiz generation detected: increasing temperature to 0.85 for variety");
-            temperature = 0.85;
-        }
-
         const response = await fetch(targetUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -138,7 +124,7 @@ router.post('/procesar-prompt', async (req, res) => {
                 prompt: augmentedPrompt,
                 stream: false,
                 options: {
-                    temperature: temperature // Dynamic temperature
+                    temperature: 0.7 // Standard creativity
                 }
             })
         });
