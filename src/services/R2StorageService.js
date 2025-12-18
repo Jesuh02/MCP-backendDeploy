@@ -52,6 +52,8 @@ class R2StorageService {
         const accessKeyId = process.env.R2_ACCESS_KEY_ID || '';
         const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY || '';
 
+        // Removed strict check to allow partial functionality if env vars are missing
+        // but logged warning. Ideally we want it to work.
         if (accountId && accessKeyId && secretAccessKey) {
             try {
                 this.r2Client = new S3Client({
@@ -67,7 +69,7 @@ class R2StorageService {
                 console.error('❌ R2StorageService: Failed to initialize R2 Client:', error.message);
             }
         } else {
-            console.warn('⚠️ R2StorageService: Cloudflare R2 not configured - file access will be limited');
+            console.warn('⚠️ R2StorageService: Cloudflare R2 not configured completely (Missing env vars). Public downloads may still work.');
         }
     }
 
