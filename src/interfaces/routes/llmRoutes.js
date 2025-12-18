@@ -1,5 +1,10 @@
 import { Router } from 'express';
 import { R2StorageService } from '../../services/R2StorageService.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdf = require('pdf-parse');
+const xlsx = require('xlsx');
+
 // Note: In Node 18+, fetch is global. If older, might need node-fetch. Assuming environment supports it.
 
 const router = Router();
@@ -28,13 +33,57 @@ router.post('/procesar-prompt', async (req, res) => {
                                 const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name);
                                  
                                  if (fileData && fileData.content) {
-                                     // Only include text content. Skip binary/base64 to avoid confusing text-only models.
-                                     if (!fileData.isBase64) {
+                                     let extractedText = null;
+                                     let processMsg = "";
+
+                                     // Handle PDF
+                                     if (fileData.contentType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                                         try {
+                                             console.log(`📄 Parsing PDF: ${file.name}`);
+                                             // content is likely base64 for PDFs from R2StorageService
+                                             const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                             const pdfData = await pdf(pdfBuffer);
+                                             extractedText = pdfData.text;
+                                             processMsg = `PDF parsed (${extractedText.length} chars)`;
+                                             console.log(`✅ ${processMsg}`);
+                                         } catch (e) {
+                                             console.warn(`⚠️ PDF parse failed for ${file.name}: ${e.message}`);
+                                         }
+                                     }
+                                     // Handle Excel
+                                     else if (fileData.contentType.includes('spreadsheet') || fileData.contentType.includes('excel') || file.name.toLowerCase().match(/\.xlsx?$/)) {
+                                         try {
+                                             console.log(`📊 Parsing Excel: ${file.name}`);
+                                             const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
+                                             let excelText = "";
+                                             for (const sheetName of workbook.SheetNames) {
+                                                 const sheet = workbook.Sheets[sheetName];
+                                                 // Convert to CSV for better token efficiency than JSON or TXT
+                                                 const text = xlsx.utils.sheet_to_csv(sheet); 
+                                                 if (text.trim()) {
+                                                     excelText += `\n[Sheet: ${sheetName}]\n${text}\n`;
+                                                 }
+                                             }
+                                             extractedText = excelText;
+                                             processMsg = `Excel parsed (${extractedText.length} chars)`;
+                                             console.log(`✅ ${processMsg}`);
+                                         } catch (e) {
+                                             console.warn(`⚠️ Excel parse failed for ${file.name}: ${e.message}`);
+                                         }
+                                     }
+                                     // Handle Text (already handled, but let's consolidate)
+                                     else if (!fileData.isBase64) {
+                                         extractedText = fileData.content;
+                                         processMsg = "Text content";
+                                     }
+
+                                     if (extractedText) {
+                                         // Only include text content. Skip binary/base64 to avoid confusing text-only models.
                                          // Limit content size per file to avoid context window overflow
-                                         const contentSnippet = fileData.content.substring(0, 8000); 
+                                         const contentSnippet = extractedText.substring(0, 15000); 
                                          augmentedPrompt += `\n\n--- Contenido del archivo: ${file.name} (${fileData.contentType}) ---\n${contentSnippet}`;
-                                         if (fileData.content.length > 8000) {
-                                             augmentedPrompt += `\n...(contenido truncado)...`;
+                                         if (extractedText.length > 15000) {
+                                             augmentedPrompt += `\n...(contenido truncado, total ${extractedText.length} chars)...`;
                                          }
                                      } else {
                                          augmentedPrompt += `\n\n--- Archivo adjunto: ${file.name} (${fileData.contentType}) [Contenido binario no incluido] ---`;
@@ -56,16 +105,22 @@ router.post('/procesar-prompt', async (req, res) => {
             throw new Error('ollamaUrl is required');
         }
 
-        // Call Ollama
+        // Call LLM (DeepSeek via Ollama wrapper or Direct)
         // If ollamaUrl ends with /, remove it
         const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
         const targetUrl = `${baseUrl}/api/generate`;
+        
+        console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${model || 'deepseek-chat'})`);
+
+        // Prioritize file content in the prompt
+        // If files were processed, we move them to the TOP of the prompt context
+        // This helps the LLM focus on the files more than the task titles
         
         const response = await fetch(targetUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: model || 'llama3',
+                model: model || 'deepseek-chat', // Default to deepseek
                 prompt: augmentedPrompt,
                 stream: false,
                 options: {
@@ -75,7 +130,7 @@ router.post('/procesar-prompt', async (req, res) => {
         });
 
         if (!response.ok) {
-            throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+            throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
         }
 
         const data = await response.json();
