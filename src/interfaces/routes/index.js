@@ -4,11 +4,13 @@
  */
 
 export { default as notificationRoutes } from './notificationRoutes.js';
+export { default as llmRoutes } from './llmRoutes.js';
 
 // Route configuration helper
 export function configureRoutes(app) {
     const routes = [
-        { path: '/', router: notificationRoutes }
+        { path: '/', router: notificationRoutes },
+        { path: '/', router: llmRoutes } // Register LLM routes at root (e.g. /procesar-prompt)
     ];
 
     routes.forEach(({ path, router }) => {
@@ -20,5 +22,6 @@ export function configureRoutes(app) {
 }
 
 export default {
-    notificationRoutes
+    notificationRoutes,
+    llmRoutes
 };
