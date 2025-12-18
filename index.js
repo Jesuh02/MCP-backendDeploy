@@ -247,7 +247,7 @@ if (R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY) {
         console.error('❌ Failed to initialize R2 Client:', error.message);
     }
 } else {
-    console.warn('⚠️ Cloudflare R2 not configured - file access will be limited');
+    console.warn('⚠️ Cloudflare R2 not configured completely (Missing env vars). Public downloads may still work.');
 }
 
 /**
