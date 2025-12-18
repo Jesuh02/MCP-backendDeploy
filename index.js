@@ -4509,8 +4509,24 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS (FALLBACK):', tokensPrompt);
                 console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO (FALLBACK):', augmentedPrompt.substring(0, 300) + '...');
 
+                // Detectar si es una solicitud de preguntas de refuerzo sobre programación
+                let systemPrompt = null;
+                if (augmentedPrompt.includes('PROGRAMACIÓN') && augmentedPrompt.includes('preguntas de selección múltiple')) {
+                    systemPrompt = `Eres un experto educador en programación con amplia experiencia enseñando desarrollo de software.
+Tu tarea es generar preguntas técnicas de programación que evalúen conocimientos reales y prácticos.
+ENFOCA TUS PREGUNTAS EXCLUSIVAMENTE EN:
+TEMAS SOBRE PROGRAMACION Y DESARROLLO 
+
+IMPORTANTE:
+- Las preguntas deben ser TÉCNICAS y PRÁCTICAS
+- Evita preguntas teóricas abstractas
+- Incluye código real en las preguntas y opciones
+- Las explicaciones deben ser detalladas y técnicas
+- Usa terminología precisa de desarrollo de software`;
+                }
+
                 // Call DeepSeek via LLMService
-                let respuestaFinal = await callDeepSeek(null, augmentedPrompt);
+                let respuestaFinal = await callDeepSeek(systemPrompt, augmentedPrompt);
 
                 // Defensive fallback if model returns empty
                 if (!respuestaFinal || !respuestaFinal.trim()) {
