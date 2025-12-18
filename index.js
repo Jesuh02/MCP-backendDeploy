@@ -3672,7 +3672,8 @@ app.post('/procesar-prompt', async(req, res) => {
 
         // Recibe prompt del usuario, url de ollama y contexto del archivo (descripcionTarea)
         // 🔥 NUEVO: También recibimos submissionId, taskId, fileUri para poder obtener el contenido desde R2/Supabase
-        let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent, userId, submissionId, taskId, fileUri, studentId } = req.body;
+        // 🔥 NUEVO: jsonContent para archivos adjuntos del curso, model para especificar modelo LLM
+        let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent, userId, submissionId, taskId, fileUri, studentId, jsonContent, model } = req.body;
 
         // ============================================================
         // 🔥 NUEVO: OBTENER CONTENIDO DESDE R2/SUPABASE SI NO VIENE EN EL REQUEST
@@ -3820,6 +3821,51 @@ app.post('/procesar-prompt', async(req, res) => {
         console.log('📄 FileContent length:', (fileContent || '').length);
         console.log('🔑 SubmissionId:', submissionId || 'NO PROPORCIONADO');
         console.log('📋 TaskId:', taskId || 'NO PROPORCIONADO');
+        console.log('📎 JsonContent:', jsonContent ? 'PRESENTE' : 'NO PROPORCIONADO');
+        console.log('🤖 Model:', model || 'NO ESPECIFICADO');
+
+        // ============================================================
+        // 🔥 NUEVO: PROCESAR jsonContent PARA ARCHIVOS ADJUNTOS DEL CURSO
+        // Si viene jsonContent con archivos del curso, descargarlos y añadir al prompt
+        // ============================================================
+        let augmentedPrompt = prompt;
+        if (jsonContent) {
+            try {
+                const files = JSON.parse(jsonContent);
+                if (Array.isArray(files) && files.length > 0) {
+                    console.log(`📂 Procesando ${files.length} archivos adjuntos del curso...`);
+                    
+                    for (const file of files) {
+                        if (file.uri && (file.uri.includes('r2.dev') || file.uri.startsWith('http'))) {
+                            console.log(`📥 Descargando contenido de ${file.name}...`);
+                            try {
+                                const fileData = await getSubmissionFileContent(file.uri, file.name || 'archivo', null);
+                                
+                                if (fileData && fileData.content) {
+                                    // Solo incluir contenido de texto, no binario
+                                    if (!fileData.isBase64 && fileData.contentType && fileData.contentType.startsWith('text/')) {
+                                        // Limitar tamaño para evitar overflow del contexto
+                                        const contentSnippet = fileData.content.substring(0, 8000);
+                                        augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} ---\n${contentSnippet}`;
+                                        if (fileData.content.length > 8000) {
+                                            augmentedPrompt += `\n...(contenido truncado)...`;
+                                        }
+                                        console.log(`✅ Contenido de ${file.name} añadido al prompt (${contentSnippet.length} chars)`);
+                                    } else {
+                                        augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (${fileData.contentType || 'tipo desconocido'}) ---`;
+                                        console.log(`ℹ️ Archivo ${file.name} es binario o no textual, solo referencia añadida`);
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn(`⚠️ Error descargando archivo ${file.name}: ${e.message}`);
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn("⚠️ Error procesando jsonContent:", e.message);
+            }
+        }
 
         // 🔥 MEJORA: Extraer información estructurada del taskDescription si tiene formato con emojis
         // El cliente Android envía taskDescription en formato:
@@ -4459,12 +4505,12 @@ Responde considerando el contexto académico disponible si es relevante para la 
             console.log('📝 taskDescription recibido:', taskDescription);
             // Procesar como pregunta simple sin contexto de archivo
             try {
-                const tokensPrompt = encode(prompt).length;
+                const tokensPrompt = encode(augmentedPrompt).length;
                 console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS (FALLBACK):', tokensPrompt);
-                console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO (FALLBACK):', prompt.substring(0, 300) + '...');
+                console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO (FALLBACK):', augmentedPrompt.substring(0, 300) + '...');
 
                 // Call DeepSeek via LLMService
-                let respuestaFinal = await callDeepSeek(null, prompt);
+                let respuestaFinal = await callDeepSeek(null, augmentedPrompt);
 
                 // Defensive fallback if model returns empty
                 if (!respuestaFinal || !respuestaFinal.trim()) {
