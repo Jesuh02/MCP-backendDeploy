@@ -363,7 +363,8 @@ router.post('/procesar-prompt', async (req, res) => {
                                                                 const toSave = filtered.map(fq => fq);
                                                                 const allQ = Array.isArray(existingHistory) ? [...existingHistory, ...toSave] : toSave;
                                                                 const recent = allQ.slice(-50);
-                                                                await supabase2.client.from('reinforcement_question_history').upsert({ user_id: userId, course_id: courseId, questions: recent }, { onConflict: 'user_id,course_id' });
+                                                                // Insert a new row with the recent questions (log-style history)
+                                                                await supabase2.client.from('reinforcement_question_history').insert([{ user_id: userId, course_id: courseId, questions: recent }]);
                                                             } catch (upErr) { console.warn('⚠️ Failed to upsert retry results:', upErr?.message || upErr); }
                                                             break;
                                                         }
