@@ -57,21 +57,12 @@ app.get('/health', (req, res) => {
     });
 });
 
-    // Also respond to / for basic health checks
-    app.get('/_health', (req, res) => {
-        res.status(200).send('OK');
-    });
+// Also respond to / for basic health checks
+app.get('/_health', (req, res) => {
+    res.status(200).send('OK');
+});
 
-    console.log('🏥 Healthcheck endpoints registered (/health, /_health)');
-
-    // Start listening immediately to pass healthchecks
-    const server = app.listen(PORT, '0.0.0.0', () => {
-        console.log(`🚀 Server listening on port ${PORT} (Healthcheck ready)`);
-    });
-
-    // Configure timeouts
-    server.keepAliveTimeout = 120 * 1000;
-    server.headersTimeout = 120 * 1000;
+console.log('🏥 Healthcheck endpoints registered (/health, /_health)');
 
 // Initialize Firebase Admin (with error handling)
 let admin;
@@ -214,20 +205,11 @@ async function callDeepSeek(systemPrompt, userPrompt) {
 
 // Initialize MCPService for GitHub analysis
 let mcpService = null;
-
-/**
- * Lazy load MCPService to prevent startup crashes
- */
-function getMcpService() {
-    if (!mcpService) {
-        try {
-            mcpService = new MCPService();
-            console.log('✅ MCPService initialized lazily');
-        } catch (error) {
-            console.error('❌ Failed to initialize MCPService:', error.message);
-        }
-    }
-    return mcpService;
+try {
+    mcpService = new MCPService();
+    console.log('✅ MCPService initialized for GitHub analysis');
+} catch (error) {
+    console.error('❌ Failed to initialize MCPService:', error.message);
 }
 
 // Initialize SupabaseService
@@ -863,13 +845,12 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('   📦 URL:', repoUrl);
     console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
 
-    const mcp = getMcpService();
-    if (!mcp) {
+    if (!mcpService) {
         throw new Error('MCPService no está disponible');
     }
 
     try {
-        const result = await mcp.analyzeGitHubRepo(repoUrl, {
+        const result = await mcpService.analyzeGitHubRepo(repoUrl, {
             taskDescription: taskDescription,
             criteria: prompt,
             maxFiles: 25
@@ -2574,8 +2555,10 @@ Para poder calificar esta tarea, necesito poder leer y analizar el contenido del
         // Validaciones adicionales específicas para casos comunes
         (descripcionLower.includes('python') && archivoLower.includes('sql') && !descripcionLower.includes('sql')) ||
         (descripcionLower.includes('sql') && archivoLower.includes('python') && !descripcionLower.includes('python')) ||
-        (descripcionLower.includes('java') && !archivoLower.includes('class') && !archivoLower.includes('public') && !archivoLower.includes('java') && archivoLower.length > 50) ||
-        (descripcionLower.includes('javascript') && !archivoLower.includes('function') && !archivoLower.includes('const') && !archivoLower.includes('var') && !archivoLower.includes('let') && archivoLower.length > 50)
+        (descripcionLower.includes('java') && !archivoLower.includes('java') && archivoLower.length > 50) ||
+        (descripcionLower.includes('javascript') && !archivoLower.includes('javascript') && archivoLower.length > 50) ||
+        (descripcionLower.includes('html') && !archivoLower.includes('html') && archivoLower.length > 50) ||
+        (descripcionLower.includes('css') && !archivoLower.includes('css') && archivoLower.length > 50)
     ) {
         nota = 0;
         cumplimiento = 'El archivo no cumple con el parámetro solicitado.';
@@ -4695,34 +4678,12 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                             let generatedQuestions = JSON.parse(cleanJson);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
-                                // Helper to normalize text for comparison
-                                const normalize = (text) => (text || '').toLowerCase().trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").replace(/\s+/g, " ");
-
-                                // Filter out disallowed questions AND duplicates from history
+                                // Filter out disallowed questions (meta-evaluation, pedagogy, personal data)
                                 let allowed = generatedQuestions.filter(q => {
                                     try {
                                         const qText = (q.question || q.pregunta || '').toString();
                                         const opts = Array.isArray(q.options) ? q.options : [];
-
-                                        // 1. Check disallowed patterns
-                                        if (isQuestionDisallowed(qText, opts)) return false;
-
-                                        // 2. Check duplicates against history
-                                        if (questionHistory && questionHistory.length > 0) {
-                                            const normalizedNew = normalize(qText);
-                                            // Check exact text match or very high similarity
-                                            const isDuplicate = questionHistory.some(h => {
-                                                const hText = (h.question || h.pregunta || (typeof h === 'string' ? h : JSON.stringify(h))).toString();
-                                                return normalize(hText) === normalizedNew;
-                                            });
-                                            
-                                            if (isDuplicate) {
-                                                console.log(`♻️ Skipping duplicate question: "${qText.substring(0, 30)}..."`);
-                                                return false;
-                                            }
-                                        }
-
-                                        return true;
+                                        return !isQuestionDisallowed(qText, opts);
                                     } catch (e) {
                                         return false;
                                     }
@@ -4742,19 +4703,7 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                                                     try {
                                                         const qText = (q.question || q.pregunta || '').toString();
                                                         const opts = Array.isArray(q.options) ? q.options : [];
-                                                        
-                                                        if (isQuestionDisallowed(qText, opts)) return false;
-
-                                                        if (questionHistory && questionHistory.length > 0) {
-                                                            const normalizedNew = normalize(qText);
-                                                            const isDuplicate = questionHistory.some(h => {
-                                                                const hText = (h.question || h.pregunta || (typeof h === 'string' ? h : JSON.stringify(h))).toString();
-                                                                return normalize(hText) === normalizedNew;
-                                                            });
-                                                            if (isDuplicate) return false;
-                                                        }
-                                                        
-                                                        return true;
+                                                        return !isQuestionDisallowed(qText, opts);
                                                     } catch (e) {
                                                         return false;
                                                     }
@@ -5935,9 +5884,8 @@ async function handleMCPToolCall(toolName, args) {
             return await sendMCPNotification(args);
 
         case 'analyze_repository':
-            const mcp = getMcpService();
-            if (mcp) {
-                const analysis = await mcp.analyzeGitHubRepo(args.repoUrl, { taskDescription: args.taskDescription || '' });
+            if (mcpService) {
+                const analysis = await mcpService.analyzeRepository(args.repoUrl, args.taskDescription || '');
                 return { content: [{ type: 'text', text: JSON.stringify(analysis, null, 2) }] };
             }
             return { content: [{ type: 'text', text: 'GitHub analysis not available' }] };
@@ -6206,9 +6154,8 @@ app.get('/health/detailed', async(req, res) => {
         // Test LLM connection
         let llmHealth = { status: 'not_tested' };
         try {
-            const mcp = getMcpService();
-            if (mcp && mcp.llmService) {
-                llmHealth = await mcp.llmService.testConnection();
+            if (mcpService && mcpService.llmService) {
+                llmHealth = await mcpService.llmService.testConnection();
             } else if (llmService) {
                 llmHealth = await llmService.testConnection();
             }
@@ -6441,9 +6388,6 @@ app.post('/tools/call', async(req, res) => {
     console.log('🔧 Tool call request:', params?.name);
 
     try {
-        const mcp = getMcpService();
-        if (!mcp) throw new Error('MCPService no está disponible');
-
         const { name, arguments: args } = params;
 
         if (name === 'query_database') {
@@ -6452,7 +6396,7 @@ app.post('/tools/call', async(req, res) => {
 
             if (isSQL) {
                 console.log('📊 Executing raw SQL query...');
-                result = await mcp.processQuery(args.query, { includeSchema: true });
+                result = await mcpService.processQuery(args.query, { includeSchema: true });
             } else {
                 console.log('🤖 Processing Natural Language Query via Agent...');
                 try {
@@ -6475,7 +6419,7 @@ app.post('/tools/call', async(req, res) => {
                         console.log('📝 Grading Mode enabled');
                     }
 
-                    const agentResponse = await mcp.processQueryWithAgent(modifiedQuery);
+                    const agentResponse = await mcpService.processQueryWithAgent(modifiedQuery);
                     result = {
                         data: agentResponse,
                         sqlScript: "-- Executed via LLM Agent with tool calling"
@@ -6500,7 +6444,7 @@ app.post('/tools/call', async(req, res) => {
                 }
             });
         } else if (name === 'get_database_schema') {
-            const schema = await mcp.getDatabaseSchema();
+            const schema = await mcpService.getDatabaseSchema();
             res.json({
                 jsonrpc: '2.0',
                 id: req.body.id,
@@ -6567,7 +6511,7 @@ app.post('/tools/call', async(req, res) => {
                     console.log('🛡️ Repo Analysis: Qualitative mode hint added');
                 }
 
-                const result = await mcp.analyzeGitHubRepo(args.repoUrl, {
+                const result = await mcpService.analyzeGitHubRepo(args.repoUrl, {
                     taskDescription: modifiedTaskDesc,
                     gradingCriteria: args.gradingCriteria,
                     focusAreas: args.focusAreas,
@@ -6940,39 +6884,39 @@ app.get('/listar-submissions/:taskId', async(req, res) => {
 });
 
 // Listen on all interfaces so the service is reachable from other devices on the LAN
-// app.listen() is already called at the top of the file for healthchecks.
-// This block is for logging startup info only.
-const localIPs = getLocalIPAddress();
-console.log('='.repeat(60));
-console.log('🚀 Microservicio de distribución de contexto con DeepSeek v2.3');
-console.log('='.repeat(60));
-console.log(`📡 Puerto: ${PORT}`);
-console.log(`🌐 Escuchando en todas las interfaces: 0.0.0.0`);
-console.log(`🤖 Modelo LLM: DeepSeek v2.3 (Cloud API)`);
-console.log('\n📍 Direcciones IP detectadas automáticamente:');
-console.log('   ℹ️  Configura tu app Android para usar una de estas IPs');
-console.log('');
-
-if (localIPs.length > 0) {
-    localIPs.forEach((ip, index) => {
-        console.log(`   ${index + 1}. http://${ip}:${PORT}`);
-    });
+app.listen(PORT, '0.0.0.0', () => {
+    const localIPs = getLocalIPAddress();
+    console.log('='.repeat(60));
+    console.log('🚀 Microservicio de distribución de contexto con DeepSeek v2.3');
+    console.log('='.repeat(60));
+    console.log(`📡 Puerto: ${PORT}`);
+    console.log(`🌐 Escuchando en todas las interfaces: 0.0.0.0`);
+    console.log(`🤖 Modelo LLM: DeepSeek v2.3 (Cloud API)`);
+    console.log('\n📍 Direcciones IP detectadas automáticamente:');
+    console.log('   ℹ️  Configura tu app Android para usar una de estas IPs');
     console.log('');
-    console.log(`   💡 IP Principal recomendada: http://${localIPs[0]}:${PORT}`);
-} else {
-    console.log('   ⚠️  No se detectaron IPs locales (puede estar usando solo localhost)');
-}
 
-console.log('\n🔗 Endpoints disponibles:');
-console.log(`   • POST /analizar-entrega`);
-console.log(`   • POST /feedback-entrega`);
-console.log(`   • POST /procesar-prompt`);
-console.log(`   • POST /obtener-contenido-submission`);
-console.log(`   • GET  /listar-submissions/:taskId`);
-console.log(`   • GET  / (health check)`);
-console.log(`   • GET  /health (Railway healthcheck - fast)`);
-console.log(`   • GET  /health/detailed (full diagnostics)`);
-console.log(`   • POST /initialize (MCP)`);
-console.log(`   • POST /tools/list (MCP)`);
-console.log(`   • POST /tools/call (MCP)`);
-console.log('='.repeat(60));
+    if (localIPs.length > 0) {
+        localIPs.forEach((ip, index) => {
+            console.log(`   ${index + 1}. http://${ip}:${PORT}`);
+        });
+        console.log('');
+        console.log(`   💡 IP Principal recomendada: http://${localIPs[0]}:${PORT}`);
+    } else {
+        console.log('   ⚠️  No se detectaron IPs locales (puede estar usando solo localhost)');
+    }
+
+    console.log('\n🔗 Endpoints disponibles:');
+    console.log(`   • POST /analizar-entrega`);
+    console.log(`   • POST /feedback-entrega`);
+    console.log(`   • POST /procesar-prompt`);
+    console.log(`   • POST /obtener-contenido-submission`);
+    console.log(`   • GET  /listar-submissions/:taskId`);
+    console.log(`   • GET  / (health check)`);
+    console.log(`   • GET  /health (Railway healthcheck - fast)`);
+    console.log(`   • GET  /health/detailed (full diagnostics)`);
+    console.log(`   • POST /initialize (MCP)`);
+    console.log(`   • POST /tools/list (MCP)`);
+    console.log(`   • POST /tools/call (MCP)`);
+    console.log('='.repeat(60));
+});
