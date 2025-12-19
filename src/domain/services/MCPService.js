@@ -25,11 +25,6 @@ export class MCPService {
     async getReinforcementHistory(userId, courseId) {
         if (!userId || !courseId) return [];
         
-        // Emulate MCP Tool Call logging to satisfy requirement
-        console.log(`🔧 MCP Tool Call: query_database`, { 
-            query: `SELECT questions FROM reinforcement_question_history WHERE user_id = ${userId} AND course_id = ${courseId}` 
-        });
-        
         console.log(`📚 MCPService: Fetching reinforcement history for user ${userId}, course ${courseId}`);
         
         try {
