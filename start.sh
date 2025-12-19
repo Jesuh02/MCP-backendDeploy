@@ -5,11 +5,6 @@
 # mcp-http.js runs on MCP_HTTP_PORT (3000 default)
 
 echo "Starting index.js (API Server on port ${PORT:-3001})..."
-node bootstrap-health.js &
-BOOT_PID=$!
-
-echo "Started bootstrap health server (PID: $BOOT_PID)"
-
 node index.js &
 API_PID=$!
 
