@@ -244,8 +244,7 @@ async function initializeReinforcementHistoryTable() {
                 user_id INTEGER NOT NULL,
                 course_id INTEGER NOT NULL,
                 questions JSONB NOT NULL,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                UNIQUE(user_id, course_id)
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             );
 
             -- Create index for faster lookups
@@ -302,17 +301,40 @@ async function getReinforcementQuestionHistory(userId, courseId) {
     try {
         const { data, error } = await supabaseService.client
             .from('reinforcement_question_history')
-            .select('questions')
+            .select('questions, created_at')
             .eq('user_id', userId)
             .eq('course_id', courseId)
-            .single();
+            .order('created_at', { ascending: true });
 
-        if (error && error.code !== 'PGRST116') {
-            console.warn('⚠️ Error retrieving question history:', error.message);
+        if (error) {
+            console.warn('⚠️ Error retrieving question history:', error.message || error);
             return [];
         }
 
-        return data?.questions || [];
+        // Aggregate questions from all rows (log-style history)
+        try {
+            const combined = [];
+            if (Array.isArray(data)) {
+                data.forEach(row => {
+                    if (!row) return;
+                    const q = row.questions;
+                    if (Array.isArray(q)) {
+                        combined.push(...q);
+                    } else if (typeof q === 'string') {
+                        try {
+                            const parsed = JSON.parse(q);
+                            if (Array.isArray(parsed)) combined.push(...parsed);
+                        } catch (e) {
+                            // ignore malformed
+                        }
+                    }
+                });
+            }
+            return combined;
+        } catch (err) {
+            console.warn('⚠️ Failed to aggregate reinforcement history:', err.message || err);
+            return [];
+        }
     } catch (error) {
         console.warn('⚠️ Failed to retrieve question history:', error.message);
         return [];
@@ -341,21 +363,21 @@ async function saveReinforcementQuestionHistory(userId, courseId, questions) {
         // Keep only the last 50 questions to avoid excessive storage
         const recentQuestions = allQuestions.slice(-50);
 
-        // Upsert the record
-        const { error } = await supabaseService.client
-            .from('reinforcement_question_history')
-            .upsert({
-                user_id: userId,
-                course_id: courseId,
-                questions: recentQuestions
-            }, {
-                onConflict: 'user_id,course_id'
-            });
+        // Insert a new history row (append); we store the recentQuestions payload in this row
+        const insertPayload = {
+            user_id: userId,
+            course_id: courseId,
+            questions: recentQuestions
+        };
 
-        if (error) {
-            console.warn('⚠️ Error saving question history:', error.message);
+        const { error: insertError } = await supabaseService.client
+            .from('reinforcement_question_history')
+            .insert([insertPayload]);
+
+        if (insertError) {
+            console.warn('⚠️ Error saving question history (insert):', insertError.message || insertError);
         } else {
-            console.log(`✅ Saved ${questions.length} questions to history for user ${userId}, course ${courseId}`);
+            console.log(`✅ Inserted ${questions.length} questions to history for user ${userId}, course ${courseId}`);
         }
     } catch (error) {
         console.warn('⚠️ Failed to save question history:', error.message);

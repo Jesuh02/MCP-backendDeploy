@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { R2StorageService } from '../../services/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
+import { MCPService } from '../../domain/services/MCPService.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
@@ -113,36 +114,21 @@ router.post('/procesar-prompt', async (req, res) => {
         let existingHistory = [];
         if (userId && courseId) {
             try {
-                const supabase = SupabaseService.getInstance();
-                if (supabase && supabase.client) {
-                    const { data: existingRows } = await supabase.client
-                        .from('reinforcement_question_history')
-                        .select('questions')
-                        .eq('user_id', userId)
-                        .eq('course_id', courseId);
-                    
-                    let history = [];
-                    if (existingRows && Array.isArray(existingRows)) {
-                        existingRows.forEach(row => {
-                            if (row.questions && Array.isArray(row.questions)) {
-                                history = history.concat(row.questions);
-                            }
-                        });
-                    }
-                    existingHistory = history;
-                    // Extract plain question text for guidance
-                    historyQuestionsList = history.map(h => {
-                        if (!h) return null;
-                        if (typeof h === 'string') return h;
-                        if (h.question) return h.question;
-                        if (h.pregunta) return h.pregunta;
-                        try { return JSON.stringify(h); } catch(e) { return null; }
-                    }).filter(Boolean);
+                const mcpService = new MCPService();
+                existingHistory = await mcpService.getReinforcementHistory(userId, courseId);
+                
+                // Extract plain question text for guidance
+                historyQuestionsList = existingHistory.map(h => {
+                    if (!h) return null;
+                    if (typeof h === 'string') return h;
+                    if (h.question) return h.question;
+                    if (h.pregunta) return h.pregunta;
+                    try { return JSON.stringify(h); } catch(e) { return null; }
+                }).filter(Boolean);
 
-                    if (historyQuestionsList.length > 0) {
-                        // Pass up to 50 previous questions to ensure better coverage against duplicates
-                        augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
-                    }
+                if (historyQuestionsList.length > 0) {
+                    // Pass up to 50 previous questions to ensure better coverage against duplicates
+                    augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
                 }
             } catch (e) {
                 console.warn('⚠️ Could not read reinforcement history before generation:', e?.message || e);
@@ -279,40 +265,25 @@ router.post('/procesar-prompt', async (req, res) => {
 
                     if (userId && courseId) {
                         try {
-                            const supabase = SupabaseService.getInstance();
-                            if (supabase && supabase.client) {
-                                const { data: existing, error } = await supabase.client
-                                    .from('reinforcement_question_history')
-                                    .select('questions')
-                                    .eq('user_id', userId)
-                                    .eq('course_id', courseId)
-                                    .single();
+                            const mcpService = new MCPService();
+                            
+                            // Check against full history again
+                            const history = existingHistory && existingHistory.length ? existingHistory : historyQuestionsList;
+                            
+                            filtered = transformed.filter(q => {
+                                try {
+                                    const qText = q.question || q.pregunta || JSON.stringify(q);
+                                    return !questionExistsInHistory(qText, history);
+                                } catch (e) { return true; }
+                            });
 
-                                const history = (existing && existing.questions) ? existing.questions : [];
-
-                                filtered = transformed.filter(q => {
-                                    try {
-                                        const qText = q.question || q.pregunta || JSON.stringify(q);
-                                        return !questionExistsInHistory(qText, history);
-                                    } catch (e) { return true; }
-                                });
-
-                                            // Save newly selected questions back to history (append as new record)
-                                            if (filtered.length > 0) {
-                                                const toSave = filtered.map(fq => fq);
-                                                // Create a NEW record for this batch of questions instead of upserting/overwriting
-                                                await supabase.client
-                                                    .from('reinforcement_question_history')
-                                                    .insert({ 
-                                                        user_id: userId, 
-                                                        course_id: courseId, 
-                                                        questions: toSave,
-                                                        created_at: new Date().toISOString()
-                                                    });
-                                            } else {
-                                                console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
-                                            }
-                            }
+                                        // Save newly selected questions back to history (append as new record)
+                                        if (filtered.length > 0) {
+                                            const toSave = filtered.map(fq => fq);
+                                            await mcpService.saveReinforcementHistory(userId, courseId, toSave);
+                                        } else {
+                                            console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
+                                        }
                         } catch (e) {
                             console.warn('⚠️ Failed to consult/save reinforcement history:', e?.message || e);
                         }
@@ -371,12 +342,10 @@ router.post('/procesar-prompt', async (req, res) => {
                                                             filtered = newlyFiltered;
                                                             // Upsert these into history
                                                             try {
-                                                                const supabase2 = SupabaseService.getInstance();
+                                                                const mcpService2 = new MCPService();
                                                                 const toSave = filtered.map(fq => fq);
-                                                                const allQ = Array.isArray(existingHistory) ? [...existingHistory, ...toSave] : toSave;
-                                                                const recent = allQ.slice(-50);
-                                                                await supabase2.client.from('reinforcement_question_history').upsert({ user_id: userId, course_id: courseId, questions: recent }, { onConflict: 'user_id,course_id' });
-                                                            } catch (upErr) { console.warn('⚠️ Failed to upsert retry results:', upErr?.message || upErr); }
+                                                                await mcpService2.saveReinforcementHistory(userId, courseId, toSave);
+                                                            } catch (upErr) { console.warn('⚠️ Failed to save retry results:', upErr?.message || upErr); }
                                                             break;
                                                         }
                                                     }

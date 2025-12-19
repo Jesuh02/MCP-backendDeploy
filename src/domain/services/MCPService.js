@@ -19,6 +19,62 @@ export class MCPService {
     }
 
     /**
+     * Get reinforcement learning history for a user in a course
+     * Aggregates questions from all history records
+     */
+    async getReinforcementHistory(userId, courseId) {
+        if (!userId || !courseId) return [];
+        
+        try {
+            const { data: existingRows, error } = await this.supabase.client
+                .from('reinforcement_question_history')
+                .select('questions')
+                .eq('user_id', userId)
+                .eq('course_id', courseId);
+            
+            if (error) throw error;
+
+            let history = [];
+            if (existingRows && Array.isArray(existingRows)) {
+                existingRows.forEach(row => {
+                    if (row.questions && Array.isArray(row.questions)) {
+                        history = history.concat(row.questions);
+                    }
+                });
+            }
+            return history;
+        } catch (error) {
+            logger.warn(`Error fetching reinforcement history: ${error.message}`);
+            return [];
+        }
+    }
+
+    /**
+     * Save new reinforcement learning questions to history
+     * Uses INSERT to support log-based schema (multiple rows per user/course)
+     */
+    async saveReinforcementHistory(userId, courseId, questions) {
+        if (!userId || !courseId || !questions || !questions.length) return false;
+
+        try {
+            const { error } = await this.supabase.client
+                .from('reinforcement_question_history')
+                .insert({
+                    user_id: userId,
+                    course_id: courseId,
+                    questions: questions,
+                    created_at: new Date().toISOString()
+                });
+            
+            if (error) throw error;
+            return true;
+        } catch (error) {
+            logger.warn(`Error saving reinforcement history: ${error.message}`);
+            return false;
+        }
+    }
+
+    /**
      * Detect business / marketing intent keywords in the natural language query.
      */
     isBusinessIntent(query) {
