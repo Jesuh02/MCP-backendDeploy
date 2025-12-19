@@ -205,11 +205,20 @@ async function callDeepSeek(systemPrompt, userPrompt) {
 
 // Initialize MCPService for GitHub analysis
 let mcpService = null;
-try {
-    mcpService = new MCPService();
-    console.log('✅ MCPService initialized for GitHub analysis');
-} catch (error) {
-    console.error('❌ Failed to initialize MCPService:', error.message);
+
+/**
+ * Lazy load MCPService to prevent startup crashes
+ */
+function getMcpService() {
+    if (!mcpService) {
+        try {
+            mcpService = new MCPService();
+            console.log('✅ MCPService initialized lazily');
+        } catch (error) {
+            console.error('❌ Failed to initialize MCPService:', error.message);
+        }
+    }
+    return mcpService;
 }
 
 // Initialize SupabaseService
@@ -845,12 +854,13 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('   📦 URL:', repoUrl);
     console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
 
-    if (!mcpService) {
+    const mcp = getMcpService();
+    if (!mcp) {
         throw new Error('MCPService no está disponible');
     }
 
     try {
-        const result = await mcpService.analyzeGitHubRepo(repoUrl, {
+        const result = await mcp.analyzeGitHubRepo(repoUrl, {
             taskDescription: taskDescription,
             criteria: prompt,
             maxFiles: 25
@@ -5918,8 +5928,9 @@ async function handleMCPToolCall(toolName, args) {
             return await sendMCPNotification(args);
 
         case 'analyze_repository':
-            if (mcpService) {
-                const analysis = await mcpService.analyzeRepository(args.repoUrl, args.taskDescription || '');
+            const mcp = getMcpService();
+            if (mcp) {
+                const analysis = await mcp.analyzeGitHubRepo(args.repoUrl, { taskDescription: args.taskDescription || '' });
                 return { content: [{ type: 'text', text: JSON.stringify(analysis, null, 2) }] };
             }
             return { content: [{ type: 'text', text: 'GitHub analysis not available' }] };
@@ -6188,8 +6199,9 @@ app.get('/health/detailed', async(req, res) => {
         // Test LLM connection
         let llmHealth = { status: 'not_tested' };
         try {
-            if (mcpService && mcpService.llmService) {
-                llmHealth = await mcpService.llmService.testConnection();
+            const mcp = getMcpService();
+            if (mcp && mcp.llmService) {
+                llmHealth = await mcp.llmService.testConnection();
             } else if (llmService) {
                 llmHealth = await llmService.testConnection();
             }
@@ -6422,6 +6434,9 @@ app.post('/tools/call', async(req, res) => {
     console.log('🔧 Tool call request:', params?.name);
 
     try {
+        const mcp = getMcpService();
+        if (!mcp) throw new Error('MCPService no está disponible');
+
         const { name, arguments: args } = params;
 
         if (name === 'query_database') {
@@ -6430,7 +6445,7 @@ app.post('/tools/call', async(req, res) => {
 
             if (isSQL) {
                 console.log('📊 Executing raw SQL query...');
-                result = await mcpService.processQuery(args.query, { includeSchema: true });
+                result = await mcp.processQuery(args.query, { includeSchema: true });
             } else {
                 console.log('🤖 Processing Natural Language Query via Agent...');
                 try {
@@ -6453,7 +6468,7 @@ app.post('/tools/call', async(req, res) => {
                         console.log('📝 Grading Mode enabled');
                     }
 
-                    const agentResponse = await mcpService.processQueryWithAgent(modifiedQuery);
+                    const agentResponse = await mcp.processQueryWithAgent(modifiedQuery);
                     result = {
                         data: agentResponse,
                         sqlScript: "-- Executed via LLM Agent with tool calling"
@@ -6478,7 +6493,7 @@ app.post('/tools/call', async(req, res) => {
                 }
             });
         } else if (name === 'get_database_schema') {
-            const schema = await mcpService.getDatabaseSchema();
+            const schema = await mcp.getDatabaseSchema();
             res.json({
                 jsonrpc: '2.0',
                 id: req.body.id,
@@ -6545,7 +6560,7 @@ app.post('/tools/call', async(req, res) => {
                     console.log('🛡️ Repo Analysis: Qualitative mode hint added');
                 }
 
-                const result = await mcpService.analyzeGitHubRepo(args.repoUrl, {
+                const result = await mcp.analyzeGitHubRepo(args.repoUrl, {
                     taskDescription: modifiedTaskDesc,
                     gradingCriteria: args.gradingCriteria,
                     focusAreas: args.focusAreas,
