@@ -426,8 +426,9 @@ function questionExistsInHistory(questionText, historyArray) {
             const cNorm = normalizeText(candidate);
             if (!cNorm) continue;
 
-            // Exact normalized match or one contains the other -> consider it the same
-            if (cNorm === qNorm || cNorm.includes(qNorm) || qNorm.includes(cNorm)) {
+            // Strict equality check for normalized text to avoid false positives
+            // Previously used .includes() which was too aggressive
+            if (cNorm === qNorm) {
                 return true;
             }
         } catch (e) {
@@ -455,11 +456,19 @@ function isQuestionDisallowed(text, options) {
         'qué se debe priorizar al generar',
         'cómo debe evalu',
         'qué debería priorizar',
-        'qué debería considerar para evaluar'
+        'qué debería considerar para evaluar',
+        'instrucciones del docente',
+        'según el archivo',
+        'basado en el archivo',
+        'prioridad alta',
+        'prioridad baja'
     ];
 
     for (const p of metaPatterns) {
-        if (lower.includes(p)) return true;
+        if (lower.includes(p)) {
+            console.log(`🚫 Question disallowed by meta pattern: "${p}" in "${text.substring(0, 30)}..."`);
+            return true;
+        }
     }
 
     // Disallow questions that mention personal/student data or ask to use it
@@ -468,23 +477,41 @@ function isQuestionDisallowed(text, options) {
         'información personal',
         'datos del estudiante',
         'información del estudiante',
-        'identificación del estudiante'
+        'identificación del estudiante',
+        'nombre del estudiante'
     ];
     for (const p of personalPatterns) {
-        if (lower.includes(p)) return true;
+        if (lower.includes(p)) {
+            console.log(`🚫 Question disallowed by personal pattern: "${p}"`);
+            return true;
+        }
     }
 
     // Disallow pedagogical/administrative questions
-    const pedagPatterns = ['pedagog', 'gestión del curso', 'gestión del curso', 'administr', 'profesor debe', 'docente debe'];
+    // Relaxed patterns to avoid false positives in technical contexts
+    const pedagPatterns = [
+        'pedagogía', 
+        'gestión administrativa del curso', 
+        'labor del profesor',
+        'rol del docente'
+    ];
     for (const p of pedagPatterns) {
-        if (lower.includes(p)) return true;
+        if (lower.includes(p)) {
+            console.log(`🚫 Question disallowed by pedagogical pattern: "${p}"`);
+            return true;
+        }
     }
 
     // Also inspect options for personal data leakage
     if (Array.isArray(options)) {
         for (const opt of options) {
             const ol = (opt || '').toLowerCase();
-            for (const p of personalPatterns) if (ol.includes(p)) return true;
+            for (const p of personalPatterns) {
+                if (ol.includes(p)) {
+                    console.log(`🚫 Question disallowed by option pattern: "${p}"`);
+                    return true;
+                }
+            }
         }
     }
 
