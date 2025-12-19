@@ -3,8 +3,9 @@
  * Exportaciones centralizadas de todas las rutas
  */
 
-export { default as notificationRoutes } from './notificationRoutes.js';
-export { default as llmRoutes } from './llmRoutes.js';
+import notificationRoutes from './notificationRoutes.js';
+import llmRoutes from './llmRoutes.js';
+export { notificationRoutes, llmRoutes };
 
 // Route configuration helper
 export function configureRoutes(app) {

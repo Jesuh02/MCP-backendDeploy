@@ -1,4 +1,4 @@
-/**
+﻿/**
  * templates/index.js
  * Exportaciones centralizadas de todas las plantillas
  */
