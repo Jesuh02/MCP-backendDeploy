@@ -3888,12 +3888,12 @@ app.post('/send-notification', async(req, res) => {
 // });
 
 // MOVED TO src/interfaces/routes/llmRoutes.js
-// The configureRoutes(app) call at the end of this file handles the mounting.        // ============================================================
-        // 🔥 NUEVO: OBTENER CONTENIDO DESDE R2/SUPABASE SI NO VIENE EN EL REQUEST
-        // Si fileContent está vacío pero tenemos información de la submission,
-        // intentar obtener el contenido directamente desde el servidor
-        // ============================================================
-        if ((!fileContent || fileContent.trim().length < 50) && supabaseService) {
+// The configureRoutes(app) call at the end of this file handles the mounting.
+/*
+// DEPRECATED MONOLITHIC LOGIC - DISABLED
+// This entire block is commented out to avoid syntax errors.
+// Logic moved to src/interfaces/routes/llmRoutes.js
+
             console.log('🔍 FileContent vacío o muy corto, intentando obtener desde servidor...');
             
             try {
@@ -5344,6 +5344,7 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
         return res.status(500).json({ error: 'Error interno del servidor', detalle: error.message });
     }
 });
+*/
 
 // Función para obtener la IP local del servidor automáticamente
 function getLocalIPAddress() {
