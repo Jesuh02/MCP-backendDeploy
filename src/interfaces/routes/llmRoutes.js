@@ -294,7 +294,7 @@ router.post('/procesar-prompt', async (req, res) => {
                                     console.log('🔁 All questions filtered; attempting DeepSeek retries to generate distinct questions');
                                     for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
                                         try {
-                                            const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera preguntas totalmente diferentes que NO repitan ni parafraseen las siguientes preguntas ya vistas por este usuario:\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, responde con un array JSON vacío []`;
+                                            const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera preguntas totalmente diferentes que NO repitan ni parafraseen las siguientes preguntas ya vistas por este usuario:\n${historyQuestionsList.slice(-100).map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, responde con un array JSON vacío []`;
 
                                             const retryResp = await fetch(targetUrl, {
                                                 method: 'POST',
