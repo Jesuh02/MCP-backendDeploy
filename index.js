@@ -4678,12 +4678,34 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                             let generatedQuestions = JSON.parse(cleanJson);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
-                                // Filter out disallowed questions (meta-evaluation, pedagogy, personal data)
+                                // Helper to normalize text for comparison
+                                const normalize = (text) => (text || '').toLowerCase().trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").replace(/\s+/g, " ");
+
+                                // Filter out disallowed questions AND duplicates from history
                                 let allowed = generatedQuestions.filter(q => {
                                     try {
                                         const qText = (q.question || q.pregunta || '').toString();
                                         const opts = Array.isArray(q.options) ? q.options : [];
-                                        return !isQuestionDisallowed(qText, opts);
+
+                                        // 1. Check disallowed patterns
+                                        if (isQuestionDisallowed(qText, opts)) return false;
+
+                                        // 2. Check duplicates against history
+                                        if (questionHistory && questionHistory.length > 0) {
+                                            const normalizedNew = normalize(qText);
+                                            // Check exact text match or very high similarity
+                                            const isDuplicate = questionHistory.some(h => {
+                                                const hText = (h.question || h.pregunta || (typeof h === 'string' ? h : JSON.stringify(h))).toString();
+                                                return normalize(hText) === normalizedNew;
+                                            });
+                                            
+                                            if (isDuplicate) {
+                                                console.log(`♻️ Skipping duplicate question: "${qText.substring(0, 30)}..."`);
+                                                return false;
+                                            }
+                                        }
+
+                                        return true;
                                     } catch (e) {
                                         return false;
                                     }
@@ -4703,7 +4725,19 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                                                     try {
                                                         const qText = (q.question || q.pregunta || '').toString();
                                                         const opts = Array.isArray(q.options) ? q.options : [];
-                                                        return !isQuestionDisallowed(qText, opts);
+                                                        
+                                                        if (isQuestionDisallowed(qText, opts)) return false;
+
+                                                        if (questionHistory && questionHistory.length > 0) {
+                                                            const normalizedNew = normalize(qText);
+                                                            const isDuplicate = questionHistory.some(h => {
+                                                                const hText = (h.question || h.pregunta || (typeof h === 'string' ? h : JSON.stringify(h))).toString();
+                                                                return normalize(hText) === normalizedNew;
+                                                            });
+                                                            if (isDuplicate) return false;
+                                                        }
+                                                        
+                                                        return true;
                                                     } catch (e) {
                                                         return false;
                                                     }
