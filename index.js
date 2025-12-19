@@ -379,6 +379,65 @@ function isReinforcementLearningRequest(prompt) {
 }
 
 /**
+ * Normalize text for robust comparison: lower-case, remove accents, punctuation and extra spaces
+ * @param {string} s
+ * @returns {string}
+ */
+function normalizeText(s) {
+    if (!s) return '';
+    try {
+        return s.toString()
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/\p{Diacritic}/gu, '')
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    } catch (e) {
+        // Fallback for environments without \p{Diacritic}
+        return s.toString()
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+}
+
+/**
+ * Check whether a question (text) exists in a history array.
+ * History entries may be stored as objects with `question` or `pregunta` fields or as raw strings.
+ */
+function questionExistsInHistory(questionText, historyArray) {
+    if (!questionText) return false;
+    const qNorm = normalizeText(questionText);
+    if (!historyArray || !Array.isArray(historyArray)) return false;
+
+    for (const h of historyArray) {
+        try {
+            let candidate = '';
+            if (!h) continue;
+            if (typeof h === 'string') candidate = h;
+            else if (h.question) candidate = h.question;
+            else if (h.pregunta) candidate = h.pregunta;
+            else candidate = JSON.stringify(h);
+
+            const cNorm = normalizeText(candidate);
+            if (!cNorm) continue;
+
+            // Exact normalized match or one contains the other -> consider it the same
+            if (cNorm === qNorm || cNorm.includes(qNorm) || qNorm.includes(cNorm)) {
+                return true;
+            }
+        } catch (e) {
+            continue;
+        }
+    }
+    return false;
+}
+
+/**
  * Detect disallowed question types (meta-evaluation, pedagogical, or personal data)
  * @param {string} text - Question text
  * @param {Array} options - Optional array of option strings
@@ -4669,12 +4728,36 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                             let generatedQuestions = JSON.parse(cleanJson);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
+                                // Remove internal duplicates based on normalized question text
+                                const unique = [];
+                                const seen = new Set();
+                                for (const q of generatedQuestions) {
+                                    try {
+                                        const text = (q.question || q.pregunta || '').toString();
+                                        const norm = normalizeText(text);
+                                        if (!norm) continue;
+                                        if (seen.has(norm)) continue;
+                                        seen.add(norm);
+                                        unique.push(q);
+                                    } catch (e) {
+                                        continue;
+                                    }
+                                }
+
                                 // Filter out disallowed questions (meta-evaluation, pedagogy, personal data)
-                                let allowed = generatedQuestions.filter(q => {
+                                // and questions that appear in the user's course history
+                                let allowed = unique.filter(q => {
                                     try {
                                         const qText = (q.question || q.pregunta || '').toString();
                                         const opts = Array.isArray(q.options) ? q.options : [];
-                                        return !isQuestionDisallowed(qText, opts);
+
+                                        // Disallowed by content rules
+                                        if (isQuestionDisallowed(qText, opts)) return false;
+
+                                        // Disallowed if it already exists in history for this user/course
+                                        if (questionExistsInHistory(qText, questionHistory)) return false;
+
+                                        return true;
                                     } catch (e) {
                                         return false;
                                     }
@@ -4690,11 +4773,29 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                                             const retryClean = retryResp.replace(/```json/g, '').replace(/```/g, '').trim();
                                             const retryQuestions = JSON.parse(retryClean);
                                             if (Array.isArray(retryQuestions)) {
-                                                allowed = retryQuestions.filter(q => {
+                                                // Deduplicate retry results and filter against history
+                                                const uniqueRetry = [];
+                                                const retrySeen = new Set();
+                                                for (const q of retryQuestions) {
+                                                    try {
+                                                        const text = (q.question || q.pregunta || '').toString();
+                                                        const norm = normalizeText(text);
+                                                        if (!norm) continue;
+                                                        if (retrySeen.has(norm)) continue;
+                                                        retrySeen.add(norm);
+                                                        uniqueRetry.push(q);
+                                                    } catch (e) {
+                                                        continue;
+                                                    }
+                                                }
+
+                                                allowed = uniqueRetry.filter(q => {
                                                     try {
                                                         const qText = (q.question || q.pregunta || '').toString();
                                                         const opts = Array.isArray(q.options) ? q.options : [];
-                                                        return !isQuestionDisallowed(qText, opts);
+                                                        if (isQuestionDisallowed(qText, opts)) return false;
+                                                        if (questionExistsInHistory(qText, questionHistory)) return false;
+                                                        return true;
                                                     } catch (e) {
                                                         return false;
                                                     }
