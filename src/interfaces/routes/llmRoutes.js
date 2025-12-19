@@ -10,10 +10,10 @@ const xlsx = require('xlsx');
 // Note: In Node 18+, fetch is global. If older, might need node-fetch. Assuming environment supports it.
 
 const router = Router();
+const mcpService = new MCPService();
 
 router.post('/procesar-prompt', async (req, res) => {
     try {
-        const mcpService = new MCPService();
         const { prompt, ollamaUrl, model, jsonContent } = req.body;
         
         console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl}`);
