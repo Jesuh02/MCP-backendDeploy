@@ -134,10 +134,63 @@ router.post('/procesar-prompt', async (req, res) => {
         }
 
         const data = await response.json();
-        
+
+        // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
+        let respuestaTexto = data.response;
+        try {
+            // Ensure we have a string to search for JSON array
+            const raw = typeof respuestaTexto === 'string' ? respuestaTexto : JSON.stringify(respuestaTexto);
+            const start = raw.indexOf('[');
+            const end = raw.lastIndexOf(']');
+            if (start !== -1 && end !== -1 && start < end) {
+                const arrayJson = raw.substring(start, end + 1);
+                const parsed = JSON.parse(arrayJson);
+                if (Array.isArray(parsed)) {
+                    // Fisher-Yates shuffle helper
+                    const shuffle = (arr) => {
+                        for (let i = arr.length - 1; i > 0; i--) {
+                            const j = Math.floor(Math.random() * (i + 1));
+                            [arr[i], arr[j]] = [arr[j], arr[i]];
+                        }
+                    };
+
+                    const transformed = parsed.map((q) => {
+                        try {
+                            if (!q || !Array.isArray(q.options)) return q;
+                            // Keep a copy of the original correct value (by index)
+                            const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
+                            const origCorrect = q.options[origIdx];
+                            const newOptions = q.options.slice();
+                            shuffle(newOptions);
+                            // Find new index of the original correct option. If duplicates exist, find by value first occurrence.
+                            let newIndex = newOptions.findIndex(o => o === origCorrect);
+                            if (newIndex === -1) {
+                                // Fallback: if value comparison fails, try to preserve by position mapping
+                                newIndex = 0;
+                            }
+                            return {
+                                ...q,
+                                options: newOptions,
+                                correctIndex: newIndex
+                            };
+                        } catch (e) {
+                            // If anything goes wrong with a single question, return it unchanged
+                            return q;
+                        }
+                    });
+
+                    respuestaTexto = JSON.stringify(transformed);
+                }
+            }
+        } catch (e) {
+            console.warn('⚠️ Could not parse/shuffle LLM response JSON array:', e?.message || e);
+            // Keep original data.response in case of parse failure
+            respuestaTexto = data.response;
+        }
+
         // Return in MicroservicioPromptResponse format matching Android expectations
         res.json({
-            respuesta_texto: data.response,
+            respuesta_texto: respuestaTexto,
             nota: null,
             esCalificacion: false,
             contenidoVacio: false,
