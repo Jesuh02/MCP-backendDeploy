@@ -1,617 +1,408 @@
-/**
- * notificationRoutes.js
- * Rutas de API para envío de notificaciones (Push y Email)
- * 
- * @description Define los endpoints REST para el sistema de notificaciones
- * Incluye: creación de cursos, calificaciones, videos, chat y genéricas
- */
-
-import express from 'express';
-import axios from 'axios';
+import { Router } from 'express';
+import { R2StorageService } from '../../services/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
-import { NotificationService } from '../../services/NotificationService.js';
-import { 
-    generateGradeEmailHTML, 
-    generateGradeModifiedEmailHTML, 
-    generateNewCourseEmailHTML,
-    generateGenericEmailHTML 
-} from '../../templates/emailTemplates.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdf = require('pdf-parse');
+const xlsx = require('xlsx');
 
-const router = express.Router();
+// Note: In Node 18+, fetch is global. If older, might need node-fetch. Assuming environment supports it.
 
-// Get service instances
-const supabaseService = SupabaseService.getInstance();
-const notificationService = NotificationService.getInstance();
+const router = Router();
 
-/**
- * 📢 Notifica a los suscriptores cuando un creador publica un nuevo curso
- * POST /notify-course-creation
- * Body: { creatorUserId, creatorUsername, courseId, courseTitle, courseThumbnailUrl }
- */
-router.post('/notify-course-creation', async (req, res) => {
+router.post('/procesar-prompt', async (req, res) => {
     try {
-        const { creatorUserId, creatorUsername, courseId, courseTitle, courseThumbnailUrl } = req.body;
+        const { prompt, ollamaUrl, model, jsonContent } = req.body;
+        
+        console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl}`);
 
-        if (!creatorUserId || !courseId) {
-            return res.status(400).json({ error: 'Missing required fields: creatorUserId, courseId' });
-        }
+        let augmentedPrompt = prompt;
 
-        console.log(`📢 Course creation notification: User ${creatorUserId} created course "${courseTitle}"`);
-
-        // 1. Fetch subscribers from Supabase
-        const { data: subscriptions, error: subError } = await supabaseService.client
-            .from('subscriptions')
-            .select('subscriber_id')
-            .eq('subscribed_to_id', creatorUserId);
-
-        if (subError) {
-            throw new Error(`Error fetching subscriptions: ${subError.message}`);
-        }
-
-        const subscribers = subscriptions || [];
-        console.log(`Found ${subscribers.length} subscribers for user ${creatorUserId}`);
-
-        if (subscribers.length === 0) {
-            return res.json({ message: 'No subscribers to notify', notificationsSent: 0 });
-        }
-
-        // 2. Get subscriber details (username, email)
-        const subscriberIds = subscribers.map(s => s.subscriber_id);
-        const { data: users, error: usersError } = await supabaseService.client
-            .from('usuarios')
-            .select('id, username, email')
-            .in('id', subscriberIds);
-
-        if (usersError) {
-            throw new Error(`Error fetching users: ${usersError.message}`);
-        }
-
-        // 3. Create notification records + send emails
-        let successCount = 0;
-
-        for (const user of (users || [])) {
+        // Process jsonContent to fetch files from R2
+        if (jsonContent) {
             try {
-                // Create in-app notification
-                await supabaseService.client
-                    .from('notifications')
-                    .insert({
-                        user_id: user.id,
-                        type: 'new_course',
-                        title: `${creatorUsername || 'Un creador'} subió un nuevo curso`,
-                        message: `${courseTitle || 'Nuevo curso disponible'}`,
-                        sender_username: creatorUsername,
-                        thumbnail_url: courseThumbnailUrl,
-                        related_id: courseId,
-                        is_read: false
-                    });
+                const files = JSON.parse(jsonContent);
+                if (Array.isArray(files) && files.length > 0) {
+                    console.log(`📂 Processing ${files.length} attached files...`);
+                    const r2Service = R2StorageService.getInstance();
+                    
+                    for (const file of files) {
+                        if (file.uri && (r2Service.isR2Url(file.uri) || file.uri.startsWith('http'))) {
+                            console.log(`📥 Downloading content for ${file.name}...`);
+                            try {
+                                // Use getSubmissionFileContent which handles various sources (R2, HTTP)
+                                const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name);
+                                 
+                                 if (fileData && fileData.content) {
+                                     let extractedText = null;
+                                     let processMsg = "";
 
-                // Send email with Resend
-                if (user.email && process.env.RESEND_API_KEY) {
-                    try {
-                        const emailHTML = generateNewCourseEmailHTML({
-                            subscriberName: user.username,
-                            creatorName: creatorUsername,
-                            courseTitle: courseTitle,
-                            thumbnailUrl: courseThumbnailUrl
-                        });
+                                     // Handle PDF
+                                     if (fileData.contentType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                                         try {
+                                             console.log(`📄 Parsing PDF: ${file.name}`);
+                                             // content is likely base64 for PDFs from R2StorageService
+                                             const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                             const pdfData = await pdf(pdfBuffer);
+                                             extractedText = pdfData.text;
+                                             processMsg = `PDF parsed (${extractedText.length} chars)`;
+                                             console.log(`✅ ${processMsg}`);
+                                         } catch (e) {
+                                             console.warn(`⚠️ PDF parse failed for ${file.name}: ${e.message}`);
+                                         }
+                                     }
+                                     // Handle Excel
+                                     else if (fileData.contentType.includes('spreadsheet') || fileData.contentType.includes('excel') || file.name.toLowerCase().match(/\.xlsx?$/)) {
+                                         try {
+                                             console.log(`📊 Parsing Excel: ${file.name}`);
+                                             const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
+                                             let excelText = "";
+                                             for (const sheetName of workbook.SheetNames) {
+                                                 const sheet = workbook.Sheets[sheetName];
+                                                 // Convert to CSV for better token efficiency than JSON or TXT
+                                                 const text = xlsx.utils.sheet_to_csv(sheet); 
+                                                 if (text.trim()) {
+                                                     excelText += `\n[Sheet: ${sheetName}]\n${text}\n`;
+                                                 }
+                                             }
+                                             extractedText = excelText;
+                                             processMsg = `Excel parsed (${extractedText.length} chars)`;
+                                             console.log(`✅ ${processMsg}`);
+                                         } catch (e) {
+                                             console.warn(`⚠️ Excel parse failed for ${file.name}: ${e.message}`);
+                                         }
+                                     }
+                                     // Handle Text (already handled, but let's consolidate)
+                                     else if (!fileData.isBase64) {
+                                         extractedText = fileData.content;
+                                         processMsg = "Text content";
+                                     }
 
-                        await axios.post('https://api.resend.com/emails', {
-                            from: 'CourseV <CourseV@yisuscompany.com>',
-                            to: user.email,
-                            subject: `📚 ¡${creatorUsername} publicó un nuevo curso!`,
-                            html: emailHTML
-                        }, {
-                            headers: {
-                                'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-                                'Content-Type': 'application/json'
+                                     if (extractedText) {
+                                         // Only include text content. Skip binary/base64 to avoid confusing text-only models.
+                                         // Limit content size per file to avoid context window overflow
+                                         const contentSnippet = extractedText.substring(0, 15000); 
+                                         augmentedPrompt += `\n\n--- Contenido del archivo: ${file.name} (${fileData.contentType}) ---\n${contentSnippet}`;
+                                         if (extractedText.length > 15000) {
+                                             augmentedPrompt += `\n...(contenido truncado, total ${extractedText.length} chars)...`;
+                                         }
+                                     } else {
+                                         augmentedPrompt += `\n\n--- Archivo adjunto: ${file.name} (${fileData.contentType}) [Contenido binario no incluido] ---`;
+                                     }
+                                 }
+                            } catch (e) {
+                                console.warn(`⚠️ Failed to fetch file ${file.name}: ${e.message}`);
                             }
-                        });
-                        console.log(`✅ Email sent to ${user.email}`);
-                    } catch (emailError) {
-                        console.warn(`⚠️ Failed to send email to ${user.email}:`, emailError.message);
+                        }
                     }
                 }
-
-                // Send push notification
-                await notificationService.sendPushNotification(
-                    user.id,
-                    '📚 ¡Nuevo curso disponible!',
-                    `${creatorUsername} publicó: ${courseTitle}`,
-                    { type: 'new_course', courseId: courseId.toString() }
-                );
-
-                successCount++;
-            } catch (error) {
-                console.error(`Error notifying user ${user.id}:`, error.message);
+            } catch (e) {
+                console.warn("⚠️ Error parsing jsonContent for files:", e.message);
             }
         }
 
-        res.json({
-            message: 'Notifications sent',
-            notificationsSent: successCount,
-            totalSubscribers: users?.length || 0
-        });
-
-    } catch (error) {
-        console.error('Error in notify-course-creation:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * 📊 Notifica al ESTUDIANTE cuando recibe una calificación en su tarea
- * POST /notify-grade
- * Body: { studentId, taskName, grade, feedback, gradedByUsername, oldGrade, oldFeedback, isModification }
- */
-router.post('/notify-grade', async (req, res) => {
-    const { studentId, taskName, grade, feedback, gradedByUsername, oldGrade, oldFeedback, isModification } = req.body;
-
-    if (!studentId || !taskName || grade === undefined) {
-        return res.status(400).json({ error: 'studentId, taskName y grade son requeridos' });
-    }
-
-    const isUpdate = isModification === true || (oldGrade !== undefined && oldGrade !== null);
-
-    console.log(`📊 Notificando calificación al estudiante ${studentId}`);
-    console.log(`   📝 Tarea: ${taskName}`);
-    console.log(`   📈 Nota: ${grade}/10 ${isUpdate ? `(anterior: ${oldGrade}/10)` : '(nueva)'}`);
-
-    try {
-        // 1. Obtener información del estudiante
-        const { data: student, error: studentError } = await supabaseService.client
-            .from('usuarios')
-            .select('id, email, username')
-            .eq('id', studentId)
-            .single();
-
-        if (studentError || !student) {
-            console.error(`❌ Estudiante ${studentId} no encontrado:`, studentError?.message);
-            return res.status(404).json({ error: 'Estudiante no encontrado' });
+        // Ensure ollamaUrl is valid
+        if (!ollamaUrl) {
+            throw new Error('ollamaUrl is required');
         }
 
-        console.log(`✅ Estudiante encontrado: ${student.username} (${student.email})`);
-
-        // 2. Preparar contenido de la notificación
-        const gradeFormatted = typeof grade === 'number' ? grade.toFixed(1) : grade;
-        const gradeEmoji = grade >= 9 ? '🏆' : grade >= 7 ? '⭐' : grade >= 5 ? '✅' : '📚';
-
-        let emailSubject, emailHTML, pushTitle, pushBody, notificationType;
-
-        if (isUpdate) {
-            // Calificación MODIFICADA
-            const oldGradeFormatted = typeof oldGrade === 'number' ? oldGrade.toFixed(1) : oldGrade;
-            const gradeImproved = parseFloat(grade) > parseFloat(oldGrade);
-            const changeEmoji = gradeImproved ? '📈' : parseFloat(grade) < parseFloat(oldGrade) ? '📉' : '🔄';
-
-            emailSubject = `${changeEmoji} Tu calificación en "${taskName}" ha sido actualizada`;
-            emailHTML = generateGradeModifiedEmailHTML({
-                studentName: student.username,
-                taskTitle: taskName,
-                previousGrade: oldGrade,
-                newGrade: grade,
-                previousFeedback: oldFeedback,
-                newFeedback: feedback,
-                gradedBy: gradedByUsername
-            });
-            pushTitle = `${changeEmoji} Calificación actualizada: ${oldGradeFormatted} → ${gradeFormatted}`;
-            pushBody = `Tu nota en "${taskName}" cambió de ${oldGradeFormatted} a ${gradeFormatted}`;
-            notificationType = 'grade_modified';
-        } else {
-            // Nueva calificación
-            emailSubject = `${gradeEmoji} ¡Tu tarea "${taskName}" ha sido calificada!`;
-            emailHTML = generateGradeEmailHTML({
-                studentName: student.username,
-                taskTitle: taskName,
-                grade: grade,
-                feedback: feedback,
-                gradedBy: gradedByUsername
-            });
-            pushTitle = `${gradeEmoji} Tarea calificada: ${gradeFormatted}/10`;
-            pushBody = `Tu tarea "${taskName}" ha sido evaluada${gradedByUsername ? ` por ${gradedByUsername}` : ''}`;
-            notificationType = 'grade';
-        }
-
-        // 3. Enviar Email al estudiante
-        if (student.email && process.env.RESEND_API_KEY) {
+        // If userId/courseId provided, fetch reinforcement history and instruct LLM to avoid repeats
+        const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+        const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
+        let historyQuestionsList = [];
+        let existingHistory = [];
+        if (userId && courseId) {
             try {
-                await axios.post('https://api.resend.com/emails', {
-                    from: 'CourseV <CourseV@yisuscompany.com>',
-                    to: student.email,
-                    subject: emailSubject,
-                    html: emailHTML
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-                        'Content-Type': 'application/json'
+                const supabase = SupabaseService.getInstance();
+                if (supabase && supabase.client) {
+                    const { data: existing } = await supabase.client
+                        .from('reinforcement_question_history')
+                        .select('questions')
+                        .eq('user_id', userId)
+                        .eq('course_id', courseId)
+                        .single();
+                    const history = (existing && existing.questions) ? existing.questions : [];
+                    existingHistory = history;
+                    // Extract plain question text for guidance
+                    historyQuestionsList = history.map(h => {
+                        if (!h) return null;
+                        if (typeof h === 'string') return h;
+                        if (h.question) return h.question;
+                        if (h.pregunta) return h.pregunta;
+                        try { return JSON.stringify(h); } catch(e) { return null; }
+                    }).filter(Boolean);
+
+                    if (historyQuestionsList.length > 0) {
+                        augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(0,20).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
                     }
-                });
-                console.log(`📧 Email de calificación enviado a ${student.email}`);
-            } catch (emailError) {
-                console.warn(`⚠️ Error enviando email:`, emailError.response?.data || emailError.message);
-            }
-        }
-
-        // 4. Enviar Push Notification al estudiante
-        await notificationService.sendPushNotification(
-            studentId,
-            pushTitle,
-            pushBody,
-            {
-                type: notificationType,
-                taskName: taskName,
-                grade: gradeFormatted.toString(),
-                oldGrade: isUpdate ? String(oldGrade) : null,
-                action: 'OPEN_GRADES'
-            }
-        );
-        console.log(`📱 Push notification de calificación enviada al estudiante ${studentId}`);
-
-        // 5. Guardar notificación en la base de datos
-        try {
-            await supabaseService.client
-                .from('notifications')
-                .insert({
-                    user_id: studentId,
-                    title: emailSubject,
-                    message: isUpdate
-                        ? `Tu calificación en "${taskName}" cambió de ${oldGrade} a ${gradeFormatted}/10`
-                        : `Tu tarea "${taskName}" ha sido calificada con ${gradeFormatted}/10`,
-                    type: notificationType,
-                    read: false,
-                    created_at: new Date().toISOString()
-                });
-            console.log(`💾 Notificación guardada en BD para estudiante ${studentId}`);
-        } catch (dbError) {
-            console.warn(`⚠️ No se pudo guardar notificación en BD:`, dbError.message);
-        }
-
-        res.json({
-            success: true,
-            message: isUpdate
-                ? 'Notificación de calificación MODIFICADA enviada al estudiante'
-                : 'Notificación de calificación enviada al estudiante',
-            isModification: isUpdate,
-            studentId: studentId,
-            studentUsername: student.username,
-            studentEmail: student.email,
-            taskName: taskName,
-            grade: gradeFormatted,
-            oldGrade: isUpdate ? oldGrade : null
-        });
-
-    } catch (error) {
-        console.error('❌ Error en /notify-grade:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * 🎬 Notifica a los suscriptores cuando un creador sube un nuevo video
- * POST /notify-video-upload
- * Body: { creatorId, videoTitle, videoId }
- */
-router.post('/notify-video-upload', async (req, res) => {
-    const { creatorId, videoTitle, videoId } = req.body;
-
-    if (!creatorId || !videoTitle || !videoId) {
-        return res.status(400).json({ error: 'Faltan datos requeridos: creatorId, videoTitle, videoId' });
-    }
-
-    console.log(`📢 Procesando notificación de video para creador ${creatorId}`);
-
-    try {
-        // 1. Obtener información del creador
-        const { data: creator, error: creatorError } = await supabaseService.client
-            .from('usuarios')
-            .select('username')
-            .eq('id', creatorId)
-            .single();
-
-        if (creatorError || !creator) {
-            throw new Error(`Error obteniendo creador: ${creatorError?.message}`);
-        }
-
-        // 2. Obtener suscriptores del creador
-        const { data: subscriptions, error: subError } = await supabaseService.client
-            .from('subscriptions')
-            .select('subscriber_id')
-            .eq('creator_id', creatorId);
-
-        if (subError) {
-            throw new Error(`Error obteniendo suscriptores: ${subError.message}`);
-        }
-
-        if (!subscriptions || subscriptions.length === 0) {
-            console.log('ℹ️ El creador no tiene suscriptores.');
-            return res.json({ message: 'Sin suscriptores para notificar', count: 0 });
-        }
-
-        const subscriberIds = subscriptions.map(s => s.subscriber_id);
-        console.log(`👥 Encontrados ${subscriberIds.length} suscriptores.`);
-
-        // 3. Preparar notificaciones para la base de datos
-        const notificationsToInsert = subscriberIds.map(subId => ({
-            user_id: subId,
-            title: 'Nuevo video disponible',
-            message: `${creator.username} ha subido: ${videoTitle}`,
-            type: 'video_upload',
-            related_id: videoId,
-            is_read: false,
-            created_at: new Date().toISOString()
-        }));
-
-        // 4. Guardar en Supabase
-        const { error: insertError } = await supabaseService.client
-            .from('notifications')
-            .insert(notificationsToInsert);
-
-        if (insertError) {
-            console.error('⚠️ Error guardando notificaciones en DB:', insertError.message);
-        } else {
-            console.log('✅ Notificaciones guardadas en base de datos.');
-        }
-
-        // 5. Enviar Notificaciones Push y Email
-        let pushCount = 0;
-        let emailCount = 0;
-
-        for (const subId of subscriberIds) {
-            // Push Notification
-            const pushResult = await notificationService.sendPushNotification(
-                subId,
-                '¡Nuevo Video!',
-                `${creator.username} acaba de subir un nuevo video: ${videoTitle}`,
-                {
-                    type: 'video_upload',
-                    videoId: videoId.toString(),
-                    creatorId: creatorId.toString()
                 }
-            );
-            if (pushResult.success > 0) pushCount++;
-
-            // Email Notification
-            const emailResult = await notificationService.sendEmailNotification(
-                subId,
-                '¡Nuevo Video Disponible! 🎥',
-                `Hola,\n\n${creator.username} acaba de subir un nuevo video titulado: "${videoTitle}".\n\n¡Entra a la app para verlo ahora!`,
-                { type: 'generic' }
-            );
-            if (emailResult) emailCount++;
-        }
-
-        res.json({
-            success: true,
-            message: `Notificaciones procesadas`,
-            subscribers: subscriberIds.length,
-            pushSent: pushCount,
-            emailSent: emailCount
-        });
-
-    } catch (error) {
-        console.error('❌ Error en /notify-video-upload:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * 💬 Notifica por email al usuario cuando recibe una respuesta del chat IA
- * POST /notify-chat-response
- * Body: { userId, responsePreview }
- */
-router.post('/notify-chat-response', async (req, res) => {
-    const { userId, responsePreview } = req.body;
-
-    if (!userId) {
-        return res.status(400).json({ error: 'userId es requerido' });
-    }
-
-    console.log(`📧 Enviando notificación de chat para usuario ${userId}`);
-
-    try {
-        const { data: user, error: userError } = await supabaseService.client
-            .from('usuarios')
-            .select('email, username')
-            .eq('id', userId)
-            .single();
-
-        if (userError || !user || !user.email) {
-            console.warn(`⚠️ No se encontró email para userId ${userId}`);
-            return res.status(404).json({ error: 'Usuario no encontrado o sin email' });
-        }
-
-        const emailSubject = 'Nueva respuesta disponible - CourseV';
-        const emailBody = `Hola ${user.username || 'Usuario'},
-
-Tu consulta ha sido procesada por nuestro asistente de inteligencia artificial y tu respuesta está disponible.
-
-Por razones de seguridad, la respuesta completa solo está disponible dentro de la aplicación móvil.
-
-Saludos cordiales,
-Equipo CourseV`;
-
-        await notificationService.sendEmailNotification(userId, emailSubject, emailBody, { type: 'generic' });
-
-        console.log(`✅ Notificación de chat enviada a ${user.email}`);
-        res.json({
-            success: true,
-            message: 'Notificación enviada',
-            email: user.email,
-            securityNote: 'Response preview not included for security'
-        });
-
-    } catch (error) {
-        console.error('❌ Error en /notify-chat-response:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * 📱 Envía notificación push vía Firebase Cloud Messaging
- * POST /send-push-notification
- * Body: { userId, title, body, data }
- */
-router.post('/send-push-notification', async (req, res) => {
-    const { userId, title, body, data } = req.body;
-
-    if (!userId) {
-        return res.status(400).json({ error: 'userId es requerido' });
-    }
-
-    console.log(`📱 Enviando notificación push para usuario ${userId}`);
-
-    try {
-        const result = await notificationService.sendPushNotification(
-            userId,
-            title || '🤖 Nueva respuesta del chat',
-            body || 'Tu consulta ha sido procesada',
-            {
-                userId: userId.toString(),
-                type: 'chat_response',
-                timestamp: new Date().toISOString(),
-                ...data
+            } catch (e) {
+                console.warn('⚠️ Could not read reinforcement history before generation:', e?.message || e);
             }
-        );
-
-        res.json({
-            success: result.success > 0,
-            message: `Push notifications sent to ${result.success} device(s)`,
-            results: result
-        });
-
-    } catch (error) {
-        console.error('❌ Error en /send-push-notification:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * 🔔 Endpoint genérico para enviar notificaciones por push y email
- * POST /send-notification
- * Body: { userId, title, message, type, relatedId, senderUsername }
- */
-router.post('/send-notification', async (req, res) => {
-    const { userId, title, message, type, relatedId, senderUsername } = req.body;
-
-    if (!userId) {
-        return res.status(400).json({ error: 'userId es requerido' });
-    }
-
-    console.log(`🔔 Enviando notificación completa para usuario ${userId}`);
-    console.log(`   Tipo: ${type}, Título: ${title}`);
-
-    const results = {
-        push: { success: false, error: null },
-        email: { success: false, error: null }
-    };
-
-    try {
-        // 1. ENVIAR PUSH NOTIFICATION
-        try {
-            const pushResult = await notificationService.sendPushNotification(
-                userId,
-                title || '📢 Nueva notificación',
-                message || 'Tienes una nueva notificación',
-                {
-                    userId: userId.toString(),
-                    type: type || 'generic',
-                    relatedId: relatedId ? relatedId.toString() : '',
-                    senderUsername: senderUsername || '',
-                    timestamp: new Date().toISOString()
-                }
-            );
-            results.push.success = pushResult.success > 0;
-            results.push.sentCount = pushResult.success;
-            console.log(`📱 Push notifications: ${pushResult.success} enviadas`);
-        } catch (pushError) {
-            results.push.error = pushError.message;
-            console.error('❌ Error en push notification:', pushError.message);
         }
 
-        // 2. ENVIAR EMAIL
+        // Call LLM (DeepSeek via Ollama wrapper or Direct)
+        // If ollamaUrl ends with /, remove it
+        const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
+        const targetUrl = `${baseUrl}/api/generate`;
+        
+        console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${model || 'deepseek-chat'})`);
+
+        // Prioritize file content in the prompt
+        // If files were processed, we move them to the TOP of the prompt context
+        // This helps the LLM focus on the files more than the task titles
+        
+        const response = await fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: model || 'deepseek-chat', // Default to deepseek
+                prompt: augmentedPrompt,
+                stream: false,
+                options: {
+                    temperature: 0.7 // Standard creativity
+                }
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
+        let respuestaTexto = data.response;
         try {
-            const userIdNumber = parseInt(userId, 10);
-            const { data: userData, error: userError } = await supabaseService.client
-                .from('usuarios')
-                .select('email, username')
-                .eq('id', userIdNumber)
-                .single();
+            // Ensure we have a string to search for JSON array
+            const raw = typeof respuestaTexto === 'string' ? respuestaTexto : JSON.stringify(respuestaTexto);
+            const start = raw.indexOf('[');
+            const end = raw.lastIndexOf(']');
+            if (start !== -1 && end !== -1 && start < end) {
+                const arrayJson = raw.substring(start, end + 1);
+                const parsed = JSON.parse(arrayJson);
+                if (Array.isArray(parsed)) {
+                    // Fisher-Yates shuffle helper
+                    const shuffle = (arr) => {
+                        for (let i = arr.length - 1; i > 0; i--) {
+                            const j = Math.floor(Math.random() * (i + 1));
+                            [arr[i], arr[j]] = [arr[j], arr[i]];
+                        }
+                    };
 
-            if (!userError && userData && userData.email && 
-                userData.email !== '.' && !userData.email.startsWith('missing_email_')) {
-                
-                const userEmail = userData.email;
-                let emailSubject = title || '📢 Nueva notificación en CourseV';
-
-                // Personalizar subject según el tipo
-                const subjectPrefixes = {
-                    'new_course': '📚',
-                    'new_video': '🎬',
-                    'task_graded': '📊',
-                    'grade': '📊',
-                    'grade_modified': '📊',
-                    'task_submission': '📝',
-                    'new_task': '📋'
-                };
-                const prefix = subjectPrefixes[type] || '📢';
-                emailSubject = `${prefix} ${title}`;
-
-                const emailHTML = generateGenericEmailHTML({
-                    subject: title,
-                    message: message,
-                    type: type,
-                    senderName: senderUsername
-                });
-
-                if (process.env.RESEND_API_KEY) {
-                    const emailResponse = await fetch('https://api.resend.com/emails', {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            from: 'CourseV <CourseV@yisuscompany.com>',
-                            to: [userEmail],
-                            subject: emailSubject,
-                            html: emailHTML
-                        })
+                    const transformed = parsed.map((q) => {
+                        try {
+                            if (!q || !Array.isArray(q.options)) return q;
+                            // Keep a copy of the original correct value (by index)
+                            const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
+                            const origCorrect = q.options[origIdx];
+                            const newOptions = q.options.slice();
+                            shuffle(newOptions);
+                            // Find new index of the original correct option. If duplicates exist, find by value first occurrence.
+                            let newIndex = newOptions.findIndex(o => o === origCorrect);
+                            if (newIndex === -1) {
+                                // Fallback: if value comparison fails, try to preserve by position mapping
+                                newIndex = 0;
+                            }
+                            return {
+                                ...q,
+                                options: newOptions,
+                                correctIndex: newIndex
+                            };
+                        } catch (e) {
+                            // If anything goes wrong with a single question, return it unchanged
+                            return q;
+                        }
                     });
 
-                    if (emailResponse.ok) {
-                        results.email.success = true;
-                        console.log(`✅ Email enviado a ${userEmail}`);
-                    } else {
-                        const errorData = await emailResponse.json();
-                        results.email.error = errorData.message || 'Email send failed';
-                        console.error(`❌ Error enviando email:`, errorData);
+                    // If userId/courseId are provided, filter out any questions that were already served
+                    // to that user in that course by consulting Supabase `reinforcement_question_history`.
+                    const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+                    const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
+
+                    // Helper: normalize text
+                    const normalizeText = (s) => {
+                        if (!s) return '';
+                        try {
+                            return s.toString()
+                                .toLowerCase()
+                                .normalize('NFD')
+                                .replace(/\p{Diacritic}/gu, '')
+                                .replace(/[^a-z0-9\s]/g, ' ')
+                                .replace(/\s+/g, ' ')
+                                .trim();
+                        } catch (e) {
+                            return s.toString()
+                                .toLowerCase()
+                                .normalize('NFD')
+                                .replace(/[\u0300-\u036f]/g, '')
+                                .replace(/[^a-z0-9\s]/g, ' ')
+                                .replace(/\s+/g, ' ')
+                                .trim();
+                        }
+                    };
+
+                    const questionExistsInHistory = (questionText, historyArray) => {
+                        if (!questionText) return false;
+                        const qNorm = normalizeText(questionText);
+                        if (!historyArray || !Array.isArray(historyArray)) return false;
+                        for (const h of historyArray) {
+                            try {
+                                let candidate = '';
+                                if (!h) continue;
+                                if (typeof h === 'string') candidate = h;
+                                else if (h.question) candidate = h.question;
+                                else if (h.pregunta) candidate = h.pregunta;
+                                else candidate = JSON.stringify(h);
+
+                                const cNorm = normalizeText(candidate);
+                                if (!cNorm) continue;
+                                if (cNorm === qNorm || cNorm.includes(qNorm) || qNorm.includes(cNorm)) {
+                                    return true;
+                                }
+                            } catch (e) {
+                                continue;
+                            }
+                        }
+                        return false;
+                    };
+
+                    let filtered = transformed;
+
+                    if (userId && courseId) {
+                        try {
+                            const supabase = SupabaseService.getInstance();
+                            if (supabase && supabase.client) {
+                                const { data: existing, error } = await supabase.client
+                                    .from('reinforcement_question_history')
+                                    .select('questions')
+                                    .eq('user_id', userId)
+                                    .eq('course_id', courseId)
+                                    .single();
+
+                                const history = (existing && existing.questions) ? existing.questions : [];
+
+                                filtered = transformed.filter(q => {
+                                    try {
+                                        const qText = q.question || q.pregunta || JSON.stringify(q);
+                                        return !questionExistsInHistory(qText, history);
+                                    } catch (e) { return true; }
+                                });
+
+                                            // Save newly selected questions back to history (append, keep last 50)
+                                            if (filtered.length > 0) {
+                                                const toSave = filtered.map(fq => fq);
+                                                const allQuestions = Array.isArray(history) ? [...history, ...toSave] : toSave;
+                                                const recentQuestions = allQuestions.slice(-50);
+                                                await supabase.client
+                                                    .from('reinforcement_question_history')
+                                                    .upsert({ user_id: userId, course_id: courseId, questions: recentQuestions }, { onConflict: 'user_id,course_id' });
+                                            } else {
+                                                console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
+                                            }
+                            }
+                        } catch (e) {
+                            console.warn('⚠️ Failed to consult/save reinforcement history:', e?.message || e);
+                        }
                     }
-                } else {
-                    results.email.error = 'Resend API key not configured';
+
+                                // If everything was filtered out (duplicates/disallowed), attempt up to 2 retries
+                                if ((userId && courseId) && Array.isArray(filtered) && filtered.length === 0 && historyQuestionsList.length > 0) {
+                                    console.log('🔁 All questions filtered; attempting DeepSeek retries to generate distinct questions');
+                                    for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
+                                        try {
+                                            const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera preguntas totalmente diferentes que NO repitan ni parafraseen las siguientes preguntas ya vistas por este usuario:\n${historyQuestionsList.slice(0,20).map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, responde con un array JSON vacío []`;
+
+                                            const retryResp = await fetch(targetUrl, {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ model: model || 'deepseek-chat', prompt: retryPrompt, stream: false, options: { temperature: 0.8 } })
+                                            });
+
+                                            if (!retryResp.ok) {
+                                                console.warn(`⚠️ Retry ${attempt} DeepSeek API error: ${retryResp.status} ${retryResp.statusText}`);
+                                                continue;
+                                            }
+
+                                            const retryData = await retryResp.json();
+                                            const rawRetry = typeof retryData.response === 'string' ? retryData.response : JSON.stringify(retryData.response);
+                                            const s = rawRetry.indexOf('[');
+                                            const e = rawRetry.lastIndexOf(']');
+                                            if (s !== -1 && e !== -1 && s < e) {
+                                                try {
+                                                    const arrJ = rawRetry.substring(s, e + 1);
+                                                    const parsedRetry = JSON.parse(arrJ);
+                                                    if (Array.isArray(parsedRetry) && parsedRetry.length > 0) {
+                                                        const transformedRetry = parsedRetry.map(q => {
+                                                            try {
+                                                                if (!q || !Array.isArray(q.options)) return q;
+                                                                const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
+                                                                const origCorrect = q.options[origIdx];
+                                                                const newOptions = q.options.slice();
+                                                                for (let i = newOptions.length - 1; i > 0; i--) {
+                                                                    const j = Math.floor(Math.random() * (i + 1));
+                                                                    [newOptions[i], newOptions[j]] = [newOptions[j], newOptions[i]];
+                                                                }
+                                                                let newIndex = newOptions.findIndex(o => o === origCorrect);
+                                                                if (newIndex === -1) newIndex = 0;
+                                                                return { ...q, options: newOptions, correctIndex: newIndex };
+                                                            } catch (qq) { return q; }
+                                                        });
+
+                                                        // Filter parsedRetry using questionExistsInHistory against existingHistory (or historyQuestionsList)
+                                                        const historyToCheck = existingHistory && existingHistory.length ? existingHistory : historyQuestionsList;
+                                                        const newlyFiltered = transformedRetry.filter(q => {
+                                                            try { const qText = q.question || q.pregunta || JSON.stringify(q); return !questionExistsInHistory(qText, historyToCheck); } catch (ex) { return true; }
+                                                        });
+
+                                                        if (newlyFiltered.length > 0) {
+                                                            filtered = newlyFiltered;
+                                                            // Upsert these into history
+                                                            try {
+                                                                const supabase2 = SupabaseService.getInstance();
+                                                                const toSave = filtered.map(fq => fq);
+                                                                const allQ = Array.isArray(existingHistory) ? [...existingHistory, ...toSave] : toSave;
+                                                                const recent = allQ.slice(-50);
+                                                                await supabase2.client.from('reinforcement_question_history').upsert({ user_id: userId, course_id: courseId, questions: recent }, { onConflict: 'user_id,course_id' });
+                                                            } catch (upErr) { console.warn('⚠️ Failed to upsert retry results:', upErr?.message || upErr); }
+                                                            break;
+                                                        }
+                                                    }
+                                                } catch (parseErr) {
+                                                    console.warn('⚠️ Could not parse retry response JSON array:', parseErr?.message || parseErr);
+                                                }
+                                            }
+                                        } catch (retryErr) {
+                                            console.warn('⚠️ Retry attempt failed:', retryErr?.message || retryErr);
+                                        }
+                                    }
+                                }
+
+                                respuestaTexto = JSON.stringify(filtered);
                 }
-            } else {
-                let reason = 'Unknown';
-                if (userError) reason = `DB error: ${userError.message}`;
-                else if (!userData) reason = 'Usuario no encontrado';
-                else if (!userData.email) reason = 'Email vacío';
-                else if (userData.email === '.') reason = 'Email placeholder';
-                results.email.error = reason;
-                console.warn(`⚠️ No se pudo enviar email: ${reason}`);
             }
-        } catch (emailError) {
-            results.email.error = emailError.message;
-            console.error('❌ Error en email:', emailError.message);
+        } catch (e) {
+            console.warn('⚠️ Could not parse/shuffle LLM response JSON array:', e?.message || e);
+            // Keep original data.response in case of parse failure
+            respuestaTexto = data.response;
         }
 
-        const overallSuccess = results.push.success || results.email.success;
+        // Return in MicroservicioPromptResponse format matching Android expectations
         res.json({
-            success: overallSuccess,
-            message: `Notificación enviada: Push=${results.push.success}, Email=${results.email.success}`,
-            results
+            respuesta_texto: respuestaTexto,
+            nota: null,
+            esCalificacion: false,
+            contenidoVacio: false,
+            error: null
         });
 
     } catch (error) {
-        console.error('❌ Error general en /send-notification:', error);
-        res.status(500).json({ error: error.message, results });
+        console.error('❌ Error processing prompt:', error);
+        res.status(500).json({
+            respuesta_texto: null,
+            error: error.message,
+            detalle: error.stack
+        });
     }
 });
 
