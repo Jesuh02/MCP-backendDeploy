@@ -49,6 +49,81 @@ export class MCPService {
     }
 
     /**
+     * Get reinforcement question history for a user-course combination
+     * @param {number} userId - User ID
+     * @param {number} courseId - Course ID
+     * @returns {Promise<Array>} Array of previous questions
+     */
+    async getReinforcementQuestionHistory(userId, courseId) {
+        if (!this.supabase) {
+            logger.warn('⚠️ SupabaseService not available for history retrieval');
+            return [];
+        }
+
+        try {
+            const { data, error } = await this.supabase.client
+                .from('reinforcement_question_history')
+                .select('questions')
+                .eq('user_id', userId)
+                .eq('course_id', courseId)
+                .single();
+
+            if (error && error.code !== 'PGRST116') {
+                logger.warn('⚠️ Error retrieving question history:', error.message);
+                return [];
+            }
+
+            return data?.questions || [];
+        } catch (error) {
+            logger.warn('⚠️ Failed to retrieve question history:', error.message);
+            return [];
+        }
+    }
+
+    /**
+     * Save reinforcement questions to history for a user-course combination
+     * @param {number} userId - User ID
+     * @param {number} courseId - Course ID
+     * @param {Array} questions - Array of questions to save
+     */
+    async saveReinforcementQuestionHistory(userId, courseId, questions) {
+        if (!this.supabase) {
+            logger.warn('⚠️ SupabaseService not available for history saving');
+            return;
+        }
+
+        try {
+            // First, get existing history
+            const existingHistory = await this.getReinforcementQuestionHistory(userId, courseId);
+
+            // Combine existing with new questions
+            const allQuestions = [...existingHistory, ...questions];
+
+            // Keep only the last 50 questions to avoid excessive storage
+            const recentQuestions = allQuestions.slice(-50);
+
+            // Upsert the record
+            const { error } = await this.supabase.client
+                .from('reinforcement_question_history')
+                .upsert({
+                    user_id: userId,
+                    course_id: courseId,
+                    questions: recentQuestions
+                }, {
+                    onConflict: 'user_id,course_id'
+                });
+
+            if (error) {
+                logger.warn('⚠️ Error saving question history:', error.message);
+            } else {
+                logger.info(`✅ Saved ${questions.length} questions to history for user ${userId}, course ${courseId}`);
+            }
+        } catch (error) {
+            logger.warn('⚠️ Failed to save question history:', error.message);
+        }
+    }
+
+    /**
      * Build a curated data snapshot so the LLM always has real Supabase metrics.
      */
     async generateDataSnapshot(query, options = {}) {

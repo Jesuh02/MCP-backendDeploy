@@ -287,80 +287,7 @@ async function initializeReinforcementHistoryTable() {
 // Initialize the table
 initializeReinforcementHistoryTable();
 
-/**
- * Get reinforcement question history for a user-course combination
- * @param {number} userId - User ID
- * @param {number} courseId - Course ID
- * @returns {Promise<Array>} Array of previous questions
- */
-async function getReinforcementQuestionHistory(userId, courseId) {
-    if (!supabaseService) {
-        console.warn('⚠️ SupabaseService not available for history retrieval');
-        return [];
-    }
 
-    try {
-        const { data, error } = await supabaseService.client
-            .from('reinforcement_question_history')
-            .select('questions')
-            .eq('user_id', userId)
-            .eq('course_id', courseId)
-            .single();
-
-        if (error && error.code !== 'PGRST116') {
-            console.warn('⚠️ Error retrieving question history:', error.message);
-            return [];
-        }
-
-        return data?.questions || [];
-    } catch (error) {
-        console.warn('⚠️ Failed to retrieve question history:', error.message);
-        return [];
-    }
-}
-
-/**
- * Save reinforcement questions to history for a user-course combination
- * @param {number} userId - User ID
- * @param {number} courseId - Course ID
- * @param {Array} questions - Array of questions to save
- */
-async function saveReinforcementQuestionHistory(userId, courseId, questions) {
-    if (!supabaseService) {
-        console.warn('⚠️ SupabaseService not available for history saving');
-        return;
-    }
-
-    try {
-        // First, get existing history
-        const existingHistory = await getReinforcementQuestionHistory(userId, courseId);
-
-        // Combine existing with new questions
-        const allQuestions = [...existingHistory, ...questions];
-
-        // Keep only the last 50 questions to avoid excessive storage
-        const recentQuestions = allQuestions.slice(-50);
-
-        // Upsert the record
-        const { error } = await supabaseService.client
-            .from('reinforcement_question_history')
-            .upsert({
-                user_id: userId,
-                course_id: courseId,
-                questions: recentQuestions
-            }, {
-                onConflict: 'user_id,course_id'
-            });
-
-        if (error) {
-            console.warn('⚠️ Error saving question history:', error.message);
-        } else {
-            console.log(`✅ Saved ${questions.length} questions to history for user ${userId}, course ${courseId}`);
-        }
-    } catch (error) {
-        console.warn('⚠️ Failed to save question history:', error.message);
-    }
-}
 
 /**
  * Check if a prompt is for reinforcement learning questions
@@ -4706,7 +4633,7 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 
                 try {
                     // Get existing question history for this user-course combination
-                    const questionHistory = await getReinforcementQuestionHistory(userId, courseId);
+                    const questionHistory = await mcpService.getReinforcementQuestionHistory(userId, courseId);
                     console.log(`📚 Retrieved ${questionHistory.length} previous questions from history`);
 
                     // Extract question count from prompt (default to 5)
@@ -4841,7 +4768,7 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
 
                                 if (allowed.length > 0) {
                                     // Save only allowed questions to history
-                                    await saveReinforcementQuestionHistory(userId, courseId, allowed);
+                                    await mcpService.saveReinforcementQuestionHistory(userId, courseId, allowed);
                                     console.log(`✅ Filtered, generated and saved ${allowed.length} reinforcement questions`);
                                 } else {
                                     console.log('⚠️ No se generaron preguntas válidas después del retry. Enviando respuesta original para diagnóstico.');
