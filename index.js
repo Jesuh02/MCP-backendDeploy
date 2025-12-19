@@ -2574,10 +2574,8 @@ Para poder calificar esta tarea, necesito poder leer y analizar el contenido del
         // Validaciones adicionales específicas para casos comunes
         (descripcionLower.includes('python') && archivoLower.includes('sql') && !descripcionLower.includes('sql')) ||
         (descripcionLower.includes('sql') && archivoLower.includes('python') && !descripcionLower.includes('python')) ||
-        (descripcionLower.includes('java') && !archivoLower.includes('java') && archivoLower.length > 50) ||
-        (descripcionLower.includes('javascript') && !archivoLower.includes('javascript') && archivoLower.length > 50) ||
-        (descripcionLower.includes('html') && !archivoLower.includes('html') && archivoLower.length > 50) ||
-        (descripcionLower.includes('css') && !archivoLower.includes('css') && archivoLower.length > 50)
+        (descripcionLower.includes('java') && !archivoLower.includes('class') && !archivoLower.includes('public') && !archivoLower.includes('java') && archivoLower.length > 50) ||
+        (descripcionLower.includes('javascript') && !archivoLower.includes('function') && !archivoLower.includes('const') && !archivoLower.includes('var') && !archivoLower.includes('let') && archivoLower.length > 50)
     ) {
         nota = 0;
         cumplimiento = 'El archivo no cumple con el parámetro solicitado.';
