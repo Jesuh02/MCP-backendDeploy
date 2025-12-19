@@ -50,6 +50,20 @@ export class MCPService {
     }
 
     /**
+     * Return only the question text strings from reinforcement history
+     * Useful for prompt injection / deduplication checks
+     */
+    async getReinforcementQuestionsText(userId, courseId) {
+        const history = await this.getReinforcementHistory(userId, courseId);
+        if (!Array.isArray(history) || !history.length) return [];
+
+        return history
+            .map(item => (item && (item.question || item.text || item.pregunta) ? (item.question || item.text || item.pregunta) : (typeof item === 'string' ? item : '')))
+            .filter(Boolean)
+            .map(s => s.replace(/\s+/g, ' ').trim());
+    }
+
+    /**
      * Save new reinforcement learning questions to history
      * Uses INSERT to support log-based schema (multiple rows per user/course)
      */
