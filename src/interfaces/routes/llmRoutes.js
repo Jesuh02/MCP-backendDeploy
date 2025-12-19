@@ -115,13 +115,20 @@ router.post('/procesar-prompt', async (req, res) => {
             try {
                 const supabase = SupabaseService.getInstance();
                 if (supabase && supabase.client) {
-                    const { data: existing } = await supabase.client
+                    const { data: existingRows } = await supabase.client
                         .from('reinforcement_question_history')
                         .select('questions')
                         .eq('user_id', userId)
-                        .eq('course_id', courseId)
-                        .single();
-                    const history = (existing && existing.questions) ? existing.questions : [];
+                        .eq('course_id', courseId);
+                    
+                    let history = [];
+                    if (existingRows && Array.isArray(existingRows)) {
+                        existingRows.forEach(row => {
+                            if (row.questions && Array.isArray(row.questions)) {
+                                history = history.concat(row.questions);
+                            }
+                        });
+                    }
                     existingHistory = history;
                     // Extract plain question text for guidance
                     historyQuestionsList = history.map(h => {
@@ -133,7 +140,8 @@ router.post('/procesar-prompt', async (req, res) => {
                     }).filter(Boolean);
 
                     if (historyQuestionsList.length > 0) {
-                        augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(0,20).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
+                        // Pass up to 50 previous questions to ensure better coverage against duplicates
+                        augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
                     }
                 }
             } catch (e) {
@@ -289,14 +297,18 @@ router.post('/procesar-prompt', async (req, res) => {
                                     } catch (e) { return true; }
                                 });
 
-                                            // Save newly selected questions back to history (append, keep last 50)
+                                            // Save newly selected questions back to history (append as new record)
                                             if (filtered.length > 0) {
                                                 const toSave = filtered.map(fq => fq);
-                                                const allQuestions = Array.isArray(history) ? [...history, ...toSave] : toSave;
-                                                const recentQuestions = allQuestions.slice(-50);
+                                                // Create a NEW record for this batch of questions instead of upserting/overwriting
                                                 await supabase.client
                                                     .from('reinforcement_question_history')
-                                                    .upsert({ user_id: userId, course_id: courseId, questions: recentQuestions }, { onConflict: 'user_id,course_id' });
+                                                    .insert({ 
+                                                        user_id: userId, 
+                                                        course_id: courseId, 
+                                                        questions: toSave,
+                                                        created_at: new Date().toISOString()
+                                                    });
                                             } else {
                                                 console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
                                             }
@@ -311,7 +323,7 @@ router.post('/procesar-prompt', async (req, res) => {
                                     console.log('🔁 All questions filtered; attempting DeepSeek retries to generate distinct questions');
                                     for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
                                         try {
-                                            const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera preguntas totalmente diferentes que NO repitan ni parafraseen las siguientes preguntas ya vistas por este usuario:\n${historyQuestionsList.slice(0,20).map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, responde con un array JSON vacío []`;
+                                            const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera preguntas totalmente diferentes que NO repitan ni parafraseen las siguientes preguntas ya vistas por este usuario:\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, responde con un array JSON vacío []`;
 
                                             const retryResp = await fetch(targetUrl, {
                                                 method: 'POST',
