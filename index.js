@@ -4762,6 +4762,33 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
                 console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO:', promptCompleto.substring(0, 500) + '...');
 
+                // --- SERVER-SIDE DEDUPLICATION FOR REINFORCEMENT QUESTIONS ---
+                // If this request is asking to generate reinforcement (multiple-choice) questions,
+                // fetch the user's existing question history for the course and instruct the LLM
+                // explicitly NOT to repeat or paraphrase any of those questions.
+                let historyQuestionsList = [];
+                try {
+                    const courseIdVal = extractCourseIdFromRequest(req.body) || null;
+                    if (isReinforcementLearningRequest(prompt) && userId && courseIdVal) {
+                        console.log('🔎 Detected reinforcement generation request — fetching existing history...');
+                        const existing = await getReinforcementQuestionHistory(userId, courseIdVal);
+                        if (Array.isArray(existing) && existing.length) {
+                            historyQuestionsList = existing
+                                .map(item => (item && (item.question || item.text || item.pregunta) ? (item.question || item.text || item.pregunta) : (typeof item === 'string' ? item : '')))
+                                .filter(Boolean)
+                                .map(s => s.replace(/\s+/g, ' ').trim());
+
+                            if (historyQuestionsList.length) {
+                                const snippet = historyQuestionsList.slice(-50).map((q, i) => `${i + 1}. ${q}`).join('\n');
+                                promptCompleto += `\n\nEXISTING_QUESTIONS_DO_NOT_REPEAT:\n${snippet}\n\nINSTRUCCIÓN: NO repitas, parafrasees ni generes preguntas sustantivamente equivalentes a las listadas arriba. Genera SÓLO preguntas nuevas y únicas. Si no es posible, responde con un array JSON vacío []`;
+                                console.log(`✅ Añadido bloque de historial (${historyQuestionsList.length} preguntas) al prompt para evitar repeticiones`);
+                            }
+                        }
+                    }
+                } catch (histErr) {
+                    console.warn('⚠️ Error obteniendo historial de refuerzo:', histErr.message || histErr);
+                }
+
                 // Call DeepSeek via LLMService
                 let respuestaFinal = await callDeepSeek(null, promptCompleto);
 
@@ -4769,6 +4796,41 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 if (!respuestaFinal || !respuestaFinal.trim()) {
                     console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA, aplicando mensaje por defecto');
                     respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
+                }
+
+                // If this was a reinforcement generation request, attempt to filter out
+                // any questions that are duplicates of the user's history.
+                try {
+                    if (isReinforcementLearningRequest(prompt) && historyQuestionsList && historyQuestionsList.length) {
+                        console.log('🔁 Post-processing LLM output to remove duplicates against history...');
+                        // Try to parse LLM output as JSON array
+                        let parsed = null;
+                        try {
+                            parsed = JSON.parse(respuestaFinal);
+                        } catch (e) {
+                            // Not JSON — attempt to extract a JSON array substring
+                            const match = respuestaFinal.match(/\[\s*\{[\s\S]*\}\s*\]/);
+                            if (match) {
+                                try { parsed = JSON.parse(match[0]); } catch (e2) { parsed = null; }
+                            }
+                        }
+
+                        if (Array.isArray(parsed)) {
+                            const seen = new Set(historyQuestionsList.map(s => s.toLowerCase()));
+                            const filtered = parsed.filter(item => {
+                                const text = (item && (item.question || item.text || item.pregunta)) ? (item.question || item.text || item.pregunta) : (typeof item === 'string' ? item : '');
+                                const t = (text || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
+                                return t && !seen.has(t);
+                            });
+
+                            if (filtered.length !== parsed.length) {
+                                console.log(`✅ Filtrado de duplicados aplicado. ${parsed.length - filtered.length} elementos eliminados.`);
+                                respuestaFinal = JSON.stringify(filtered);
+                            }
+                        }
+                    }
+                } catch (postErr) {
+                    console.warn('⚠️ Error en filtrado post-LLM (silencioso):', postErr.message || postErr);
                 }
 
                 // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
