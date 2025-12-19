@@ -221,6 +221,174 @@ try {
 }
 
 // ============================================================
+// 📚 REINFORCEMENT LEARNING HISTORY TABLE INITIALIZATION
+// Create table for storing question history per user-course to avoid repetitions
+// ============================================================
+
+/**
+ * Initialize reinforcement learning history table
+ */
+async function initializeReinforcementHistoryTable() {
+    if (!supabaseService) {
+        console.warn('⚠️ SupabaseService not available - skipping reinforcement history table initialization');
+        return;
+    }
+
+    try {
+        console.log('📚 Initializing reinforcement learning history table...');
+
+        // Create table if it doesn't exist
+        const createTableQuery = `
+            CREATE TABLE IF NOT EXISTS reinforcement_question_history (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                course_id INTEGER NOT NULL,
+                questions JSONB NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                UNIQUE(user_id, course_id)
+            );
+
+            -- Create index for faster lookups
+            CREATE INDEX IF NOT EXISTS idx_reinforcement_history_user_course
+            ON reinforcement_question_history(user_id, course_id);
+
+            -- Create index for cleanup (older entries)
+            CREATE INDEX IF NOT EXISTS idx_reinforcement_history_created_at
+            ON reinforcement_question_history(created_at);
+        `;
+
+        // Execute the table creation
+        const { error } = await supabaseService.client.rpc('exec_sql', {
+            sql: createTableQuery
+        });
+
+        if (error) {
+            // Try direct table creation if RPC fails
+            console.log('⚠️ RPC method failed, trying direct table creation...');
+            const { error: directError } = await supabaseService.client
+                .from('reinforcement_question_history')
+                .select('id')
+                .limit(1);
+
+            if (directError && directError.code === 'PGRST116') {
+                console.log('📚 Table does not exist, would need manual creation via Supabase dashboard');
+                console.log('⚠️ Please create the table manually with the following SQL:');
+                console.log(createTableQuery);
+            }
+        } else {
+            console.log('✅ Reinforcement learning history table initialized successfully');
+        }
+    } catch (error) {
+        console.warn('⚠️ Failed to initialize reinforcement history table:', error.message);
+        console.log('ℹ️ The application will continue without question history tracking');
+    }
+}
+
+// Initialize the table
+initializeReinforcementHistoryTable();
+
+/**
+ * Get reinforcement question history for a user-course combination
+ * @param {number} userId - User ID
+ * @param {number} courseId - Course ID
+ * @returns {Promise<Array>} Array of previous questions
+ */
+async function getReinforcementQuestionHistory(userId, courseId) {
+    if (!supabaseService) {
+        console.warn('⚠️ SupabaseService not available for history retrieval');
+        return [];
+    }
+
+    try {
+        const { data, error } = await supabaseService.client
+            .from('reinforcement_question_history')
+            .select('questions')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .single();
+
+        if (error && error.code !== 'PGRST116') {
+            console.warn('⚠️ Error retrieving question history:', error.message);
+            return [];
+        }
+
+        return data?.questions || [];
+    } catch (error) {
+        console.warn('⚠️ Failed to retrieve question history:', error.message);
+        return [];
+    }
+}
+
+/**
+ * Save reinforcement questions to history for a user-course combination
+ * @param {number} userId - User ID
+ * @param {number} courseId - Course ID
+ * @param {Array} questions - Array of questions to save
+ */
+async function saveReinforcementQuestionHistory(userId, courseId, questions) {
+    if (!supabaseService) {
+        console.warn('⚠️ SupabaseService not available for history saving');
+        return;
+    }
+
+    try {
+        // First, get existing history
+        const existingHistory = await getReinforcementQuestionHistory(userId, courseId);
+
+        // Combine existing with new questions
+        const allQuestions = [...existingHistory, ...questions];
+
+        // Keep only the last 50 questions to avoid excessive storage
+        const recentQuestions = allQuestions.slice(-50);
+
+        // Upsert the record
+        const { error } = await supabaseService.client
+            .from('reinforcement_question_history')
+            .upsert({
+                user_id: userId,
+                course_id: courseId,
+                questions: recentQuestions
+            }, {
+                onConflict: 'user_id,course_id'
+            });
+
+        if (error) {
+            console.warn('⚠️ Error saving question history:', error.message);
+        } else {
+            console.log(`✅ Saved ${questions.length} questions to history for user ${userId}, course ${courseId}`);
+        }
+    } catch (error) {
+        console.warn('⚠️ Failed to save question history:', error.message);
+    }
+}
+
+/**
+ * Check if a prompt is for reinforcement learning questions
+ * @param {string} prompt - The prompt text
+ * @returns {boolean} True if it's a reinforcement learning request
+ */
+function isReinforcementLearningRequest(prompt) {
+    if (!prompt) return false;
+
+    const lowerPrompt = prompt.toLowerCase();
+    return lowerPrompt.includes('refuerzo') ||
+           lowerPrompt.includes('reinforcement') ||
+           lowerPrompt.includes('preguntas de selección múltiple') ||
+           lowerPrompt.includes('multiple-choice') ||
+           (lowerPrompt.includes('genera') && lowerPrompt.includes('preguntas'));
+}
+
+/**
+ * Extract course ID from request body for reinforcement learning
+ * @param {Object} reqBody - Request body
+ * @returns {number|null} Course ID or null
+ */
+function extractCourseIdFromRequest(reqBody) {
+    // Try different possible field names
+    return reqBody.courseId || reqBody.course_id || reqBody.idCurso || null;
+}
+
+// ============================================================
 // CLOUDFLARE R2 SERVICE (S3-Compatible Storage)
 // ============================================================
 
@@ -4384,6 +4552,100 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 
         // Si NO es pregunta de nota/tarea/archivo, solo DeepSeek responde
         if (!esPreguntaNota) {
+            // ============================================================
+            // 🎯 REINFORCEMENT LEARNING QUESTIONS HANDLING
+            // Check if this is a reinforcement learning request and apply history logic
+            // ============================================================
+            const esReinforcementRequest = isReinforcementLearningRequest(prompt);
+            const courseId = extractCourseIdFromRequest(req.body);
+
+            if (esReinforcementRequest && courseId && userId) {
+                console.log('🎯 PROCESANDO SOLICITUD DE REINFORCEMENT LEARNING...');
+                console.log('   - User ID:', userId);
+                console.log('   - Course ID:', courseId);
+
+                try {
+                    // Get existing question history for this user-course combination
+                    const questionHistory = await getReinforcementQuestionHistory(userId, courseId);
+                    console.log(`📚 Retrieved ${questionHistory.length} previous questions from history`);
+
+                    // Extract question count from prompt (default to 5)
+                    const questionCountMatch = prompt.match(/genera\s+(\d+)/i);
+                    const questionCount = questionCountMatch ? parseInt(questionCountMatch[1]) : 5;
+
+                    // Build prompt with history to avoid repetitions
+                    let promptCompleto = `INSTRUCCIONES CRÍTICAS PARA GENERAR PREGUNTAS DE REFORZAMIENTO:
+- GENERA ${questionCount} PREGUNTAS DE SELECCIÓN MÚLTIPLE (A, B, C, D) PARA REFORZAR CONOCIMIENTOS
+- TODAS LAS PREGUNTAS DEBEN SER ÚNICAS Y NO REPETIRSE ENTRE SESIONES
+- USA EXCLUSIVAMENTE EL CONTENIDO PROPORCIONADO POR EL DOCENTE (TEMAS, TAREAS Y ARCHIVOS)
+- NO INVENTES CONTENIDO NI USES CONOCIMIENTOS GENERALES
+- LAS PREGUNTAS DEBEN SER TÉCNICAS Y RELACIONADAS CON PROGRAMACIÓN
+- FORMATO JSON ESTRICTO SIN MARKDOWN, SIN TEXTO EXTRA
+
+HISTORIAL DE PREGUNTAS ANTERIORES (NO REPETIR NINGUNA):
+${questionHistory.map((q, i) => `${i + 1}. ${q.question || q.pregunta || 'Pregunta sin texto'}`).join('\n')}
+
+CONTEXTO DEL CURSO:
+${augmentedPrompt}
+
+FORMATO DE RESPUESTA JSON ESTRICTO:
+[
+  {
+    "question": "¿Pregunta técnica específica del contenido docente?",
+    "options": ["Opción A (respuesta correcta)", "Opción B (error común)", "Opción C (alternativa plausible)", "Opción D (incorrecta)"],
+    "correctIndex": 0,
+    "explanation": "Explicación técnica detallada con referencia específica al código o concepto del material docente."
+  }
+]`;
+
+                    const tokensPrompt = encode(promptCompleto).length;
+                    console.log('[REINFORCEMENT DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
+
+                    // Call DeepSeek for reinforcement questions
+                    let respuestaFinal = await callDeepSeek(null, promptCompleto);
+
+                    // Defensive fallback
+                    if (!respuestaFinal || !respuestaFinal.trim()) {
+                        console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA para reinforcement');
+                        respuestaFinal = 'Lo siento, no pude generar preguntas de refuerzo en este momento. Intenta nuevamente.';
+                    } else {
+                        // Try to parse and save the generated questions
+                        try {
+                            const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
+                            const generatedQuestions = JSON.parse(cleanJson);
+
+                            if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
+                                // Save to history
+                                await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
+                                console.log(`✅ Generated and saved ${generatedQuestions.length} reinforcement questions`);
+                            }
+                        } catch (parseError) {
+                            console.warn('⚠️ Could not parse generated questions for history:', parseError.message);
+                        }
+                    }
+
+                    // Send response
+                    const tokensRespuesta = encode(respuestaFinal).length;
+                    console.log('[REINFORCEMENT DeepSeek v2.3] TOKENS DE RESPUESTA:', tokensRespuesta);
+                    console.log('📊 RESUMEN TOKENS - TOTAL:', tokensPrompt + tokensRespuesta);
+
+                    console.log('✅ ENVIANDO RESPUESTA DE REINFORCEMENT AL CLIENTE');
+                    const endTime = new Date();
+                    const duration = endTime - startTime;
+                    console.log('🕐 HORA DE RESPUESTA:', endTime.toLocaleString('es-ES'));
+                    console.log('⏱️ DURACIÓN TOTAL:', Math.round(duration / 1000), 'segundos');
+                    console.log('==============================================');
+
+                    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                    return res.json({ respuesta_texto: respuestaFinal });
+
+                } catch (reinforcementError) {
+                    console.error('❌ ERROR EN REINFORCEMENT LEARNING:', reinforcementError.message);
+                    // Fall back to regular processing
+                    console.log('🔄 Falling back to regular DeepSeek processing...');
+                }
+            }
+
             console.log('📊 PROCESANDO PREGUNTA SIMPLE CON DEEPSEEK V2.3...');
             try {
                 // Si hay contexto académico disponible, incluirlo para dar mejor respuesta
