@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { R2StorageService } from '../../services/R2StorageService.js';
+import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
@@ -179,7 +180,98 @@ router.post('/procesar-prompt', async (req, res) => {
                         }
                     });
 
-                    respuestaTexto = JSON.stringify(transformed);
+                    // If userId/courseId are provided, filter out any questions that were already served
+                    // to that user in that course by consulting Supabase `reinforcement_question_history`.
+                    const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+                    const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
+
+                    // Helper: normalize text
+                    const normalizeText = (s) => {
+                        if (!s) return '';
+                        try {
+                            return s.toString()
+                                .toLowerCase()
+                                .normalize('NFD')
+                                .replace(/\p{Diacritic}/gu, '')
+                                .replace(/[^a-z0-9\s]/g, ' ')
+                                .replace(/\s+/g, ' ')
+                                .trim();
+                        } catch (e) {
+                            return s.toString()
+                                .toLowerCase()
+                                .normalize('NFD')
+                                .replace(/[\u0300-\u036f]/g, '')
+                                .replace(/[^a-z0-9\s]/g, ' ')
+                                .replace(/\s+/g, ' ')
+                                .trim();
+                        }
+                    };
+
+                    const questionExistsInHistory = (questionText, historyArray) => {
+                        if (!questionText) return false;
+                        const qNorm = normalizeText(questionText);
+                        if (!historyArray || !Array.isArray(historyArray)) return false;
+                        for (const h of historyArray) {
+                            try {
+                                let candidate = '';
+                                if (!h) continue;
+                                if (typeof h === 'string') candidate = h;
+                                else if (h.question) candidate = h.question;
+                                else if (h.pregunta) candidate = h.pregunta;
+                                else candidate = JSON.stringify(h);
+
+                                const cNorm = normalizeText(candidate);
+                                if (!cNorm) continue;
+                                if (cNorm === qNorm || cNorm.includes(qNorm) || qNorm.includes(cNorm)) {
+                                    return true;
+                                }
+                            } catch (e) {
+                                continue;
+                            }
+                        }
+                        return false;
+                    };
+
+                    let filtered = transformed;
+
+                    if (userId && courseId) {
+                        try {
+                            const supabase = SupabaseService.getInstance();
+                            if (supabase && supabase.client) {
+                                const { data: existing, error } = await supabase.client
+                                    .from('reinforcement_question_history')
+                                    .select('questions')
+                                    .eq('user_id', userId)
+                                    .eq('course_id', courseId)
+                                    .single();
+
+                                const history = (existing && existing.questions) ? existing.questions : [];
+
+                                filtered = transformed.filter(q => {
+                                    try {
+                                        const qText = q.question || q.pregunta || JSON.stringify(q);
+                                        return !questionExistsInHistory(qText, history);
+                                    } catch (e) { return true; }
+                                });
+
+                                // Save newly selected questions back to history (append, keep last 50)
+                                if (filtered.length > 0) {
+                                    const toSave = filtered.map(fq => fq);
+                                    const allQuestions = Array.isArray(history) ? [...history, ...toSave] : toSave;
+                                    const recentQuestions = allQuestions.slice(-50);
+                                    await supabase.client
+                                        .from('reinforcement_question_history')
+                                        .upsert({ user_id: userId, course_id: courseId, questions: recentQuestions }, { onConflict: 'user_id,course_id' });
+                                } else {
+                                    console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('⚠️ Failed to consult/save reinforcement history:', e?.message || e);
+                        }
+                    }
+
+                    respuestaTexto = JSON.stringify(filtered);
                 }
             }
         } catch (e) {
