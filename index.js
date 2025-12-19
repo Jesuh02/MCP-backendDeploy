@@ -14,7 +14,6 @@ import { DocxLoader } from 'langchain/document_loaders/fs/docx';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { LLMService } from './src/infrastructure/ai/LLMService.js';
 import { MCPService } from './src/domain/services/MCPService.js';
-import { configureRoutes } from './src/interfaces/routes/index.js';
 import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
 
 // AWS SDK for Cloudflare R2 (S3-compatible)
@@ -1579,14 +1578,6 @@ function generateGenericEmailHTML(title, message, type, senderUsername) {
 // Configurar bodyParser.json() ANTES de las rutas
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
-
-// Register modular routes (refactored route handlers)
-try {
-    configureRoutes(app);
-    console.log('✅ Modular routes configured via src/interfaces/routes');
-} catch (e) {
-    console.warn('⚠️ Could not configure modular routes:', e?.message || e);
-}
 
 // ============================================================
 // 📍 REGISTER MODULAR ROUTES
