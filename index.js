@@ -57,21 +57,21 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Also respond to / for basic health checks
-app.get('/_health', (req, res) => {
-    res.status(200).send('OK');
-});
+    // Also respond to / for basic health checks
+    app.get('/_health', (req, res) => {
+        res.status(200).send('OK');
+    });
 
-console.log('🏥 Healthcheck endpoints registered (/health, /_health)');
+    console.log('🏥 Healthcheck endpoints registered (/health, /_health)');
 
-// Start listening immediately to pass healthchecks
-const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server listening on port ${PORT} (Healthcheck ready)`);
-});
+    // Start listening immediately to pass healthchecks
+    const server = app.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 Server listening on port ${PORT} (Healthcheck ready)`);
+    });
 
-// Configure timeouts
-server.keepAliveTimeout = 120 * 1000;
-server.headersTimeout = 120 * 1000;
+    // Configure timeouts
+    server.keepAliveTimeout = 120 * 1000;
+    server.headersTimeout = 120 * 1000;
 
 // Initialize Firebase Admin (with error handling)
 let admin;
