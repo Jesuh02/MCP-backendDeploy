@@ -3864,24 +3864,31 @@ app.post('/send-notification', async(req, res) => {
 /**
  * Recibe un prompt, lo divide o resume si supera el límite de tokens,
  * y lo envía al modelo Granite/Ollama.
+ * DEPRECATED: This logic is now handled by src/interfaces/routes/llmRoutes.js
+ * which is mounted via configureRoutes() below.
+ * Commenting out this monolithic handler to allow the modular route to take precedence.
  */
-app.post('/procesar-prompt', async(req, res) => {
-    const startTime = new Date();
-    console.log('==============================================');
-    console.log('🔥 NUEVA SOLICITUD RECIBIDA EN /procesar-prompt');
-    console.log('🕐 HORA DE INICIO:', startTime.toLocaleString('es-ES'));
-    console.log('==============================================');
+// app.post('/procesar-prompt', async(req, res) => {
+//     const startTime = new Date();
+//     console.log('==============================================');
+//     console.log('🔥 NUEVA SOLICITUD RECIBIDA EN /procesar-prompt (MONOLITHIC)');
+//     console.log('⚠️ WARNING: This handler is deprecated. Request should go to llmRoutes.js');
+//     console.log('🕐 HORA DE INICIO:', startTime.toLocaleString('es-ES'));
+//     console.log('==============================================');
+//
+//     // FORWARDING LOGIC or ERROR
+//     // Since we want to use the new route, we should just let this fall through
+//     // but app.post captures it. So we must comment it out entirely or use next().
+//     // Since next() is complex with async here, commenting out is safer.
+//     /*
+//     try {
+//         // ... (existing logic commented out) ...
+//     } catch (error) { ... }
+//     */
+// });
 
-    try {
-        console.log('📥 BODY RECIBIDO:', JSON.stringify(req.body, null, 2));
-        console.log('==============================================');
-
-        // Recibe prompt del usuario, url de ollama y contexto del archivo (descripcionTarea)
-        // 🔥 NUEVO: También recibimos submissionId, taskId, fileUri para poder obtener el contenido desde R2/Supabase
-        // 🔥 NUEVO: jsonContent para archivos adjuntos del curso, model para especificar modelo LLM
-        let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent, userId, submissionId, taskId, fileUri, studentId, jsonContent, model } = req.body;
-
-        // ============================================================
+// MOVED TO src/interfaces/routes/llmRoutes.js
+// The configureRoutes(app) call at the end of this file handles the mounting.        // ============================================================
         // 🔥 NUEVO: OBTENER CONTENIDO DESDE R2/SUPABASE SI NO VIENE EN EL REQUEST
         // Si fileContent está vacío pero tenemos información de la submission,
         // intentar obtener el contenido directamente desde el servidor
@@ -6910,7 +6917,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('\n🔗 Endpoints disponibles:');
     console.log(`   • POST /analizar-entrega`);
     console.log(`   • POST /feedback-entrega`);
-    console.log(`   • POST /procesar-prompt`);
+    console.log(`   • POST /procesar-prompt (via llmRoutes)`);
     console.log(`   • POST /obtener-contenido-submission`);
     console.log(`   • GET  /listar-submissions/:taskId`);
     console.log(`   • GET  / (health check)`);
