@@ -25,6 +25,8 @@ export class MCPService {
     async getReinforcementHistory(userId, courseId) {
         if (!userId || !courseId) return [];
         
+        console.log(`📚 MCPService: Fetching reinforcement history for user ${userId}, course ${courseId}`);
+        
         try {
             const { data: existingRows, error } = await this.supabase.client
                 .from('reinforcement_question_history')

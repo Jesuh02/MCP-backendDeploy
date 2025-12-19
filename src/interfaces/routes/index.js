@@ -9,7 +9,7 @@ export { default as llmRoutes } from './llmRoutes.js';
 // Route configuration helper
 export function configureRoutes(app) {
     const routes = [
-        { path: '/', router: notificationRoutes },
+        // { path: '/', router: notificationRoutes }, // DISABLED: duplicate /procesar-prompt handler
         { path: '/', router: llmRoutes } // Register LLM routes at root (e.g. /procesar-prompt)
     ];
 

@@ -363,8 +363,9 @@ function isReinforcementLearningRequest(prompt) {
     return lowerPrompt.includes('refuerzo') ||
            lowerPrompt.includes('reinforcement') ||
            lowerPrompt.includes('preguntas de selección múltiple') ||
+           lowerPrompt.includes('preguntas de opción múltiple') ||
            lowerPrompt.includes('multiple-choice') ||
-           (lowerPrompt.includes('genera') && lowerPrompt.includes('preguntas'));
+           ((lowerPrompt.includes('genera') || lowerPrompt.includes('crear') || lowerPrompt.includes('hacer')) && lowerPrompt.includes('preguntas'));
 }
 
 /**
