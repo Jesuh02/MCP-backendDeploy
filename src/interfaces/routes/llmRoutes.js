@@ -127,8 +127,8 @@ router.post('/procesar-prompt', async (req, res) => {
                 }).filter(Boolean);
 
                 if (historyQuestionsList.length > 0) {
-                    // Pass up to 50 previous questions to ensure better coverage against duplicates
-                    augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
+                    // Pass up to 100 previous questions to ensure better coverage against duplicates
+                    augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(-100).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
                 }
             } catch (e) {
                 console.warn('⚠️ Could not read reinforcement history before generation:', e?.message || e);
