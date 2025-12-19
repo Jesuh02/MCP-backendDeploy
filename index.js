@@ -288,99 +288,66 @@ initializeReinforcementHistoryTable();
 
 /**
  * Get reinforcement question history for a user-course combination
- * @param {number} userId - User ID
- * @param {number} courseId - Course ID
- * @returns {Promise<Array>} Array of previous questions
+ * DEPRECATED: Use mcpService.getReinforcementHistory instead
  */
 async function getReinforcementQuestionHistory(userId, courseId) {
+    if (mcpService) {
+        return await mcpService.getReinforcementHistory(userId, courseId);
+    }
+    
+    // Fallback logic
     if (!supabaseService) {
         console.warn('⚠️ SupabaseService not available for history retrieval');
         return [];
     }
-
+    // ... rest of legacy logic if needed, but better to redirect
     try {
         const { data, error } = await supabaseService.client
             .from('reinforcement_question_history')
-            .select('questions, created_at')
+            .select('questions')
             .eq('user_id', userId)
-            .eq('course_id', courseId)
-            .order('created_at', { ascending: true });
-
-        if (error) {
-            console.warn('⚠️ Error retrieving question history:', error.message || error);
-            return [];
+            .eq('course_id', courseId);
+            
+        if (error) throw error;
+        
+        let combined = [];
+        if (data && Array.isArray(data)) {
+            data.forEach(row => {
+                if (row.questions && Array.isArray(row.questions)) {
+                    combined = combined.concat(row.questions);
+                }
+            });
         }
-
-        // Aggregate questions from all rows (log-style history)
-        try {
-            const combined = [];
-            if (Array.isArray(data)) {
-                data.forEach(row => {
-                    if (!row) return;
-                    const q = row.questions;
-                    if (Array.isArray(q)) {
-                        combined.push(...q);
-                    } else if (typeof q === 'string') {
-                        try {
-                            const parsed = JSON.parse(q);
-                            if (Array.isArray(parsed)) combined.push(...parsed);
-                        } catch (e) {
-                            // ignore malformed
-                        }
-                    }
-                });
-            }
-            return combined;
-        } catch (err) {
-            console.warn('⚠️ Failed to aggregate reinforcement history:', err.message || err);
-            return [];
-        }
-    } catch (error) {
-        console.warn('⚠️ Failed to retrieve question history:', error.message);
+        return combined;
+    } catch (err) {
+        console.warn('⚠️ Legacy history fetch failed:', err.message);
         return [];
     }
 }
 
 /**
- * Save reinforcement questions to history for a user-course combination
- * @param {number} userId - User ID
- * @param {number} courseId - Course ID
- * @param {Array} questions - Array of questions to save
+ * Save reinforcement questions to history
+ * DEPRECATED: Use mcpService.saveReinforcementHistory instead
  */
 async function saveReinforcementQuestionHistory(userId, courseId, questions) {
-    if (!supabaseService) {
-        console.warn('⚠️ SupabaseService not available for history saving');
-        return;
+    if (mcpService) {
+        return await mcpService.saveReinforcementHistory(userId, courseId, questions);
     }
 
+    if (!supabaseService) return;
+
     try {
-        // First, get existing history
-        const existingHistory = await getReinforcementQuestionHistory(userId, courseId);
-
-        // Combine existing with new questions
-        const allQuestions = [...existingHistory, ...questions];
-
-        // Keep only the last 50 questions to avoid excessive storage
-        const recentQuestions = allQuestions.slice(-50);
-
-        // Insert a new history row (append); we store the recentQuestions payload in this row
-        const insertPayload = {
-            user_id: userId,
-            course_id: courseId,
-            questions: recentQuestions
-        };
-
-        const { error: insertError } = await supabaseService.client
+        // Simple insert for fallback
+        await supabaseService.client
             .from('reinforcement_question_history')
-            .insert([insertPayload]);
-
-        if (insertError) {
-            console.warn('⚠️ Error saving question history (insert):', insertError.message || insertError);
-        } else {
-            console.log(`✅ Inserted ${questions.length} questions to history for user ${userId}, course ${courseId}`);
-        }
-    } catch (error) {
-        console.warn('⚠️ Failed to save question history:', error.message);
+            .insert({
+                user_id: userId,
+                course_id: courseId,
+                questions: questions,
+                created_at: new Date().toISOString()
+            });
+    } catch (err) {
+        console.warn('⚠️ Legacy history save failed:', err.message);
     }
 }
 
