@@ -64,6 +64,15 @@ app.get('/_health', (req, res) => {
 
 console.log('🏥 Healthcheck endpoints registered (/health, /_health)');
 
+// Start listening immediately to pass healthchecks
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server listening on port ${PORT} (Healthcheck ready)`);
+});
+
+// Configure timeouts
+server.keepAliveTimeout = 120 * 1000;
+server.headersTimeout = 120 * 1000;
+
 // Initialize Firebase Admin (with error handling)
 let admin;
 try {
@@ -6933,39 +6942,39 @@ app.get('/listar-submissions/:taskId', async(req, res) => {
 });
 
 // Listen on all interfaces so the service is reachable from other devices on the LAN
-app.listen(PORT, '0.0.0.0', () => {
-    const localIPs = getLocalIPAddress();
-    console.log('='.repeat(60));
-    console.log('🚀 Microservicio de distribución de contexto con DeepSeek v2.3');
-    console.log('='.repeat(60));
-    console.log(`📡 Puerto: ${PORT}`);
-    console.log(`🌐 Escuchando en todas las interfaces: 0.0.0.0`);
-    console.log(`🤖 Modelo LLM: DeepSeek v2.3 (Cloud API)`);
-    console.log('\n📍 Direcciones IP detectadas automáticamente:');
-    console.log('   ℹ️  Configura tu app Android para usar una de estas IPs');
+// app.listen() is already called at the top of the file for healthchecks.
+// This block is for logging startup info only.
+const localIPs = getLocalIPAddress();
+console.log('='.repeat(60));
+console.log('🚀 Microservicio de distribución de contexto con DeepSeek v2.3');
+console.log('='.repeat(60));
+console.log(`📡 Puerto: ${PORT}`);
+console.log(`🌐 Escuchando en todas las interfaces: 0.0.0.0`);
+console.log(`🤖 Modelo LLM: DeepSeek v2.3 (Cloud API)`);
+console.log('\n📍 Direcciones IP detectadas automáticamente:');
+console.log('   ℹ️  Configura tu app Android para usar una de estas IPs');
+console.log('');
+
+if (localIPs.length > 0) {
+    localIPs.forEach((ip, index) => {
+        console.log(`   ${index + 1}. http://${ip}:${PORT}`);
+    });
     console.log('');
+    console.log(`   💡 IP Principal recomendada: http://${localIPs[0]}:${PORT}`);
+} else {
+    console.log('   ⚠️  No se detectaron IPs locales (puede estar usando solo localhost)');
+}
 
-    if (localIPs.length > 0) {
-        localIPs.forEach((ip, index) => {
-            console.log(`   ${index + 1}. http://${ip}:${PORT}`);
-        });
-        console.log('');
-        console.log(`   💡 IP Principal recomendada: http://${localIPs[0]}:${PORT}`);
-    } else {
-        console.log('   ⚠️  No se detectaron IPs locales (puede estar usando solo localhost)');
-    }
-
-    console.log('\n🔗 Endpoints disponibles:');
-    console.log(`   • POST /analizar-entrega`);
-    console.log(`   • POST /feedback-entrega`);
-    console.log(`   • POST /procesar-prompt`);
-    console.log(`   • POST /obtener-contenido-submission`);
-    console.log(`   • GET  /listar-submissions/:taskId`);
-    console.log(`   • GET  / (health check)`);
-    console.log(`   • GET  /health (Railway healthcheck - fast)`);
-    console.log(`   • GET  /health/detailed (full diagnostics)`);
-    console.log(`   • POST /initialize (MCP)`);
-    console.log(`   • POST /tools/list (MCP)`);
-    console.log(`   • POST /tools/call (MCP)`);
-    console.log('='.repeat(60));
-});
+console.log('\n🔗 Endpoints disponibles:');
+console.log(`   • POST /analizar-entrega`);
+console.log(`   • POST /feedback-entrega`);
+console.log(`   • POST /procesar-prompt`);
+console.log(`   • POST /obtener-contenido-submission`);
+console.log(`   • GET  /listar-submissions/:taskId`);
+console.log(`   • GET  / (health check)`);
+console.log(`   • GET  /health (Railway healthcheck - fast)`);
+console.log(`   • GET  /health/detailed (full diagnostics)`);
+console.log(`   • POST /initialize (MCP)`);
+console.log(`   • POST /tools/list (MCP)`);
+console.log(`   • POST /tools/call (MCP)`);
+console.log('='.repeat(60));
