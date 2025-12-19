@@ -138,10 +138,7 @@ router.post('/procesar-prompt', async (req, res) => {
         // Call LLM (DeepSeek via Ollama wrapper or Direct)
         // If ollamaUrl ends with /, remove it
         const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
-        
-        // Remove /api/generate suffix if present, as we add it back
-        const cleanBaseUrl = baseUrl.replace(/\/api\/generate\/?$/, '');
-        const targetUrl = `${cleanBaseUrl}/api/generate`;
+        const targetUrl = `${baseUrl}/api/generate`;
         
         console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${model || 'deepseek-chat'})`);
 

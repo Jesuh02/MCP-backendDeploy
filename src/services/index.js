@@ -12,5 +12,4 @@ export default {
     UserService: () => import('./UserService.js').then(m => m.UserService),
     NotificationService: () => import('./NotificationService.js').then(m => m.NotificationService),
     R2StorageService: () => import('./R2StorageService.js').then(m => m.R2StorageService)
-    MCPService: () => import('../domain/services/MCPService.js').then(m => m.MCPService)
 };
