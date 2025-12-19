@@ -1561,10 +1561,17 @@ app.post('/reinforcement-history', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Missing userId, courseId or questions' });
         }
 
-        // saveReinforcementQuestionHistory is defined above in this file
-        await saveReinforcementQuestionHistory(Number(userId), Number(courseId), questions);
-
-        return res.json({ success: true, message: 'Reinforcement history saved' });
+        // Use MCPService for saving history
+        // This uses INSERT to avoid unique constraint errors
+        if (mcpService) {
+            await mcpService.saveReinforcementHistory(Number(userId), Number(courseId), questions);
+            return res.json({ success: true, message: 'Reinforcement history saved' });
+        } else {
+             // Fallback if MCPService not initialized (should not happen)
+             console.warn('⚠️ MCPService not available, falling back to legacy save');
+             await saveReinforcementQuestionHistory(Number(userId), Number(courseId), questions);
+             return res.json({ success: true, message: 'Reinforcement history saved (legacy)' });
+        }
     } catch (err) {
         console.error('Error saving reinforcement history:', err);
         return res.status(500).json({ success: false, error: String(err) });
@@ -1579,8 +1586,14 @@ app.get('/reinforcement-history/:userId/:courseId', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Missing userId or courseId' });
         }
 
-        const history = await getReinforcementQuestionHistory(userId, courseId);
-        return res.json({ success: true, data: history });
+        // Use MCPService for fetching history
+        if (mcpService) {
+             const history = await mcpService.getReinforcementHistory(userId, courseId);
+             return res.json({ success: true, data: history });
+        } else {
+             const history = await getReinforcementQuestionHistory(userId, courseId);
+             return res.json({ success: true, data: history });
+        }
     } catch (err) {
         console.error('Error fetching reinforcement history:', err);
         return res.status(500).json({ success: false, error: String(err) });
@@ -4623,7 +4636,13 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 
                 try {
                     // Get existing question history for this user-course combination
-                    const questionHistory = await getReinforcementQuestionHistory(userId, courseId);
+                    // USE MCPService to ensure we get all history and avoid duplicates
+                    let questionHistory = [];
+                    if (mcpService) {
+                         questionHistory = await mcpService.getReinforcementHistory(userId, courseId);
+                    } else {
+                         questionHistory = await getReinforcementQuestionHistory(userId, courseId);
+                    }
                     console.log(`📚 Retrieved ${questionHistory.length} previous questions from history`);
 
                     // Extract question count from prompt (default to 5)
@@ -4673,7 +4692,11 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
                                 // Save to history
-                                await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
+                                if (mcpService) {
+                                     await mcpService.saveReinforcementHistory(userId, courseId, generatedQuestions);
+                                } else {
+                                     await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
+                                }
                                 console.log(`✅ Generated and saved ${generatedQuestions.length} reinforcement questions`);
                             }
                         } catch (parseError) {
