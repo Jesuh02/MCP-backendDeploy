@@ -14,7 +14,6 @@ import { DocxLoader } from 'langchain/document_loaders/fs/docx';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { LLMService } from './src/infrastructure/ai/LLMService.js';
 import { MCPService } from './src/domain/services/MCPService.js';
-import { configureRoutes } from './src/interfaces/routes/index.js';
 import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
 
 // AWS SDK for Cloudflare R2 (S3-compatible)
@@ -377,60 +376,6 @@ function isReinforcementLearningRequest(prompt) {
            lowerPrompt.includes('preguntas de selección múltiple') ||
            lowerPrompt.includes('multiple-choice') ||
            (lowerPrompt.includes('genera') && lowerPrompt.includes('preguntas'));
-}
-
-/**
- * Detect disallowed question types (meta-evaluation, pedagogical, or personal data)
- * @param {string} text - Question text
- * @param {Array} options - Optional array of option strings
- * @returns {boolean} True if the question should be rejected
- */
-function isQuestionDisallowed(text, options) {
-    if (!text) return true;
-    const lower = text.toLowerCase();
-
-    // Disallow questions that ask the user how to evaluate, prioritize, or manage the course
-    const metaPatterns = [
-        'qué se debe priorizar',
-        'qué sería correcto para evaluar',
-        'qué sería lo correcto para evaluar',
-        'qué se debe priorizar al generar',
-        'cómo debe evalu',
-        'qué debería priorizar',
-        'qué debería considerar para evaluar'
-    ];
-
-    for (const p of metaPatterns) {
-        if (lower.includes(p)) return true;
-    }
-
-    // Disallow questions that mention personal/student data or ask to use it
-    const personalPatterns = [
-        'datos personales',
-        'información personal',
-        'datos del estudiante',
-        'información del estudiante',
-        'identificación del estudiante'
-    ];
-    for (const p of personalPatterns) {
-        if (lower.includes(p)) return true;
-    }
-
-    // Disallow pedagogical/administrative questions
-    const pedagPatterns = ['pedagog', 'gestión del curso', 'gestión del curso', 'administr', 'profesor debe', 'docente debe'];
-    for (const p of pedagPatterns) {
-        if (lower.includes(p)) return true;
-    }
-
-    // Also inspect options for personal data leakage
-    if (Array.isArray(options)) {
-        for (const opt of options) {
-            const ol = (opt || '').toLowerCase();
-            for (const p of personalPatterns) if (ol.includes(p)) return true;
-        }
-    }
-
-    return false;
 }
 
 /**
@@ -1579,14 +1524,6 @@ function generateGenericEmailHTML(title, message, type, senderUsername) {
 // Configurar bodyParser.json() ANTES de las rutas
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
-
-// Register modular routes (refactored route handlers)
-try {
-    configureRoutes(app);
-    console.log('✅ Modular routes configured via src/interfaces/routes');
-} catch (e) {
-    console.warn('⚠️ Could not configure modular routes:', e?.message || e);
-}
 
 // ============================================================
 // 📍 REGISTER MODULAR ROUTES
@@ -4672,61 +4609,15 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                         console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA para reinforcement');
                         respuestaFinal = 'Lo siento, no pude generar preguntas de refuerzo en este momento. Intenta nuevamente.';
                     } else {
-                        // Try to parse, filter disallowed questions and save the allowed ones
+                        // Try to parse and save the generated questions
                         try {
                             const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
-                            let generatedQuestions = JSON.parse(cleanJson);
+                            const generatedQuestions = JSON.parse(cleanJson);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
-                                // Filter out disallowed questions (meta-evaluation, pedagogy, personal data)
-                                let allowed = generatedQuestions.filter(q => {
-                                    try {
-                                        const qText = (q.question || q.pregunta || '').toString();
-                                        const opts = Array.isArray(q.options) ? q.options : [];
-                                        return !isQuestionDisallowed(qText, opts);
-                                    } catch (e) {
-                                        return false;
-                                    }
-                                });
-
-                                // If nothing allowed, attempt one retry with a stricter instruction
-                                if (allowed.length === 0) {
-                                    console.log('⚠️ Todas las preguntas generadas fueron deshabilitadas por las reglas. Reintentando con instrucciones más estrictas...');
-                                    const stricterPrompt = promptCompleto + "\n\nIMPORTANTE: BAJO NINGUNA CIRCUNSTANCIA GENERES PREGUNTAS QUE PIDAN AL USUARIO OPINAR SOBRE CÓMO EVALUAR, NI PREGUNTAS SOBRE DATOS PERSONALES O GESTIÓN PEDAGÓGICA. SOLO PREGUNTAS TÉCNICAS BASADAS EN LOS ARCHIVOS.";
-                                    let retryResp = await callDeepSeek(null, stricterPrompt);
-                                    if (retryResp) {
-                                        try {
-                                            const retryClean = retryResp.replace(/```json/g, '').replace(/```/g, '').trim();
-                                            const retryQuestions = JSON.parse(retryClean);
-                                            if (Array.isArray(retryQuestions)) {
-                                                allowed = retryQuestions.filter(q => {
-                                                    try {
-                                                        const qText = (q.question || q.pregunta || '').toString();
-                                                        const opts = Array.isArray(q.options) ? q.options : [];
-                                                        return !isQuestionDisallowed(qText, opts);
-                                                    } catch (e) {
-                                                        return false;
-                                                    }
-                                                });
-                                                // prefer retryResp as the respuestaFinal if allowed found
-                                                if (allowed.length > 0) respuestaFinal = JSON.stringify(allowed);
-                                            }
-                                        } catch (e) {
-                                            console.warn('⚠️ Retry parse failed:', e.message);
-                                        }
-                                    }
-                                } else {
-                                    // If we have allowed questions, make respuestaFinal the JSON of allowed
-                                    respuestaFinal = JSON.stringify(allowed);
-                                }
-
-                                if (allowed.length > 0) {
-                                    // Save only allowed questions to history
-                                    await saveReinforcementQuestionHistory(userId, courseId, allowed);
-                                    console.log(`✅ Filtered, generated and saved ${allowed.length} reinforcement questions`);
-                                } else {
-                                    console.log('⚠️ No se generaron preguntas válidas después del retry. Enviando respuesta original para diagnóstico.');
-                                }
+                                // Save to history
+                                await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
+                                console.log(`✅ Generated and saved ${generatedQuestions.length} reinforcement questions`);
                             }
                         } catch (parseError) {
                             console.warn('⚠️ Could not parse generated questions for history:', parseError.message);
