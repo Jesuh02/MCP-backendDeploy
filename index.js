@@ -1530,6 +1530,41 @@ app.use(bodyParser.json({ limit: '50mb' }));
 // The notification routes are now handled by the refactored module
 // Legacy routes below are kept for backwards compatibility
 // ============================================================
+
+// Reinforcement history endpoints (save and fetch)
+app.post('/reinforcement-history', async (req, res) => {
+    try {
+        const { userId, courseId, questions } = req.body || {};
+        if (!userId || !courseId || !questions) {
+            return res.status(400).json({ success: false, error: 'Missing userId, courseId or questions' });
+        }
+
+        // saveReinforcementQuestionHistory is defined above in this file
+        await saveReinforcementQuestionHistory(Number(userId), Number(courseId), questions);
+
+        return res.json({ success: true, message: 'Reinforcement history saved' });
+    } catch (err) {
+        console.error('Error saving reinforcement history:', err);
+        return res.status(500).json({ success: false, error: String(err) });
+    }
+});
+
+app.get('/reinforcement-history/:userId/:courseId', async (req, res) => {
+    try {
+        const userId = Number(req.params.userId);
+        const courseId = Number(req.params.courseId);
+        if (!userId || !courseId) {
+            return res.status(400).json({ success: false, error: 'Missing userId or courseId' });
+        }
+
+        const history = await getReinforcementQuestionHistory(userId, courseId);
+        return res.json({ success: true, data: history });
+    } catch (err) {
+        console.error('Error fetching reinforcement history:', err);
+        return res.status(500).json({ success: false, error: String(err) });
+    }
+});
+
 // Note: The notificationRoutes module is available but we keep
 // the legacy functions below to avoid breaking existing integrations
 // TODO: Migrate to app.use('/', notificationRoutes) after testing
