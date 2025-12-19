@@ -106,6 +106,41 @@ router.post('/procesar-prompt', async (req, res) => {
             throw new Error('ollamaUrl is required');
         }
 
+        // If userId/courseId provided, fetch reinforcement history and instruct LLM to avoid repeats
+        const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+        const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
+        let historyQuestionsList = [];
+        let existingHistory = [];
+        if (userId && courseId) {
+            try {
+                const supabase = SupabaseService.getInstance();
+                if (supabase && supabase.client) {
+                    const { data: existing } = await supabase.client
+                        .from('reinforcement_question_history')
+                        .select('questions')
+                        .eq('user_id', userId)
+                        .eq('course_id', courseId)
+                        .single();
+                    const history = (existing && existing.questions) ? existing.questions : [];
+                    existingHistory = history;
+                    // Extract plain question text for guidance
+                    historyQuestionsList = history.map(h => {
+                        if (!h) return null;
+                        if (typeof h === 'string') return h;
+                        if (h.question) return h.question;
+                        if (h.pregunta) return h.pregunta;
+                        try { return JSON.stringify(h); } catch(e) { return null; }
+                    }).filter(Boolean);
+
+                    if (historyQuestionsList.length > 0) {
+                        augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(0,20).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
+                    }
+                }
+            } catch (e) {
+                console.warn('⚠️ Could not read reinforcement history before generation:', e?.message || e);
+            }
+        }
+
         // Call LLM (DeepSeek via Ollama wrapper or Direct)
         // If ollamaUrl ends with /, remove it
         const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
@@ -254,24 +289,96 @@ router.post('/procesar-prompt', async (req, res) => {
                                     } catch (e) { return true; }
                                 });
 
-                                // Save newly selected questions back to history (append, keep last 50)
-                                if (filtered.length > 0) {
-                                    const toSave = filtered.map(fq => fq);
-                                    const allQuestions = Array.isArray(history) ? [...history, ...toSave] : toSave;
-                                    const recentQuestions = allQuestions.slice(-50);
-                                    await supabase.client
-                                        .from('reinforcement_question_history')
-                                        .upsert({ user_id: userId, course_id: courseId, questions: recentQuestions }, { onConflict: 'user_id,course_id' });
-                                } else {
-                                    console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
-                                }
+                                            // Save newly selected questions back to history (append, keep last 50)
+                                            if (filtered.length > 0) {
+                                                const toSave = filtered.map(fq => fq);
+                                                const allQuestions = Array.isArray(history) ? [...history, ...toSave] : toSave;
+                                                const recentQuestions = allQuestions.slice(-50);
+                                                await supabase.client
+                                                    .from('reinforcement_question_history')
+                                                    .upsert({ user_id: userId, course_id: courseId, questions: recentQuestions }, { onConflict: 'user_id,course_id' });
+                                            } else {
+                                                console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
+                                            }
                             }
                         } catch (e) {
                             console.warn('⚠️ Failed to consult/save reinforcement history:', e?.message || e);
                         }
                     }
 
-                    respuestaTexto = JSON.stringify(filtered);
+                                // If everything was filtered out (duplicates/disallowed), attempt up to 2 retries
+                                if ((userId && courseId) && Array.isArray(filtered) && filtered.length === 0 && historyQuestionsList.length > 0) {
+                                    console.log('🔁 All questions filtered; attempting DeepSeek retries to generate distinct questions');
+                                    for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
+                                        try {
+                                            const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera preguntas totalmente diferentes que NO repitan ni parafraseen las siguientes preguntas ya vistas por este usuario:\n${historyQuestionsList.slice(0,20).map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, responde con un array JSON vacío []`;
+
+                                            const retryResp = await fetch(targetUrl, {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ model: model || 'deepseek-chat', prompt: retryPrompt, stream: false, options: { temperature: 0.8 } })
+                                            });
+
+                                            if (!retryResp.ok) {
+                                                console.warn(`⚠️ Retry ${attempt} DeepSeek API error: ${retryResp.status} ${retryResp.statusText}`);
+                                                continue;
+                                            }
+
+                                            const retryData = await retryResp.json();
+                                            const rawRetry = typeof retryData.response === 'string' ? retryData.response : JSON.stringify(retryData.response);
+                                            const s = rawRetry.indexOf('[');
+                                            const e = rawRetry.lastIndexOf(']');
+                                            if (s !== -1 && e !== -1 && s < e) {
+                                                try {
+                                                    const arrJ = rawRetry.substring(s, e + 1);
+                                                    const parsedRetry = JSON.parse(arrJ);
+                                                    if (Array.isArray(parsedRetry) && parsedRetry.length > 0) {
+                                                        const transformedRetry = parsedRetry.map(q => {
+                                                            try {
+                                                                if (!q || !Array.isArray(q.options)) return q;
+                                                                const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
+                                                                const origCorrect = q.options[origIdx];
+                                                                const newOptions = q.options.slice();
+                                                                for (let i = newOptions.length - 1; i > 0; i--) {
+                                                                    const j = Math.floor(Math.random() * (i + 1));
+                                                                    [newOptions[i], newOptions[j]] = [newOptions[j], newOptions[i]];
+                                                                }
+                                                                let newIndex = newOptions.findIndex(o => o === origCorrect);
+                                                                if (newIndex === -1) newIndex = 0;
+                                                                return { ...q, options: newOptions, correctIndex: newIndex };
+                                                            } catch (qq) { return q; }
+                                                        });
+
+                                                        // Filter parsedRetry using questionExistsInHistory against existingHistory (or historyQuestionsList)
+                                                        const historyToCheck = existingHistory && existingHistory.length ? existingHistory : historyQuestionsList;
+                                                        const newlyFiltered = transformedRetry.filter(q => {
+                                                            try { const qText = q.question || q.pregunta || JSON.stringify(q); return !questionExistsInHistory(qText, historyToCheck); } catch (ex) { return true; }
+                                                        });
+
+                                                        if (newlyFiltered.length > 0) {
+                                                            filtered = newlyFiltered;
+                                                            // Upsert these into history
+                                                            try {
+                                                                const supabase2 = SupabaseService.getInstance();
+                                                                const toSave = filtered.map(fq => fq);
+                                                                const allQ = Array.isArray(existingHistory) ? [...existingHistory, ...toSave] : toSave;
+                                                                const recent = allQ.slice(-50);
+                                                                await supabase2.client.from('reinforcement_question_history').upsert({ user_id: userId, course_id: courseId, questions: recent }, { onConflict: 'user_id,course_id' });
+                                                            } catch (upErr) { console.warn('⚠️ Failed to upsert retry results:', upErr?.message || upErr); }
+                                                            break;
+                                                        }
+                                                    }
+                                                } catch (parseErr) {
+                                                    console.warn('⚠️ Could not parse retry response JSON array:', parseErr?.message || parseErr);
+                                                }
+                                            }
+                                        } catch (retryErr) {
+                                            console.warn('⚠️ Retry attempt failed:', retryErr?.message || retryErr);
+                                        }
+                                    }
+                                }
+
+                                respuestaTexto = JSON.stringify(filtered);
                 }
             }
         } catch (e) {
