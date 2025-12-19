@@ -287,7 +287,80 @@ async function initializeReinforcementHistoryTable() {
 // Initialize the table
 initializeReinforcementHistoryTable();
 
+/**
+ * Get reinforcement question history for a user-course combination
+ * @param {number} userId - User ID
+ * @param {number} courseId - Course ID
+ * @returns {Promise<Array>} Array of previous questions
+ */
+async function getReinforcementQuestionHistory(userId, courseId) {
+    if (!supabaseService) {
+        console.warn('⚠️ SupabaseService not available for history retrieval');
+        return [];
+    }
 
+    try {
+        const { data, error } = await supabaseService.client
+            .from('reinforcement_question_history')
+            .select('questions')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .single();
+
+        if (error && error.code !== 'PGRST116') {
+            console.warn('⚠️ Error retrieving question history:', error.message);
+            return [];
+        }
+
+        return data?.questions || [];
+    } catch (error) {
+        console.warn('⚠️ Failed to retrieve question history:', error.message);
+        return [];
+    }
+}
+
+/**
+ * Save reinforcement questions to history for a user-course combination
+ * @param {number} userId - User ID
+ * @param {number} courseId - Course ID
+ * @param {Array} questions - Array of questions to save
+ */
+async function saveReinforcementQuestionHistory(userId, courseId, questions) {
+    if (!supabaseService) {
+        console.warn('⚠️ SupabaseService not available for history saving');
+        return;
+    }
+
+    try {
+        // First, get existing history
+        const existingHistory = await getReinforcementQuestionHistory(userId, courseId);
+
+        // Combine existing with new questions
+        const allQuestions = [...existingHistory, ...questions];
+
+        // Keep only the last 50 questions to avoid excessive storage
+        const recentQuestions = allQuestions.slice(-50);
+
+        // Upsert the record
+        const { error } = await supabaseService.client
+            .from('reinforcement_question_history')
+            .upsert({
+                user_id: userId,
+                course_id: courseId,
+                questions: recentQuestions
+            }, {
+                onConflict: 'user_id,course_id'
+            });
+
+        if (error) {
+            console.warn('⚠️ Error saving question history:', error.message);
+        } else {
+            console.log(`✅ Saved ${questions.length} questions to history for user ${userId}, course ${courseId}`);
+        }
+    } catch (error) {
+        console.warn('⚠️ Failed to save question history:', error.message);
+    }
+}
 
 /**
  * Check if a prompt is for reinforcement learning questions
@@ -303,66 +376,6 @@ function isReinforcementLearningRequest(prompt) {
            lowerPrompt.includes('preguntas de selección múltiple') ||
            lowerPrompt.includes('multiple-choice') ||
            (lowerPrompt.includes('genera') && lowerPrompt.includes('preguntas'));
-}
-
-/**
- * Normalize text for robust comparison: lower-case, remove accents, punctuation and extra spaces
- * @param {string} s
- * @returns {string}
- */
-function normalizeText(s) {
-    if (!s) return '';
-    try {
-        return s.toString()
-            .toLowerCase()
-            .normalize('NFD')
-            .replace(/\p{Diacritic}/gu, '')
-            .replace(/[^a-z0-9\s]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-    } catch (e) {
-        // Fallback for environments without \p{Diacritic}
-        return s.toString()
-            .toLowerCase()
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-z0-9\s]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-    }
-}
-
-/**
- * Check whether a question (text) exists in a history array.
- * History entries may be stored as objects with `question` or `pregunta` fields or as raw strings.
- */
-function questionExistsInHistory(questionText, historyArray) {
-    if (!questionText) return false;
-    const qNorm = normalizeText(questionText);
-    if (!historyArray || !Array.isArray(historyArray)) return false;
-
-    for (const h of historyArray) {
-        try {
-            let candidate = '';
-            if (!h) continue;
-            if (typeof h === 'string') candidate = h;
-            else if (h.question) candidate = h.question;
-            else if (h.pregunta) candidate = h.pregunta;
-            else candidate = JSON.stringify(h);
-
-            const cNorm = normalizeText(candidate);
-            if (!cNorm) continue;
-
-            // Strict equality check for normalized text to avoid false positives
-            // Previously used .includes() which was too aggressive
-            if (cNorm === qNorm) {
-                return true;
-            }
-        } catch (e) {
-            continue;
-        }
-    }
-    return false;
 }
 
 /**
@@ -383,19 +396,11 @@ function isQuestionDisallowed(text, options) {
         'qué se debe priorizar al generar',
         'cómo debe evalu',
         'qué debería priorizar',
-        'qué debería considerar para evaluar',
-        'instrucciones del docente',
-        'según el archivo',
-        'basado en el archivo',
-        'prioridad alta',
-        'prioridad baja'
+        'qué debería considerar para evaluar'
     ];
 
     for (const p of metaPatterns) {
-        if (lower.includes(p)) {
-            console.log(`🚫 Question disallowed by meta pattern: "${p}" in "${text.substring(0, 30)}..."`);
-            return true;
-        }
+        if (lower.includes(p)) return true;
     }
 
     // Disallow questions that mention personal/student data or ask to use it
@@ -404,41 +409,23 @@ function isQuestionDisallowed(text, options) {
         'información personal',
         'datos del estudiante',
         'información del estudiante',
-        'identificación del estudiante',
-        'nombre del estudiante'
+        'identificación del estudiante'
     ];
     for (const p of personalPatterns) {
-        if (lower.includes(p)) {
-            console.log(`🚫 Question disallowed by personal pattern: "${p}"`);
-            return true;
-        }
+        if (lower.includes(p)) return true;
     }
 
     // Disallow pedagogical/administrative questions
-    // Relaxed patterns to avoid false positives in technical contexts
-    const pedagPatterns = [
-        'pedagogía', 
-        'gestión administrativa del curso', 
-        'labor del profesor',
-        'rol del docente'
-    ];
+    const pedagPatterns = ['pedagog', 'gestión del curso', 'gestión del curso', 'administr', 'profesor debe', 'docente debe'];
     for (const p of pedagPatterns) {
-        if (lower.includes(p)) {
-            console.log(`🚫 Question disallowed by pedagogical pattern: "${p}"`);
-            return true;
-        }
+        if (lower.includes(p)) return true;
     }
 
     // Also inspect options for personal data leakage
     if (Array.isArray(options)) {
         for (const opt of options) {
             const ol = (opt || '').toLowerCase();
-            for (const p of personalPatterns) {
-                if (ol.includes(p)) {
-                    console.log(`🚫 Question disallowed by option pattern: "${p}"`);
-                    return true;
-                }
-            }
+            for (const p of personalPatterns) if (ol.includes(p)) return true;
         }
     }
 
@@ -4633,7 +4620,7 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 
                 try {
                     // Get existing question history for this user-course combination
-                    const questionHistory = await mcpService.getReinforcementQuestionHistory(userId, courseId);
+                    const questionHistory = await getReinforcementQuestionHistory(userId, courseId);
                     console.log(`📚 Retrieved ${questionHistory.length} previous questions from history`);
 
                     // Extract question count from prompt (default to 5)
@@ -4682,36 +4669,12 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                             let generatedQuestions = JSON.parse(cleanJson);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
-                                // Remove internal duplicates based on normalized question text
-                                const unique = [];
-                                const seen = new Set();
-                                for (const q of generatedQuestions) {
-                                    try {
-                                        const text = (q.question || q.pregunta || '').toString();
-                                        const norm = normalizeText(text);
-                                        if (!norm) continue;
-                                        if (seen.has(norm)) continue;
-                                        seen.add(norm);
-                                        unique.push(q);
-                                    } catch (e) {
-                                        continue;
-                                    }
-                                }
-
                                 // Filter out disallowed questions (meta-evaluation, pedagogy, personal data)
-                                // and questions that appear in the user's course history
-                                let allowed = unique.filter(q => {
+                                let allowed = generatedQuestions.filter(q => {
                                     try {
                                         const qText = (q.question || q.pregunta || '').toString();
                                         const opts = Array.isArray(q.options) ? q.options : [];
-
-                                        // Disallowed by content rules
-                                        if (isQuestionDisallowed(qText, opts)) return false;
-
-                                        // Disallowed if it already exists in history for this user/course
-                                        if (questionExistsInHistory(qText, questionHistory)) return false;
-
-                                        return true;
+                                        return !isQuestionDisallowed(qText, opts);
                                     } catch (e) {
                                         return false;
                                     }
@@ -4727,29 +4690,11 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                                             const retryClean = retryResp.replace(/```json/g, '').replace(/```/g, '').trim();
                                             const retryQuestions = JSON.parse(retryClean);
                                             if (Array.isArray(retryQuestions)) {
-                                                // Deduplicate retry results and filter against history
-                                                const uniqueRetry = [];
-                                                const retrySeen = new Set();
-                                                for (const q of retryQuestions) {
-                                                    try {
-                                                        const text = (q.question || q.pregunta || '').toString();
-                                                        const norm = normalizeText(text);
-                                                        if (!norm) continue;
-                                                        if (retrySeen.has(norm)) continue;
-                                                        retrySeen.add(norm);
-                                                        uniqueRetry.push(q);
-                                                    } catch (e) {
-                                                        continue;
-                                                    }
-                                                }
-
-                                                allowed = uniqueRetry.filter(q => {
+                                                allowed = retryQuestions.filter(q => {
                                                     try {
                                                         const qText = (q.question || q.pregunta || '').toString();
                                                         const opts = Array.isArray(q.options) ? q.options : [];
-                                                        if (isQuestionDisallowed(qText, opts)) return false;
-                                                        if (questionExistsInHistory(qText, questionHistory)) return false;
-                                                        return true;
+                                                        return !isQuestionDisallowed(qText, opts);
                                                     } catch (e) {
                                                         return false;
                                                     }
@@ -4768,7 +4713,7 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
 
                                 if (allowed.length > 0) {
                                     // Save only allowed questions to history
-                                    await mcpService.saveReinforcementQuestionHistory(userId, courseId, allowed);
+                                    await saveReinforcementQuestionHistory(userId, courseId, allowed);
                                     console.log(`✅ Filtered, generated and saved ${allowed.length} reinforcement questions`);
                                 } else {
                                     console.log('⚠️ No se generaron preguntas válidas después del retry. Enviando respuesta original para diagnóstico.');
