@@ -26,6 +26,7 @@ export class MCPService {
      */
     async getReinforcementHistory(userId, courseId) {
         if (!userId || !courseId) return [];
+        console.log(`🔎 MCPService.getReinforcementHistory called for user=${userId} course=${courseId}`);
         
         try {
             const { data: existing, error } = await this.supabase.client
@@ -55,6 +56,7 @@ export class MCPService {
      */
     async updateReinforcementHistory(userId, courseId, newQuestions) {
         if (!userId || !courseId || !newQuestions || newQuestions.length === 0) return;
+        console.log(`💾 MCPService.updateReinforcementHistory called for user=${userId} course=${courseId} newQuestions=${newQuestions.length}`);
 
         try {
             // Get current history first to append
