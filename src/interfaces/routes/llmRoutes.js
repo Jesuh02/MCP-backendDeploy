@@ -24,75 +24,79 @@ router.post('/procesar-prompt', async (req, res) => {
             try {
                 const files = JSON.parse(jsonContent);
                 if (Array.isArray(files) && files.length > 0) {
-                    console.log(`📂 Processing ${files.length} attached files...`);
+                    console.log(`📂 Procesando ${files.length} archivos adjuntos...`);
                     const r2Service = R2StorageService.getInstance();
                     
                     for (const file of files) {
                         if (file.uri && (r2Service.isR2Url(file.uri) || file.uri.startsWith('http'))) {
-                            console.log(`📥 Downloading content for ${file.name}...`);
+                            console.log(`📥 Descargando contenido de ${file.name}...`);
                             try {
                                 // Use getSubmissionFileContent which handles various sources (R2, HTTP)
                                 const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name);
                                  
-                                 if (fileData && fileData.content) {
-                                     let extractedText = null;
-                                     let processMsg = "";
+                                if (fileData && fileData.content) {
+                                    let extractedText = null;
+                                    let processMsg = "";
 
-                                     // Handle PDF
-                                     if (fileData.contentType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-                                         try {
-                                             console.log(`📄 Parsing PDF: ${file.name}`);
-                                             // content is likely base64 for PDFs from R2StorageService
-                                             const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
-                                             const pdfData = await pdf(pdfBuffer);
-                                             extractedText = pdfData.text;
-                                             processMsg = `PDF parsed (${extractedText.length} chars)`;
-                                             console.log(`✅ ${processMsg}`);
-                                         } catch (e) {
-                                             console.warn(`⚠️ PDF parse failed for ${file.name}: ${e.message}`);
-                                         }
-                                     }
-                                     // Handle Excel
-                                     else if (fileData.contentType.includes('spreadsheet') || fileData.contentType.includes('excel') || file.name.toLowerCase().match(/\.xlsx?$/)) {
-                                         try {
-                                             console.log(`📊 Parsing Excel: ${file.name}`);
-                                             const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
-                                             let excelText = "";
-                                             for (const sheetName of workbook.SheetNames) {
-                                                 const sheet = workbook.Sheets[sheetName];
-                                                 // Convert to CSV for better token efficiency than JSON or TXT
-                                                 const text = xlsx.utils.sheet_to_csv(sheet); 
-                                                 if (text.trim()) {
-                                                     excelText += `\n[Sheet: ${sheetName}]\n${text}\n`;
-                                                 }
-                                             }
-                                             extractedText = excelText;
-                                             processMsg = `Excel parsed (${extractedText.length} chars)`;
-                                             console.log(`✅ ${processMsg}`);
-                                         } catch (e) {
-                                             console.warn(`⚠️ Excel parse failed for ${file.name}: ${e.message}`);
-                                         }
-                                     }
-                                     // Handle Text (already handled, but let's consolidate)
-                                     else if (!fileData.isBase64) {
-                                         extractedText = fileData.content;
-                                         processMsg = "Text content";
-                                     }
+                                    // Handle PDF
+                                    if (fileData.contentType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                                        try {
+                                            console.log(`📄 Analizando PDF: ${file.name}`);
+                                            // content is likely base64 for PDFs from R2StorageService
+                                            const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                            const pdfData = await pdf(pdfBuffer);
+                                            extractedText = pdfData.text;
+                                            processMsg = `PDF analizado (${extractedText.length} chars)`;
+                                            console.log(`✅ ${processMsg}`);
+                                            console.log(`📝 CONTENIDO PDF (${file.name} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+                                        } catch (e) {
+                                            console.warn(`⚠️ Error al analizar PDF ${file.name}: ${e.message}`);
+                                        }
+                                    }
+                                    // Handle Excel
+                                    else if (fileData.contentType.includes('spreadsheet') || fileData.contentType.includes('excel') || file.name.toLowerCase().match(/\.xlsx?$/)) {
+                                        try {
+                                            console.log(`📊 Analizando Excel: ${file.name}`);
+                                            const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
+                                            let excelText = "";
+                                            for (const sheetName of workbook.SheetNames) {
+                                                const sheet = workbook.Sheets[sheetName];
+                                                // Convert to CSV for better token efficiency than JSON or TXT
+                                                const text = xlsx.utils.sheet_to_csv(sheet); 
+                                                if (text.trim()) {
+                                                    excelText += `\n[Sheet: ${sheetName}]\n${text}\n`;
+                                                }
+                                            }
+                                            extractedText = excelText;
+                                            processMsg = `Excel analizado (${extractedText.length} chars)`;
+                                            console.log(`✅ ${processMsg}`);
+                                            console.log(`📝 CONTENIDO EXCEL (${file.name} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+                                        } catch (e) {
+                                            console.warn(`⚠️ Error al analizar Excel ${file.name}: ${e.message}`);
+                                        }
+                                    }
+                                    // Handle Text (already handled, but let's consolidate)
+                                    else if (!fileData.isBase64) {
+                                        extractedText = fileData.content;
+                                        processMsg = "Contenido de texto plano";
+                                        console.log(`📝 CONTENIDO TEXTO (${file.name} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+                                    }
 
-                                     if (extractedText) {
-                                         // Only include text content. Skip binary/base64 to avoid confusing text-only models.
-                                         // Limit content size per file to avoid context window overflow
-                                         const contentSnippet = extractedText.substring(0, 15000); 
-                                         augmentedPrompt += `\n\n--- Contenido del archivo: ${file.name} (${fileData.contentType}) ---\n${contentSnippet}`;
-                                         if (extractedText.length > 15000) {
-                                             augmentedPrompt += `\n...(contenido truncado, total ${extractedText.length} chars)...`;
-                                         }
-                                     } else {
-                                         augmentedPrompt += `\n\n--- Archivo adjunto: ${file.name} (${fileData.contentType}) [Contenido binario no incluido] ---`;
-                                     }
-                                 }
+                                    if (extractedText) {
+                                        // Only include text content. Skip binary/base64 to avoid confusing text-only models.
+                                        // Limit content size per file to avoid context window overflow
+                                        const contentSnippet = extractedText.substring(0, 15000); 
+                                        augmentedPrompt += `\n\n--- Contenido del archivo: ${file.name} (${fileData.contentType}) ---\n${contentSnippet}`;
+                                        if (extractedText.length > 15000) {
+                                            augmentedPrompt += `\n...(contenido truncado, total ${extractedText.length} chars)...`;
+                                        }
+                                    } else {
+                                        console.log(`ℹ️ Archivo ${file.name} es binario o no textual, solo referencia añadida`);
+                                        augmentedPrompt += `\n\n--- Archivo adjunto: ${file.name} (${fileData.contentType}) [Contenido binario no incluido] ---`;
+                                    }
+                                }
                             } catch (e) {
-                                console.warn(`⚠️ Failed to fetch file ${file.name}: ${e.message}`);
+                                console.warn(`⚠️ Fallo al descargar archivo ${file.name}: ${e.message}`);
                             }
                         }
                     }
