@@ -82,6 +82,15 @@ export class LLMService {
             // Sanitize messages to avoid DeepSeek API errors
             const sanitizedMessages = this.sanitizeMessages(messages);
 
+            // LOGGING REQUESTED BY USER: Show full context sent to LLM
+            console.log("--------------- LLM CONTEXT START ---------------");
+            console.log("TIMESTAMP:", new Date().toISOString());
+            console.log("MESSAGES:", JSON.stringify(sanitizedMessages, null, 2));
+            if (tools && tools.length > 0) {
+                console.log("TOOLS:", JSON.stringify(tools, null, 2));
+            }
+            console.log("--------------- LLM CONTEXT END -----------------");
+
             // If no tools, just invoke directly
             if (!tools || tools.length === 0) {
                 const response = await this.model.invoke(sanitizedMessages);

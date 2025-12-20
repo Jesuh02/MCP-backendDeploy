@@ -4733,6 +4733,12 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                     console.log('[REINFORCEMENT DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
 
                     // Call DeepSeek for reinforcement questions
+                    
+                    // LOG FULL CONTEXT FOR USER DEBUGGING
+                    console.log(`\n================== 📝 FULL PROMPT TO LLM START (REINFORCEMENT) ==================\n`);
+                    console.log(promptCompleto);
+                    console.log(`\n================== 📝 FULL PROMPT TO LLM END (REINFORCEMENT) ==================\n`);
+
                     let respuestaFinal = await callDeepSeek(null, promptCompleto);
 
                     // --- STRICT DEDUPLICATION LOGIC WITH RETRY (POST-GENERATION) ---
