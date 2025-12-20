@@ -4612,6 +4612,19 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                          questionHistory = await getReinforcementQuestionHistory(userId, courseId);
                     }
                     console.log(`📚 Retrieved ${questionHistory.length} previous questions from history`);
+                    
+                    // Normalize history to strings
+                    const historyStrings = questionHistory.map(h => {
+                         if (!h) return null;
+                         if (typeof h === 'string') return h;
+                         if (h.question) return h.question;
+                         if (h.pregunta) return h.pregunta;
+                         try { return JSON.stringify(h); } catch(e) { return null; }
+                    }).filter(Boolean);
+
+                    // Slice to last 50 to avoid context overflow
+                    const recentHistory = historyStrings.slice(-50);
+                    console.log(`📚 Injecting ${recentHistory.length} recent questions into prompt context for deduplication`);
 
                     // Extract question count from prompt (default to 5)
                     const questionCountMatch = prompt.match(/genera\s+(\d+)/i);
@@ -4627,7 +4640,7 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 - FORMATO JSON ESTRICTO SIN MARKDOWN, SIN TEXTO EXTRA
 
 HISTORIAL DE PREGUNTAS ANTERIORES (NO REPETIR NINGUNA):
-${questionHistory.map((q, i) => `${i + 1}. ${q.question || q.pregunta || 'Pregunta sin texto'}`).join('\n')}
+${recentHistory.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
 CONTEXTO DEL CURSO:
 ${augmentedPrompt}
@@ -4641,7 +4654,8 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
     "explanation": "Explicación técnica detallada con referencia específica al código o concepto del material docente."
   }
 ]`;
-
+                    
+                    console.log('📝 PROMPT ENVIADO A LLM (Inicio):', promptCompleto.substring(0, 500) + '...');
                     const tokensPrompt = encode(promptCompleto).length;
                     console.log('[REINFORCEMENT DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
 
