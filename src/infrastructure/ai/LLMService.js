@@ -36,7 +36,7 @@ export class LLMService {
                 maxRetries: 1
             });
         } else {
-            // console.log("Initializing Ollama LLM...");
+            console.log("Initializing Ollama LLM...");
             this.provider = 'ollama';
             // Initialize Ollama with Llama 3:8b
             this.model = new ChatOllama({
@@ -82,32 +82,9 @@ export class LLMService {
             // Sanitize messages to avoid DeepSeek API errors
             const sanitizedMessages = this.sanitizeMessages(messages);
 
-            // LOGGING REQUESTED BY USER: Show full context sent to LLM
-            // Only log if the context contains specific files of interest
-            const messageContext = JSON.stringify(sanitizedMessages);
-            const isTargetContext = messageContext.includes('ReinforcementLearningScreen.kt') || messageContext.includes('utils/index.js');
-
-            if (isTargetContext) {
-                console.log("--------------- LLM CONTEXT START ---------------");
-                console.log("TIMESTAMP:", new Date().toISOString());
-                console.log("MESSAGES:", JSON.stringify(sanitizedMessages, null, 2));
-                if (tools && tools.length > 0) {
-                    console.log("TOOLS:", JSON.stringify(tools, null, 2));
-                }
-                console.log("--------------- LLM CONTEXT END -----------------");
-            }
-
             // If no tools, just invoke directly
             if (!tools || tools.length === 0) {
                 const response = await this.model.invoke(sanitizedMessages);
-                
-                if (isTargetContext) {
-                    console.log("--------------- LLM RESPONSE START ---------------");
-                    console.log("RESPONSE:", JSON.stringify(response, null, 2));
-                    console.log("TOOL EXECUTION: NONE (No tools provided)");
-                    console.log("--------------- LLM RESPONSE END -----------------");
-                }
-                
                 return response;
             }
 
@@ -119,28 +96,13 @@ export class LLMService {
             });
 
             const response = await modelWithTools.invoke(sanitizedMessages);
-            
-            if (isTargetContext) {
-                console.log("--------------- LLM RESPONSE START ---------------");
-                console.log("RESPONSE:", JSON.stringify(response, null, 2));
-                
-                // Check if tool calls exist in response
-                if (response.tool_calls && response.tool_calls.length > 0) {
-                     console.log("TOOL EXECUTION: YES");
-                     console.log("TOOLS CALLED:", JSON.stringify(response.tool_calls, null, 2));
-                } else {
-                     console.log("TOOL EXECUTION: NO");
-                }
-                console.log("--------------- LLM RESPONSE END -----------------");
-            }
-            
             return response;
         } catch (error) {
-            // console.error("Error generating LLM response:", error);
+            console.error("Error generating LLM response:", error);
 
             // If the error is about tool_calls, try without tools
             if (error.message && error.message.includes('tool_calls')) {
-                // console.warn("Tool call error detected, retrying without tools...");
+                console.warn("Tool call error detected, retrying without tools...");
                 try {
                     const sanitizedMessages = this.sanitizeMessages(messages);
                     const response = await this.model.invoke(sanitizedMessages);
