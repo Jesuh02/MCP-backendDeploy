@@ -52,26 +52,29 @@ router.post('/procesar-prompt', async (req, res) => {
                                             // content is likely base64 for PDFs from R2StorageService
                                             const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
                                             
-                                            console.log(`📄 Buffer creado. Tamaño: ${pdfBuffer.length} bytes. Intentando parsear con pdf-parse...`);
-
-                                            const pdfData = await pdf(pdfBuffer);
-                                            extractedText = pdfData.text;
-                                            
-                                            if (extractedText && extractedText.trim().length > 0) {
-                                                processMsg = `PDF analizado (${extractedText.length} chars)`;
-                                                console.log(`✅ ${processMsg}`);
-                                                // LOGGING CONTENT FOR USER VERIFICATION
-                                                console.log(`\n============== CONTENIDO DEL ARCHIVO PDF (${file.name}) ==============\n`);
-                                                console.log(extractedText.substring(0, 5000)); // Show first 5000 chars
-                                                if (extractedText.length > 5000) console.log(`\n... [${extractedText.length - 5000} caracteres restantes] ...`);
-                                                console.log(`\n====================================================================\n`);
+                                            // Validate buffer
+                                            if (pdfBuffer.length === 0) {
+                                                console.warn('⚠️ PDF Buffer is empty!');
                                             } else {
-                                                console.warn(`⚠️ El PDF ${file.name} se parseó pero el texto está vacío (posiblemente imagen escaneada o protegido).`);
-                                                console.log(`ℹ️ PDF Info: ${JSON.stringify(pdfData.info)}`);
+                                                const pdfData = await pdf(pdfBuffer);
+                                                extractedText = pdfData.text;
+                                                
+                                                if (extractedText && extractedText.trim().length > 0) {
+                                                    processMsg = `PDF analizado (${extractedText.length} chars)`;
+                                                    console.log(`✅ ${processMsg}`);
+                                                    // LOGGING CONTENT FOR USER VERIFICATION
+                                                    console.log(`\n============== CONTENIDO DEL ARCHIVO PDF (${file.name}) ==============\n`);
+                                                    console.log(extractedText.substring(0, 5000)); // Show first 5000 chars
+                                                    if (extractedText.length > 5000) console.log(`\n... [${extractedText.length - 5000} caracteres restantes] ...`);
+                                                    console.log(`\n====================================================================\n`);
+                                                } else {
+                                                    console.warn('⚠️ PDF parsed but returned empty text (scanned PDF?)');
+                                                    console.log(`ℹ️ PDF Info: ${JSON.stringify(pdfData.info)}`);
+                                                }
                                             }
                                         } catch (e) {
                                             console.warn(`⚠️ Error al analizar PDF ${file.name}: ${e.message}`);
-                                            console.error(e);
+                                            console.error(e); // Full stack trace
                                         }
                                     }
                                     // Handle Excel
