@@ -4708,6 +4708,15 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                                     generatedQuestions = generatedQuestions.filter(q => {
                                         const qText = q.question || q.pregunta || (typeof q === 'string' ? q : JSON.stringify(q));
                                         const isDupe = historySet.has(normalize(qText));
+                                        
+                                        // RELAXATION STRATEGY:
+                                        // If we are on the LAST retry attempt, allow duplicates to pass through
+                                        // rather than returning an empty array which breaks the client experience.
+                                        if (isDupe && retries === MAX_RETRIES) {
+                                             console.warn(`⚠️ LAST RESORT: Allowing duplicate question to avoid empty response: "${qText.substring(0, 30)}..."`);
+                                             return true;
+                                        }
+
                                         if (isDupe) console.log(`♻️ Duplicate detected and removed: "${qText.substring(0, 50)}..."`);
                                         return !isDupe;
                                     });
