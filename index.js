@@ -4599,18 +4599,25 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 
             if (esReinforcementRequest && courseId && userId) {
                 console.log('🎯 PROCESANDO SOLICITUD DE REINFORCEMENT LEARNING...');
-                console.log('   - User ID:', userId);
-                console.log('   - Course ID:', courseId);
+                console.log(`   - User ID: ${userId}, Course ID: ${courseId}`);
 
                 try {
                     // Get existing question history for this user-course combination
                     // USE MCPService to ensure we get all history and avoid duplicates
                     let questionHistory = [];
-                    if (mcpService) {
-                         questionHistory = await mcpService.getReinforcementHistory(userId, courseId);
-                    } else {
-                         questionHistory = await getReinforcementQuestionHistory(userId, courseId);
+                    
+                    // Force usage of MCPService (create new instance if global is null)
+                    const serviceToUse = mcpService || new MCPService();
+                    console.log(`🔍 Calling MCPService.getReinforcementHistory for user ${userId} course ${courseId}...`);
+                    
+                    try {
+                        questionHistory = await serviceToUse.getReinforcementHistory(userId, courseId);
+                    } catch (serviceErr) {
+                        console.error('❌ Error calling MCPService:', serviceErr);
+                        // Fallback to legacy if needed, though MCPService is preferred
+                        questionHistory = await getReinforcementQuestionHistory(userId, courseId);
                     }
+                    
                     console.log(`📚 Retrieved ${questionHistory.length} previous questions from history`);
                     
                     // Normalize history to strings
@@ -4625,6 +4632,10 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                     // Slice to last 50 to avoid context overflow
                     const recentHistory = historyStrings.slice(-50);
                     console.log(`📚 Injecting ${recentHistory.length} recent questions into prompt context for deduplication`);
+                    
+                    if (recentHistory.length > 0) {
+                        console.log('📝 Sample of history injected:', recentHistory[0].substring(0, 50) + '...');
+                    }
 
                     // Extract question count from prompt (default to 5)
                     const questionCountMatch = prompt.match(/genera\s+(\d+)/i);
