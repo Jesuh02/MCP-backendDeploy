@@ -32,7 +32,9 @@ router.post('/procesar-prompt', async (req, res) => {
                             console.log(`📥 Descargando contenido de ${file.name}...`);
                             try {
                                 // Use getSubmissionFileContent which handles various sources (R2, HTTP)
-                                const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name);
+                                // IMPORTANT: Pass null for submissionId to ensure we don't look up user submission contexts.
+                                // We only want the file content provided in the URI (Teacher Materials).
+                                const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name, null);
                                  
                                 if (fileData && fileData.content) {
                                     let extractedText = null;
