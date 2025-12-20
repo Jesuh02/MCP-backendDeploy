@@ -4677,7 +4677,7 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                     // Ensure we NEVER return a question that exists in the user's history
                     // If deduplication removes all questions, RETRY with a negative prompt
                     let retries = 0;
-                    const MAX_RETRIES = 2;
+                    const MAX_RETRIES = 3; // Increased to 3 for extra robustness
                     let validQuestionsFound = false;
 
                     while (retries <= MAX_RETRIES && !validQuestionsFound) {
