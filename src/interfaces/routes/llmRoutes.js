@@ -32,9 +32,7 @@ router.post('/procesar-prompt', async (req, res) => {
                             console.log(`📥 Descargando contenido de ${file.name}...`);
                             try {
                                 // Use getSubmissionFileContent which handles various sources (R2, HTTP)
-                                // IMPORTANT: Pass null for submissionId to ensure we don't look up user submission contexts.
-                                // We only want the file content provided in the URI (Teacher Materials).
-                                const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name, null);
+                                const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name);
                                  
                                 if (fileData && fileData.content) {
                                     let extractedText = null;
@@ -62,14 +60,10 @@ router.post('/procesar-prompt', async (req, res) => {
                                                 if (extractedText && extractedText.trim().length > 0) {
                                                     processMsg = `PDF analizado (${extractedText.length} chars)`;
                                                     console.log(`✅ ${processMsg}`);
-                                                    // LOGGING CONTENT FOR USER VERIFICATION
-                                                    console.log(`\n============== CONTENIDO DEL ARCHIVO PDF (${file.name}) ==============\n`);
-                                                    console.log(extractedText.substring(0, 5000)); // Show first 5000 chars
-                                                    if (extractedText.length > 5000) console.log(`\n... [${extractedText.length - 5000} caracteres restantes] ...`);
-                                                    console.log(`\n====================================================================\n`);
+                                                    // USER REQUESTED CONTENT LOGGING
+                                                    console.log(`📝 CONTENIDO PDF (${file.name} - primeros 2000 chars):\n${extractedText.substring(0, 2000)}...`);
                                                 } else {
                                                     console.warn('⚠️ PDF parsed but returned empty text (scanned PDF?)');
-                                                    console.log(`ℹ️ PDF Info: ${JSON.stringify(pdfData.info)}`);
                                                 }
                                             }
                                         } catch (e) {
