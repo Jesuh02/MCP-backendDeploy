@@ -292,7 +292,7 @@ router.post('/procesar-prompt', async (req, res) => {
                                 // If everything was filtered out (duplicates/disallowed), attempt up to 2 retries
                                 if ((userId && courseId) && Array.isArray(filtered) && filtered.length === 0 && historyQuestionsList.length > 0) {
                                     console.log('🔁 All questions filtered; attempting DeepSeek retries to generate distinct questions');
-                                    for (let attempt = 1; attempt <= 3 && filtered.length === 0; attempt++) {
+                                    for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
                                         try {
                                             // Sample a NEW set of history for the retry to give different negative examples
                                             const retryShuffledHistory = [...historyQuestionsList].sort(() => 0.5 - Math.random());
