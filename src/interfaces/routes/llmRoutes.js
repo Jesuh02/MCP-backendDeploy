@@ -38,19 +38,37 @@ router.post('/procesar-prompt', async (req, res) => {
                                     let extractedText = null;
                                     let processMsg = "";
 
+                                    // DEBUG LOGS FOR PDF DETECTION
+                                    const isPdfName = file.name.toLowerCase().endsWith('.pdf');
+                                    const isPdfMime = fileData.contentType === 'application/pdf';
+                                    console.log(`🔍 DEBUG: File=${file.name}, ContentType=${fileData.contentType}, isPdfName=${isPdfName}, isPdfMime=${isPdfMime}`);
+
                                     // Handle PDF
-                                    if (fileData.contentType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                                    if (isPdfMime || isPdfName) {
                                         try {
-                                            console.log(`📄 Analizando PDF: ${file.name}`);
+                                            console.log(`📄 Analizando PDF: ${file.name} (Size: ${fileData.size} bytes)`);
                                             // content is likely base64 for PDFs from R2StorageService
                                             const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
-                                            const pdfData = await pdf(pdfBuffer);
-                                            extractedText = pdfData.text;
-                                            processMsg = `PDF analizado (${extractedText.length} chars)`;
-                                            console.log(`✅ ${processMsg}`);
-                                            console.log(`📝 CONTENIDO PDF (${file.name} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+                                            
+                                            // Validate buffer
+                                            if (pdfBuffer.length === 0) {
+                                                console.warn('⚠️ PDF Buffer is empty!');
+                                            } else {
+                                                const pdfData = await pdf(pdfBuffer);
+                                                extractedText = pdfData.text;
+                                                
+                                                if (extractedText && extractedText.trim().length > 0) {
+                                                    processMsg = `PDF analizado (${extractedText.length} chars)`;
+                                                    console.log(`✅ ${processMsg}`);
+                                                    // USER REQUESTED CONTENT LOGGING
+                                                    console.log(`📝 CONTENIDO PDF (${file.name} - primeros 2000 chars):\n${extractedText.substring(0, 2000)}...`);
+                                                } else {
+                                                    console.warn('⚠️ PDF parsed but returned empty text (scanned PDF?)');
+                                                }
+                                            }
                                         } catch (e) {
                                             console.warn(`⚠️ Error al analizar PDF ${file.name}: ${e.message}`);
+                                            console.error(e); // Full stack trace
                                         }
                                     }
                                     // Handle Excel

@@ -4588,17 +4588,6 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
         console.log('🔍 ¿Es pregunta de nota/tarea/archivo?:', esPreguntaNota);
         console.log('🎯 ¿Es evaluación crítica (solo gemma3n)?:', esPreguntaEvaluacionCritica);
 
-        // LOGGING FILE CONTENT FOR DEBUGGING
-        if (fileContent && fileContent.trim().length > 0) {
-            console.log('📂 FILE CONTENT BEING PROCESSED (FIRST 500 CHARS):');
-            console.log('--------------------------------------------------');
-            console.log(fileContent.substring(0, 500));
-            console.log('--------------------------------------------------');
-            console.log(`📄 Total content length: ${fileContent.length} characters`);
-        } else {
-            console.log('⚠️ NO FILE CONTENT AVAILABLE OR EMPTY FOR THIS REQUEST');
-        }
-
         // Si NO es pregunta de nota/tarea/archivo, solo DeepSeek responde
         if (!esPreguntaNota) {
             // ============================================================
@@ -4688,7 +4677,7 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                     // Ensure we NEVER return a question that exists in the user's history
                     // If deduplication removes all questions, RETRY with a negative prompt
                     let retries = 0;
-                    const MAX_RETRIES = 3; // Increased to 3 for extra robustness
+                    const MAX_RETRIES = 2;
                     let validQuestionsFound = false;
 
                     while (retries <= MAX_RETRIES && !validQuestionsFound) {
@@ -4719,15 +4708,6 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                                     generatedQuestions = generatedQuestions.filter(q => {
                                         const qText = q.question || q.pregunta || (typeof q === 'string' ? q : JSON.stringify(q));
                                         const isDupe = historySet.has(normalize(qText));
-                                        
-                                        // RELAXATION STRATEGY:
-                                        // If we are on the LAST retry attempt, allow duplicates to pass through
-                                        // rather than returning an empty array which breaks the client experience.
-                                        if (isDupe && retries === MAX_RETRIES) {
-                                             console.warn(`⚠️ LAST RESORT: Allowing duplicate question to avoid empty response: "${qText.substring(0, 30)}..."`);
-                                             return true;
-                                        }
-
                                         if (isDupe) console.log(`♻️ Duplicate detected and removed: "${qText.substring(0, 50)}..."`);
                                         return !isDupe;
                                     });
