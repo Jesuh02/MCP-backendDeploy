@@ -292,9 +292,13 @@ router.post('/procesar-prompt', async (req, res) => {
                                 // If everything was filtered out (duplicates/disallowed), attempt up to 2 retries
                                 if ((userId && courseId) && Array.isArray(filtered) && filtered.length === 0 && historyQuestionsList.length > 0) {
                                     console.log('🔁 All questions filtered; attempting DeepSeek retries to generate distinct questions');
-                                    for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
+                                    for (let attempt = 1; attempt <= 3 && filtered.length === 0; attempt++) {
                                         try {
-                                            const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera preguntas totalmente diferentes que NO repitan ni parafraseen las siguientes preguntas ya vistas por este usuario:\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, responde con un array JSON vacío []`;
+                                            // Sample a NEW set of history for the retry to give different negative examples
+                                            const retryShuffledHistory = [...historyQuestionsList].sort(() => 0.5 - Math.random());
+                                            const retrySample = retryShuffledHistory.slice(0, 60);
+
+                                            const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera 10 preguntas totalmente diferentes que NO sean idénticas a las siguientes (ya vistas):\n${retrySample.map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, intenta cambiar el enfoque de las preguntas.`;
 
                                             const retryResp = await fetch(targetUrl, {
                                                 method: 'POST',
