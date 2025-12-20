@@ -4588,6 +4588,17 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
         console.log('🔍 ¿Es pregunta de nota/tarea/archivo?:', esPreguntaNota);
         console.log('🎯 ¿Es evaluación crítica (solo gemma3n)?:', esPreguntaEvaluacionCritica);
 
+        // LOGGING FILE CONTENT FOR DEBUGGING
+        if (fileContent && fileContent.trim().length > 0) {
+            console.log('📂 FILE CONTENT BEING PROCESSED (FIRST 500 CHARS):');
+            console.log('--------------------------------------------------');
+            console.log(fileContent.substring(0, 500));
+            console.log('--------------------------------------------------');
+            console.log(`📄 Total content length: ${fileContent.length} characters`);
+        } else {
+            console.log('⚠️ NO FILE CONTENT AVAILABLE OR EMPTY FOR THIS REQUEST');
+        }
+
         // Si NO es pregunta de nota/tarea/archivo, solo DeepSeek responde
         if (!esPreguntaNota) {
             // ============================================================
