@@ -4673,41 +4673,74 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                     // Call DeepSeek for reinforcement questions
                     let respuestaFinal = await callDeepSeek(null, promptCompleto);
 
-                    // --- STRICT DEDUPLICATION LOGIC (POST-GENERATION) ---
+                    // --- STRICT DEDUPLICATION LOGIC WITH RETRY (POST-GENERATION) ---
                     // Ensure we NEVER return a question that exists in the user's history
-                    if (respuestaFinal && historyStrings.length > 0) {
-                        try {
-                            // Extract JSON array
-                            const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
-                            // Attempt to find the array if it's wrapped in text
-                            const arrayMatch = cleanJson.match(/\[[\s\S]*\]/);
-                            const jsonToParse = arrayMatch ? arrayMatch[0] : cleanJson;
-                            
-                            let generatedQuestions = JSON.parse(jsonToParse);
-                            
-                            if (Array.isArray(generatedQuestions)) {
-                                const initialCount = generatedQuestions.length;
-                                // Create a Set of normalized history questions for fast lookup
-                                const normalize = (str) => (str || '').toString().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
-                                const historySet = new Set(historyStrings.map(q => normalize(q)));
-                                
-                                // Filter out duplicates
-                                generatedQuestions = generatedQuestions.filter(q => {
-                                    const qText = q.question || q.pregunta || (typeof q === 'string' ? q : JSON.stringify(q));
-                                    const isDupe = historySet.has(normalize(qText));
-                                    if (isDupe) console.log(`♻️ Duplicate detected and removed: "${qText.substring(0, 50)}..."`);
-                                    return !isDupe;
-                                });
-                                
-                                if (generatedQuestions.length < initialCount) {
-                                    console.log(`♻️ DEDUPLICATION: Removed ${initialCount - generatedQuestions.length} duplicate questions found in full history.`);
-                                    // Update respuestaFinal with the filtered list
-                                    respuestaFinal = JSON.stringify(generatedQuestions);
-                                }
-                            }
-                        } catch (e) {
-                            console.warn('⚠️ Deduplication check failed (parsing error):', e.message);
+                    // If deduplication removes all questions, RETRY with a negative prompt
+                    let retries = 0;
+                    const MAX_RETRIES = 2;
+                    let validQuestionsFound = false;
+
+                    while (retries <= MAX_RETRIES && !validQuestionsFound) {
+                        if (retries > 0) {
+                            console.log(`🔄 Retry attempt ${retries}/${MAX_RETRIES} for diverse questions...`);
+                            // Construct a stronger negative prompt for the retry
+                            const retryPrompt = promptCompleto + `\n\n⚠️ CRITICAL INSTRUCTION: The previous attempt generated duplicate questions which were rejected. GENERATE COMPLETELY NEW QUESTIONS. Do NOT use any of the topics or phrasings from the history provided above. Focus on different aspects of the content.`;
+                            respuestaFinal = await callDeepSeek(null, retryPrompt);
                         }
+
+                        if (respuestaFinal && historyStrings.length > 0) {
+                            try {
+                                // Extract JSON array
+                                const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
+                                // Attempt to find the array if it's wrapped in text
+                                const arrayMatch = cleanJson.match(/\[[\s\S]*\]/);
+                                const jsonToParse = arrayMatch ? arrayMatch[0] : cleanJson;
+                                
+                                let generatedQuestions = JSON.parse(jsonToParse);
+                                
+                                if (Array.isArray(generatedQuestions)) {
+                                    const initialCount = generatedQuestions.length;
+                                    // Create a Set of normalized history questions for fast lookup
+                                    const normalize = (str) => (str || '').toString().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+                                    const historySet = new Set(historyStrings.map(q => normalize(q)));
+                                    
+                                    // Filter out duplicates
+                                    generatedQuestions = generatedQuestions.filter(q => {
+                                        const qText = q.question || q.pregunta || (typeof q === 'string' ? q : JSON.stringify(q));
+                                        const isDupe = historySet.has(normalize(qText));
+                                        if (isDupe) console.log(`♻️ Duplicate detected and removed: "${qText.substring(0, 50)}..."`);
+                                        return !isDupe;
+                                    });
+                                    
+                                    if (generatedQuestions.length < initialCount) {
+                                        console.log(`♻️ DEDUPLICATION: Removed ${initialCount - generatedQuestions.length} duplicate questions found in full history.`);
+                                    }
+
+                                    // Check if we have valid questions left
+                                    if (generatedQuestions.length > 0) {
+                                        // Update respuestaFinal with the filtered list
+                                        respuestaFinal = JSON.stringify(generatedQuestions);
+                                        validQuestionsFound = true;
+                                    } else {
+                                        console.warn(`⚠️ All generated questions were duplicates. Attempting retry...`);
+                                        // If we are out of retries, we might need to fallback or just return empty
+                                        if (retries === MAX_RETRIES) {
+                                            console.error('❌ Max retries reached. Could not generate unique questions.');
+                                            respuestaFinal = "[]"; // Explicit empty array to avoid breaking frontend JSON parse
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn('⚠️ Deduplication check failed (parsing error):', e.message);
+                                // If parsing fails, we might assume it's invalid and retry if possible, or just break
+                                if (retries === MAX_RETRIES) validQuestionsFound = true; // Give up
+                            }
+                        } else {
+                            // If no history to check against or no response, consider it done (or failed)
+                            validQuestionsFound = true;
+                        }
+                        
+                        retries++;
                     }
                     // ----------------------------------------------------
 
