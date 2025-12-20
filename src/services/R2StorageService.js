@@ -290,7 +290,7 @@ class R2StorageService {
      * @returns {Promise<{content: string, contentType: string, size: number, isBase64: boolean, fileType: string}>}
      */
     async downloadFromPublicUrl(url, fileName) {
-        console.log(`🌐 Descargando desde URL pública: ${url}`);
+        console.log(`🌐 Downloading from public URL: ${url}`);
 
         try {
             const response = await axios.get(url, {
@@ -303,22 +303,12 @@ class R2StorageService {
             });
 
             const buffer = Buffer.from(response.data);
-            console.log(`📥 Buffer recibido de axios. Tamaño: ${buffer.length} bytes`);
-
-            // Log first few bytes to check if it looks like a PDF (%PDF)
-            if (buffer.length > 4) {
-                const header = buffer.subarray(0, 10).toString('hex');
-                const headerAscii = buffer.subarray(0, 10).toString('utf-8').replace(/[^\x20-\x7E]/g, '.');
-                console.log(`🔍 File Header (hex): ${header}`);
-                console.log(`🔍 File Header (ascii): ${headerAscii}`);
-            }
-
             const contentType = response.headers['content-type'] || 'application/octet-stream';
             const isText = contentType.includes('text') || this.isTextFile(fileName);
 
             const content = isText ? buffer.toString('utf-8') : buffer.toString('base64');
 
-            console.log(`✅ Archivo descargado desde R2 público: ${buffer.length} bytes. Tipo: ${contentType}, esBase64: ${!isText}`);
+            console.log(`✅ File downloaded from public URL: ${buffer.length} bytes`);
 
             return {
                 content,

@@ -36,8 +36,6 @@ import { UserService } from './src/services/UserService.js';
 import { createRequire } from 'module';
 const require = createRequire(
     import.meta.url);
-const pdf = require('pdf-parse');
-const xlsx = require('xlsx');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -3947,9 +3945,7 @@ app.post('/procesar-prompt', async(req, res) => {
                 
                 // Estrategia 4: Buscar ÚLTIMA submission del usuario (fallback si no hay taskId)
                 // Esto es útil cuando el usuario pregunta sobre su última tarea enviada
-                // MODIFICACIÓN: No buscar última submission si ya se proporcionó jsonContent (archivos explícitos)
-                // Esto evita mezclar contexto de usuario con contexto de materiales del curso (Reinforcement Learning)
-                if (!submission && (userId || studentId) && !jsonContent) {
+                if (!submission && (userId || studentId)) {
                     const searchUserId = userId || studentId;
                     console.log(`📡 Buscando ÚLTIMA submission del usuario ${searchUserId}...`);
                     const { data, error } = await supabaseService.client
@@ -4052,75 +4048,17 @@ app.post('/procesar-prompt', async(req, res) => {
                                 const fileData = await getSubmissionFileContent(file.uri, file.name || 'archivo', null);
                                 
                                 if (fileData && fileData.content) {
-                                    let extractedText = null;
-                                    let processMsg = "";
-                                    
-                                    const isPdfName = file.name.toLowerCase().endsWith('.pdf');
-                                    const isPdfMime = fileData.contentType === 'application/pdf';
-
-                                    // 1. Handle PDF
-                                    if (isPdfMime || isPdfName) {
-                                        try {
-                                            console.log(`📄 Analizando PDF: ${file.name} (Size: ${fileData.size} bytes)`);
-                                            // content is likely base64 for PDFs from getSubmissionFileContent
-                                            const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
-                                            
-                                            console.log(`📄 Buffer creado. Tamaño: ${pdfBuffer.length} bytes. Intentando parsear con pdf-parse...`);
-                                            const pdfData = await pdf(pdfBuffer);
-                                            extractedText = pdfData.text;
-                                            
-                                            if (extractedText && extractedText.trim().length > 0) {
-                                                processMsg = `PDF analizado (${extractedText.length} chars)`;
-                                                console.log(`✅ ${processMsg}`);
-                                                // LOGGING CONTENT FOR USER VERIFICATION
-                                                console.log(`\n============== CONTENIDO DEL ARCHIVO PDF (${file.name}) ==============\n`);
-                                                console.log(extractedText.substring(0, 5000)); // Show first 5000 chars
-                                                if (extractedText.length > 5000) console.log(`\n... [${extractedText.length - 5000} caracteres restantes] ...`);
-                                                console.log(`\n====================================================================\n`);
-                                            } else {
-                                                console.warn(`⚠️ El PDF ${file.name} se parseó pero el texto está vacío (posiblemente imagen escaneada).`);
-                                                console.log(`ℹ️ PDF Info: ${JSON.stringify(pdfData.info)}`);
-                                            }
-                                        } catch (e) {
-                                            console.warn(`⚠️ Error al analizar PDF ${file.name}: ${e.message}`);
-                                        }
-                                    }
-                                    // 2. Handle Excel
-                                    else if (fileData.contentType && (fileData.contentType.includes('spreadsheet') || fileData.contentType.includes('excel')) || file.name.toLowerCase().match(/\.xlsx?$/)) {
-                                        try {
-                                            console.log(`📊 Analizando Excel: ${file.name}`);
-                                            const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
-                                            let excelText = "";
-                                            for (const sheetName of workbook.SheetNames) {
-                                                const sheet = workbook.Sheets[sheetName];
-                                                const text = xlsx.utils.sheet_to_csv(sheet); 
-                                                if (text.trim()) {
-                                                    excelText += `\n[Sheet: ${sheetName}]\n${text}\n`;
-                                                }
-                                            }
-                                            extractedText = excelText;
-                                            console.log(`✅ Excel analizado (${extractedText.length} chars)`);
-                                        } catch (e) {
-                                            console.warn(`⚠️ Error al analizar Excel ${file.name}: ${e.message}`);
-                                        }
-                                    }
-                                    // 3. Handle Text (already text)
-                                    else if (!fileData.isBase64 && fileData.contentType && fileData.contentType.startsWith('text/')) {
-                                        extractedText = fileData.content;
-                                        console.log(`📝 Contenido de texto plano detectado (${extractedText.length} chars)`);
-                                    }
-
-                                    // Add to prompt if we extracted text
-                                    if (extractedText) {
-                                        // Limit content size per file
-                                        const contentSnippet = extractedText.substring(0, 15000); 
+                                    // Solo incluir contenido de texto, no binario
+                                    if (!fileData.isBase64 && fileData.contentType && fileData.contentType.startsWith('text/')) {
+                                        // Limitar tamaño para evitar overflow del contexto
+                                        const contentSnippet = fileData.content.substring(0, 8000);
                                         augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} ---\n${contentSnippet}`;
-                                        if (extractedText.length > 15000) {
-                                            augmentedPrompt += `\n...(contenido truncado, total ${extractedText.length} chars)...`;
+                                        if (fileData.content.length > 8000) {
+                                            augmentedPrompt += `\n...(contenido truncado)...`;
                                         }
-                                        console.log(`✅ Contenido de ${file.name} añadido al prompt`);
+                                        console.log(`✅ Contenido de ${file.name} añadido al prompt (${contentSnippet.length} chars)`);
                                     } else {
-                                        augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (${fileData.contentType || 'tipo desconocido'}) [Contenido binario no incluido] ---`;
+                                        augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (${fileData.contentType || 'tipo desconocido'}) ---`;
                                         console.log(`ℹ️ Archivo ${file.name} es binario o no textual, solo referencia añadida`);
                                     }
                                 }
@@ -4733,12 +4671,6 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                     console.log('[REINFORCEMENT DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
 
                     // Call DeepSeek for reinforcement questions
-                    
-                    // LOG FULL CONTEXT FOR USER DEBUGGING
-                    console.log(`\n================== 📝 FULL PROMPT TO LLM START (REINFORCEMENT) ==================\n`);
-                    console.log(promptCompleto);
-                    console.log(`\n================== 📝 FULL PROMPT TO LLM END (REINFORCEMENT) ==================\n`);
-
                     let respuestaFinal = await callDeepSeek(null, promptCompleto);
 
                     // --- STRICT DEDUPLICATION LOGIC WITH RETRY (POST-GENERATION) ---
