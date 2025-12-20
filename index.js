@@ -174,7 +174,7 @@ if (admin) {
 let llmService = null;
 try {
     llmService = LLMService.getInstance();
-    console.log(`✅ LLMService initialized with ${process.env.DEEPSEEK_MODEL || 'deepseek-chat'} (Provider: DeepSeek AI)`);
+    // console.log(`✅ LLMService initialized with ${process.env.DEEPSEEK_MODEL || 'deepseek-chat'} (Provider: DeepSeek AI)`);
 } catch (error) {
     console.error('❌ Failed to initialize LLMService:', error.message);
 }
