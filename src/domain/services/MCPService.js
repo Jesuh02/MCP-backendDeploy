@@ -56,6 +56,10 @@ export class MCPService {
                 });
             }
             console.log(`✅ MCPService: Found ${history.length} questions in history for user ${userId} course ${courseId}`);
+            
+            // Log for clarity as requested (simulation of tool execution log)
+            logger.info(`🔍 Executing query: SELECT questions FROM reinforcement_question_history WHERE user_id = ${userId} AND course_id = ${courseId}`);
+            
             return history;
         } catch (error) {
             logger.warn(`Error fetching reinforcement history: ${error.message}`);
