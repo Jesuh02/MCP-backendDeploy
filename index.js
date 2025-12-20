@@ -4673,6 +4673,44 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                     // Call DeepSeek for reinforcement questions
                     let respuestaFinal = await callDeepSeek(null, promptCompleto);
 
+                    // --- STRICT DEDUPLICATION LOGIC (POST-GENERATION) ---
+                    // Ensure we NEVER return a question that exists in the user's history
+                    if (respuestaFinal && historyStrings.length > 0) {
+                        try {
+                            // Extract JSON array
+                            const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
+                            // Attempt to find the array if it's wrapped in text
+                            const arrayMatch = cleanJson.match(/\[[\s\S]*\]/);
+                            const jsonToParse = arrayMatch ? arrayMatch[0] : cleanJson;
+                            
+                            let generatedQuestions = JSON.parse(jsonToParse);
+                            
+                            if (Array.isArray(generatedQuestions)) {
+                                const initialCount = generatedQuestions.length;
+                                // Create a Set of normalized history questions for fast lookup
+                                const normalize = (str) => (str || '').toString().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+                                const historySet = new Set(historyStrings.map(q => normalize(q)));
+                                
+                                // Filter out duplicates
+                                generatedQuestions = generatedQuestions.filter(q => {
+                                    const qText = q.question || q.pregunta || (typeof q === 'string' ? q : JSON.stringify(q));
+                                    const isDupe = historySet.has(normalize(qText));
+                                    if (isDupe) console.log(`♻️ Duplicate detected and removed: "${qText.substring(0, 50)}..."`);
+                                    return !isDupe;
+                                });
+                                
+                                if (generatedQuestions.length < initialCount) {
+                                    console.log(`♻️ DEDUPLICATION: Removed ${initialCount - generatedQuestions.length} duplicate questions found in full history.`);
+                                    // Update respuestaFinal with the filtered list
+                                    respuestaFinal = JSON.stringify(generatedQuestions);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('⚠️ Deduplication check failed (parsing error):', e.message);
+                        }
+                    }
+                    // ----------------------------------------------------
+
                     // Defensive fallback
                     if (!respuestaFinal || !respuestaFinal.trim()) {
                         console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA para reinforcement');
@@ -4681,50 +4719,16 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                         // Try to parse and save the generated questions
                         try {
                             const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
-                            let generatedQuestions = JSON.parse(cleanJson);
+                            const generatedQuestions = JSON.parse(cleanJson);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
-                                
-                                // --- POST-GENERATION FILTERING (STRICT DEDUPLICATION) ---
-                                // Verify against full historyStrings to ensure no duplicates slipped through prompt injection
-                                if (historyStrings && historyStrings.length > 0) {
-                                    console.log('🛡️ Verifying generated questions against history for strict deduplication...');
-                                    
-                                    const historySet = new Set(historyStrings.map(q => 
-                                        typeof q === 'string' ? q.toLowerCase().trim() : ''
-                                    ));
-
-                                    const uniqueQuestions = generatedQuestions.filter(q => {
-                                        const qText = (q.question || q.pregunta || '').toLowerCase().trim();
-                                        // Filter if it matches history OR if it's too similar (exact match logic for now)
-                                        const isDuplicate = historySet.has(qText);
-                                        if (isDuplicate) {
-                                            console.log(`⚠️ Removed duplicate question: "${q.question?.substring(0, 30)}..."`);
-                                        }
-                                        return !isDuplicate;
-                                    });
-
-                                    if (uniqueQuestions.length < generatedQuestions.length) {
-                                        console.log(`♻️ Filtered ${generatedQuestions.length - uniqueQuestions.length} duplicates. New count: ${uniqueQuestions.length}`);
-                                        generatedQuestions = uniqueQuestions;
-                                        
-                                        // Update the final response JSON text to reflect filtered questions
-                                        respuestaFinal = JSON.stringify(generatedQuestions);
-                                    }
-                                }
-                                // --------------------------------------------------------
-
-                                if (generatedQuestions.length > 0) {
-                                    // Save to history
-                                    if (mcpService) {
-                                         await mcpService.saveReinforcementHistory(userId, courseId, generatedQuestions);
-                                    } else {
-                                         await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
-                                    }
-                                    console.log(`✅ Generated and saved ${generatedQuestions.length} unique reinforcement questions`);
+                                // Save to history
+                                if (mcpService) {
+                                     await mcpService.saveReinforcementHistory(userId, courseId, generatedQuestions);
                                 } else {
-                                    console.warn('⚠️ All generated questions were duplicates. Returning empty set (client should handle retry).');
+                                     await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
                                 }
+                                console.log(`✅ Generated and saved ${generatedQuestions.length} reinforcement questions`);
                             }
                         } catch (parseError) {
                             console.warn('⚠️ Could not parse generated questions for history:', parseError.message);
