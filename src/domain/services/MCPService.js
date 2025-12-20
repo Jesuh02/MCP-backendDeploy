@@ -27,6 +27,17 @@ export class MCPService {
         
         console.log(`📚 MCPService: Fetching reinforcement history for user ${userId}, course ${courseId}`);
         
+        // Ensure supabase is initialized
+        if (!this.supabase) {
+             console.warn('⚠️ MCPService: SupabaseService not initialized, attempting to get instance');
+             try {
+                 this.supabase = SupabaseService.getInstance();
+             } catch(e) {
+                 console.error('❌ MCPService: Failed to get SupabaseService instance:', e.message);
+                 return [];
+             }
+        }
+
         try {
             const { data: existingRows, error } = await this.supabase.client
                 .from('reinforcement_question_history')
@@ -44,6 +55,7 @@ export class MCPService {
                     }
                 });
             }
+            console.log(`✅ MCPService: Found ${history.length} questions in history for user ${userId} course ${courseId}`);
             return history;
         } catch (error) {
             logger.warn(`Error fetching reinforcement history: ${error.message}`);
