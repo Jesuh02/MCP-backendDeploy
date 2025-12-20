@@ -4681,16 +4681,50 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                         // Try to parse and save the generated questions
                         try {
                             const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
-                            const generatedQuestions = JSON.parse(cleanJson);
+                            let generatedQuestions = JSON.parse(cleanJson);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
-                                // Save to history
-                                if (mcpService) {
-                                     await mcpService.saveReinforcementHistory(userId, courseId, generatedQuestions);
-                                } else {
-                                     await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
+                                
+                                // --- POST-GENERATION FILTERING (STRICT DEDUPLICATION) ---
+                                // Verify against full historyStrings to ensure no duplicates slipped through prompt injection
+                                if (historyStrings && historyStrings.length > 0) {
+                                    console.log('🛡️ Verifying generated questions against history for strict deduplication...');
+                                    
+                                    const historySet = new Set(historyStrings.map(q => 
+                                        typeof q === 'string' ? q.toLowerCase().trim() : ''
+                                    ));
+
+                                    const uniqueQuestions = generatedQuestions.filter(q => {
+                                        const qText = (q.question || q.pregunta || '').toLowerCase().trim();
+                                        // Filter if it matches history OR if it's too similar (exact match logic for now)
+                                        const isDuplicate = historySet.has(qText);
+                                        if (isDuplicate) {
+                                            console.log(`⚠️ Removed duplicate question: "${q.question?.substring(0, 30)}..."`);
+                                        }
+                                        return !isDuplicate;
+                                    });
+
+                                    if (uniqueQuestions.length < generatedQuestions.length) {
+                                        console.log(`♻️ Filtered ${generatedQuestions.length - uniqueQuestions.length} duplicates. New count: ${uniqueQuestions.length}`);
+                                        generatedQuestions = uniqueQuestions;
+                                        
+                                        // Update the final response JSON text to reflect filtered questions
+                                        respuestaFinal = JSON.stringify(generatedQuestions);
+                                    }
                                 }
-                                console.log(`✅ Generated and saved ${generatedQuestions.length} reinforcement questions`);
+                                // --------------------------------------------------------
+
+                                if (generatedQuestions.length > 0) {
+                                    // Save to history
+                                    if (mcpService) {
+                                         await mcpService.saveReinforcementHistory(userId, courseId, generatedQuestions);
+                                    } else {
+                                         await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
+                                    }
+                                    console.log(`✅ Generated and saved ${generatedQuestions.length} unique reinforcement questions`);
+                                } else {
+                                    console.warn('⚠️ All generated questions were duplicates. Returning empty set (client should handle retry).');
+                                }
                             }
                         } catch (parseError) {
                             console.warn('⚠️ Could not parse generated questions for history:', parseError.message);
