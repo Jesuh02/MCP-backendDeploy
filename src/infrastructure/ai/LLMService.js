@@ -78,6 +78,34 @@ export class LLMService {
     async generateResponse(messages, tools = []) {
         if (!this.model) throw new Error("LLM disabled");
 
+        // --- USER REQUESTED LOGGING ---
+        console.log("\n🔍 [LLM REQUEST START] ----------------------------------------");
+        try {
+            const messageLog = messages.map(m => ({
+                role: m.constructor.name,
+                content: m.content,
+                // Truncate very long content for readability, but keep enough to see context
+                contentPreview: m.content.length > 500 ? m.content.substring(0, 500) + "... (truncated)" : m.content
+            }));
+            console.log("INPUT MESSAGES:", JSON.stringify(messageLog, null, 2));
+            
+            // Check for specific files requested by user
+            const fullContent = JSON.stringify(messages);
+            const interestingFiles = [
+                'ReinforcementLearningScreen.kt',
+                'utils/index.js', 
+                'MCPService.js'
+            ];
+            const foundFiles = interestingFiles.filter(f => fullContent.includes(f));
+            if (foundFiles.length > 0) {
+                console.log(`\n!!! 🎯 TARGET FILES DETECTED IN PROMPT: ${foundFiles.join(', ')} !!!\n`);
+            }
+        } catch (e) {
+            console.log("Error logging inputs:", e);
+        }
+        console.log("------------------------------------------------------------\n");
+        // ------------------------------
+
         try {
             // Sanitize messages to avoid DeepSeek API errors
             const sanitizedMessages = this.sanitizeMessages(messages);
@@ -85,6 +113,13 @@ export class LLMService {
             // If no tools, just invoke directly
             if (!tools || tools.length === 0) {
                 const response = await this.model.invoke(sanitizedMessages);
+                
+                // --- USER REQUESTED LOGGING ---
+                console.log("\n📤 [LLM RESPONSE] -------------------------------------------");
+                console.log("OUTPUT CONTENT:", response.content);
+                console.log("------------------------------------------------------------\n");
+                // ------------------------------
+                
                 return response;
             }
 
@@ -96,6 +131,16 @@ export class LLMService {
             });
 
             const response = await modelWithTools.invoke(sanitizedMessages);
+            
+            // --- USER REQUESTED LOGGING ---
+            console.log("\n📤 [LLM RESPONSE (WITH TOOLS)] ------------------------------");
+            console.log("OUTPUT CONTENT:", response.content);
+            if (response.tool_calls && response.tool_calls.length > 0) {
+                console.log("TOOL CALLS:", JSON.stringify(response.tool_calls, null, 2));
+            }
+            console.log("------------------------------------------------------------\n");
+            // ------------------------------
+
             return response;
         } catch (error) {
             console.error("Error generating LLM response:", error);
@@ -106,6 +151,13 @@ export class LLMService {
                 try {
                     const sanitizedMessages = this.sanitizeMessages(messages);
                     const response = await this.model.invoke(sanitizedMessages);
+                    
+                    // --- USER REQUESTED LOGGING ---
+                    console.log("\n📤 [LLM RESPONSE (RETRY)] -----------------------------------");
+                    console.log("OUTPUT CONTENT:", response.content);
+                    console.log("------------------------------------------------------------\n");
+                    // ------------------------------
+                    
                     return response;
                 } catch (retryError) {
                     throw retryError;

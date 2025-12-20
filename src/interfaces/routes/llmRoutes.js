@@ -39,14 +39,16 @@ router.post('/procesar-prompt', async (req, res) => {
                                     let processMsg = "";
 
                                     // DEBUG LOGS FOR PDF DETECTION
-                                    const isPdfName = file.name.toLowerCase().endsWith('.pdf');
-                                    const isPdfMime = fileData.contentType === 'application/pdf';
-                                    console.log(`🔍 DEBUG: File=${file.name}, ContentType=${fileData.contentType}, isPdfName=${isPdfName}, isPdfMime=${isPdfMime}`);
+                                    const rawName = file.name || "";
+                                    const nameLower = rawName.trim().toLowerCase();
+                                    const isPdfName = nameLower.endsWith('.pdf');
+                                    const isPdfMime = (fileData.contentType || '').toLowerCase().includes('pdf');
+                                    console.log(`🔍 DEBUG: Processing file '${rawName}' (Mime: ${fileData.contentType}) -> isPdfName=${isPdfName}, isPdfMime=${isPdfMime}`);
 
                                     // Handle PDF
                                     if (isPdfMime || isPdfName) {
                                         try {
-                                            console.log(`📄 Analizando PDF: ${file.name} (Size: ${fileData.size} bytes)`);
+                                            console.log(`📄 Analizando PDF: ${rawName} (Size: ${fileData.size} bytes)`);
                                             // content is likely base64 for PDFs from R2StorageService
                                             const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
                                             
@@ -54,27 +56,31 @@ router.post('/procesar-prompt', async (req, res) => {
                                             if (pdfBuffer.length === 0) {
                                                 console.warn('⚠️ PDF Buffer is empty!');
                                             } else {
+                                                // Ensure pdf-parse is working
                                                 const pdfData = await pdf(pdfBuffer);
-                                                extractedText = pdfData.text;
+                                                const rawText = pdfData.text;
                                                 
-                                                if (extractedText && extractedText.trim().length > 0) {
+                                                if (rawText && rawText.trim().length > 0) {
+                                                    extractedText = rawText;
                                                     processMsg = `PDF analizado (${extractedText.length} chars)`;
                                                     console.log(`✅ ${processMsg}`);
                                                     // USER REQUESTED CONTENT LOGGING
-                                                    console.log(`📝 CONTENIDO PDF (${file.name} - primeros 2000 chars):\n${extractedText.substring(0, 2000)}...`);
+                                                    console.log(`📝 CONTENIDO PDF (${rawName} - primeros 2000 chars):\n${extractedText.substring(0, 2000)}...`);
                                                 } else {
-                                                    console.warn('⚠️ PDF parsed but returned empty text (scanned PDF?)');
+                                                    console.warn(`⚠️ PDF parsed but returned empty text (scanned PDF?): ${rawName}`);
+                                                    // Try to see if there is any info
+                                                    console.log('PDF Info:', pdfData.info);
                                                 }
                                             }
                                         } catch (e) {
-                                            console.warn(`⚠️ Error al analizar PDF ${file.name}: ${e.message}`);
+                                            console.warn(`⚠️ Error al analizar PDF ${rawName}: ${e.message}`);
                                             console.error(e); // Full stack trace
                                         }
                                     }
                                     // Handle Excel
-                                    else if (fileData.contentType.includes('spreadsheet') || fileData.contentType.includes('excel') || file.name.toLowerCase().match(/\.xlsx?$/)) {
+                                    else if ((fileData.contentType || '').includes('spreadsheet') || (fileData.contentType || '').includes('excel') || nameLower.match(/\.xlsx?$/)) {
                                         try {
-                                            console.log(`📊 Analizando Excel: ${file.name}`);
+                                            console.log(`📊 Analizando Excel: ${rawName}`);
                                             const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
                                             let excelText = "";
                                             for (const sheetName of workbook.SheetNames) {
@@ -88,29 +94,29 @@ router.post('/procesar-prompt', async (req, res) => {
                                             extractedText = excelText;
                                             processMsg = `Excel analizado (${extractedText.length} chars)`;
                                             console.log(`✅ ${processMsg}`);
-                                            console.log(`📝 CONTENIDO EXCEL (${file.name} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+                                            console.log(`📝 CONTENIDO EXCEL (${rawName} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
                                         } catch (e) {
-                                            console.warn(`⚠️ Error al analizar Excel ${file.name}: ${e.message}`);
+                                            console.warn(`⚠️ Error al analizar Excel ${rawName}: ${e.message}`);
                                         }
                                     }
                                     // Handle Text (already handled, but let's consolidate)
                                     else if (!fileData.isBase64) {
                                         extractedText = fileData.content;
                                         processMsg = "Contenido de texto plano";
-                                        console.log(`📝 CONTENIDO TEXTO (${file.name} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+                                        console.log(`📝 CONTENIDO TEXTO (${rawName} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
                                     }
 
                                     if (extractedText) {
                                         // Only include text content. Skip binary/base64 to avoid confusing text-only models.
                                         // Limit content size per file to avoid context window overflow
                                         const contentSnippet = extractedText.substring(0, 15000); 
-                                        augmentedPrompt += `\n\n--- Contenido del archivo: ${file.name} (${fileData.contentType}) ---\n${contentSnippet}`;
+                                        augmentedPrompt += `\n\n--- Contenido del archivo: ${rawName} (${fileData.contentType}) ---\n${contentSnippet}`;
                                         if (extractedText.length > 15000) {
                                             augmentedPrompt += `\n...(contenido truncado, total ${extractedText.length} chars)...`;
                                         }
                                     } else {
-                                        console.log(`ℹ️ Archivo ${file.name} es binario o no textual, solo referencia añadida`);
-                                        augmentedPrompt += `\n\n--- Archivo adjunto: ${file.name} (${fileData.contentType}) [Contenido binario no incluido] ---`;
+                                        console.log(`ℹ️ Archivo ${rawName} es binario o no textual, solo referencia añadida. (isPdf=${isPdfName}, isExcel=${nameLower.match(/\.xlsx?$/)})`);
+                                        augmentedPrompt += `\n\n--- Archivo adjunto: ${rawName} (${fileData.contentType}) [Contenido binario no incluido] ---`;
                                     }
                                 }
                             } catch (e) {
