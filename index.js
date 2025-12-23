@@ -1947,7 +1947,7 @@ async function sendEmailNotification(userId, subject, text) {
                         <td class="header" style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); padding: 40px 30px; text-align: center;">
                             <div class="logo-container">
                                 <h1 class="brand-name" style="font-size: 36px; font-weight: 700; color: #ffffff; letter-spacing: -1px; margin: 0 0 8px 0;">
-                                    📚 YisusCompany
+                                    📚 CourseV
                                 </h1>
                                 <p class="brand-tagline" style="font-size: 14px; color: rgba(255,255,255,0.9); margin: 0; font-weight: 500;">
                                     Tu plataforma de aprendizaje inteligente
