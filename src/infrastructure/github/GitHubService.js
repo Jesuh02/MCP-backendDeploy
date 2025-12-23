@@ -82,7 +82,7 @@ export class GitHubService {
     async makeRequest(endpoint, options = {}) {
         const headers = {
             'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': 'CourseV-MCP-Server'
+            'User-Agent': 'YisusCompany-MCP-Server'
         };
 
         if (this.token) {

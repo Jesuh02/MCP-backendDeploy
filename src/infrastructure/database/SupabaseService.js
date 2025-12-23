@@ -482,7 +482,7 @@ CREATE TABLE public.videos (
             const schema = await this.getDatabaseSchema();
 
             // Build context string
-            let context = '# CourseV Database Context\n\n';
+            let context = '# YisusCompany Database Context\n\n';
             context += '## Available Tables:\n\n';
 
             for (const [table, info] of Object.entries(schema)) {

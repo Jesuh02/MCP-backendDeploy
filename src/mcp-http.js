@@ -55,7 +55,7 @@ app.get('/health', async(req, res) => {
 
         res.json({
             status: 'ok',
-            server: 'CourseV by YisusFactory MCP Server',
+            server: 'YisusCompany by YisusFactory MCP Server',
             version: '1.0.0',
             timestamp: new Date().toISOString(),
             services: {
@@ -128,7 +128,7 @@ app.post('/tools/list', async(req, res) => {
         result: {
             tools: [{
                     name: 'query_database',
-                    description: `Execute queries on the CourseV by YisusFactory Supabase database. Returns real-time data.
+                    description: `Execute queries on the YisusCompany by YisusFactory Supabase database. Returns real-time data.
 
 **CAPABILITIES:**
 - Execute RAW PostgreSQL/SQL queries directly (SELECT, INSERT, UPDATE, DELETE)

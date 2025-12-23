@@ -49,7 +49,7 @@ const MAX_TOKENS = 4096;
 app.get('/health', (req, res) => {
     res.status(200).json({
         status: 'ok',
-        server: 'coursev-mcp-server',
+        server: 'yisuscompany-mcp-server',
         version: '1.0.0',
         timestamp: new Date().toISOString(),
         uptime: process.uptime()
@@ -387,7 +387,7 @@ let r2Client = null;
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '';
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '';
-const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'coursev-files';
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'yisuscompany-files';
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || 'https://pub-9f393625246c4018b5613be60b01bda1.r2.dev';
 
 if (R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY) {
@@ -621,7 +621,7 @@ async function getSubmissionFileContent(fileUri, fileName, submissionId = null) 
                 responseType: 'arraybuffer',
                 timeout: 60000,
                 headers: {
-                    'User-Agent': 'CourseV-MCP-Server/1.0',
+                    'User-Agent': 'YisusCompany-MCP-Server/1.0',
                     'Accept': '*/*'
                 }
             });
@@ -658,7 +658,7 @@ async function getSubmissionFileContent(fileUri, fileName, submissionId = null) 
                 responseType: 'arraybuffer',
                 timeout: 30000,
                 headers: {
-                    'User-Agent': 'CourseV-MCP-Server/1.0'
+                    'User-Agent': 'YisusCompany-MCP-Server/1.0'
                 }
             });
 
@@ -1235,12 +1235,12 @@ function generateGradeEmailHTML(studentName, taskName, grade, feedback, gradedBy
             </p>
             
             <div style="text-align: center;">
-                <a href="#" class="cta-button">Ver detalles en CourseV</a>
+                <a href="#" class="cta-button">Ver detalles en YisusCompany</a>
             </div>
         </div>
         
         <div class="footer">
-            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p>Este email fue enviado por <span class="brand">YisusCompany</span></p>
             <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
         </div>
     </div>
@@ -1366,12 +1366,12 @@ function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, newGrad
             </div>
             
             <div style="text-align: center; margin-top: 24px;">
-                <a href="#" class="cta-button">Ver detalles en CourseV</a>
+                <a href="#" class="cta-button">Ver detalles en YisusCompany</a>
             </div>
         </div>
         
         <div class="footer">
-            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p>Este email fue enviado por <span class="brand">YisusCompany</span></p>
             <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
         </div>
     </div>
@@ -1435,7 +1435,7 @@ function generateNewCourseEmailHTML(userName, creatorUsername, courseTitle, thum
         </div>
         
         <div class="footer">
-            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p>Este email fue enviado por <span class="brand">YisusCompany</span></p>
             <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
         </div>
     </div>
@@ -1492,13 +1492,13 @@ function generateGenericEmailHTML(title, message, type, senderUsername) {
             
             <div style="text-align: center;">
                 <a href="#" class="cta-button" style="background: ${config.gradient};">
-                    Abrir en CourseV
+                    Abrir en YisusCompany
                 </a>
             </div>
         </div>
         
         <div class="footer">
-            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p>Este email fue enviado por <span class="brand">YisusCompany</span></p>
             <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
         </div>
     </div>
@@ -1703,7 +1703,7 @@ async function sendEmailNotification(userId, subject, text) {
 
         console.log(`📧 Preparando email para: ${userEmail}`);
 
-        // 🎬 Template de email con animación Lottie y diseño moderno CourseV
+        // 🎬 Template de email con animación Lottie y diseño moderno YisusCompany
         const htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
@@ -1947,7 +1947,7 @@ async function sendEmailNotification(userId, subject, text) {
                         <td class="header" style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); padding: 40px 30px; text-align: center;">
                             <div class="logo-container">
                                 <h1 class="brand-name" style="font-size: 36px; font-weight: 700; color: #ffffff; letter-spacing: -1px; margin: 0 0 8px 0;">
-                                    📚 CourseV
+                                    📚 YisusCompany
                                 </h1>
                                 <p class="brand-tagline" style="font-size: 14px; color: rgba(255,255,255,0.9); margin: 0; font-weight: 500;">
                                     Tu plataforma de aprendizaje inteligente
@@ -1965,10 +1965,10 @@ async function sendEmailNotification(userId, subject, text) {
                             <v:textbox inset="0,0,0,0">
                             <![endif]-->
                             <div style="max-width: 540px; width: 100%; margin: 0 auto; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2);">
-                                <!-- GIF animado de CourseV desde R2 -->
+                                <!-- GIF animado de YisusCompany desde R2 -->
                                 <img 
                                     src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/88a385d4fe0ce2a8dfea2d0ae4677174.gif"
-                                    alt="CourseV - Plataforma de Aprendizaje"
+                                    alt="YisusCompany - Plataforma de Aprendizaje"
                                     width="540"
                                     style="width: 100%; max-width: 540px; height: auto; display: block; border-radius: 16px; border: 0;"
                                 />
@@ -1998,8 +1998,8 @@ async function sendEmailNotification(userId, subject, text) {
                             
                             <!-- CTA Button -->
                             <div style="text-align: center; margin: 30px 0;">
-                                <a href="https://coursev-app.yisuscompany.com/app-link?action=chat" class="cta-button" style="display: inline-block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 12px; font-weight: 600; font-size: 16px;">
-                                    🚀 Abrir CourseV
+                                <a href="https://yisuscompany-app.yisuscompany.com/app-link?action=chat" class="cta-button" style="display: inline-block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 12px; font-weight: 600; font-size: 16px;">
+                                    🚀 Abrir YisusCompany
                                 </a>
                             </div>
                             
@@ -2042,10 +2042,10 @@ async function sendEmailNotification(userId, subject, text) {
                     <tr>
                         <td class="footer" style="background: #0f172a; padding: 30px; text-align: center;">
                             <div class="footer-brand" style="font-size: 20px; font-weight: 700; color: #6366f1; margin-bottom: 16px;">
-                                📚 CourseV
+                                📚 YisusCompany
                             </div>
                             <p class="footer-text" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0;">
-                                Este es un mensaje automático de CourseV
+                                Este es un mensaje automático de YisusCompany
                             </p>
                             <p style="font-size: 12px; color: #475569; margin: 0;">
                                 © ${new Date().getFullYear()} CourseV by YisusCompany. Todos los derechos reservados.
