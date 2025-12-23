@@ -37,7 +37,7 @@ const fileFormat = winston.format.combine(
 export const logger = winston.createLogger({
   level: LOG_LEVEL,
   format: fileFormat,
-  defaultMeta: { service: 'CourseV-mcp-server' },
+  defaultMeta: { service: 'YisusCompany-mcp-server' },
   transports: [
     // Console transport
     new winston.transports.Console({
