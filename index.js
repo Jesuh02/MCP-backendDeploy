@@ -1386,7 +1386,7 @@ function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, newGrad
 function generateNewCourseEmailHTML(userName, creatorUsername, courseTitle, thumbnailUrl) {
     const thumbnailSection = thumbnailUrl ? `
             <div style="text-align: center; margin: 24px 0;">
-                <img src="${thumbnailUrl}" alt="Thumbnail del curso" style="max-width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                <img src="${thumbnailUrl}" alt="" aria-hidden="true" role="presentation" style="max-width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
             </div>
             ` : '';
     
@@ -1968,7 +1968,7 @@ async function sendEmailNotification(userId, subject, text) {
                                 <!-- GIF animado de YisusCompany desde R2 -->
                                 <img 
                                     src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/88a385d4fe0ce2a8dfea2d0ae4677174.gif"
-                                    alt="CourseV - Plataforma de Aprendizaje"
+                                    alt="" aria-hidden="true" role="presentation"
                                     width="540"
                                     style="width: 100%; max-width: 540px; height: auto; display: block; border-radius: 16px; border: 0;"
                                 />
