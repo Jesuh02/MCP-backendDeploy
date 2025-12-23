@@ -97,7 +97,7 @@ app.post('/initialize', async(req, res) => {
                     }
                 },
                 serverInfo: {
-                    name: 'CourseV by YisusFactory MCP Server',
+                    name: 'YisusCompany by YisusFactory MCP Server',
                     version: '1.0.0'
                 }
             }
@@ -397,7 +397,7 @@ app.post('/tools/call', async(req, res) => {
  * Start server
  */
 async function main() {
-    console.log('🚀 CourseV by YisusFactory MCP Server starting in HTTP mode...');
+    console.log('🚀 YisusCompany by YisusFactory MCP Server starting in HTTP mode...');
     console.log('📊 Connecting to Supabase...');
 
     try {
