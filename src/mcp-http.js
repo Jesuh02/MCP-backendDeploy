@@ -55,7 +55,7 @@ app.get('/health', async(req, res) => {
 
         res.json({
             status: 'ok',
-            server: 'tareamov-mcp-server',
+            server: 'CourseV by YisusFactory MCP Server',
             version: '1.0.0',
             timestamp: new Date().toISOString(),
             services: {
@@ -97,7 +97,7 @@ app.post('/initialize', async(req, res) => {
                     }
                 },
                 serverInfo: {
-                    name: 'tareamov-mcp-server',
+                    name: 'CourseV by YisusFactory MCP Server',
                     version: '1.0.0'
                 }
             }
@@ -128,7 +128,7 @@ app.post('/tools/list', async(req, res) => {
         result: {
             tools: [{
                     name: 'query_database',
-                    description: `Execute queries on the TareaMov Supabase database. Returns real-time data.
+                    description: `Execute queries on the CourseV by YisusFactory Supabase database. Returns real-time data.
 
 **CAPABILITIES:**
 - Execute RAW PostgreSQL/SQL queries directly (SELECT, INSERT, UPDATE, DELETE)
@@ -397,7 +397,7 @@ app.post('/tools/call', async(req, res) => {
  * Start server
  */
 async function main() {
-    console.log('🚀 TareaMov MCP Server starting in HTTP mode...');
+    console.log('🚀 CourseV by YisusFactory MCP Server starting in HTTP mode...');
     console.log('📊 Connecting to Supabase...');
 
     try {
