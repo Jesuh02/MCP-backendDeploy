@@ -17,7 +17,7 @@ const router = express.Router();
 router.get('/', (req, res) => {
   res.json({
     status: 'healthy',
-    service: 'TareaMov MCP Server',
+    service: 'CourseV MCP Server',
     version: '2.0.0',
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
@@ -43,11 +43,11 @@ router.get('/status', async (req, res, next) => {
     const memoryUsage = process.memoryUsage();
     
     const status = {
-      status: 'healthy',
-      service: 'TareaMov MCP Server',
-      version: '2.0.0',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
+    status: 'healthy',
+    service: 'CourseV MCP Server',
+    version: '2.0.0',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
       components: {
         supabase: supabaseHealth,
         cache: {

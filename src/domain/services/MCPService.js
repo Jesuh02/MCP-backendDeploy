@@ -479,7 +479,7 @@ export class MCPService {
                 if (!requiresData) {
                     // Simple conversational query - no SQL needed
                     const messages = [
-                        new SystemMessage(`You are a helpful assistant for TareaMov platform. Answer in Spanish.`),
+                        new SystemMessage(`You are a helpful assistant for CourseV platform. Answer in Spanish.`),
                         new HumanMessage(query)
                     ];
                     const response = await this.llmService.generateResponse(messages, []);
@@ -1107,7 +1107,7 @@ A continuación se muestra el contenido del repositorio para análisis:`;
     buildMarketingSummary(snapshot) {
         const lines = [];
 
-        lines.push('# 📊 Análisis Completo de Marketing e Inteligencia de Negocio - TareaMov\n');
+        lines.push('# 📊 Análisis Completo de Marketing e Inteligencia de Negocio - CourseV\n');
         lines.push(`**Fecha de análisis:** ${new Date(snapshot.generated_at).toLocaleString('es-ES')}`);
         lines.push(`**Pregunta original:** ${snapshot.query}`);
         lines.push(`**Fuente de datos:** Supabase (real-time)\n`);
@@ -1117,7 +1117,7 @@ A continuación se muestra el contenido del repositorio para análisis:`;
         if (snapshot.summary && snapshot.summary.length > 0) {
             snapshot.summary.forEach(item => lines.push(`- ${item}`));
         } else {
-            lines.push('- Análisis de datos del sistema TareaMov para fundamentar estrategia de marketing');
+            lines.push('- Análisis de datos del sistema CourseV para fundamentar estrategia de marketing');
             lines.push('- Objetivo: Identificar oportunidades de crecimiento, engagement y monetización');
         }
         lines.push('- **Resultado esperado:** Dashboard ejecutivo con KPIs clave y plan de acción accionable\n');
