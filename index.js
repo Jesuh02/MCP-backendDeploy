@@ -2048,7 +2048,7 @@ async function sendEmailNotification(userId, subject, text) {
                                 Este es un mensaje automático de YisusCompany
                             </p>
                             <p style="font-size: 12px; color: #475569; margin: 0;">
-                                © ${new Date().getFullYear()} CourseV by YisusCompany. Todos los derechos reservados.
+                                © ${new Date().getFullYear()} YisusCompany. Todos los derechos reservados.
                             </p>
                             
                             <div class="footer-links" style="margin-top: 20px;">
@@ -2056,7 +2056,7 @@ async function sendEmailNotification(userId, subject, text) {
                                     yisuscompany.com
                                 </a>
                                 <span style="color: #475569;">|</span>
-                                <a href="mailto:coursev@yisuscompany.com" class="footer-link" style="color: #6366f1; text-decoration: none; font-size: 13px; margin: 0 12px;">
+                                <a href="mailto:yisuscompany@yisuscompany.com" class="footer-link" style="color: #6366f1; text-decoration: none; font-size: 13px; margin: 0 12px;">
                                     Contacto
                                 </a>
                             </div>
@@ -2069,7 +2069,7 @@ async function sendEmailNotification(userId, subject, text) {
                     <tr>
                         <td style="text-align: center; color: #475569; font-size: 11px; padding: 10px;">
                             <p style="margin: 0;">
-                                Recibiste este correo porque eres usuario de CourseV.
+                                Recibiste este correo porque eres usuario de YisusCompany.
                             </p>
                             <p style="margin: 8px 0 0 0;">
                                 <a href="#" style="color: #6366f1; text-decoration: none;">Cancelar suscripción</a>
@@ -2089,8 +2089,8 @@ async function sendEmailNotification(userId, subject, text) {
 
             // ✅ Usar dominio verificado yisuscompany.com
             // Dominio verificado en https://resend.com/domains
-            const fromEmail = 'CourseV@yisuscompany.com';
-            const fromName = 'CourseV'; // Nombre que aparece en el cliente de email
+            const fromEmail = 'YisusCompany@yisuscompany.com';
+            const fromName = 'YisusCompany'; // Nombre que aparece en el cliente de email
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
@@ -2099,7 +2099,7 @@ async function sendEmailNotification(userId, subject, text) {
                     subject: `📚 ${subject}`,
                     html: htmlContent,
                     headers: {
-                        'X-Entity-Ref-ID': `coursev-${Date.now()}`,
+                        'X-Entity-Ref-ID': `yisuscompany-${Date.now()}`,
                         'List-Unsubscribe': '<mailto:unsubscribe@yisuscompany.com>'
                     }
                 }, {
@@ -2117,7 +2117,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log('🔄 Reintentando envío de email...');
                 try {
                     const fallbackResponse = await axios.post('https://api.resend.com/emails', {
-                        from: 'CourseV <CourseV@yisuscompany.com>',
+                        from: 'YisusCompany <YisusCompany@yisuscompany.com>',
                         to: [userEmail],
                         subject: `📚 ${subject}`,
                         html: htmlContent
@@ -2145,8 +2145,8 @@ async function sendEmailNotification(userId, subject, text) {
                     subject: `📚 ${subject}`
                 }],
                 from: { 
-                    email: process.env.SENDGRID_FROM_EMAIL || 'coursev@yisuscompany.com',
-                    name: 'CourseV'
+                    email: process.env.SENDGRID_FROM_EMAIL || 'yisuscompany@yisuscompany.com',
+                    name: 'YisusCompany'
                 },
                 content: [{
                     type: 'text/html',
@@ -2176,7 +2176,7 @@ async function sendEmailNotification(userId, subject, text) {
             });
 
             const info = await transporter.sendMail({
-                from: `"CourseV" <${process.env.GMAIL_USER}>`,
+                from: `"YisusCompany" <${process.env.GMAIL_USER}>`,
                 to: userEmail,
                 subject: `📚 ${subject}`,
                 text: text,
@@ -2863,7 +2863,7 @@ app.get('/', (req, res) => {
 /**
  * Smart link handler: Detecta si la app está instalada y redirige o descarga APK
  * GET /app-link?userId=XXX
- * - Si el usuario tiene la app instalada: redirige al deep link (CourseV://...)
+ * - Si el usuario tiene la app instalada: redirige al deep link (YisusCompany://...)
  * - Si NO tiene la app: descarga automáticamente el APK
  */
 app.get('/app-link', async(req, res) => {
@@ -2874,7 +2874,7 @@ app.get('/app-link', async(req, res) => {
     }
 
     // Construir deep link para la app
-    const deepLink = `CourseV://${action}?userId=${userId}`;
+    const deepLink = `YisusCompany://${action}?userId=${userId}`;
     const apkUrl = `${req.protocol}://${req.get('host')}/download-apk`;
 
     // Página HTML que detecta si la app está instalada
@@ -2884,7 +2884,7 @@ app.get('/app-link', async(req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Abriendo CourseV by YisusFactory...</title>
+    <title>Abriendo YisusCompany...</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -2953,12 +2953,12 @@ app.get('/app-link', async(req, res) => {
     <div class="container">
         <div class="logo">📱</div>
         <div id="opening">
-            <h1>Abriendo CourseV by YisusFactory</h1>
+            <h1>Abriendo YisusCompany</h1>
             <p>Redirigiendo a la aplicación...</p>
             <div class="spinner"></div>
         </div>
         <div id="download" class="hidden">
-            <h1>Descarga CourseV by YisusFactory</h1>
+            <h1>Descarga YisusCompany</h1>
             <p>La aplicación no está instalada en tu dispositivo</p>
             <a href="${apkUrl}" class="btn">📥 Descargar APK</a>
             <p style="margin-top: 20px; font-size: 14px;">La descarga comenzará automáticamente en 3 segundos...</p>
@@ -3012,7 +3012,7 @@ app.get('/app-link', async(req, res) => {
 });
 
 /**
- * Descarga el APK de CourseV by YisusFactory
+ * Descarga el APK de YisusCompany
  * GET /download-apk
  */
 app.get('/download-apk', (req, res) => {
@@ -3060,7 +3060,7 @@ app.get('/download-apk', (req, res) => {
 
     // Configurar headers para descarga
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition', 'attachment; filename="CourseV.apk"');
+    res.setHeader('Content-Disposition', 'attachment; filename="YisusCompany.apk"');
 
     // Enviar el archivo
     res.sendFile(apkPath, { root: __dirname }, (err) => {
@@ -3151,7 +3151,7 @@ app.post('/notify-course-creation', async(req, res) => {
                 // Send email with Resend - Plantilla profesional
                 if (user.email) {
                     try {
-                        const senderEmail = 'CourseV@yisuscompany.com';
+                        const senderEmail = 'YisusCompany@yisuscompany.com';
                         const emailHTML = generateNewCourseEmailHTML(
                             user.username,
                             creatorUsername,
@@ -3160,7 +3160,7 @@ app.post('/notify-course-creation', async(req, res) => {
                         );
                         
                         await axios.post('https://api.resend.com/emails', {
-                            from: `CourseV <${senderEmail}>`,
+                            from: `YisusCompany <${senderEmail}>`,
                             to: user.email,
                             subject: `📚 ¡${creatorUsername} publicó un nuevo curso!`,
                             html: emailHTML
@@ -3282,7 +3282,7 @@ app.post('/notify-grade', async(req, res) => {
                 const RESEND_API_KEY = process.env.RESEND_API_KEY;
                 if (RESEND_API_KEY) {
                     await axios.post('https://api.resend.com/emails', {
-                        from: 'CourseV <CourseV@yisuscompany.com>',
+                        from: 'YisusCompany <YisusCompany@yisuscompany.com>',
                         to: student.email,
                         subject: emailSubject,
                         html: emailHTML
@@ -3495,7 +3495,7 @@ app.post('/notify-chat-response', async(req, res) => {
 
         // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
         // Solo notificar que hay una respuesta disponible
-        const emailSubject = 'Nueva respuesta disponible - CourseV';
+        const emailSubject = 'Nueva respuesta disponible - YisusCompany';
 
         // Smart link que detecta si la app está instalada o descarga el APK
         const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
@@ -3506,7 +3506,7 @@ Tu consulta ha sido procesada por nuestro asistente de inteligencia artificial y
 
 Por razones de seguridad, la respuesta completa solo está disponible dentro de la aplicación móvil.
 
-Para ver tu respuesta, accede a la aplicación CourseV:
+Para ver tu respuesta, accede a la aplicación YisusCompany:
 ${smartLink}
 
 Información de seguridad:
@@ -3517,7 +3517,7 @@ Información de seguridad:
 Si no solicitaste esta consulta, por favor ignora este mensaje.
 
 Saludos cordiales,
-Equipo CourseV
+Equipo YisusCompany
 Plataforma Educativa`;
 
         // Enviar email usando la función existente
@@ -3599,7 +3599,7 @@ app.post('/send-push-notification', async(req, res) => {
                             defaultSound: true,
                             defaultVibrateTimings: true,
                             defaultLightSettings: true,
-                            color: '#6366f1', // Indigo color (CourseV brand)
+                            color: '#6366f1', // Indigo color (YisusCompany brand)
                             icon: 'ic_notification',
                             clickAction: 'OPEN_CHAT'
                         }
@@ -3765,7 +3765,7 @@ app.post('/send-notification', async(req, res) => {
                 console.log(`📧 Enviando email a: ${userEmail}`);
 
                 // Crear contenido del email usando plantilla profesional
-                let emailSubject = title || '📢 Nueva notificación en CourseV';
+                let emailSubject = title || '📢 Nueva notificación en YisusCompany';
                 
                 // Generar HTML profesional usando la plantilla genérica
                 const emailHTML = generateGenericEmailHTML(title, message, type, senderUsername);
@@ -3794,7 +3794,7 @@ app.post('/send-notification', async(req, res) => {
                 // Enviar con Resend API
                 const RESEND_API_KEY = process.env.RESEND_API_KEY;
                 if (RESEND_API_KEY) {
-                    const fromEmail = 'CourseV <CourseV@yisuscompany.com>';
+                    const fromEmail = 'YisusCompany <YisusCompany@yisuscompany.com>';
                     
                     const emailResponse = await fetch('https://api.resend.com/emails', {
                         method: 'POST',
@@ -4451,7 +4451,7 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                     if (targetUserId) {
                         // Enviar correo
                         console.log(`📧 Enviando correo a ID: ${targetUserId}`);
-                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de CourseV', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
+                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de YisusCompany', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
 
                         // Responder al usuario
                         const respuestaExito = `✅ Correo enviado exitosamente a ${cmd.target_type === 'me' ? 'tu dirección de email' : cmd.target_name}.\n\n**Asunto:** ${cmd.subject}\n**Mensaje:** ${cmd.body}`;
@@ -5638,9 +5638,9 @@ app.post('/mcp/message', async(req, res) => {
                         resources: { subscribe: true, listChanged: true }
                     },
                     serverInfo: {
-                            name: 'CourseV-mcp-server',
+                            name: 'YisusCompany-mcp-server',
                             version: '1.0.0',
-                            description: 'MCP Server for CourseV - Course Management Platform'
+                            description: 'MCP Server for YisusCompany - Course Management Platform'
                         }
                 };
                 break;
@@ -5655,7 +5655,7 @@ app.post('/mcp/message', async(req, res) => {
                     tools: [
                         {
                             name: 'query_database',
-                            description: 'Execute queries on CourseV Supabase database. Returns real-time data.',
+                            description: 'Execute queries on YisusCompany Supabase database. Returns real-time data.',
                             inputSchema: {
                                 type: 'object',
                                 properties: { query: { type: 'string', description: 'SQL or natural language query' } },
@@ -5724,8 +5724,8 @@ app.post('/mcp/message', async(req, res) => {
             case 'resources/list':
                 result = {
                     resources: [
-                        { uri: 'CourseV://database/schema', name: 'Database Schema', mimeType: 'application/json' },
-                        { uri: 'CourseV://database/stats', name: 'Database Statistics', mimeType: 'application/json' }
+                        { uri: 'YisusCompany://database/schema', name: 'Database Schema', mimeType: 'application/json' },
+                        { uri: 'YisusCompany://database/stats', name: 'Database Statistics', mimeType: 'application/json' }
                     ]
                 };
                 break;
@@ -5794,9 +5794,9 @@ app.post('/mcp', async(req, res) => {
                         resources: { subscribe: true, listChanged: true }
                     },
                     serverInfo: {
-                        name: 'CourseV-mcp-server',
+                        name: 'YisusCompany-mcp-server',
                         version: '1.0.0',
-                        description: 'MCP Server for CourseV - Course Management Platform'
+                        description: 'MCP Server for YisusCompany - Course Management Platform'
                     }
                 };
                 break;
@@ -5806,7 +5806,7 @@ app.post('/mcp', async(req, res) => {
                     tools: [
                         {
                             name: 'query_database',
-                            description: 'Execute queries on CourseV Supabase database. Returns real-time data from usuarios, courses, videos, tasks, subscriptions, etc.',
+                            description: 'Execute queries on YisusCompany Supabase database. Returns real-time data from usuarios, courses, videos, tasks, subscriptions, etc.',
                             inputSchema: {
                                 type: 'object',
                                 properties: {
@@ -5900,13 +5900,13 @@ app.post('/mcp', async(req, res) => {
                 result = {
                     resources: [
                         {
-                            uri: 'CourseV://database/schema',
+                            uri: 'YisusCompany://database/schema',
                             name: 'Database Schema',
-                            description: 'Complete CourseV database schema',
+                            description: 'Complete YisusCompany database schema',
                             mimeType: 'application/json'
                         },
                         {
-                            uri: 'CourseV://database/stats',
+                            uri: 'YisusCompany://database/stats',
                             name: 'Database Statistics',
                             description: 'Current database statistics (users, courses, tasks, etc.)',
                             mimeType: 'application/json'
@@ -5998,12 +5998,12 @@ async function handleMCPToolCall(toolName, args) {
 async function handleMCPResourceRead(uri) {
     console.log(`📖 MCP Resource Read: ${uri}`);
 
-    if (uri === 'CourseV://database/schema') {
+    if (uri === 'YisusCompany://database/schema') {
         const schema = await getDatabaseSchema();
         return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(schema, null, 2) }] };
     }
 
-    if (uri === 'CourseV://database/stats') {
+    if (uri === 'YisusCompany://database/stats') {
         const stats = await getDatabaseStats();
         return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(stats, null, 2) }] };
     }
@@ -6262,7 +6262,7 @@ app.get('/health/detailed', async(req, res) => {
 
         res.json({
             status: 'ok',
-            server: 'coursev-mcp-server',
+            server: 'YisusCompany-mcp-server',
             version: '1.0.0',
             timestamp: new Date().toISOString(),
             uptime: process.uptime(),
@@ -6305,7 +6305,7 @@ app.post('/initialize', async(req, res) => {
                     }
                 },
                 serverInfo: {
-                    name: 'CourseV-mcp-server',
+                    name: 'YisusCompany-mcp-server',
                     version: '1.0.0'
                 }
             }
@@ -6336,7 +6336,7 @@ app.post('/tools/list', async(req, res) => {
         result: {
             tools: [{
                     name: 'query_database',
-                    description: `Execute queries on the CourseV Supabase database. Returns real-time data.
+                    description: `Execute queries on the YisusCompany Supabase database. Returns real-time data.
 
 **CAPABILITIES:**
 - Execute RAW PostgreSQL/SQL queries directly (SELECT, INSERT, UPDATE, DELETE)
