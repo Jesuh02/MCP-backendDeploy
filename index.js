@@ -1235,13 +1235,13 @@ function generateGradeEmailHTML(studentName, taskName, grade, feedback, gradedBy
             </p>
             
             <div style="text-align: center;">
-                <a href="#" class="cta-button">Ver detalles en YisusCompany</a>
+                <a href="#" class="cta-button">Ver detalles en CourseV</a>
             </div>
         </div>
         
         <div class="footer">
-            <p>Este email fue enviado por <span class="brand">YisusCompany</span></p>
-            <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2025 CourseV. Todos los derechos reservados.</p>
         </div>
     </div>
 </body>
@@ -1366,13 +1366,13 @@ function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, newGrad
             </div>
             
             <div style="text-align: center; margin-top: 24px;">
-                <a href="#" class="cta-button">Ver detalles en YisusCompany</a>
+                <a href="#" class="cta-button">Ver detalles en CourseV</a>
             </div>
         </div>
         
         <div class="footer">
-            <p>Este email fue enviado por <span class="brand">YisusCompany</span></p>
-            <p style="margin-top: 8px;">© 2025 YisusCompany. Todos los derechos reservados.</p>
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2025 CourseV. Todos los derechos reservados.</p>
         </div>
     </div>
 </body>
@@ -1968,7 +1968,7 @@ async function sendEmailNotification(userId, subject, text) {
                                 <!-- GIF animado de YisusCompany desde R2 -->
                                 <img 
                                     src="https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/videos/88a385d4fe0ce2a8dfea2d0ae4677174.gif"
-                                    alt="YisusCompany - Plataforma de Aprendizaje"
+                                    alt="CourseV - Plataforma de Aprendizaje"
                                     width="540"
                                     style="width: 100%; max-width: 540px; height: auto; display: block; border-radius: 16px; border: 0;"
                                 />
@@ -1999,7 +1999,7 @@ async function sendEmailNotification(userId, subject, text) {
                             <!-- CTA Button -->
                             <div style="text-align: center; margin: 30px 0;">
                                 <a href="https://yisuscompany-app.yisuscompany.com/app-link?action=chat" class="cta-button" style="display: inline-block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 12px; font-weight: 600; font-size: 16px;">
-                                    🚀 Abrir YisusCompany
+                                    🚀 Abrir CourseV
                                 </a>
                             </div>
                             
@@ -2041,14 +2041,14 @@ async function sendEmailNotification(userId, subject, text) {
                     <!-- Footer -->
                     <tr>
                         <td class="footer" style="background: #0f172a; padding: 30px; text-align: center;">
-                            <div class="footer-brand" style="font-size: 20px; font-weight: 700; color: #6366f1; margin-bottom: 16px;">
-                                📚 YisusCompany
+                                <div class="footer-brand" style="font-size: 20px; font-weight: 700; color: #6366f1; margin-bottom: 16px;">
+                                📚 CourseV
                             </div>
                             <p class="footer-text" style="font-size: 13px; color: #64748b; margin: 0 0 8px 0;">
-                                Este es un mensaje automático de YisusCompany
+                                Este es un mensaje automático de CourseV
                             </p>
                             <p style="font-size: 12px; color: #475569; margin: 0;">
-                                © ${new Date().getFullYear()} YisusCompany. Todos los derechos reservados.
+                                © ${new Date().getFullYear()} CourseV. Todos los derechos reservados.
                             </p>
                             
                             <div class="footer-links" style="margin-top: 20px;">
@@ -2069,7 +2069,7 @@ async function sendEmailNotification(userId, subject, text) {
                     <tr>
                         <td style="text-align: center; color: #475569; font-size: 11px; padding: 10px;">
                             <p style="margin: 0;">
-                                Recibiste este correo porque eres usuario de YisusCompany.
+                                Recibiste este correo porque eres usuario de CourseV.
                             </p>
                             <p style="margin: 8px 0 0 0;">
                                 <a href="#" style="color: #6366f1; text-decoration: none;">Cancelar suscripción</a>
@@ -2090,7 +2090,7 @@ async function sendEmailNotification(userId, subject, text) {
             // ✅ Usar dominio verificado yisuscompany.com
             // Dominio verificado en https://resend.com/domains
             const fromEmail = 'YisusCompany@yisuscompany.com';
-            const fromName = 'YisusCompany'; // Nombre que aparece en el cliente de email
+            const fromName = 'CourseV'; // Nombre que aparece en el cliente de email
             
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
@@ -2117,7 +2117,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log('🔄 Reintentando envío de email...');
                 try {
                     const fallbackResponse = await axios.post('https://api.resend.com/emails', {
-                        from: 'YisusCompany <YisusCompany@yisuscompany.com>',
+                        from: 'CourseV <YisusCompany@yisuscompany.com>',
                         to: [userEmail],
                         subject: `📚 ${subject}`,
                         html: htmlContent
@@ -3495,7 +3495,7 @@ app.post('/notify-chat-response', async(req, res) => {
 
         // 🔒 SEGURIDAD: NO incluir datos sensibles en el email
         // Solo notificar que hay una respuesta disponible
-        const emailSubject = 'Nueva respuesta disponible - YisusCompany';
+        const emailSubject = 'Nueva respuesta disponible - CourseV';
 
         // Smart link que detecta si la app está instalada o descarga el APK
         const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
@@ -3506,7 +3506,7 @@ Tu consulta ha sido procesada por nuestro asistente de inteligencia artificial y
 
 Por razones de seguridad, la respuesta completa solo está disponible dentro de la aplicación móvil.
 
-Para ver tu respuesta, accede a la aplicación YisusCompany:
+    Para ver tu respuesta, accede a la aplicación CourseV:
 ${smartLink}
 
 Información de seguridad:
@@ -3517,7 +3517,7 @@ Información de seguridad:
 Si no solicitaste esta consulta, por favor ignora este mensaje.
 
 Saludos cordiales,
-Equipo YisusCompany
+    Equipo CourseV
 Plataforma Educativa`;
 
         // Enviar email usando la función existente
@@ -3765,7 +3765,7 @@ app.post('/send-notification', async(req, res) => {
                 console.log(`📧 Enviando email a: ${userEmail}`);
 
                 // Crear contenido del email usando plantilla profesional
-                let emailSubject = title || '📢 Nueva notificación en YisusCompany';
+                let emailSubject = title || '📢 Nueva notificación en CourseV';
                 
                 // Generar HTML profesional usando la plantilla genérica
                 const emailHTML = generateGenericEmailHTML(title, message, type, senderUsername);
@@ -4451,7 +4451,7 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                     if (targetUserId) {
                         // Enviar correo
                         console.log(`📧 Enviando correo a ID: ${targetUserId}`);
-                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de YisusCompany', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
+                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de CourseV', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
 
                         // Responder al usuario
                         const respuestaExito = `✅ Correo enviado exitosamente a ${cmd.target_type === 'me' ? 'tu dirección de email' : cmd.target_name}.\n\n**Asunto:** ${cmd.subject}\n**Mensaje:** ${cmd.body}`;
