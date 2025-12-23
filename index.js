@@ -2884,7 +2884,7 @@ app.get('/app-link', async(req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Abriendo TareaMov...</title>
+    <title>Abriendo CourseV by YisusFactory...</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -2953,12 +2953,12 @@ app.get('/app-link', async(req, res) => {
     <div class="container">
         <div class="logo">📱</div>
         <div id="opening">
-            <h1>Abriendo TareaMov</h1>
+            <h1>Abriendo CourseV by YisusFactory</h1>
             <p>Redirigiendo a la aplicación...</p>
             <div class="spinner"></div>
         </div>
         <div id="download" class="hidden">
-            <h1>Descarga TareaMov</h1>
+            <h1>Descarga CourseV by YisusFactory</h1>
             <p>La aplicación no está instalada en tu dispositivo</p>
             <a href="${apkUrl}" class="btn">📥 Descargar APK</a>
             <p style="margin-top: 20px; font-size: 14px;">La descarga comenzará automáticamente en 3 segundos...</p>
@@ -3012,11 +3012,11 @@ app.get('/app-link', async(req, res) => {
 });
 
 /**
- * Descarga el APK de TareaMov
+ * Descarga el APK de CourseV by YisusFactory
  * GET /download-apk
  */
 app.get('/download-apk', (req, res) => {
-    const apkPath = './app-debug.apk';
+     const apkPath = './app-debug.apk';
     const fs = require('fs');
 
     // Verificar si el APK existe
