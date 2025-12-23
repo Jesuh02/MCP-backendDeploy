@@ -84,7 +84,7 @@ async function handleInitialize(id, params) {
                 }
             },
             serverInfo: {
-                name: 'tareamov-mcp-server',
+                name: 'CourseV-mcp-server',
                 version: '1.0.0'
             }
         });
@@ -107,7 +107,7 @@ async function handleToolsList(id) {
     sendResponse(id, {
         tools: [{
                 name: 'query_database',
-                description: `Execute queries on the TareaMov Supabase database. Returns real-time data.
+                description: `Execute queries on the CourseV Supabase database. Returns real-time data.
 
 **CAPABILITIES:**
 - Execute RAW PostgreSQL/SQL queries directly (SELECT, INSERT, UPDATE, DELETE)
@@ -169,7 +169,7 @@ async function handleResourcesList(id) {
         const tables = await supabase.getTables();
 
         const resources = tables.map(table => ({
-            uri: `supabase://tareamov/${table}`,
+            uri: `supabase://CourseV/${table}`,
             name: `Table: ${table}`,
             mimeType: 'application/json',
             description: `Access data from ${table} table`
@@ -234,7 +234,7 @@ async function handleResourcesRead(id, params) {
     console.error('🔧 Resource read request:', params.uri);
 
     try {
-        const match = params.uri.match(/^supabase:\/\/tareamov\/(.+)$/);
+        const match = params.uri.match(/^supabase:\/\/CourseV\/(.+)$/);
         if (!match) {
             throw new Error('Invalid resource URI');
         }
@@ -300,7 +300,7 @@ async function handleRequest(request) {
  * Main: Read from stdin and process JSON-RPC requests
  */
 async function main() {
-    console.error('🚀 TareaMov MCP Server starting in STDIO mode...');
+    console.error('🚀 CourseV MCP Server starting in STDIO mode...');
     console.error('📊 Connecting to Supabase...');
 
     try {

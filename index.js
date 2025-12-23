@@ -2863,7 +2863,7 @@ app.get('/', (req, res) => {
 /**
  * Smart link handler: Detecta si la app está instalada y redirige o descarga APK
  * GET /app-link?userId=XXX
- * - Si el usuario tiene la app instalada: redirige al deep link (tareamov://...)
+ * - Si el usuario tiene la app instalada: redirige al deep link (CourseV://...)
  * - Si NO tiene la app: descarga automáticamente el APK
  */
 app.get('/app-link', async(req, res) => {
@@ -2874,7 +2874,7 @@ app.get('/app-link', async(req, res) => {
     }
 
     // Construir deep link para la app
-    const deepLink = `tareamov://${action}?userId=${userId}`;
+    const deepLink = `CourseV://${action}?userId=${userId}`;
     const apkUrl = `${req.protocol}://${req.get('host')}/download-apk`;
 
     // Página HTML que detecta si la app está instalada
@@ -3060,7 +3060,7 @@ app.get('/download-apk', (req, res) => {
 
     // Configurar headers para descarga
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition', 'attachment; filename="TareaMov.apk"');
+    res.setHeader('Content-Disposition', 'attachment; filename="CourseV.apk"');
 
     // Enviar el archivo
     res.sendFile(apkPath, { root: __dirname }, (err) => {
@@ -3599,7 +3599,7 @@ app.post('/send-push-notification', async(req, res) => {
                             defaultSound: true,
                             defaultVibrateTimings: true,
                             defaultLightSettings: true,
-                            color: '#6366f1', // Indigo color (TareaMov brand)
+                            color: '#6366f1', // Indigo color (CourseV brand)
                             icon: 'ic_notification',
                             clickAction: 'OPEN_CHAT'
                         }
@@ -4451,7 +4451,7 @@ No se pudo analizar el repositorio: ${gitHubUrl}
                     if (targetUserId) {
                         // Enviar correo
                         console.log(`📧 Enviando correo a ID: ${targetUserId}`);
-                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de TareaMov', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
+                        await sendEmailNotification(targetUserId, cmd.subject || 'Notificación de CourseV', cmd.body || 'Este es un mensaje automático enviado desde el asistente IA.');
 
                         // Responder al usuario
                         const respuestaExito = `✅ Correo enviado exitosamente a ${cmd.target_type === 'me' ? 'tu dirección de email' : cmd.target_name}.\n\n**Asunto:** ${cmd.subject}\n**Mensaje:** ${cmd.body}`;
@@ -5638,10 +5638,10 @@ app.post('/mcp/message', async(req, res) => {
                         resources: { subscribe: true, listChanged: true }
                     },
                     serverInfo: {
-                        name: 'tareamov-mcp-server',
-                        version: '1.0.0',
-                        description: 'MCP Server for TareaMov - Course Management Platform'
-                    }
+                            name: 'CourseV-mcp-server',
+                            version: '1.0.0',
+                            description: 'MCP Server for CourseV - Course Management Platform'
+                        }
                 };
                 break;
 
@@ -5655,7 +5655,7 @@ app.post('/mcp/message', async(req, res) => {
                     tools: [
                         {
                             name: 'query_database',
-                            description: 'Execute queries on TareaMov Supabase database. Returns real-time data.',
+                            description: 'Execute queries on CourseV Supabase database. Returns real-time data.',
                             inputSchema: {
                                 type: 'object',
                                 properties: { query: { type: 'string', description: 'SQL or natural language query' } },
@@ -5724,8 +5724,8 @@ app.post('/mcp/message', async(req, res) => {
             case 'resources/list':
                 result = {
                     resources: [
-                        { uri: 'tareamov://database/schema', name: 'Database Schema', mimeType: 'application/json' },
-                        { uri: 'tareamov://database/stats', name: 'Database Statistics', mimeType: 'application/json' }
+                        { uri: 'CourseV://database/schema', name: 'Database Schema', mimeType: 'application/json' },
+                        { uri: 'CourseV://database/stats', name: 'Database Statistics', mimeType: 'application/json' }
                     ]
                 };
                 break;
@@ -5794,9 +5794,9 @@ app.post('/mcp', async(req, res) => {
                         resources: { subscribe: true, listChanged: true }
                     },
                     serverInfo: {
-                        name: 'tareamov-mcp-server',
+                        name: 'CourseV-mcp-server',
                         version: '1.0.0',
-                        description: 'MCP Server for TareaMov - Course Management Platform'
+                        description: 'MCP Server for CourseV - Course Management Platform'
                     }
                 };
                 break;
@@ -5806,7 +5806,7 @@ app.post('/mcp', async(req, res) => {
                     tools: [
                         {
                             name: 'query_database',
-                            description: 'Execute queries on TareaMov Supabase database. Returns real-time data from usuarios, courses, videos, tasks, subscriptions, etc.',
+                            description: 'Execute queries on CourseV Supabase database. Returns real-time data from usuarios, courses, videos, tasks, subscriptions, etc.',
                             inputSchema: {
                                 type: 'object',
                                 properties: {
@@ -5900,13 +5900,13 @@ app.post('/mcp', async(req, res) => {
                 result = {
                     resources: [
                         {
-                            uri: 'tareamov://database/schema',
+                            uri: 'CourseV://database/schema',
                             name: 'Database Schema',
-                            description: 'Complete TareaMov database schema',
+                            description: 'Complete CourseV database schema',
                             mimeType: 'application/json'
                         },
                         {
-                            uri: 'tareamov://database/stats',
+                            uri: 'CourseV://database/stats',
                             name: 'Database Statistics',
                             description: 'Current database statistics (users, courses, tasks, etc.)',
                             mimeType: 'application/json'
@@ -5998,12 +5998,12 @@ async function handleMCPToolCall(toolName, args) {
 async function handleMCPResourceRead(uri) {
     console.log(`📖 MCP Resource Read: ${uri}`);
 
-    if (uri === 'tareamov://database/schema') {
+    if (uri === 'CourseV://database/schema') {
         const schema = await getDatabaseSchema();
         return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(schema, null, 2) }] };
     }
 
-    if (uri === 'tareamov://database/stats') {
+    if (uri === 'CourseV://database/stats') {
         const stats = await getDatabaseStats();
         return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(stats, null, 2) }] };
     }
@@ -6305,7 +6305,7 @@ app.post('/initialize', async(req, res) => {
                     }
                 },
                 serverInfo: {
-                    name: 'tareamov-mcp-server',
+                    name: 'CourseV-mcp-server',
                     version: '1.0.0'
                 }
             }
@@ -6336,7 +6336,7 @@ app.post('/tools/list', async(req, res) => {
         result: {
             tools: [{
                     name: 'query_database',
-                    description: `Execute queries on the TareaMov Supabase database. Returns real-time data.
+                    description: `Execute queries on the CourseV Supabase database. Returns real-time data.
 
 **CAPABILITIES:**
 - Execute RAW PostgreSQL/SQL queries directly (SELECT, INSERT, UPDATE, DELETE)
