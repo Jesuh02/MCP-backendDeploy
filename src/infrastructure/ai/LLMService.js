@@ -84,8 +84,8 @@ export class LLMService {
             const messageLog = messages.map(m => ({
                 role: m.constructor.name,
                 content: m.content,
-                // Truncate very long content for readability, but keep enough to see context
-                contentPreview: m.content.length > 500 ? m.content.substring(0, 500) + "... (truncated)" : m.content
+                // Show FULL content as requested by user to verify no truncation
+                contentPreview: m.content // Removed truncation limit
             }));
             console.log("INPUT MESSAGES:", JSON.stringify(messageLog, null, 2));
             
