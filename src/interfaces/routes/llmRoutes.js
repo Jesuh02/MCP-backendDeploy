@@ -163,8 +163,31 @@ router.post('/procesar-prompt', async (req, res) => {
             }
         }
 
-        // Call LLM (DeepSeek via Ollama wrapper or Direct)
-        // If ollamaUrl ends with /, remove it
+                // LLM REQUEST START: instrucción fija para generación de preguntas
+                // Insertamos un encabezado que obliga al modelo a usar TODO el contenido
+                // de los archivos del curso (tareas y temas) y a devolver un JSON estructurado.
+                const llmRequestHeader = `LLM REQUEST START:
+Por favor, EXTRAIGA y UTILICE TODO el contenido de los archivos del curso entregados por el docente (tareas, temas, materiales, descripciones, enunciados). Si en esta petición se incluyen archivos o su contenido (adjuntos / jsonContent), priorice y base TODAS las preguntas en ese contenido. No invente contenidos adicionales sobre el curso; si falta información relevante, indique explícitamente que no hay suficiente información para generar preguntas concretas.
+
+FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
+[
+    {
+        "question": "Texto de la pregunta",
+        "options": ["opción A","opción B","opción C","opción D"],
+        "correctIndex": 0, // índice de la opción correcta
+        "difficulty": "easy|medium|hard",
+        "topic": "tema o tarea relacionada (ej: 'Tarea 1 - Tema: Álgebra')",
+        "source": "nombre_del_archivo_o_ruta_de_origen"
+    }
+]
+
+LLM REQUEST END`;
+
+                // Prepend header so the model sees the requirement first
+                augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
+
+                // Call LLM (DeepSeek via Ollama wrapper or Direct)
+                // If ollamaUrl ends with /, remove it
         const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
         const targetUrl = `${baseUrl}/api/generate`;
         
