@@ -108,12 +108,9 @@ router.post('/procesar-prompt', async (req, res) => {
 
                                     if (extractedText) {
                                         // Only include text content. Skip binary/base64 to avoid confusing text-only models.
-                                        // Limit content size per file to avoid context window overflow
-                                        const contentSnippet = extractedText.substring(0, 15000); 
+                                        // INCLUDE TODO el contenido del archivo (sin límite por archivo)
+                                        const contentSnippet = extractedText;
                                         augmentedPrompt += `\n\n--- Contenido del archivo: ${rawName} (${fileData.contentType}) ---\n${contentSnippet}`;
-                                        if (extractedText.length > 15000) {
-                                            augmentedPrompt += `\n...(contenido truncado, total ${extractedText.length} chars)...`;
-                                        }
                                     } else {
                                         console.log(`ℹ️ Archivo ${rawName} es binario o no textual, solo referencia añadida. (isPdf=${isPdfName}, isExcel=${nameLower.match(/\.xlsx?$/)})`);
                                         augmentedPrompt += `\n\n--- Archivo adjunto: ${rawName} (${fileData.contentType}) [Contenido binario no incluido] ---`;
