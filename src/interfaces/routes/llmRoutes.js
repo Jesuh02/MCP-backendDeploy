@@ -164,7 +164,14 @@ router.post('/procesar-prompt', async (req, res) => {
                 // Insertamos un encabezado que obliga al modelo a usar TODO el contenido
                 // de los archivos del curso (tareas y temas) y a devolver un JSON estructurado.
                 const llmRequestHeader = `LLM REQUEST START:
-Por favor, EXTRAIGA y UTILICE TODO el contenido de los archivos del curso entregados por el docente (tareas, temas, materiales, descripciones, enunciados). Si en esta petición se incluyen archivos o su contenido (adjuntos / jsonContent), priorice y base TODAS las preguntas en ese contenido. No invente contenidos adicionales sobre el curso; si falta información relevante, indique explícitamente que no hay suficiente información para generar preguntas concretas.
+INSTRUCCIÓN CRÍTICA DE CONTEXTO:
+El usuario ha adjuntado MÚLTIPLES archivos y contenidos del curso (tareas, temas, PDFs, documentos).
+TU TAREA ES ANALIZAR Y UTILIZAR EL CONTENIDO DE **TODOS** LOS ARCHIVOS PROPORCIONADOS, SIN EXCEPCIÓN.
+NO te limites a analizar solo el primer archivo o solo el último.
+NO apliques límites de lectura: procesa la información completa de cada archivo adjunto para generar las preguntas.
+
+Si hay archivos adjuntos (PDFs, Excel, Texto), su contenido está incluido en este prompt. ÚSALO TODO.
+Priorice el contenido de los archivos sobre los nombres de las tareas si hay conflicto.
 
 FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
 [
