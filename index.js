@@ -4223,6 +4223,50 @@ INPUT MESSAGES: [
             return 0;
         };
 
+        // ============================================================
+        // 🔀 FUNCIÓN PARA MEZCLAR (SHUFFLE) LAS OPCIONES DE CADA PREGUNTA
+        // Esto asegura que la opción correcta no siempre quede en la misma letra
+        // Input: array de objetos { question, options: [...], correctIndex }
+        // Output: nuevo array con opciones reordenadas y correctIndex actualizado
+        function shuffleQuestionsOptions(questions) {
+            if (!Array.isArray(questions)) return questions;
+
+            const shuffleArray = (arr) => {
+                for (let i = arr.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    const tmp = arr[i];
+                    arr[i] = arr[j];
+                    arr[j] = tmp;
+                }
+                return arr;
+            };
+
+            return questions.map((q) => {
+                try {
+                    if (!q || !Array.isArray(q.options) || q.options.length <= 1) return q;
+
+                    const originalOptions = q.options.slice();
+                    const originalCorrect = (typeof q.correctIndex === 'number') ? q.correctIndex : 0;
+
+                    // Build index array and shuffle it
+                    const idx = originalOptions.map((_, i) => i);
+                    shuffleArray(idx);
+
+                    // Reorder options according to shuffled indices
+                    const newOptions = idx.map(i => originalOptions[i]);
+
+                    // Find new position of the original correct index
+                    const newCorrectIndex = idx.findIndex(i => i === originalCorrect);
+
+                    q.options = newOptions;
+                    q.correctIndex = (newCorrectIndex >= 0) ? newCorrectIndex : 0;
+                    return q;
+                } catch (e) {
+                    return q;
+                }
+            });
+        }
+
         // Si el archivo tiene contenido vacío y se pide calificación, dar 0
         const preguntaLowerVacio = (prompt || '').toLowerCase();
         const esPreguntaCalificacion = /nota|calificaci(ó|o)n|puntaje|evaluaci(ó|o)n|califica|eval(ú|u)a|analiza|revisa/.test(preguntaLowerVacio);
@@ -4781,13 +4825,20 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                             const generatedQuestions = JSON.parse(cleanJson);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
-                                // Save to history
+                                // Shuffle options so the correct answer isn't always the same letter
+                                const shuffledQuestions = shuffleQuestionsOptions(generatedQuestions);
+
+                                // Save to history the shuffled version
                                 if (mcpService) {
-                                     await mcpService.saveReinforcementHistory(userId, courseId, generatedQuestions);
+                                     await mcpService.saveReinforcementHistory(userId, courseId, shuffledQuestions);
                                 } else {
-                                     await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
+                                     await saveReinforcementQuestionHistory(userId, courseId, shuffledQuestions);
                                 }
-                                console.log(`✅ Generated and saved ${generatedQuestions.length} reinforcement questions`);
+
+                                // Update respuestaFinal to reflect the shuffled ordering
+                                respuestaFinal = JSON.stringify(shuffledQuestions);
+
+                                console.log(`✅ Generated, shuffled and saved ${shuffledQuestions.length} reinforcement questions`);
                             }
                         } catch (parseError) {
                             console.warn('⚠️ Could not parse generated questions for history:', parseError.message);
@@ -4915,8 +4966,11 @@ Responde considerando el contexto académico disponible si es relevante para la 
 
                             if (filtered.length !== parsed.length) {
                                 console.log(`✅ Filtrado de duplicados aplicado. ${parsed.length - filtered.length} elementos eliminados.`);
-                                respuestaFinal = JSON.stringify(filtered);
                             }
+
+                            // Shuffle options for each question to avoid always returning the same answer letter
+                            const shuffledOutput = shuffleQuestionsOptions(filtered);
+                            respuestaFinal = JSON.stringify(shuffledOutput);
                         }
                     }
                 } catch (postErr) {
