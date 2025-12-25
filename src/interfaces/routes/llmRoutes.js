@@ -177,15 +177,28 @@ REGLA DE ALEATORIEDAD:
 La respuesta correcta NO debe estar siempre en la primera opción (índice 0).
 Distribuye aleatoriamente la posición de la respuesta correcta entre las opciones A, B, C y D.
 
-FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
+FORMATO DE SALIDA REQUERIDO:
+Devuelva UN ÚNICO array JSON válido.
+CADA elemento del array debe ser un OBJETO encerrado en llaves { ... }.
+NO devuelvas texto plano fuera del JSON.
+
+Ejemplo de estructura correcta:
 [
     {
-        "question": "Texto de la pregunta",
-        "options": ["opción A","opción B","opción C","opción D"],
-        "correctIndex": 2, // (0=A, 1=B, 2=C, 3=D) - VARÍA ESTE ÍNDICE ALEATORIAMENTE
-        "difficulty": "easy|medium|hard",
-        "topic": "tema o tarea relacionada (ej: 'Tarea 1 - Tema: Álgebra')",
-        "source": "nombre_del_archivo_o_ruta_de_origen"
+        "question": "¿Cuál es la capital de Francia?",
+        "options": ["Londres", "Berlín", "París", "Madrid"],
+        "correctIndex": 2,
+        "difficulty": "easy",
+        "topic": "Geografía",
+        "source": "libro.pdf"
+    },
+    {
+        "question": "¿Cuánto es 2+2?",
+        "options": ["3", "4", "5", "6"],
+        "correctIndex": 1,
+        "difficulty": "easy",
+        "topic": "Matemáticas",
+        "source": "notas.txt"
     }
 ]
 
@@ -223,39 +236,51 @@ LLM REQUEST END`;
         }
 
         const data = await response.json();
-        
-        // --- ROBUST RESPONSE EXTRACTION ---
-        // Support multiple formats: Ollama (response), OpenAI (choices[0].message.content), Generic (content/message)
-        let respuestaTexto = null;
-        
-        if (data.response) {
-            respuestaTexto = data.response;
-        } else if (data.choices && Array.isArray(data.choices) && data.choices.length > 0 && data.choices[0].message && data.choices[0].message.content) {
-            respuestaTexto = data.choices[0].message.content;
-        } else if (data.message && data.message.content) {
-            respuestaTexto = data.message.content;
-        } else if (data.content) {
-            respuestaTexto = data.content;
-        } else {
-            console.warn("⚠️ Unknown LLM response format:", JSON.stringify(data).substring(0, 200));
-            // Fallback: try to stringify the whole data if it looks like an array/object?
-            // No, better to leave null and let the error handler catch it, or return empty string
-            respuestaTexto = null;
-        }
 
-        if (!respuestaTexto) {
-            throw new Error("Respuesta vacía o formato desconocido del LLM");
-        }
-
+        // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
+        let respuestaTexto = data.response;
         try {
             // Ensure we have a string to search for JSON array
             const raw = typeof respuestaTexto === 'string' ? respuestaTexto : JSON.stringify(respuestaTexto);
+            
+            // --- ROBUST JSON EXTRACTION STRATEGY ---
+            let parsed = null;
+            
+            // Strategy 1: Standard JSON.parse of the array block
             const start = raw.indexOf('[');
             const end = raw.lastIndexOf(']');
             if (start !== -1 && end !== -1 && start < end) {
                 const arrayJson = raw.substring(start, end + 1);
-                const parsed = JSON.parse(arrayJson);
-                if (Array.isArray(parsed)) {
+                try {
+                    parsed = JSON.parse(arrayJson);
+                } catch (e1) {
+                    console.warn("⚠️ Standard JSON parse failed, attempting regex repair...");
+                }
+            }
+
+            // Strategy 2: Regex extraction of individual objects if array parse failed
+            if (!parsed || !Array.isArray(parsed)) {
+                 console.log("⚠️ Attempting to extract objects via Regex...");
+                 const objectRegex = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+                 const matches = raw.match(objectRegex);
+                 if (matches && matches.length > 0) {
+                     parsed = [];
+                     for (const match of matches) {
+                         try {
+                             // Try to clean up common trailing commas or errors
+                             const cleanMatch = match.replace(/,\s*}/g, '}');
+                             const obj = JSON.parse(cleanMatch);
+                             if (obj.question && obj.options) {
+                                 parsed.push(obj);
+                             }
+                         } catch (e2) {
+                             // Ignore bad objects
+                         }
+                     }
+                 }
+            }
+            
+            if (Array.isArray(parsed) && parsed.length > 0) {
                     // Fisher-Yates shuffle helper
                     const shuffle = (arr) => {
                         for (let i = arr.length - 1; i > 0; i--) {
@@ -309,6 +334,7 @@ LLM REQUEST END`;
                     });
 
                     // If userId/courseId are provided, filter out any questions that were already served
+
                     // to that user in that course by consulting Supabase `reinforcement_question_history`.
                     const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
                     const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
@@ -467,9 +493,8 @@ LLM REQUEST END`;
             }
         } catch (e) {
             console.warn('⚠️ Could not parse/shuffle LLM response JSON array:', e?.message || e);
-            // Keep original extracted text in case of parse failure
-            // Do NOT overwrite with data.response as it might be undefined for non-Ollama models
-            // respuestaTexto is already holding the valid text from the extraction block above.
+            // Keep original data.response in case of parse failure
+            respuestaTexto = data.response;
         }
 
         // Return in MicroservicioPromptResponse format matching Android expectations
