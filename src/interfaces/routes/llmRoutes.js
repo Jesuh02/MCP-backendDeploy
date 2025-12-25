@@ -223,9 +223,30 @@ LLM REQUEST END`;
         }
 
         const data = await response.json();
+        
+        // --- ROBUST RESPONSE EXTRACTION ---
+        // Support multiple formats: Ollama (response), OpenAI (choices[0].message.content), Generic (content/message)
+        let respuestaTexto = null;
+        
+        if (data.response) {
+            respuestaTexto = data.response;
+        } else if (data.choices && Array.isArray(data.choices) && data.choices.length > 0 && data.choices[0].message && data.choices[0].message.content) {
+            respuestaTexto = data.choices[0].message.content;
+        } else if (data.message && data.message.content) {
+            respuestaTexto = data.message.content;
+        } else if (data.content) {
+            respuestaTexto = data.content;
+        } else {
+            console.warn("⚠️ Unknown LLM response format:", JSON.stringify(data).substring(0, 200));
+            // Fallback: try to stringify the whole data if it looks like an array/object?
+            // No, better to leave null and let the error handler catch it, or return empty string
+            respuestaTexto = null;
+        }
 
-        // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
-        let respuestaTexto = data.response;
+        if (!respuestaTexto) {
+            throw new Error("Respuesta vacía o formato desconocido del LLM");
+        }
+
         try {
             // Ensure we have a string to search for JSON array
             const raw = typeof respuestaTexto === 'string' ? respuestaTexto : JSON.stringify(respuestaTexto);
@@ -446,8 +467,9 @@ LLM REQUEST END`;
             }
         } catch (e) {
             console.warn('⚠️ Could not parse/shuffle LLM response JSON array:', e?.message || e);
-            // Keep original data.response in case of parse failure
-            respuestaTexto = data.response;
+            // Keep original extracted text in case of parse failure
+            // Do NOT overwrite with data.response as it might be undefined for non-Ollama models
+            // respuestaTexto is already holding the valid text from the extraction block above.
         }
 
         // Return in MicroservicioPromptResponse format matching Android expectations
