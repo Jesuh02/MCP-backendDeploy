@@ -173,12 +173,16 @@ NO apliques límites de lectura: procesa la información completa de cada archiv
 Si hay archivos adjuntos (PDFs, Excel, Texto), su contenido está incluido en este prompt. ÚSALO TODO.
 Priorice el contenido de los archivos sobre los nombres de las tareas si hay conflicto.
 
+REGLA DE ALEATORIEDAD:
+La respuesta correcta NO debe estar siempre en la primera opción (índice 0).
+Distribuye aleatoriamente la posición de la respuesta correcta entre las opciones A, B, C y D.
+
 FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
 [
     {
         "question": "Texto de la pregunta",
         "options": ["opción A","opción B","opción C","opción D"],
-        "correctIndex": 0, // índice de la opción correcta
+        "correctIndex": 2, // (0=A, 1=B, 2=C, 3=D) - VARÍA ESTE ÍNDICE ALEATORIAMENTE
         "difficulty": "easy|medium|hard",
         "topic": "tema o tarea relacionada (ej: 'Tarea 1 - Tema: Álgebra')",
         "source": "nombre_del_archivo_o_ruta_de_origen"
