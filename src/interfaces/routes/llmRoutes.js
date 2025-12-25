@@ -177,28 +177,15 @@ REGLA DE ALEATORIEDAD:
 La respuesta correcta NO debe estar siempre en la primera opción (índice 0).
 Distribuye aleatoriamente la posición de la respuesta correcta entre las opciones A, B, C y D.
 
-FORMATO DE SALIDA REQUERIDO:
-Devuelva UN ÚNICO array JSON válido.
-CADA elemento del array debe ser un OBJETO encerrado en llaves { ... }.
-NO devuelvas texto plano fuera del JSON.
-
-Ejemplo de estructura correcta:
+FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
 [
     {
-        "question": "¿Cuál es la capital de Francia?",
-        "options": ["Londres", "Berlín", "París", "Madrid"],
-        "correctIndex": 2,
-        "difficulty": "easy",
-        "topic": "Geografía",
-        "source": "libro.pdf"
-    },
-    {
-        "question": "¿Cuánto es 2+2?",
-        "options": ["3", "4", "5", "6"],
-        "correctIndex": 1,
-        "difficulty": "easy",
-        "topic": "Matemáticas",
-        "source": "notas.txt"
+        "question": "Texto de la pregunta",
+        "options": ["opción A","opción B","opción C","opción D"],
+        "correctIndex": 2, // (0=A, 1=B, 2=C, 3=D) - VARÍA ESTE ÍNDICE ALEATORIAMENTE
+        "difficulty": "easy|medium|hard",
+        "topic": "tema o tarea relacionada (ej: 'Tarea 1 - Tema: Álgebra')",
+        "source": "nombre_del_archivo_o_ruta_de_origen"
     }
 ]
 
@@ -242,45 +229,12 @@ LLM REQUEST END`;
         try {
             // Ensure we have a string to search for JSON array
             const raw = typeof respuestaTexto === 'string' ? respuestaTexto : JSON.stringify(respuestaTexto);
-            
-            // --- ROBUST JSON EXTRACTION STRATEGY ---
-            let parsed = null;
-            
-            // Strategy 1: Standard JSON.parse of the array block
             const start = raw.indexOf('[');
             const end = raw.lastIndexOf(']');
             if (start !== -1 && end !== -1 && start < end) {
                 const arrayJson = raw.substring(start, end + 1);
-                try {
-                    parsed = JSON.parse(arrayJson);
-                } catch (e1) {
-                    console.warn("⚠️ Standard JSON parse failed, attempting regex repair...");
-                }
-            }
-
-            // Strategy 2: Regex extraction of individual objects if array parse failed
-            if (!parsed || !Array.isArray(parsed)) {
-                 console.log("⚠️ Attempting to extract objects via Regex...");
-                 const objectRegex = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
-                 const matches = raw.match(objectRegex);
-                 if (matches && matches.length > 0) {
-                     parsed = [];
-                     for (const match of matches) {
-                         try {
-                             // Try to clean up common trailing commas or errors
-                             const cleanMatch = match.replace(/,\s*}/g, '}');
-                             const obj = JSON.parse(cleanMatch);
-                             if (obj.question && obj.options) {
-                                 parsed.push(obj);
-                             }
-                         } catch (e2) {
-                             // Ignore bad objects
-                         }
-                     }
-                 }
-            }
-            
-            if (Array.isArray(parsed) && parsed.length > 0) {
+                const parsed = JSON.parse(arrayJson);
+                if (Array.isArray(parsed)) {
                     // Fisher-Yates shuffle helper
                     const shuffle = (arr) => {
                         for (let i = arr.length - 1; i > 0; i--) {
@@ -322,19 +276,30 @@ LLM REQUEST END`;
                                 // Should not happen if logic is correct, but safe fallback
                                 newIndex = 0;
                             }
+                            
+                            // Ensure explanation is present (fix for null explanation error)
+                            let finalExplanation = q.explanation;
+                            if (!finalExplanation || typeof finalExplanation !== 'string') {
+                                finalExplanation = "Respuesta correcta basada en el análisis del contenido del curso.";
+                            }
+
                             return {
                                 ...q,
                                 options: newOptions,
-                                correctIndex: newIndex
+                                correctIndex: newIndex,
+                                explanation: finalExplanation
                             };
                         } catch (e) {
                             // If anything goes wrong with a single question, return it unchanged
+                            // but ensure explanation is at least present
+                            if (q && !q.explanation) {
+                                return { ...q, explanation: "Respuesta basada en el contenido." };
+                            }
                             return q;
                         }
                     });
 
                     // If userId/courseId are provided, filter out any questions that were already served
-
                     // to that user in that course by consulting Supabase `reinforcement_question_history`.
                     const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
                     const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
@@ -457,8 +422,17 @@ LLM REQUEST END`;
                                                                 }
                                                                 let newIndex = newOptions.findIndex(o => o === origCorrect);
                                                                 if (newIndex === -1) newIndex = 0;
-                                                                return { ...q, options: newOptions, correctIndex: newIndex };
-                                                            } catch (qq) { return q; }
+
+                                                                let finalExpl = q.explanation;
+                                                                if (!finalExpl || typeof finalExpl !== 'string') {
+                                                                    finalExpl = "Respuesta correcta basada en el análisis del contenido.";
+                                                                }
+
+                                                                return { ...q, options: newOptions, correctIndex: newIndex, explanation: finalExpl };
+                                                            } catch (qq) { 
+                                                                if (q && !q.explanation) return { ...q, explanation: "Respuesta basada en el contenido." };
+                                                                return q; 
+                                                            }
                                                         });
 
                                                         // Filter parsedRetry using questionExistsInHistory against existingHistory (or historyQuestionsList)
