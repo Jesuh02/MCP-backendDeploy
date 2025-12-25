@@ -247,14 +247,33 @@ LLM REQUEST END`;
                         try {
                             if (!q || !Array.isArray(q.options)) return q;
                             // Keep a copy of the original correct value (by index)
-                            const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
+                            let origIdx = 0;
+                            if (typeof q.correctIndex === 'number') {
+                                origIdx = q.correctIndex;
+                            } else if (typeof q.correctIndex === 'string') {
+                                // Handle string indices like "0", "1", "A", "B"
+                                if (/^\d+$/.test(q.correctIndex)) {
+                                    origIdx = parseInt(q.correctIndex, 10);
+                                } else {
+                                    // Try to map "A"->0, "B"->1, etc. if model returns letters
+                                    const map = { 'a': 0, 'b': 1, 'c': 2, 'd': 3, 'A': 0, 'B': 1, 'C': 2, 'D': 3 };
+                                    if (q.correctIndex in map) {
+                                        origIdx = map[q.correctIndex];
+                                    }
+                                }
+                            }
+                            
+                            // Validate bounds
+                            if (origIdx < 0 || origIdx >= q.options.length) origIdx = 0;
+
                             const origCorrect = q.options[origIdx];
                             const newOptions = q.options.slice();
                             shuffle(newOptions);
-                            // Find new index of the original correct option. If duplicates exist, find by value first occurrence.
+                            
+                            // Find new index of the original correct option.
                             let newIndex = newOptions.findIndex(o => o === origCorrect);
                             if (newIndex === -1) {
-                                // Fallback: if value comparison fails, try to preserve by position mapping
+                                // Should not happen if logic is correct, but safe fallback
                                 newIndex = 0;
                             }
                             return {
