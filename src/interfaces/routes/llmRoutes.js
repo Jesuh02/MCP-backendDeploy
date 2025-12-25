@@ -276,25 +276,13 @@ LLM REQUEST END`;
                                 // Should not happen if logic is correct, but safe fallback
                                 newIndex = 0;
                             }
-                            
-                            // Ensure explanation is present (fix for null explanation error)
-                            let finalExplanation = q.explanation;
-                            if (!finalExplanation || typeof finalExplanation !== 'string') {
-                                finalExplanation = "Respuesta correcta basada en el análisis del contenido del curso.";
-                            }
-
                             return {
                                 ...q,
                                 options: newOptions,
-                                correctIndex: newIndex,
-                                explanation: finalExplanation
+                                correctIndex: newIndex
                             };
                         } catch (e) {
                             // If anything goes wrong with a single question, return it unchanged
-                            // but ensure explanation is at least present
-                            if (q && !q.explanation) {
-                                return { ...q, explanation: "Respuesta basada en el contenido." };
-                            }
                             return q;
                         }
                     });
@@ -422,17 +410,8 @@ LLM REQUEST END`;
                                                                 }
                                                                 let newIndex = newOptions.findIndex(o => o === origCorrect);
                                                                 if (newIndex === -1) newIndex = 0;
-
-                                                                let finalExpl = q.explanation;
-                                                                if (!finalExpl || typeof finalExpl !== 'string') {
-                                                                    finalExpl = "Respuesta correcta basada en el análisis del contenido.";
-                                                                }
-
-                                                                return { ...q, options: newOptions, correctIndex: newIndex, explanation: finalExpl };
-                                                            } catch (qq) { 
-                                                                if (q && !q.explanation) return { ...q, explanation: "Respuesta basada en el contenido." };
-                                                                return q; 
-                                                            }
+                                                                return { ...q, options: newOptions, correctIndex: newIndex };
+                                                            } catch (qq) { return q; }
                                                         });
 
                                                         // Filter parsedRetry using questionExistsInHistory against existingHistory (or historyQuestionsList)
