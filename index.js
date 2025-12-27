@@ -7109,3 +7109,14 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`   • POST /tools/call (MCP)`);
     console.log('='.repeat(60));
 });
+
+// ============================================================
+// 🛡️ INDESTRUCTIBLE MODE: Ignore Shutdown Signals
+// ============================================================
+process.on('SIGTERM', () => {
+    console.log('🛑 SIGTERM received in index.js. IGNORING to keep container alive.');
+});
+
+process.on('SIGINT', () => {
+    console.log('🛑 SIGINT received in index.js. IGNORING to keep container alive.');
+});
