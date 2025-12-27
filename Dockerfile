@@ -3,6 +3,9 @@ FROM node:20-alpine
 # Set working directory
 WORKDIR /app
 
+# Install curl for healthcheck (alpine doesn't have wget)
+RUN apk add --no-cache curl
+
 # Copy package files
 COPY package*.json ./
 
@@ -19,9 +22,9 @@ RUN mkdir -p logs
 EXPOSE 3000
 
 # Health check - MCP server runs on port 3000
-# Railway healthcheck uses /health by default
-HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=5 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+# Use curl instead of wget (alpine compatible)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
 
 # Start MCP HTTP server only (NOT index.js)
 CMD ["node", "src/mcp-http.js"]
