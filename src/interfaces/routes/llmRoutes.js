@@ -249,8 +249,14 @@ LLM REQUEST END`;
                         try {
                             if (!q || !Array.isArray(q.options)) return q;
                             // Keep a copy of the original correct value (by index)
-                            const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
-                            const origCorrect = q.options[origIdx];
+                            // Handle both number and string index from LLM
+                            const rawIdx = q.correctIndex;
+                            const origIdx = (typeof rawIdx === 'number' || !isNaN(Number(rawIdx))) ? Number(rawIdx) : 0;
+                            
+                            // Safety check for index bounds
+                            const safeIdx = (origIdx >= 0 && origIdx < q.options.length) ? origIdx : 0;
+                            const origCorrect = q.options[safeIdx];
+                            
                             const newOptions = q.options.slice();
                             shuffle(newOptions);
                             // Find new index of the original correct option. If duplicates exist, find by value first occurrence.
