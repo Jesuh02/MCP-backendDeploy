@@ -15,11 +15,13 @@ COPY . .
 # Create logs directory
 RUN mkdir -p logs
 
-# Expose MCP HTTP port (Railway will bind to PORT 3000)
-EXPOSE 3000
+# Expose main port (Railway will use PORT env variable)
+EXPOSE 3001
 
-# NOTE: Railway has its own health check system (railway.json)
-# Docker HEALTHCHECK is disabled to avoid conflicts
+# Health check - Use /health endpoint with longer start period for Railway
+# Railway healthcheck uses /health by default
+HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=5 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-3001}/health || exit 1
 
-# Start MCP HTTP server only (NOT index.js)
-CMD ["node", "src/mcp-http.js"]
+# Start server
+CMD ["npm", "start"]
