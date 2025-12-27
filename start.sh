@@ -15,26 +15,40 @@ else
     export MCP_HTTP_PORT=${MCP_HTTP_PORT:-3000}
 fi
 
-echo "Starting index.js (API Server on port $PORT)..."
-# Run in a loop to restart on failure
-while true; do
-    node index.js
-    echo "⚠️ API Server crashed. Restarting in 5 seconds..."
-    sleep 5
-done &
+echo "🚀 Starting Services..."
+echo "   • API Server (index.js) on port $PORT"
+echo "   • MCP Server (mcp-http.js) on port $MCP_HTTP_PORT"
+
+# Start API Server Loop
+(
+    while true; do
+        echo "🔄 Starting API Server..."
+        node index.js
+        EXIT_CODE=$?
+        echo "⚠️ API Server crashed with exit code $EXIT_CODE. Restarting in 5 seconds..."
+        sleep 5
+    done
+) &
 API_PID=$!
 
-echo "Starting mcp-http.js (MCP Server on port $MCP_HTTP_PORT)..."
-# Run in a loop to restart on failure
-while true; do
-    node src/mcp-http.js
-    echo "⚠️ MCP Server crashed. Restarting in 5 seconds..."
-    sleep 5
-done &
+# Start MCP Server Loop
+(
+    while true; do
+        echo "🔄 Starting MCP Server..."
+        node src/mcp-http.js
+        EXIT_CODE=$?
+        echo "⚠️ MCP Server crashed with exit code $EXIT_CODE. Restarting in 5 seconds..."
+        sleep 5
+    done
+) &
 MCP_PID=$!
 
-echo "Both servers started. API PID: $API_PID, MCP PID: $MCP_PID"
+echo "✅ Both servers started in background. API_PID: $API_PID, MCP_PID: $MCP_PID"
 
-# Keep the script running to prevent container exit
-# We wait for the background shells, which are infinite loops
-wait $API_PID $MCP_PID
+# Trap signals to kill child processes gracefully
+trap 'echo "🛑 Stopping container..."; kill $API_PID $MCP_PID; exit 0' SIGINT SIGTERM
+
+# Keep script running forever
+# Using tail -f /dev/null is more robust than wait in some shells for keeping container alive
+tail -f /dev/null &
+wait $!
