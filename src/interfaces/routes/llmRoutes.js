@@ -3,6 +3,8 @@ import { R2StorageService } from '../../services/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { MCPService } from '../../domain/services/MCPService.js';
 import { createRequire } from 'module';
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 const xlsx = require('xlsx');
@@ -15,7 +17,7 @@ router.post('/procesar-prompt', async (req, res) => {
     try {
         const { prompt, ollamaUrl, model, jsonContent } = req.body;
         
-        console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl}`);
+        console.log(`🤖 Processing prompt with model ${model || 'default'}`);
 
         let augmentedPrompt = prompt;
 
@@ -127,19 +129,19 @@ router.post('/procesar-prompt', async (req, res) => {
             }
         }
 
-        // Ensure ollamaUrl is valid
-        if (!ollamaUrl) {
-            throw new Error('ollamaUrl is required');
-        }
+        // Initialize MCP Service to access LLM and History
+        const mcpService = new MCPService();
 
         // If userId/courseId provided, fetch reinforcement history and instruct LLM to avoid repeats
         const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
         const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
+        const topicId = req.body.topicId || null;
+        const taskId = req.body.taskId || null;
+
         let historyQuestionsList = [];
         let existingHistory = [];
         if (userId && courseId) {
             try {
-                const mcpService = new MCPService();
                 existingHistory = await mcpService.getReinforcementHistory(userId, courseId, topicId, taskId);
                 
                 // Extract plain question text for guidance
@@ -196,35 +198,18 @@ LLM REQUEST END`;
                 // Prepend header so the model sees the requirement first
                 augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
 
-                // Call LLM (DeepSeek via Ollama wrapper or Direct)
-                // If ollamaUrl ends with /, remove it
-        const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
-        const targetUrl = `${baseUrl}/api/generate`;
-        
-        console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${model || 'deepseek-chat'})`);
-
-        // Prioritize file content in the prompt
-        // If files were processed, we move them to the TOP of the prompt context
-        // This helps the LLM focus on the files more than the task titles
-        
-        const response = await fetch(targetUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: model || 'deepseek-chat', // Default to deepseek
-                prompt: augmentedPrompt,
-                stream: false,
-                options: {
-                    temperature: 0.7 // Standard creativity
-                }
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
+                // Use centralized LLM Service instead of direct fetch
+                console.log(`🤖 Using Centralized LLM Service (Provider: ${mcpService.llmService.provider})`);
+                
+                // Construct messages for LangChain
+                const messages = [
+                    new SystemMessage("You are an educational assistant. Output strict JSON."),
+                    new HumanMessage(augmentedPrompt)
+                ];
+                
+                // Generate response
+                const response = await mcpService.llmService.generateResponse(messages, []);
+                const data = { response: response.content };
 
         // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
         let respuestaTexto = data.response;
