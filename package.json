@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/mcp-http.js",
   "scripts": {
-    "start": "node src/mcp-http.js",
+    "start": "sh start.sh",
     "start:api": "node index.js",
     "start:mcp": "node src/mcp-http.js",
     "start:both": "sh start.sh",

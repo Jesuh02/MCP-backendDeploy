@@ -13,6 +13,7 @@ services:
       - PORT=3001
       - MCP_HTTP_PORT=3000
       - HOST=0.0.0.0
+    command: sh start.sh
     env_file:
       - .env
     volumes:
