@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { MCPService } from '../../domain/services/MCPService.js';
 import { R2StorageService } from '../../services/R2StorageService.js';
 import { createRequire } from 'module';
+import multer from 'multer';
+
 const require = createRequire(import.meta.url);
 const xlsx = require('xlsx');
 
@@ -9,12 +11,53 @@ const router = Router();
 const mcpService = new MCPService();
 const r2Service = R2StorageService.getInstance();
 
+// Configure multer for memory storage
+const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
+/**
+ * Upload a file to R2
+ * Accepts multipart/form-data with field 'file'
+ */
+router.post('/upload', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        const file = req.file;
+        const userId = req.body.userId || 'anon';
+        const timestamp = Date.now();
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const objectKey = `uploads/${userId}/${timestamp}_${safeName}`;
+
+        console.log(`📤 Uploading ${file.originalname} (${file.size} bytes) to ${objectKey}`);
+
+        const publicUrl = await r2Service.uploadFile(
+            file.buffer,
+            objectKey,
+            file.mimetype
+        );
+
+        res.json({
+            success: true,
+            url: publicUrl,
+            filename: file.originalname,
+            size: file.size,
+            mimetype: file.mimetype
+        });
+
+    } catch (error) {
+        console.error('❌ Error uploading file:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 /**
  * Generate an Excel file from a natural language query
- * 1. Process query with MCPService (Supabase)
- * 2. Convert data to Excel
- * 3. Upload to R2
- * 4. Return URL
+ * ... (existing code)
  */
 router.post('/generate-excel', async (req, res) => {
     try {
