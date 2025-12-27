@@ -65,9 +65,19 @@ try {
 }
 
 /**
- * Health check endpoint
+ * Simple health check endpoint for Railway (must be fast)
  */
-app.get('/health', async(req, res) => {
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        timestamp: new Date().toISOString()
+    });
+});
+
+/**
+ * Detailed health check endpoint (includes DB and LLM checks)
+ */
+app.get('/health/detailed', async(req, res) => {
     try {
         const dbHealth = await supabase.healthCheck();
 
