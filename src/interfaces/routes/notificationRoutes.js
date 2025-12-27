@@ -15,17 +15,22 @@ router.post('/notify-chat-response', async (req, res) => {
 
         // Just send a generic "new response" notification
         // We don't send the content for security/privacy
-        await notificationService.sendNotification(
-            userId,
-            '🤖 Nueva respuesta disponible',
-            'Tu consulta ha sido procesada. Abre la app para ver la respuesta completa.'
-        );
+        // Use try-catch for notification logic to avoid crashing the response
+        try {
+            await notificationService.sendNotification(
+                userId,
+                '🤖 Nueva respuesta disponible',
+                'Tu consulta ha sido procesada. Abre la app para ver la respuesta completa.'
+            );
+        } catch (notifError) {
+             console.warn('⚠️ Notification failed but response handled:', notifError.message);
+             // We continue to return success to the client because the MAIN action (processing) was fine.
+             // The notification is secondary.
+        }
 
         res.json({ success: true });
     } catch (error) {
-        console.error('❌ Error sending notification:', error);
-        // Don't fail the request if notification fails, just log it
-        // But return error so client knows
+        console.error('❌ Error in notify-chat-response:', error);
         res.status(500).json({ error: error.message });
     }
 });
