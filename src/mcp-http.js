@@ -37,12 +37,14 @@ app.use((req, res, next) => {
 // even before services are initialized
 // ============================================================
 app.get('/health', (req, res) => {
-    res.json({
+    console.log('🏥 Health check requested from:', req.ip);
+    res.status(200).json({
         status: 'ok',
         server: 'YisusCompany by YisusFactory MCP Server',
         version: '1.0.0',
         timestamp: new Date().toISOString()
     });
+    console.log('✅ Health check response sent (200 OK)');
 });
 
 // Initialize services AFTER health check endpoint
