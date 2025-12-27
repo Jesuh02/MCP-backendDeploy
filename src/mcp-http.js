@@ -27,6 +27,9 @@ app.use((req, res, next) => {
     next();
 });
 
+// Configure Routes (Excel, Notifications, LLM)
+configureRoutes(app);
+
 // Initialize services
 const supabase = SupabaseService.getInstance();
 let mcpService;
