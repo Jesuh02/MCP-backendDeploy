@@ -2,7 +2,7 @@ node_modules
 npm-debug.log
 .env
 .env.*
-!.railway-env.json
+.railway-env.json
 logs/*.log
 .git
 .gitignore
