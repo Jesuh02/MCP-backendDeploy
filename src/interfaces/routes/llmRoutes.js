@@ -178,7 +178,7 @@ FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con EXACTAMENTE 10 (D
     {
         "question": "Texto de la pregunta",
         "options": ["opción A","opción B","opción C","opción D"],
-        "correctIndex": 2, // (0=A, 1=B, 2=C, 3=D) - VARÍA ESTE ÍNDICE ALEATORIAMENTE
+        "correctIndex": 0, // índice de la opción correcta
         "difficulty": "easy|medium|hard",
         "topic": "tema o tarea relacionada (ej: 'Tarea 1 - Tema: Álgebra')",
         "source": "nombre_del_archivo_o_ruta_de_origen"
@@ -243,33 +243,14 @@ LLM REQUEST END`;
                         try {
                             if (!q || !Array.isArray(q.options)) return q;
                             // Keep a copy of the original correct value (by index)
-                            let origIdx = 0;
-                            if (typeof q.correctIndex === 'number') {
-                                origIdx = q.correctIndex;
-                            } else if (typeof q.correctIndex === 'string') {
-                                // Handle string indices like "0", "1", "A", "B"
-                                if (/^\d+$/.test(q.correctIndex)) {
-                                    origIdx = parseInt(q.correctIndex, 10);
-                                } else {
-                                    // Try to map "A"->0, "B"->1, etc. if model returns letters
-                                    const map = { 'a': 0, 'b': 1, 'c': 2, 'd': 3, 'A': 0, 'B': 1, 'C': 2, 'D': 3 };
-                                    if (q.correctIndex in map) {
-                                        origIdx = map[q.correctIndex];
-                                    }
-                                }
-                            }
-                            
-                            // Validate bounds
-                            if (origIdx < 0 || origIdx >= q.options.length) origIdx = 0;
-
+                            const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
                             const origCorrect = q.options[origIdx];
                             const newOptions = q.options.slice();
                             shuffle(newOptions);
-                            
-                            // Find new index of the original correct option.
+                            // Find new index of the original correct option. If duplicates exist, find by value first occurrence.
                             let newIndex = newOptions.findIndex(o => o === origCorrect);
                             if (newIndex === -1) {
-                                // Should not happen if logic is correct, but safe fallback
+                                // Fallback: if value comparison fails, try to preserve by position mapping
                                 newIndex = 0;
                             }
                             return {
@@ -449,12 +430,10 @@ Asegúrate de generar ${needed} preguntas nuevas.`;
                     // 3. Final Save to History (Only new ones)
                     if (userId && courseId && accumulatedQuestions.length > 0) {
                         try {
-                            const topicId = req.body.topicId || req.body.topic_id || null;
-                            const taskId = req.body.taskId || req.body.task_id || null;
                             const mcpService = new MCPService();
                             // We save ALL accumulated questions because we already filtered them against history.
                             // So they are all "new" for this user.
-                            await mcpService.saveReinforcementHistory(userId, courseId, accumulatedQuestions, topicId, taskId);
+                            await mcpService.saveReinforcementHistory(userId, courseId, accumulatedQuestions);
                         } catch (e) {
                             console.warn('⚠️ Failed to save history:', e.message);
                         }
