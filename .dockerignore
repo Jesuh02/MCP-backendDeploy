@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+.env
+.env.*
+!.railway-env.json
+logs/*.log
+.git
+.gitignore
+README.md
+.vscode
+.idea
+*.md
+!package*.json
+start.sh
+test-resend.js
+railway.json
