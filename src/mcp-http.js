@@ -118,6 +118,35 @@ async function main() {
 
         // Set server timeout to 5 minutes (300000 ms) to handle long LLM/Excel generation
         server.setTimeout(300000);
+
+        // Prevent server from shutting down unexpectedly
+        process.on('SIGTERM', () => {
+            console.log('⚠️ SIGTERM received, shutting down gracefully...');
+            server.close(() => {
+                console.log('✅ Server closed gracefully');
+                process.exit(0);
+            });
+        });
+
+        process.on('SIGINT', () => {
+            console.log('⚠️ SIGINT received, shutting down gracefully...');
+            server.close(() => {
+                console.log('✅ Server closed gracefully');
+                process.exit(0);
+            });
+        });
+
+        // Keep the process alive
+        process.on('uncaughtException', (error) => {
+            console.error('❌ Uncaught Exception:', error);
+            // Don't exit - log and continue
+        });
+
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+            // Don't exit - log and continue
+        });
+
     } catch (error) {
         console.error('❌ Failed to connect to Supabase:', error);
         process.exit(1);
