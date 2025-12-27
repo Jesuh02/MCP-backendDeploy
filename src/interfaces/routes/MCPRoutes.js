@@ -200,7 +200,22 @@ Provide a GitHub URL and optional evaluation criteria.
  */
 router.post('/tools/call', async(req, res) => {
     const { params } = req.body;
-    console.log('🔧 Tool call request:', params?.name);
+    // Enhanced logging to help debug Android client requests
+    try {
+        console.log('🔧 Tool call request:', params?.name);
+        console.log('🔍 Incoming /tools/call headers preview:', Object.keys(req.headers).slice(0,20));
+        if (req.headers['x-mcp-client']) {
+            console.log('   • Detected X-MCP-Client header:', req.headers['x-mcp-client']);
+        }
+        try {
+            const rawBodyPreview = JSON.stringify(req.body).substring(0, 1000);
+            console.log('   • Incoming /tools/call body preview:', rawBodyPreview);
+        } catch (e) {
+            console.log('   • Unable to stringify req.body for preview', e.message);
+        }
+    } catch (e) {
+        console.error('Error while logging incoming /tools/call request', e);
+    }
 
     try {
         const { name, arguments: args } = params;
