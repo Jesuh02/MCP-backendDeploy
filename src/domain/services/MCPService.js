@@ -504,8 +504,10 @@ RULES:
 - If using alias, reference it in SELECT (e.g., u.username NOT t.username)
 - For JOINs, verify foreign keys exist
 - For LIST queries (dame usuarios, lista de cursos, etc.), select ALL relevant columns
-- IF query asks for specific month/year (e.g. "septiembre 2025"), USE date_trunc or extract. 
-  Example: WHERE extract(month from created_at) = 9 AND extract(year from created_at) = 2025
+- IF query asks for specific month/year (e.g. "septiembre 2025"), prefer standard comparisons over functions for better compatibility.
+  Example: WHERE created_at >= '2025-09-01' AND created_at < '2025-10-01'
+- IF using bigint timestamps (e.g. subscription_date), use integers or to_timestamp. 
+  Example: WHERE subscription_date >= 1756684800
 
 Output ONLY SQL in code block:
 \`\`\`sql
