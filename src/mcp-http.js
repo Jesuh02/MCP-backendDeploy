@@ -17,7 +17,9 @@ const PORT = process.env.MCP_HTTP_PORT || 3000;
 // Middleware
 app.use(express.json());
 app.use((req, res, next) => {
-    console.log(`📨 ${req.method} ${req.path}`);
+    const timestamp = new Date().toISOString();
+    const clientIp = req.ip || req.connection.remoteAddress;
+    console.log(`📨 [${timestamp}] ${req.method} ${req.path} from ${clientIp}`);
     // Enable CORS for Android emulator
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
