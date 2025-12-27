@@ -113,7 +113,8 @@ router.post('/procesar-prompt', async (req, res) => {
                                         augmentedPrompt += `\n\n--- Contenido del archivo: ${rawName} (${fileData.contentType}) ---\n${contentSnippet}`;
                                     } else {
                                         console.log(`ℹ️ Archivo ${rawName} es binario o no textual, solo referencia añadida. (isPdf=${isPdfName}, isExcel=${nameLower.match(/\.xlsx?$/)})`);
-                                        augmentedPrompt += `\n\n--- Archivo adjunto: ${rawName} (${fileData.contentType}) [Contenido binario no incluido] ---`;
+                                        // Still add reference to the file even if empty content to allow LLM to see the filename
+                                        augmentedPrompt += `\n\n--- Archivo adjunto: ${rawName} (${fileData.contentType}) [Contenido vacío o binario] ---`;
                                     }
                                 }
                             } catch (e) {
