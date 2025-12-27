@@ -30,9 +30,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// Configure Routes (Excel, Notifications, LLM)
-configureRoutes(app);
-
 // Compatibility route: accept legacy client POSTs to /procesar-prompt
 app.post('/procesar-prompt', async (req, res) => {
     console.log('📨 Legacy POST /procesar-prompt received (compat route)');
@@ -117,6 +114,10 @@ async function main() {
     try {
         await supabase.testConnection();
         console.log('✅ Supabase connected');
+
+        // Configure Routes AFTER Supabase connection
+        console.log('📍 Configuring routes...');
+        configureRoutes(app);
 
         // Helper to get local IP
         const getLocalIp = () => {
