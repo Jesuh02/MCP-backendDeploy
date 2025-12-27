@@ -9,6 +9,7 @@ import express from 'express';
 import os from 'os';
 import { MCPService } from './domain/services/MCPService.js';
 import { SupabaseService } from './infrastructure/database/SupabaseService.js';
+import { configureRoutes } from './interfaces/routes/index.js';
 
 const app = express();
 const PORT = process.env.MCP_HTTP_PORT || 3000;
