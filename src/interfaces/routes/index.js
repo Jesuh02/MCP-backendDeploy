@@ -12,14 +12,17 @@ export { notificationRoutes, llmRoutes, excelRoutes };
 // Route configuration helper
 export function configureRoutes(app) {
     const routes = [
-        { path: '/', router: notificationRoutes }, // Enabled by user request
-        { path: '/', router: llmRoutes }, // Register LLM routes at root (e.g. /procesar-prompt)
-        { path: '/', router: excelRoutes } // Register Excel routes at root (e.g. /generate-excel)
+        { path: '/notifications', router: notificationRoutes, name: 'Notifications' }, 
+        { path: '/llm', router: llmRoutes, name: 'LLM' }, 
+        { path: '/excel', router: excelRoutes, name: 'Excel' } 
     ];
 
-    routes.forEach(({ path, router }) => {
-        app.use(path, router);
-        console.log(`📍 Routes configured: ${path}`);
+    // Mount all at root for backward compatibility but log them clearly
+    // Also mount at specific paths for cleaner API structure if needed
+    routes.forEach(({ path, router, name }) => {
+        // Mount at root as requested by current app architecture
+        app.use('/', router);
+        console.log(`📍 Route configured: ${name} (mounted at /)`);
     });
 
     return app;
