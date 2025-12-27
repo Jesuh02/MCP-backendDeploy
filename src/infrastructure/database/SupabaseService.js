@@ -648,12 +648,13 @@ CREATE TABLE public.videos (
                         const match = whereClause.match(/(\w+)\s+is\s+not\s+null/i);
                         query = query.not(match[1], 'is', null);
                     }
-                    // Handle simple equality 'col = val'
+                    // Handle comparison operators (>=, <=, >, <, =, <>)
                     else {
-                        const eqMatch = whereClause.match(/(\w+)\s*=\s*([^\s;]+)/i);
-                        if (eqMatch) {
-                            const column = eqMatch[1];
-                            let value = eqMatch[2];
+                        const opMatch = whereClause.match(/(\w+)\s*([<>=!]+)\s*([^\s;]+)/i);
+                        if (opMatch) {
+                            const column = opMatch[1];
+                            const operator = opMatch[2];
+                            let value = opMatch[3];
                             value = value.replace(/^['"]|['"]$/g, '').replace(/;$/g, '').trim();
 
                             const lowerVal = String(value).toLowerCase();
@@ -666,7 +667,15 @@ CREATE TABLE public.videos (
                                 finalValue = isNaN(numValue) ? value : numValue;
                             }
 
-                            query = query.eq(column, finalValue);
+                            switch (operator) {
+                                case '=': query = query.eq(column, finalValue); break;
+                                case '!=': case '<>': query = query.neq(column, finalValue); break;
+                                case '>': query = query.gt(column, finalValue); break;
+                                case '<': query = query.lt(column, finalValue); break;
+                                case '>=': query = query.gte(column, finalValue); break;
+                                case '<=': query = query.lte(column, finalValue); break;
+                                default: query = query.eq(column, finalValue); // Fallback
+                            }
                         }
                     }
                 }
