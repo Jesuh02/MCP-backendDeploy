@@ -23,8 +23,11 @@ EXPOSE 3000 3001
 HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=10 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${PORT:-3000}/health || exit 1
 
-# Make start script executable
-RUN chmod +x start.sh
+# Make start script executable and fix CRLF line endings (Windows compatibility)
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
+
+# Force cache bust for start.sh updates
+ENV START_SCRIPT_VERSION=v3
 
 # Start server (Run both API and MCP servers)
 CMD ["sh", "start.sh"]
