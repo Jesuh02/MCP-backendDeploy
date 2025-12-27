@@ -1,12 +1,19 @@
 #!/bin/sh
 
 # Start both servers in parallel
-# index.js runs on PORT (3001 default)
-# mcp-http.js runs on MCP_HTTP_PORT (3000 default)
+# index.js runs on PORT (defaults to 3001 if not set)
+# mcp-http.js runs on MCP_HTTP_PORT (defaults to 3000 if not set)
 
-# Force ports to avoid conflicts
-export PORT=3001
-export MCP_HTTP_PORT=3000
+# Respect existing PORT (Railway) or default to 3001
+export PORT=${PORT:-3001}
+
+# Set MCP port. Default to 3000.
+# If PORT is 3000, shift MCP port to 3001 to avoid conflict.
+if [ "$PORT" = "3000" ]; then
+    export MCP_HTTP_PORT=3001
+else
+    export MCP_HTTP_PORT=${MCP_HTTP_PORT:-3000}
+fi
 
 echo "Starting index.js (API Server on port $PORT)..."
 # Run in a loop to restart on failure
