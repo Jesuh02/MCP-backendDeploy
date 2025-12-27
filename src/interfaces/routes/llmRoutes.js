@@ -168,12 +168,12 @@ INSTRUCCIÓN CRÍTICA DE CONTEXTO:
 El usuario ha adjuntado MÚLTIPLES archivos y contenidos del curso (tareas, temas, PDFs, documentos).
 TU TAREA ES ANALIZAR Y UTILIZAR EL CONTENIDO DE **TODOS** LOS ARCHIVOS PROPORCIONADOS, SIN EXCEPCIÓN.
 NO te limites a analizar solo el primer archivo o solo el último.
-NO apliques límites de lectura: procesa la información completa de cada archivo adjunto para generar las preguntas.
+NO apliques límites de lectura: procesa la información completa de cada archivo adjunto para generar las preguntas. DEBES GENERAR SIEMPRE 10 PREGUNTAS.
 
 Si hay archivos adjuntos (PDFs, Excel, Texto), su contenido está incluido en este prompt. ÚSALO TODO.
 Priorice el contenido de los archivos sobre los nombres de las tareas si hay conflicto.
 
-FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
+FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con EXACTAMENTE 10 (DIEZ) objetos (preguntas) de esta forma:
 [
     {
         "question": "Texto de la pregunta",
@@ -316,109 +316,133 @@ LLM REQUEST END`;
                         return false;
                     };
 
-                    let filtered = transformed;
+                    // --- ACCUMULATION LOGIC START ---
+                    let accumulatedQuestions = [];
+                    const historyForCheck = (existingHistory && existingHistory.length) ? existingHistory : historyQuestionsList;
 
+                    // 1. Initial Filter: Remove duplicates from 'transformed' that are in history
                     if (userId && courseId) {
                         try {
-                            const mcpService = new MCPService();
-                            
-                            // Check against full history again
-                            const history = existingHistory && existingHistory.length ? existingHistory : historyQuestionsList;
-                            
-                            filtered = transformed.filter(q => {
+                            accumulatedQuestions = transformed.filter(q => {
                                 try {
                                     const qText = q.question || q.pregunta || JSON.stringify(q);
-                                    return !questionExistsInHistory(qText, history);
+                                    return !questionExistsInHistory(qText, historyForCheck);
                                 } catch (e) { return true; }
                             });
-
-                                        // Save newly selected questions back to history (append as new record)
-                                        if (filtered.length > 0) {
-                                            const toSave = filtered.map(fq => fq);
-                                            await mcpService.saveReinforcementHistory(userId, courseId, toSave);
-                                        } else {
-                                            console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
-                                        }
                         } catch (e) {
-                            console.warn('⚠️ Failed to consult/save reinforcement history:', e?.message || e);
+                            console.warn('⚠️ Error filtering initial batch:', e);
+                            accumulatedQuestions = transformed;
+                        }
+                    } else {
+                        accumulatedQuestions = transformed;
+                    }
+
+                    // 2. Loop to ensure we have exactly 10 questions
+                    // Runs if we have fewer than 10 questions, regardless of history logic
+                    let attempts = 0;
+                    const TARGET_COUNT = 10;
+                    const MAX_RETRIES = 3;
+
+                    while (accumulatedQuestions.length < TARGET_COUNT && attempts < MAX_RETRIES) {
+                        attempts++;
+                        const needed = TARGET_COUNT - accumulatedQuestions.length;
+                        console.log(`🔄 Attempt ${attempts}: Have ${accumulatedQuestions.length} questions, need ${needed} more.`);
+
+                        // Prepare constraints: Don't repeat what we already have
+                        const currentQuestionsText = accumulatedQuestions
+                            .map((q, i) => `${i + 1}. ${q.question || JSON.stringify(q)}`)
+                            .join('\n');
+                        
+                        // Append to augmentedPrompt (or reuse header)
+                        // Note: augmentedPrompt already has the file content.
+                        const retryPrompt = augmentedPrompt + `\n\nREINTENTO AUTOMÁTICO ${attempts}: He recibido ${accumulatedQuestions.length} preguntas válidas, pero NECESITO EXACTAMENTE ${TARGET_COUNT}.
+Genera ${needed} preguntas ADICIONALES y ÚNICAS.
+NO REPITAS ni te parezcas a las siguientes preguntas que ya tengo:
+${currentQuestionsText}
+Asegúrate de generar ${needed} preguntas nuevas.`;
+
+                        try {
+                            const retryResp = await fetch(targetUrl, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    model: model || 'deepseek-chat',
+                                    prompt: retryPrompt,
+                                    stream: false,
+                                    options: { temperature: 0.8 + (attempts * 0.05) } // Slightly increase temp
+                                })
+                            });
+
+                            if (!retryResp.ok) {
+                                console.warn(`⚠️ Retry ${attempts} failed: ${retryResp.status}`);
+                                continue;
+                            }
+
+                            const retryData = await retryResp.json();
+                            const rawRetry = typeof retryData.response === 'string' ? retryData.response : JSON.stringify(retryData.response);
+                            const s = rawRetry.indexOf('[');
+                            const e = rawRetry.lastIndexOf(']');
+                            
+                            if (s !== -1 && e !== -1 && s < e) {
+                                const arrJ = rawRetry.substring(s, e + 1);
+                                const parsedRetry = JSON.parse(arrJ);
+                                
+                                if (Array.isArray(parsedRetry)) {
+                                    // Shuffle options for new questions
+                                    const processedNew = parsedRetry.map(q => {
+                                        try {
+                                            if (!q || !Array.isArray(q.options)) return q;
+                                            const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
+                                            const origCorrect = q.options[origIdx];
+                                            const newOptions = q.options.slice();
+                                            shuffle(newOptions);
+                                            let newIndex = newOptions.findIndex(o => o === origCorrect);
+                                            if (newIndex === -1) newIndex = 0;
+                                            return { ...q, options: newOptions, correctIndex: newIndex };
+                                        } catch (e) { return q; }
+                                    });
+
+                                    // Filter new questions against:
+                                    // 1. History (if user/course)
+                                    // 2. Already accumulated questions in this session
+                                    const validNew = processedNew.filter(q => {
+                                        const qText = q.question || q.pregunta || JSON.stringify(q);
+                                        // Check against accumulated
+                                        if (questionExistsInHistory(qText, accumulatedQuestions)) return false;
+                                        // Check against history
+                                        if (userId && courseId && questionExistsInHistory(qText, historyForCheck)) return false;
+                                        return true;
+                                    });
+
+                                    if (validNew.length > 0) {
+                                        accumulatedQuestions = [...accumulatedQuestions, ...validNew];
+                                        console.log(`✅ Added ${validNew.length} new questions. Total: ${accumulatedQuestions.length}`);
+                                    } else {
+                                        console.log(`⚠️ Retry returned ${parsedRetry.length} questions but all were duplicates.`);
+                                    }
+                                }
+                            }
+                        } catch (retryErr) {
+                            console.warn(`⚠️ Error in retry loop ${attempts}: ${retryErr.message}`);
                         }
                     }
 
-                                // If everything was filtered out (duplicates/disallowed), attempt up to 2 retries
-                                if ((userId && courseId) && Array.isArray(filtered) && filtered.length === 0 && historyQuestionsList.length > 0) {
-                                    console.log('🔁 All questions filtered; attempting DeepSeek retries to generate distinct questions');
-                                    for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
-                                        try {
-                                            // Sample a NEW set of history for the retry to give different negative examples
-                                            const retryShuffledHistory = [...historyQuestionsList].sort(() => 0.5 - Math.random());
-                                            const retrySample = retryShuffledHistory.slice(0, 60);
+                    // 3. Final Save to History (Only new ones)
+                    if (userId && courseId && accumulatedQuestions.length > 0) {
+                        try {
+                            const topicId = req.body.topicId || req.body.topic_id || null;
+                            const taskId = req.body.taskId || req.body.task_id || null;
+                            const mcpService = new MCPService();
+                            // We save ALL accumulated questions because we already filtered them against history.
+                            // So they are all "new" for this user.
+                            await mcpService.saveReinforcementHistory(userId, courseId, accumulatedQuestions, topicId, taskId);
+                        } catch (e) {
+                            console.warn('⚠️ Failed to save history:', e.message);
+                        }
+                    }
 
-                                            const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera 10 preguntas totalmente diferentes que NO sean idénticas a las siguientes (ya vistas):\n${retrySample.map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, intenta cambiar el enfoque de las preguntas.`;
-
-                                            const retryResp = await fetch(targetUrl, {
-                                                method: 'POST',
-                                                headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({ model: model || 'deepseek-chat', prompt: retryPrompt, stream: false, options: { temperature: 0.8 } })
-                                            });
-
-                                            if (!retryResp.ok) {
-                                                console.warn(`⚠️ Retry ${attempt} DeepSeek API error: ${retryResp.status} ${retryResp.statusText}`);
-                                                continue;
-                                            }
-
-                                            const retryData = await retryResp.json();
-                                            const rawRetry = typeof retryData.response === 'string' ? retryData.response : JSON.stringify(retryData.response);
-                                            const s = rawRetry.indexOf('[');
-                                            const e = rawRetry.lastIndexOf(']');
-                                            if (s !== -1 && e !== -1 && s < e) {
-                                                try {
-                                                    const arrJ = rawRetry.substring(s, e + 1);
-                                                    const parsedRetry = JSON.parse(arrJ);
-                                                    if (Array.isArray(parsedRetry) && parsedRetry.length > 0) {
-                                                        const transformedRetry = parsedRetry.map(q => {
-                                                            try {
-                                                                if (!q || !Array.isArray(q.options)) return q;
-                                                                const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
-                                                                const origCorrect = q.options[origIdx];
-                                                                const newOptions = q.options.slice();
-                                                                for (let i = newOptions.length - 1; i > 0; i--) {
-                                                                    const j = Math.floor(Math.random() * (i + 1));
-                                                                    [newOptions[i], newOptions[j]] = [newOptions[j], newOptions[i]];
-                                                                }
-                                                                let newIndex = newOptions.findIndex(o => o === origCorrect);
-                                                                if (newIndex === -1) newIndex = 0;
-                                                                return { ...q, options: newOptions, correctIndex: newIndex };
-                                                            } catch (qq) { return q; }
-                                                        });
-
-                                                        // Filter parsedRetry using questionExistsInHistory against existingHistory (or historyQuestionsList)
-                                                        const historyToCheck = existingHistory && existingHistory.length ? existingHistory : historyQuestionsList;
-                                                        const newlyFiltered = transformedRetry.filter(q => {
-                                                            try { const qText = q.question || q.pregunta || JSON.stringify(q); return !questionExistsInHistory(qText, historyToCheck); } catch (ex) { return true; }
-                                                        });
-
-                                                        if (newlyFiltered.length > 0) {
-                                                            filtered = newlyFiltered;
-                                                            // Upsert these into history
-                                                            try {
-                                                                const mcpService2 = new MCPService();
-                                                                const toSave = filtered.map(fq => fq);
-                                                                await mcpService2.saveReinforcementHistory(userId, courseId, toSave);
-                                                            } catch (upErr) { console.warn('⚠️ Failed to save retry results:', upErr?.message || upErr); }
-                                                            break;
-                                                        }
-                                                    }
-                                                } catch (parseErr) {
-                                                    console.warn('⚠️ Could not parse retry response JSON array:', parseErr?.message || parseErr);
-                                                }
-                                            }
-                                        } catch (retryErr) {
-                                            console.warn('⚠️ Retry attempt failed:', retryErr?.message || retryErr);
-                                        }
-                                    }
-                                }
-
-                                respuestaTexto = JSON.stringify(filtered);
+                    respuestaTexto = JSON.stringify(accumulatedQuestions);
+                    // --- ACCUMULATION LOGIC END ---
                 }
             }
         } catch (e) {
