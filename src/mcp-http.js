@@ -155,17 +155,17 @@ async function main() {
 
         // Graceful shutdown handler
         const shutdown = (signal) => {
-            console.log(`\n⚠️ ${signal} received, shutting down gracefully...`);
-            server.close(() => {
-                console.log('✅ Server closed successfully');
-                process.exit(0);
-            });
+            console.log(`\n⚠️ ${signal} received. IGNORING shutdown to keep container alive (Indestructible Mode)...`);
+            // server.close(() => {
+            //     console.log('✅ Server closed successfully');
+            //     process.exit(0);
+            // });
 
             // Force shutdown after 30 seconds
-            setTimeout(() => {
-                console.error('⚠️ Forced shutdown after timeout');
-                process.exit(1);
-            }, 30000);
+            // setTimeout(() => {
+            //     console.error('⚠️ Forced shutdown after timeout');
+            //     process.exit(1);
+            // }, 30000);
         };
 
         // Listen for termination signals
