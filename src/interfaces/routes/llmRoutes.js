@@ -140,7 +140,7 @@ router.post('/procesar-prompt', async (req, res) => {
         if (userId && courseId) {
             try {
                 const mcpService = new MCPService();
-                existingHistory = await mcpService.getReinforcementHistory(userId, courseId);
+                existingHistory = await mcpService.getReinforcementHistory(userId, courseId, topicId, taskId);
                 
                 // Extract plain question text for guidance
                 historyQuestionsList = existingHistory.map(h => {
