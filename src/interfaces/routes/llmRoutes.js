@@ -374,23 +374,14 @@ ${currentQuestionsText}
 Asegúrate de generar ${needed} preguntas nuevas.`;
 
                         try {
-                            const retryResp = await fetch(targetUrl, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    model: model || 'deepseek-chat',
-                                    prompt: retryPrompt,
-                                    stream: false,
-                                    options: { temperature: 0.8 + (attempts * 0.05) } // Slightly increase temp
-                                })
-                            });
+                            const retryMessages = [
+                                new SystemMessage("You are an educational assistant. Output strict JSON."),
+                                new HumanMessage(retryPrompt)
+                            ];
+                            
+                            const retryResponse = await llmService.generateResponse(retryMessages, []);
+                            const retryData = { response: retryResponse.content };
 
-                            if (!retryResp.ok) {
-                                console.warn(`⚠️ Retry ${attempts} failed: ${retryResp.status}`);
-                                continue;
-                            }
-
-                            const retryData = await retryResp.json();
                             const rawRetry = typeof retryData.response === 'string' ? retryData.response : JSON.stringify(retryData.response);
                             const s = rawRetry.indexOf('[');
                             const e = rawRetry.lastIndexOf(']');
