@@ -4054,21 +4054,40 @@ app.post('/procesar-prompt', async(req, res) => {
                                     const isPdf = lowerName.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
 
                                     if (isPdf) {
-                                        try {
-                                            console.log(`📄 Intentando analizar PDF: ${file.name}`);
-                                            const buffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
-                                            const data = await pdf(buffer);
-                                            if (data.text && data.text.trim().length > 0) {
-                                                const contentSnippet = data.text;
-                                                augmentedPrompt += `\n\n--- Contenido del archivo del curso (PDF): ${file.name} ---\n${contentSnippet}`;
-                                                console.log(`✅ PDF analizado exitosamente: ${file.name} (${contentSnippet.length} chars)`);
-                                            } else {
-                                                console.warn(`⚠️ PDF analizado pero sin texto (posible escaneado): ${file.name}`);
-                                                augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (PDF escaneado o vacío) ---`;
+                                        // 🛡️ SECURITY: Skip PDF parsing if file is too large (> 10MB) to prevent OOM
+                                        if (fileData.size > 10 * 1024 * 1024) {
+                                            console.warn(`⚠️ PDF demasiado grande (${formatFileSize(fileData.size)}), saltando análisis profundo.`);
+                                            augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (PDF demasiado grande para análisis, >10MB) ---`;
+                                        } 
+                                        else if (typeof pdf === 'function') {
+                                            try {
+                                                console.log(`📄 Intentando analizar PDF: ${file.name} (${formatFileSize(fileData.size)})`);
+                                                const buffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                                
+                                                // Race condition protection: Timeout PDF parsing after 10 seconds
+                                                const pdfPromise = pdf(buffer);
+                                                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('PDF parsing timed out')), 10000));
+                                                
+                                                const data = await Promise.race([pdfPromise, timeoutPromise]);
+                                                
+                                                if (data.text && data.text.trim().length > 0) {
+                                                    // Limit text length to avoid token overflow (e.g., 50k chars)
+                                                    const contentSnippet = data.text.substring(0, 50000);
+                                                    const truncated = data.text.length > 50000 ? `... [truncado, total ${data.text.length} chars]` : '';
+                                                    
+                                                    augmentedPrompt += `\n\n--- Contenido del archivo del curso (PDF): ${file.name} ---\n${contentSnippet}${truncated}`;
+                                                    console.log(`✅ PDF analizado exitosamente: ${file.name} (${contentSnippet.length} chars)`);
+                                                } else {
+                                                    console.warn(`⚠️ PDF analizado pero sin texto (posible escaneado): ${file.name}`);
+                                                    augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (PDF escaneado o vacío) ---`;
+                                                }
+                                            } catch (e) {
+                                                console.error(`❌ Error analizando PDF ${file.name}:`, e.message);
+                                                augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (Error al leer PDF: ${e.message}) ---`;
                                             }
-                                        } catch (e) {
-                                            console.error(`❌ Error analizando PDF ${file.name}:`, e.message);
-                                            augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (Error al leer PDF) ---`;
+                                        } else {
+                                             console.warn(`⚠️ Librería 'pdf-parse' no disponible o inválida.`);
+                                             augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (Librería PDF no disponible) ---`;
                                         }
                                     }
                                     // Handle Text
@@ -4724,7 +4743,27 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                     console.log('[REINFORCEMENT DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
 
                     // Call DeepSeek for reinforcement questions
-                    let respuestaFinal = await callDeepSeek(null, promptCompleto);
+                    let respuestaFinal;
+                    try {
+                        respuestaFinal = await callDeepSeek(null, promptCompleto);
+                    } catch (error) {
+                        console.error('❌ callDeepSeek failed:', error.message);
+                        
+                        // Fallback: If "LLMService not available", try a direct fetch to Ollama local (if available)
+                        // Or just return a specific error JSON that the client can show
+                        if (error.message.includes('LLMService not available') || error.message.includes('configured')) {
+                             // Try to use the ollamaUrl passed in request as a last resort (if it's not the same server)
+                             // Actually, if DeepSeek fails, we might want to return empty list so client handles it?
+                             // But client throws 500. We should return 200 with error info.
+                             console.warn('⚠️ Falling back to error response instead of 500');
+                             return res.json({
+                                 respuesta_texto: "[]",
+                                 error: "Servicio de IA no disponible en este momento. (DeepSeek/Ollama config missing)",
+                                 nota: null
+                             });
+                        }
+                        throw error; // Rethrow to main catch if it's another error
+                    }
 
                     // --- STRICT DEDUPLICATION LOGIC WITH RETRY (POST-GENERATION) ---
                     // Ensure we NEVER return a question that exists in the user's history
