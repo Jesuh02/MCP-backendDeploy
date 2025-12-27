@@ -1,11 +1,13 @@
+import notificationRoutes from './notificationRoutes.js';
+import llmRoutes from './llmRoutes.js';
+import excelRoutes from './excelRoutes.js';
+
 /**
  * routes/index.js
  * Exportaciones centralizadas de todas las rutas
  */
 
-export { default as notificationRoutes } from './notificationRoutes.js';
-export { default as llmRoutes } from './llmRoutes.js';
-export { default as excelRoutes } from './excelRoutes.js';
+export { notificationRoutes, llmRoutes, excelRoutes };
 
 // Route configuration helper
 export function configureRoutes(app) {
