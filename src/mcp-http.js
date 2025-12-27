@@ -141,6 +141,26 @@ async function main() {
 
         // Set server timeout to 5 minutes (300000 ms) to handle long LLM/Excel generation
         server.setTimeout(300000);
+
+        // Graceful shutdown handler
+        const shutdown = (signal) => {
+            console.log(`\n⚠️ ${signal} received, shutting down gracefully...`);
+            server.close(() => {
+                console.log('✅ Server closed successfully');
+                process.exit(0);
+            });
+
+            // Force shutdown after 30 seconds
+            setTimeout(() => {
+                console.error('⚠️ Forced shutdown after timeout');
+                process.exit(1);
+            }, 30000);
+        };
+
+        // Listen for termination signals
+        process.on('SIGTERM', () => shutdown('SIGTERM'));
+        process.on('SIGINT', () => shutdown('SIGINT'));
+
     } catch (error) {
         console.error('❌ Failed to connect to Supabase:', error);
         process.exit(1);
