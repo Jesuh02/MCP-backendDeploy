@@ -43,6 +43,23 @@ const PORT = process.env.PORT || 3001;
 const MAX_TOKENS = 4096;
 
 // ============================================================
+// 🛡️ MIDDLEWARE CONFIGURATION
+// ============================================================
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// CORS Middleware
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
+// ============================================================
 // 🏥 CRITICAL: Healthcheck endpoint MUST be defined FIRST
 // This ensures Railway can verify the container is healthy
 // even before all other services are initialized
@@ -7073,7 +7090,7 @@ app.get('/listar-submissions/:taskId', async(req, res) => {
 });
 
 // Listen on all interfaces so the service is reachable from other devices on the LAN
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     const localIPs = getLocalIPAddress();
     console.log('='.repeat(60));
     console.log('🚀 Microservicio de distribución de contexto con DeepSeek v2.3');
@@ -7109,6 +7126,9 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`   • POST /tools/call (MCP)`);
     console.log('='.repeat(60));
 });
+
+// Set server timeout to 5 minutes to prevent 502 on long LLM tasks
+server.setTimeout(300000);
 
 // ============================================================
 // 🛡️ INDESTRUCTIBLE MODE: Ignore Shutdown Signals
