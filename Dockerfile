@@ -16,7 +16,7 @@ COPY . .
 RUN mkdir -p logs
 
 # Expose main port (Railway will use PORT env variable)
-EXPOSE 3000
+EXPOSE 3000 3001
 
 # Health check - Use /health endpoint with longer start period for Railway
 # Railway healthcheck uses /health by default
