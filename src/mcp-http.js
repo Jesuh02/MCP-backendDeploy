@@ -31,6 +31,31 @@ app.use((req, res, next) => {
 // Configure Routes (Excel, Notifications, LLM)
 configureRoutes(app);
 
+// Compatibility route: accept legacy client POSTs to /procesar-prompt
+app.post('/procesar-prompt', async (req, res) => {
+    console.log('📨 Legacy POST /procesar-prompt received (compat route)');
+    try {
+        const body = req.body || {};
+        const prompt = body.prompt || body.query || body.text || '';
+
+        if (!prompt) {
+            return res.status(400).json({ error: 'Missing prompt in request body' });
+        }
+
+        if (!mcpService) {
+            return res.status(500).json({ error: 'MCPService not initialized' });
+        }
+
+        // Delegate to MCPService.processQuery which returns structured result
+        const result = await mcpService.processQuery(prompt, { reason: 'legacy_procesar_prompt' });
+
+        return res.json({ success: true, result });
+    } catch (err) {
+        console.error('❌ Error handling /procesar-prompt:', err);
+        return res.status(500).json({ error: err.message || String(err) });
+    }
+});
+
 // Initialize services
 const supabase = SupabaseService.getInstance();
 let mcpService;
