@@ -68,12 +68,15 @@ router.post('/generate-excel', async (req, res) => {
         }
 
         console.log(`📊 Generating Excel for query: "${query}" (User: ${userId})`);
+        const startTime = Date.now();
 
         // 1. Get Data
         // Use processQueryToData to ensure we get actual data via SQL generation
         let result;
         try {
+            console.log(`⏱️ [${Date.now() - startTime}ms] Starting processQueryToData...`);
             result = await mcpService.processQueryToData(query);
+            console.log(`⏱️ [${Date.now() - startTime}ms] processQueryToData complete.`);
         } catch (e) {
             console.warn("⚠️ processQueryToData failed, falling back to processQuery:", e.message);
             result = await mcpService.processQuery(query);
@@ -113,6 +116,7 @@ router.post('/generate-excel', async (req, res) => {
         }
 
         console.log(`✅ Data retrieved: ${dataToExport.length} rows`);
+        console.log(`⏱️ [${Date.now() - startTime}ms] Starting Excel generation...`);
 
         // 2. Generate Excel
         const wb = xlsx.utils.book_new();
@@ -125,6 +129,7 @@ router.post('/generate-excel', async (req, res) => {
         xlsx.utils.book_append_sheet(wb, ws, "Results");
         
         const excelBuffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+        console.log(`⏱️ [${Date.now() - startTime}ms] Excel buffer created (${excelBuffer.length} bytes). Uploading...`);
 
         // 3. Upload to R2
         const timestamp = Date.now();
@@ -136,6 +141,7 @@ router.post('/generate-excel', async (req, res) => {
             filename, 
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         );
+        console.log(`⏱️ [${Date.now() - startTime}ms] Upload complete: ${publicUrl}`);
 
         // 4. Return URL
         res.json({
