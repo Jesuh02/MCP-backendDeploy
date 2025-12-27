@@ -46,9 +46,11 @@ MCP_PID=$!
 echo "✅ Both servers started in background. API_PID: $API_PID, MCP_PID: $MCP_PID"
 
 # Trap signals to kill child processes gracefully
-trap 'echo "🛑 Stopping container..."; kill $API_PID $MCP_PID; exit 0' SIGINT SIGTERM
+# We use || true to suppress errors if processes are already dead
+trap 'echo "🛑 Stopping container..."; kill $API_PID $MCP_PID 2>/dev/null || true; exit 0' SIGINT SIGTERM
 
-# Keep script running forever
-# Using tail -f /dev/null is more robust than wait in some shells for keeping container alive
-tail -f /dev/null &
-wait $!
+# Keep script running forever using a robust loop
+# This prevents the container from exiting even if child processes crash/restart
+while true; do
+    sleep 1000
+done
