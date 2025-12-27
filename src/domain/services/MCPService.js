@@ -466,6 +466,111 @@ export class MCPService {
     }
 
     /**
+     * Process a natural language query to get raw data (for Excel/Reports)
+     * Uses LLM to generate SQL, executes it, and returns the rows.
+     */
+    async processQueryToData(query) {
+        logger.info(`📊 Processing query to data: "${query}"`);
+
+        if (!this.llmService || !this.llmService.model) {
+            throw new Error("LLM Service not available for SQL generation");
+        }
+
+        // 1. Get Schema
+        const freshSchema = await this.getDatabaseSchema();
+        const schemaText = JSON.stringify(freshSchema.schema, null, 2);
+
+        // 2. Generate SQL Loop
+        const maxRetries = 3;
+        let attempt = 0;
+        let lastError = null;
+        let lastSQL = null;
+        let errorHistory = [];
+
+        while (attempt < maxRetries) {
+            attempt++;
+            
+            // Build Prompt
+            let sqlGenMessages;
+            if (attempt === 1) {
+                 sqlGenMessages = [
+                    new SystemMessage(`Generate PostgreSQL query using this schema:
+
+${schemaText}
+
+RULES:
+- Use ONLY columns from schema above
+- ALWAYS use table aliases (e.g., FROM usuarios u)
+- If using alias, reference it in SELECT (e.g., u.username NOT t.username)
+- For JOINs, verify foreign keys exist
+- For LIST queries (dame usuarios, lista de cursos, etc.), select ALL relevant columns
+- IF query asks for specific month/year (e.g. "septiembre 2025"), USE date_trunc or extract. 
+  Example: WHERE extract(month from created_at) = 9 AND extract(year from created_at) = 2025
+
+Output ONLY SQL in code block:
+\`\`\`sql
+SELECT ...
+\`\`\``),
+                    new HumanMessage(`SQL for: ${query}`)
+                ];
+            } else {
+                 // Retry prompt with feedback
+                 const errorFeedback = this.buildErrorFeedback(lastError, lastSQL, errorHistory);
+                 sqlGenMessages = [
+                    new SystemMessage(`🚨 **SQL CORRECTION REQUIRED** 🚨
+
+**FAILED SQL:**
+\`\`\`sql
+${lastSQL || 'N/A'}
+\`\`\`
+
+**ERROR MESSAGE:**
+${lastError}
+
+**SUGGESTED FIX:**
+${errorFeedback.suggestion}
+
+**Database Schema:**
+${schemaText}
+
+Generate CORRECTED SQL:
+\`\`\`sql
+SELECT ...
+\`\`\``),
+                    new HumanMessage(`CORRIGE el SQL para: ${query}`)
+                ];
+            }
+
+            // Generate
+            const sqlResponse = await this.llmService.generateResponse(sqlGenMessages, []);
+            const sqlText = sqlResponse.content || "";
+            
+            // Extract SQL
+            let sqlMatch = sqlText.match(/```sql\s*\n([\s\S]+?)\n```/) || sqlText.match(/(SELECT[\s\S]+?(?:;|\n\n|$))/i);
+            
+            if (!sqlMatch) {
+                if (attempt === maxRetries) throw new Error("Could not generate valid SQL");
+                continue;
+            }
+
+            const finalSQL = sqlMatch[1].trim().replace(/;$/, '');
+            
+            // Execute
+            try {
+                const result = await this.supabase.executeRawSQL(finalSQL);
+                return { data: result, sql: finalSQL };
+            } catch (e) {
+                logger.warn(`SQL execution failed (attempt ${attempt}): ${e.message}`);
+                lastError = e.message;
+                lastSQL = finalSQL;
+                errorHistory.push({ attempt, sql: finalSQL, error: e.message, errorType: this.classifyError(e.message) });
+            }
+        }
+        
+        throw new Error(`Failed to generate working SQL after ${maxRetries} attempts.`);
+    }
+
+    /**
      * Process a query using the Agent (LLM)
      * @param {string} query Natural language query
      * @returns {Promise<any>} Agent response
