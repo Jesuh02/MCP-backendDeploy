@@ -85,18 +85,23 @@ export class MCPService {
      * Save new reinforcement learning questions to history
      * Uses INSERT to support log-based schema (multiple rows per user/course)
      */
-    async saveReinforcementHistory(userId, courseId, questions) {
+    async saveReinforcementHistory(userId, courseId, questions, topicId = null, taskId = null) {
         if (!userId || !courseId || !questions || !questions.length) return false;
 
         try {
+            const payload = {
+                user_id: userId,
+                course_id: courseId,
+                questions: questions,
+                created_at: new Date().toISOString()
+            };
+
+            if (topicId) payload.topic_id = topicId;
+            if (taskId) payload.task_id = taskId;
+
             const { error } = await this.supabase.client
                 .from('reinforcement_question_history')
-                .insert({
-                    user_id: userId,
-                    course_id: courseId,
-                    questions: questions,
-                    created_at: new Date().toISOString()
-                });
+                .insert(payload);
             
             if (error) throw error;
             return true;
