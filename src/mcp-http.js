@@ -15,6 +15,11 @@ const app = express();
 // Railway uses PORT, fallback to MCP_HTTP_PORT for local development
 const PORT = process.env.PORT || process.env.MCP_HTTP_PORT || 3000;
 
+console.log('🔧 Port Configuration:');
+console.log(`   process.env.PORT: ${process.env.PORT}`);
+console.log(`   process.env.MCP_HTTP_PORT: ${process.env.MCP_HTTP_PORT}`);
+console.log(`   Selected PORT: ${PORT}`);
+
 // Middleware
 app.use(express.json());
 app.use((req, res, next) => {
@@ -42,7 +47,8 @@ app.get('/health', (req, res) => {
         status: 'ok',
         server: 'YisusCompany by YisusFactory MCP Server',
         version: '1.0.0',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        port: PORT
     });
     console.log('✅ Health check response sent (200 OK)');
 });
