@@ -1,5 +1,9 @@
 #!/bin/sh
 
+echo "================================================================"
+echo "🚀 STARTING CONTAINER - VERSION: INDESTRUCTIBLE V2"
+echo "================================================================"
+
 # Start both servers in parallel
 # index.js runs on PORT (defaults to 3001 if not set)
 # mcp-http.js runs on MCP_HTTP_PORT (defaults to 3000 if not set)
@@ -54,5 +58,7 @@ trap 'echo "🛑 Received signal (SIGINT/SIGTERM). Ignoring to keep container al
 # This prevents the container from exiting even if child processes crash/restart
 echo "✅ Container startup complete. Entering keep-alive loop."
 while true; do
-    sleep 1000
+    # Sleep for a long time, but not forever so we can catch signals
+    sleep 60
+    echo "💓 Heartbeat: Container is still alive..."
 done
