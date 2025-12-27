@@ -12,13 +12,7 @@ import { SupabaseService } from './infrastructure/database/SupabaseService.js';
 import { configureRoutes } from './interfaces/routes/index.js';
 
 const app = express();
-// Railway uses PORT, fallback to MCP_HTTP_PORT for local development
-const PORT = process.env.PORT || process.env.MCP_HTTP_PORT || 3000;
-
-console.log('🔧 Port Configuration:');
-console.log(`   process.env.PORT: ${process.env.PORT}`);
-console.log(`   process.env.MCP_HTTP_PORT: ${process.env.MCP_HTTP_PORT}`);
-console.log(`   Selected PORT: ${PORT}`);
+const PORT = process.env.MCP_HTTP_PORT || 3000;
 
 // Middleware
 app.use(express.json());
@@ -36,44 +30,8 @@ app.use((req, res, next) => {
     next();
 });
 
-// ============================================================
-// 🏥 CRITICAL: Health check endpoints MUST be defined FIRST
-// This ensures Railway can verify the container is healthy
-// even before services are initialized
-// ============================================================
-app.get('/health', (req, res) => {
-    console.log('🏥 /health requested from:', req.ip);
-    res.status(200).json({
-        status: 'ok',
-        server: 'MCP Server',
-        version: '1.0.0',
-        timestamp: new Date().toISOString(),
-        port: PORT
-    });
-    console.log('✅ /health response sent (200 OK)');
-});
-
-// Alternative health check for Railway
-app.get('/_health', (req, res) => {
-    console.log('🏥 /_health requested from:', req.ip);
-    res.status(200).send('OK');
-});
-
-console.log('✅ Health check endpoints registered: /health, /_health');
-
-// Initialize services AFTER health check endpoint
-const supabase = SupabaseService.getInstance();
-let mcpService;
-try {
-    mcpService = new MCPService();
-} catch (error) {
-    console.error('❌ Failed to initialize MCPService:', error);
-}
-
-console.log('📍 Configuring routes...');
-// Configure Routes (Excel, Notifications, LLM, MCP)
+// Configure Routes (Excel, Notifications, LLM)
 configureRoutes(app);
-console.log('✅ All routes configured');
 
 // Compatibility route: accept legacy client POSTs to /procesar-prompt
 app.post('/procesar-prompt', async (req, res) => {
@@ -99,6 +57,55 @@ app.post('/procesar-prompt', async (req, res) => {
         return res.status(500).json({ error: err.message || String(err) });
     }
 });
+
+// Initialize services
+const supabase = SupabaseService.getInstance();
+let mcpService;
+try {
+    mcpService = new MCPService();
+} catch (error) {
+    console.error('❌ Failed to initialize MCPService:', error);
+}
+
+/**
+ * Health check endpoint
+ */
+app.get('/health', async(req, res) => {
+    try {
+        const dbHealth = await supabase.healthCheck();
+
+        // Test LLM connection
+        let llmHealth = { status: 'not_tested' };
+        try {
+            if (mcpService && mcpService.llmService) {
+                llmHealth = await mcpService.llmService.testConnection();
+            }
+        } catch (e) {
+            llmHealth = { status: 'error', error: e.message };
+        }
+
+        res.json({
+            status: 'ok',
+            server: 'YisusCompany by YisusFactory MCP Server',
+            version: '1.0.0',
+            timestamp: new Date().toISOString(),
+            services: {
+                database: dbHealth,
+                llm: llmHealth
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+/**
+ * MCP initialize endpoint and Tools endpoints are now handled via mcpRoutes in index.js
+ */
 
 /**
  * Start server
@@ -130,70 +137,17 @@ async function main() {
             console.log(`📱 Android Emulator URL: http://10.0.2.2:${PORT}`);
             console.log(`💻 Local URL: http://localhost:${PORT}`);
             console.log(`🔌 Physical Device URL: http://${localIp}:${PORT} (Use this for physical devices)`);
-            console.log('🎯 Server is ready to accept connections');
         });
 
         // Set server timeout to 5 minutes (300000 ms) to handle long LLM/Excel generation
         server.setTimeout(300000);
-
-        // Prevent server from shutting down unexpectedly
-        process.on('SIGTERM', () => {
-            console.log('⚠️ SIGTERM received, shutting down gracefully...');
-            server.close(() => {
-                console.log('✅ Server closed gracefully');
-                process.exit(0);
-            });
-        });
-
-        process.on('SIGINT', () => {
-            console.log('⚠️ SIGINT received, shutting down gracefully...');
-            server.close(() => {
-                console.log('✅ Server closed gracefully');
-                process.exit(0);
-            });
-        });
-
-        // Keep the process alive
-        process.on('uncaughtException', (error) => {
-            console.error('❌ Uncaught Exception:', error);
-            console.error('Stack:', error.stack);
-            // Don't exit - log and continue
-        });
-
-        process.on('unhandledRejection', (reason, promise) => {
-            console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-            // Don't exit - log and continue
-        });
-
-        // Add error handler for the server
-        server.on('error', (error) => {
-            console.error('❌ Server error:', error);
-            if (error.code === 'EADDRINUSE') {
-                console.error(`Port ${PORT} is already in use`);
-                process.exit(1);
-            }
-        });
-
-        // Log when server is closing
-        server.on('close', () => {
-            console.log('⚠️ Server is closing...');
-        });
-
-        console.log('✅ All event handlers registered');
-        console.log('💚 Server initialization complete');
-
     } catch (error) {
         console.error('❌ Failed to connect to Supabase:', error);
-        console.error('Stack:', error.stack);
         process.exit(1);
     }
 }
 
-// Start the server
-console.log('🔵 Starting main() function...');
 main().catch((error) => {
-    console.error('❌ Fatal error in main():', error);
-    console.error('Stack:', error.stack);
+    console.error('❌ Fatal error:', error);
     process.exit(1);
 });
-console.log('🔵 main() called, waiting for async completion...');
