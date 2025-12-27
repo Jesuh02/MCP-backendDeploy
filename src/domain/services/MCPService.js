@@ -21,11 +21,12 @@ export class MCPService {
     /**
      * Get reinforcement learning history for a user in a course
      * Aggregates questions from all history records
+     * Optionally filters by topicId and taskId if provided
      */
-    async getReinforcementHistory(userId, courseId) {
+    async getReinforcementHistory(userId, courseId, topicId = null, taskId = null) {
         if (!userId || !courseId) return [];
         
-        console.log(`📚 MCPService: Fetching reinforcement history for user ${userId}, course ${courseId}`);
+        console.log(`📚 MCPService: Fetching reinforcement history for user ${userId}, course ${courseId} (topic: ${topicId}, task: ${taskId})`);
         
         // Ensure supabase is initialized
         if (!this.supabase) {
@@ -39,11 +40,16 @@ export class MCPService {
         }
 
         try {
-            const { data: existingRows, error } = await this.supabase.client
+            let query = this.supabase.client
                 .from('reinforcement_question_history')
                 .select('questions')
                 .eq('user_id', userId)
                 .eq('course_id', courseId);
+
+            if (topicId) query = query.eq('topic_id', topicId);
+            if (taskId) query = query.eq('task_id', taskId);
+            
+            const { data: existingRows, error } = await query;
             
             if (error) throw error;
 
