@@ -14,5 +14,8 @@ MCP_PID=$!
 
 echo "Both servers started. API PID: $API_PID, MCP PID: $MCP_PID"
 
+# Trap signals to kill child processes
+trap 'kill $API_PID $MCP_PID; exit' SIGINT SIGTERM
+
 # Wait for both processes - if either dies, the container will exit
 wait $API_PID $MCP_PID
