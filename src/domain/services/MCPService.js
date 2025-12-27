@@ -499,6 +499,7 @@ export class MCPService {
 ${schemaText}
 
 RULES:
+- ALWAYS add LIMIT 1000 to avoid freezing the server.
 - Use ONLY columns from schema above
 - ALWAYS use table aliases (e.g., FROM usuarios u)
 - If using alias, reference it in SELECT (e.g., u.username NOT t.username)
@@ -1557,7 +1558,7 @@ A continuación se muestra el contenido del repositorio para análisis:`;
                 3. Evita UNION - usa una sola tabla con WHERE
                 4. No uses subconsultas - usa JOINs simples`;
                 feedback.rules = [
-                    'SIEMPRE agrega LIMIT 20 o LIMIT 50 al final',
+                    'SIEMPRE agrega LIMIT 1000 al final',
                     'NO uses UNION, INTERSECT o EXCEPT - simplifica la lógica',
                     'Máximo 1 JOIN por query',
                     'NO uses subconsultas (SELECT dentro de SELECT)',
