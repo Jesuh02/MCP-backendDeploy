@@ -43,6 +43,7 @@
     "joi": "^17.11.0",
     "jsonwebtoken": "^9.0.2",
     "langchain": "^0.1.25",
+    "multer": "^2.0.2",
     "ndjson": "^2.0.0",
     "node-cache": "^5.1.2",
     "nodemailer": "^7.0.11",
