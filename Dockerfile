@@ -20,7 +20,7 @@ EXPOSE 3000 3001
 
 # Health check - Use /health endpoint with longer start period for Railway
 # Railway healthcheck uses /health by default
-HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=10 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${PORT:-3000}/health || exit 1
 
 # Make start script executable
