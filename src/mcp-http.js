@@ -114,6 +114,7 @@ async function main() {
             console.log(`📱 Android Emulator URL: http://10.0.2.2:${PORT}`);
             console.log(`💻 Local URL: http://localhost:${PORT}`);
             console.log(`🔌 Physical Device URL: http://${localIp}:${PORT} (Use this for physical devices)`);
+            console.log('🎯 Server is ready to accept connections');
         });
 
         // Set server timeout to 5 minutes (300000 ms) to handle long LLM/Excel generation
@@ -139,6 +140,7 @@ async function main() {
         // Keep the process alive
         process.on('uncaughtException', (error) => {
             console.error('❌ Uncaught Exception:', error);
+            console.error('Stack:', error.stack);
             // Don't exit - log and continue
         });
 
@@ -147,13 +149,35 @@ async function main() {
             // Don't exit - log and continue
         });
 
+        // Add error handler for the server
+        server.on('error', (error) => {
+            console.error('❌ Server error:', error);
+            if (error.code === 'EADDRINUSE') {
+                console.error(`Port ${PORT} is already in use`);
+                process.exit(1);
+            }
+        });
+
+        // Log when server is closing
+        server.on('close', () => {
+            console.log('⚠️ Server is closing...');
+        });
+
+        console.log('✅ All event handlers registered');
+        console.log('💚 Server initialization complete');
+
     } catch (error) {
         console.error('❌ Failed to connect to Supabase:', error);
+        console.error('Stack:', error.stack);
         process.exit(1);
     }
 }
 
+// Start the server
+console.log('🔵 Starting main() function...');
 main().catch((error) => {
-    console.error('❌ Fatal error:', error);
+    console.error('❌ Fatal error in main():', error);
+    console.error('Stack:', error.stack);
     process.exit(1);
 });
+console.log('🔵 main() called, waiting for async completion...');
