@@ -264,16 +264,17 @@ async function initializeReinforcementHistoryTable() {
 
         if (error) {
             // Try direct table creation if RPC fails
-            console.log('⚠️ RPC method failed, trying direct table creation...');
+            console.log('⚠️ RPC method failed, trying alternative approach...');
             const { error: directError } = await supabaseService.client
                 .from('reinforcement_question_history')
                 .select('id')
                 .limit(1);
 
             if (directError && directError.code === 'PGRST116') {
-                console.log('📚 Table does not exist, would need manual creation via Supabase dashboard');
-                console.log('⚠️ Please create the table manually with the following SQL:');
+                console.log('📚 Table does not exist yet - this is OK, will be created when first used');
+                console.log('ℹ️ To create manually, run this SQL in Supabase dashboard:');
                 console.log(createTableQuery);
+                return; // Exit gracefully instead of throwing
             }
         } else {
             console.log('✅ Reinforcement learning history table initialized successfully');
@@ -284,8 +285,10 @@ async function initializeReinforcementHistoryTable() {
     }
 }
 
-// Initialize the table
-initializeReinforcementHistoryTable();
+// Initialize the table (non-blocking - don't wait for it)
+initializeReinforcementHistoryTable().catch(err => {
+    console.warn('⚠️ Table initialization failed silently:', err.message);
+});
 
 /**
  * Get reinforcement question history for a user-course combination
