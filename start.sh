@@ -23,29 +23,24 @@ echo "🚀 Starting Services..."
 echo "   • API Server (index.js) on port $PORT"
 echo "   • MCP Server (mcp-http.js) on port $MCP_HTTP_PORT"
 
-# Start API Server Loop
+# Start API Server Loop (Main Service)
 (
     while true; do
-        echo "🔄 Starting API Server..."
+        echo "🔄 Starting API Server (index.js)..."
         node index.js
         EXIT_CODE=$?
-        echo "⚠️ API Server crashed with exit code $EXIT_CODE. Restarting in 5 seconds..."
-        sleep 5
+        echo "⚠️ API Server crashed with exit code $EXIT_CODE. Restarting in 1 second..."
+        sleep 1
     done
 ) &
 API_PID=$!
 
-# Start MCP Server Loop
-(
-    while true; do
-        echo "🔄 Starting MCP Server..."
-        node src/mcp-http.js
-        EXIT_CODE=$?
-        echo "⚠️ MCP Server crashed with exit code $EXIT_CODE. Restarting in 5 seconds..."
-        sleep 5
-    done
-) &
-MCP_PID=$!
+# MCP Server (mcp-http.js) is DISABLED to prevent conflicts and resource usage.
+# index.js now handles all routes including MCP and /procesar-prompt.
+echo "ℹ️  MCP Server (mcp-http.js) skipped. Using index.js as single entry point."
+MCP_PID=0
+
+echo "✅ Server started in background. API_PID: $API_PID"
 
 echo "✅ Both servers started in background. API_PID: $API_PID, MCP_PID: $MCP_PID"
 

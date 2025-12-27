@@ -27,7 +27,10 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=10 \
 RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 # Force cache bust for start.sh updates
-ENV START_SCRIPT_VERSION=v3
+ENV START_SCRIPT_VERSION=v5
+
+# Start the application
+CMD ["./start.sh"]
 
 # Start server (Run both API and MCP servers)
 CMD ["sh", "start.sh"]

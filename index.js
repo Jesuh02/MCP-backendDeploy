@@ -64,6 +64,10 @@ app.use((req, res, next) => {
 // This ensures Railway can verify the container is healthy
 // even before all other services are initialized
 // ============================================================
+app.get('/', (req, res) => {
+    res.status(200).send('YisusCompany MCP Server is Running');
+});
+
 app.get('/health', (req, res) => {
     res.status(200).json({
         status: 'ok',
@@ -7139,4 +7143,15 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
     console.log('🛑 SIGINT received in index.js. IGNORING to keep container alive.');
+});
+
+// Global Error Handler to prevent crash
+process.on('uncaughtException', (err) => {
+    console.error('❌ UNCAUGHT EXCEPTION:', err);
+    console.error('⚠️ Ignoring error to keep server alive.');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ UNHANDLED REJECTION:', reason);
+    console.error('⚠️ Ignoring error to keep server alive.');
 });

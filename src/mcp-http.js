@@ -172,13 +172,21 @@ async function main() {
         process.on('SIGTERM', () => shutdown('SIGTERM'));
         process.on('SIGINT', () => shutdown('SIGINT'));
 
+        // Global Error Handler
+        process.on('uncaughtException', (err) => {
+            console.error('❌ UNCAUGHT EXCEPTION in MCP Server:', err);
+        });
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('❌ UNHANDLED REJECTION in MCP Server:', reason);
+        });
+
     } catch (error) {
         console.error('❌ Failed to connect to Supabase:', error);
-        process.exit(1);
+        // process.exit(1); // Don't exit
     }
 }
 
 main().catch((error) => {
     console.error('❌ Fatal error:', error);
-    process.exit(1);
+    // process.exit(1); // Don't exit
 });
