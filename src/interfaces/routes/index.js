@@ -5,12 +5,14 @@
 
 export { default as notificationRoutes } from './notificationRoutes.js';
 export { default as llmRoutes } from './llmRoutes.js';
+export { default as excelRoutes } from './excelRoutes.js';
 
 // Route configuration helper
 export function configureRoutes(app) {
     const routes = [
         // { path: '/', router: notificationRoutes }, // DISABLED: duplicate /procesar-prompt handler
-        { path: '/', router: llmRoutes } // Register LLM routes at root (e.g. /procesar-prompt)
+        { path: '/', router: llmRoutes }, // Register LLM routes at root (e.g. /procesar-prompt)
+        { path: '/', router: excelRoutes } // Register Excel routes at root (e.g. /generate-excel)
     ];
 
     routes.forEach(({ path, router }) => {
@@ -23,5 +25,6 @@ export function configureRoutes(app) {
 
 export default {
     notificationRoutes,
-    llmRoutes
+    llmRoutes,
+    excelRoutes
 };

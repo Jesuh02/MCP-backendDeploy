@@ -6,7 +6,7 @@
  * almacenados en Cloudflare R2
  */
 
-import { S3Client, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import axios from 'axios';
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
 
@@ -100,6 +100,40 @@ class R2StorageService {
      */
     getPublicUrl(objectKey) {
         return `${this.publicUrl}/${objectKey}`;
+    }
+
+    /**
+     * Upload a file to Cloudflare R2
+     * @param {Buffer|string} content - File content
+     * @param {string} objectKey - Destination path/key
+     * @param {string} contentType - MIME type
+     * @returns {Promise<string>} Public URL of the uploaded file
+     */
+    async uploadFile(content, objectKey, contentType = 'application/octet-stream') {
+        if (!this.r2Client) {
+            throw new Error('R2 Client not configured');
+        }
+
+        console.log(`📤 Uploading file to R2: ${objectKey} (${contentType})`);
+
+        try {
+            const command = new PutObjectCommand({
+                Bucket: this.bucketName,
+                Key: objectKey,
+                Body: content,
+                ContentType: contentType,
+            });
+
+            await this.r2Client.send(command);
+            
+            const publicUrl = this.getPublicUrl(objectKey);
+            console.log(`✅ File uploaded successfully. Public URL: ${publicUrl}`);
+            
+            return publicUrl;
+        } catch (error) {
+            console.error(`❌ Error uploading to R2: ${error.message}`);
+            throw error;
+        }
     }
 
     /**
