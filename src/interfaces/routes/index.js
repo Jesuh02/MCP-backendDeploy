@@ -1,7 +1,7 @@
 import notificationRoutes from './notificationRoutes.js';
 import llmRoutes from './llmRoutes.js';
 import excelRoutes from './excelRoutes.js';
-import mcpRoutes from './MCPRoutes.js';
+import mcpRoutes from './mcpRoutes.js';
 
 /**
  * routes/index.js
