@@ -36,6 +36,7 @@ import { UserService } from './src/services/UserService.js';
 import { createRequire } from 'module';
 const require = createRequire(
     import.meta.url);
+const pdf = require('pdf-parse');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -4048,8 +4049,30 @@ app.post('/procesar-prompt', async(req, res) => {
                                 const fileData = await getSubmissionFileContent(file.uri, file.name || 'archivo', null);
                                 
                                     if (fileData && fileData.content) {
-                                    // Solo incluir contenido de texto, no binario
-                                    if (!fileData.isBase64 && fileData.contentType && fileData.contentType.startsWith('text/')) {
+                                    // Handle PDF
+                                    const lowerName = (file.name || '').toLowerCase();
+                                    const isPdf = lowerName.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+
+                                    if (isPdf) {
+                                        try {
+                                            console.log(`📄 Intentando analizar PDF: ${file.name}`);
+                                            const buffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                            const data = await pdf(buffer);
+                                            if (data.text && data.text.trim().length > 0) {
+                                                const contentSnippet = data.text;
+                                                augmentedPrompt += `\n\n--- Contenido del archivo del curso (PDF): ${file.name} ---\n${contentSnippet}`;
+                                                console.log(`✅ PDF analizado exitosamente: ${file.name} (${contentSnippet.length} chars)`);
+                                            } else {
+                                                console.warn(`⚠️ PDF analizado pero sin texto (posible escaneado): ${file.name}`);
+                                                augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (PDF escaneado o vacío) ---`;
+                                            }
+                                        } catch (e) {
+                                            console.error(`❌ Error analizando PDF ${file.name}:`, e.message);
+                                            augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (Error al leer PDF) ---`;
+                                        }
+                                    }
+                                    // Handle Text
+                                    else if (!fileData.isBase64 && fileData.contentType && fileData.contentType.startsWith('text/')) {
                                         // Incluir TODO el contenido del archivo (sin limitar por tokens)
                                         const contentSnippet = fileData.content;
                                         augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} ---\n${contentSnippet}`;
@@ -4227,7 +4250,11 @@ INPUT MESSAGES: [
         const preguntaLowerVacio = (prompt || '').toLowerCase();
         const esPreguntaCalificacion = /nota|calificaci(ó|o)n|puntaje|evaluaci(ó|o)n|califica|eval(ú|u)a|analiza|revisa/.test(preguntaLowerVacio);
         
-        if (esPreguntaCalificacion && esContenidoVacioPrompt(fileContent)) {
+        // 🔥 CRITICAL FIX: If the prompt explicitly forbids grading or asks for question generation, IGNORE the empty content check.
+        // This allows generating questions even if the file content is empty or unreadable.
+        const esGeneracionPreguntas = /generar\s*\d*\s*preguntas|no\s*calificar|solo\s*json/i.test(preguntaLowerVacio);
+
+        if (esPreguntaCalificacion && esContenidoVacioPrompt(fileContent) && !esGeneracionPreguntas) {
             console.log('⚠️ CONTENIDO VACÍO DETECTADO EN /procesar-prompt - Calificación: 0');
             const respuestaVacio = `📊 **CALIFICACIÓN: 0/100**
 
