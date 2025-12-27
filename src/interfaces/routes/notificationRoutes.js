@@ -48,10 +48,11 @@ router.post('/send-push-notification', async (req, res) => {
         // For now, assuming sendNotification handles both or just email
         // If you have specific push logic, add it here
         
-        await notificationService.sendNotification(
+        await notificationService.sendPushNotification(
             userId,
             title,
-            body
+            body,
+            data
         );
 
         res.json({ success: true });
