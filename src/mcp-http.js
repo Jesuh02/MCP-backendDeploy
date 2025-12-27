@@ -12,7 +12,8 @@ import { SupabaseService } from './infrastructure/database/SupabaseService.js';
 import { configureRoutes } from './interfaces/routes/index.js';
 
 const app = express();
-const PORT = process.env.MCP_HTTP_PORT || 3000;
+// Railway uses PORT, fallback to MCP_HTTP_PORT for local development
+const PORT = process.env.PORT || process.env.MCP_HTTP_PORT || 3000;
 
 // Middleware
 app.use(express.json());
@@ -30,7 +31,30 @@ app.use((req, res, next) => {
     next();
 });
 
-// Configure Routes (Excel, Notifications, LLM)
+// ============================================================
+// 🏥 CRITICAL: Health check endpoint MUST be defined FIRST
+// This ensures Railway can verify the container is healthy
+// even before services are initialized
+// ============================================================
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        server: 'YisusCompany by YisusFactory MCP Server',
+        version: '1.0.0',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Initialize services AFTER health check endpoint
+const supabase = SupabaseService.getInstance();
+let mcpService;
+try {
+    mcpService = new MCPService();
+} catch (error) {
+    console.error('❌ Failed to initialize MCPService:', error);
+}
+
+// Configure Routes (Excel, Notifications, LLM, MCP)
 configureRoutes(app);
 
 // Compatibility route: accept legacy client POSTs to /procesar-prompt
@@ -57,55 +81,6 @@ app.post('/procesar-prompt', async (req, res) => {
         return res.status(500).json({ error: err.message || String(err) });
     }
 });
-
-// Initialize services
-const supabase = SupabaseService.getInstance();
-let mcpService;
-try {
-    mcpService = new MCPService();
-} catch (error) {
-    console.error('❌ Failed to initialize MCPService:', error);
-}
-
-/**
- * Health check endpoint
- */
-app.get('/health', async(req, res) => {
-    try {
-        const dbHealth = await supabase.healthCheck();
-
-        // Test LLM connection
-        let llmHealth = { status: 'not_tested' };
-        try {
-            if (mcpService && mcpService.llmService) {
-                llmHealth = await mcpService.llmService.testConnection();
-            }
-        } catch (e) {
-            llmHealth = { status: 'error', error: e.message };
-        }
-
-        res.json({
-            status: 'ok',
-            server: 'YisusCompany by YisusFactory MCP Server',
-            version: '1.0.0',
-            timestamp: new Date().toISOString(),
-            services: {
-                database: dbHealth,
-                llm: llmHealth
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            error: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-/**
- * MCP initialize endpoint and Tools endpoints are now handled via mcpRoutes in index.js
- */
 
 /**
  * Start server
