@@ -421,13 +421,16 @@ async function main() {
             return 'localhost';
         };
 
-        app.listen(PORT, '0.0.0.0', () => {
+        const server = app.listen(PORT, '0.0.0.0', () => {
             const localIp = getLocalIp();
             console.log(`✅ MCP HTTP Server listening on http://0.0.0.0:${PORT}`);
             console.log(`📱 Android Emulator URL: http://10.0.2.2:${PORT}`);
             console.log(`💻 Local URL: http://localhost:${PORT}`);
             console.log(`🔌 Physical Device URL: http://${localIp}:${PORT} (Use this for physical devices)`);
         });
+
+        // Set server timeout to 5 minutes (300000 ms) to handle long LLM/Excel generation
+        server.setTimeout(300000);
     } catch (error) {
         console.error('❌ Failed to connect to Supabase:', error);
         process.exit(1);
