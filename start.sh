@@ -1,7 +1,7 @@
 #!/bin/sh
 
 echo "================================================================"
-echo "🚀 STARTING CONTAINER - VERSION: INDESTRUCTIBLE V2"
+echo "🚀 STARTING CONTAINER - VERSION: INDESTRUCTIBLE V3 (CRLF FIXED)"
 echo "================================================================"
 
 # Start both servers in parallel
