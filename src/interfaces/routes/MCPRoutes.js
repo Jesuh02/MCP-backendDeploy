@@ -1,228 +1,340 @@
-/**
- * MCP Routes
- * API endpoints for Model Context Protocol operations
- */
-
-import express from 'express';
+import { Router } from 'express';
 import { MCPService } from '../../domain/services/MCPService.js';
-import { logger } from '../../infrastructure/logging/Logger.js';
-import Joi from 'joi';
+import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 
-const router = express.Router();
-const mcpService = new MCPService();
+const router = Router();
+const supabase = SupabaseService.getInstance();
 
-// Validation schemas
-const querySchema = Joi.object({
-  query: Joi.string().required().min(1).max(10000),
-  includeRAG: Joi.boolean().optional().default(true),
-  includeSchema: Joi.boolean().optional().default(false),
-  maxTokens: Joi.number().optional().min(100).max(10000).default(4000)
-});
-
-const tableSchema = Joi.object({
-  tableName: Joi.string().required(),
-  page: Joi.number().optional().min(1).default(1),
-  pageSize: Joi.number().optional().min(1).max(100).default(50)
-});
-
-const githubAnalysisSchema = Joi.object({
-  repoUrl: Joi.string().required().uri().pattern(/^https?:\/\/github\.com\/[\w-]+\/[\w-]+/),
-  taskDescription: Joi.string().optional().default(''),
-  criteria: Joi.string().optional().default(''),
-  fileTypes: Joi.array().items(Joi.string()).optional(),
-  maxFiles: Joi.number().optional().min(1).max(50).default(20)
-});
-
-/**
- * POST /api/v1/mcp/query
- * Process a query and return enriched context
- */
-router.post('/query', async (req, res, next) => {
-  try {
-    // Validate request
-    const { error, value } = querySchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({
-        error: 'Validation Error',
-        message: error.details[0].message
-      });
+// Initialize service helper
+const getMCPService = () => {
+    try {
+        return new MCPService();
+    } catch (error) {
+        console.error('❌ Failed to initialize MCPService:', error);
+        return null;
     }
-    
-    const { query, includeRAG, includeSchema, maxTokens } = value;
-    
-    // Process query
-    const result = await mcpService.processQuery(query, {
-      includeRAG,
-      includeSchema,
-      maxTokens
-    });
-    
-    res.json({
-      success: true,
-      data: result
-    });
-    
-  } catch (error) {
-    next(error);
-  }
-});
+};
 
 /**
- * GET /api/v1/mcp/stats
- * Get database statistics
+ * MCP initialize endpoint
  */
-router.get('/stats', async (req, res, next) => {
-  try {
-    const stats = await mcpService.getDatabaseStats();
-    
-    res.json({
-      success: true,
-      data: stats
-    });
-    
-  } catch (error) {
-    next(error);
-  }
-});
+router.post('/initialize', async(req, res) => {
+    console.log('🔧 MCP Initialize request received');
 
-/**
- * GET /api/v1/mcp/table/:tableName
- * Get table data with pagination
- */
-router.get('/table/:tableName', async (req, res, next) => {
-  try {
-    const { tableName } = req.params;
-    const page = parseInt(req.query.page) || 1;
-    const pageSize = parseInt(req.query.pageSize) || 50;
-    
-    const result = await mcpService.getTableData(tableName, page, pageSize);
-    
-    res.json({
-      success: true,
-      data: result
-    });
-    
-  } catch (error) {
-    next(error);
-  }
-});
+    try {
+        await supabase.testConnection();
+        console.log('✅ Supabase connected');
 
-/**
- * POST /api/v1/mcp/knowledge
- * Add knowledge to base
- */
-router.post('/knowledge', async (req, res, next) => {
-  try {
-    const { content, metadata } = req.body;
-    
-    if (!content) {
-      return res.status(400).json({
-        error: 'Validation Error',
-        message: 'content is required'
-      });
+        res.json({
+            jsonrpc: '2.0',
+            id: req.body.id,
+            result: {
+                protocolVersion: '2024-11-05',
+                capabilities: {
+                    tools: {
+                        listChanged: true
+                    },
+                    resources: {
+                        subscribe: true,
+                        listChanged: true
+                    }
+                },
+                serverInfo: {
+                    name: 'YisusCompany by YisusFactory MCP Server',
+                    version: '1.0.0'
+                }
+            }
+        });
+    } catch (error) {
+        console.error('❌ Initialize error:', error);
+        res.status(500).json({
+            jsonrpc: '2.0',
+            id: req.body.id,
+            error: {
+                code: -32603,
+                message: 'Internal error during initialization',
+                data: error.message
+            }
+        });
     }
-    
-    const result = await mcpService.addKnowledge(content, metadata);
-    
-    res.json({
-      success: true,
-      data: result
-    });
-    
-  } catch (error) {
-    next(error);
-  }
 });
 
 /**
- * POST /api/v1/mcp/analyze-github
- * Analyze a GitHub repository and generate automated grading
+ * MCP tools/list endpoint
  */
-router.post('/analyze-github', async (req, res, next) => {
-  try {
-    logger.info(`🔍 Received GitHub analysis request: ${req.body.repoUrl}`);
-    
-    // Validate request
-    const { error, value } = githubAnalysisSchema.validate(req.body);
-    if (error) {
-      logger.warn(`Validation error: ${error.details[0].message}`);
-      return res.status(400).json({
-        success: false,
-        error: 'Validation Error',
-        message: error.details[0].message
-      });
+router.post('/tools/list', async(req, res) => {
+    console.log('🔧 Tools list request received');
+
+    res.json({
+        jsonrpc: '2.0',
+        id: req.body.id,
+        result: {
+            tools: [{
+                    name: 'query_database',
+                    description: `Execute queries on the YisusCompany by YisusFactory Supabase database. Returns real-time data.
+
+**CAPABILITIES:**
+- Execute RAW PostgreSQL/SQL queries directly (SELECT, INSERT, UPDATE, DELETE)
+- Process natural language queries that are auto-converted to SQL
+- Full access to all Supabase tables and relationships
+- Supports subqueries and simple JOINs if 'execute_sql' RPC is available.
+
+**HOW TO USE:**
+1. **Direct SQL**: Pass valid PostgreSQL syntax directly
+   Example: "SELECT id, usuario, email FROM usuarios LIMIT 10"
+
+2. **Natural Language**: Use Spanish or English, system converts to SQL
+   Example: "dame todos los usuarios"
+
+**BEST PRACTICES:**
+- Always select 'id', 'usuario', 'email' for user queries.
+- To check content creation (users who posted content):
+  - Courses: match 'courses.creator_user_id' with 'usuarios.id'
+  - Tasks: match 'task_submissions.student_username' with 'usuarios.usuario'
+- For "users without content" (usuarios sin contenido), you MUST check BOTH tables:
+  SELECT id, usuario FROM usuarios 
+  WHERE id NOT IN (SELECT creator_user_id FROM courses) 
+  AND usuario NOT IN (SELECT student_username FROM task_submissions)
+- Use WHERE clauses for filtering
+- Use ORDER BY and LIMIT for top/bottom results
+
+**AVAILABLE TABLES:**
+usuarios, personas, courses, videos, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos, progreso_estudiante`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            query: {
+                                type: 'string',
+                                description: 'SQL query (preferred) or natural language query. For complex analytics, use raw SQL with JOINs and aggregations.'
+                            }
+                        },
+                        required: ['query']
+                    }
+                },
+                {
+                    name: 'get_database_schema',
+                    description: `Get the complete Supabase database schema with all tables, columns, types, and relationships.
+
+**RETURNS:**
+- Table names and descriptions
+- Column names, types, and constraints
+- Primary keys and foreign keys
+- Relationships between tables
+
+**USE THIS TO:**
+- Understand database structure before writing SQL
+- Validate column names and types
+- Discover relationships for JOINs
+- Plan complex queries
+
+**TIP:** Call this ONCE at the start of a conversation, then generate SQL queries based on the schema.`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {},
+                        description: 'No parameters required - returns full schema'
+                    }
+                },
+                {
+                    name: 'analyze_github_repo',
+                    description: `Analyze and grade a GitHub repository. Extracts code, README, and structure to evaluate quality.
+
+**CAPABILITIES:**
+- Clone/read public GitHub repositories
+- Extract source code files (Python, JavaScript, Java, Kotlin, etc.)
+- Analyze project structure and organization
+- Evaluate code quality, documentation, and best practices
+- Generate grades (0-100) with detailed feedback
+
+**HOW TO USE:**
+Provide a GitHub URL and optional evaluation criteria.
+
+**EXAMPLES:**
+1. Basic: {"repoUrl": "https://github.com/user/project"}
+2. With criteria: {"repoUrl": "https://github.com/user/project", "criteria": "Evaluar implementación de patrones de diseño"}
+3. With task: {"repoUrl": "github.com/user/repo", "taskDescription": "Crear una API REST con autenticación"}
+
+**SUPPORTED URL FORMATS:**
+- https://github.com/owner/repo
+- github.com/owner/repo
+- owner/repo
+
+**RETURNS:**
+- Repository info (name, language, description)
+- Grade (0-100) with justification
+- Strengths and areas for improvement
+- Detailed technical analysis
+- List of analyzed files
+
+**NOTE:** Only works with PUBLIC repositories. For private repos, configure GITHUB_TOKEN.`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            repoUrl: {
+                                type: 'string',
+                                description: 'GitHub repository URL (e.g., https://github.com/user/repo)'
+                            },
+                            criteria: {
+                                type: 'string',
+                                description: 'Optional evaluation criteria or rubric'
+                            },
+                            taskDescription: {
+                                type: 'string',
+                                description: 'Optional task/assignment description for context'
+                            },
+                            fileTypes: {
+                                type: 'array',
+                                items: { type: 'string' },
+                                description: 'Optional file extensions to analyze (e.g., [".py", ".js"])'
+                            }
+                        },
+                        required: ['repoUrl']
+                    }
+                }
+            ]
+        }
+    });
+});
+
+/**
+ * MCP tools/call endpoint
+ */
+router.post('/tools/call', async(req, res) => {
+    const { params } = req.body;
+    console.log('🔧 Tool call request:', params?.name);
+
+    try {
+        const { name, arguments: args } = params;
+        const mcpService = getMCPService();
+
+        if (name === 'query_database') {
+            let result;
+            // Check if it's likely SQL
+            const isSQL = /^\s*(select|insert|update|delete|with)\s/i.test(args.query);
+
+            if (!mcpService) {
+                throw new Error('MCPService not initialized');
+            }
+
+            if (isSQL) {
+                console.log('📊 Executing raw SQL query...');
+                result = await mcpService.processQuery(args.query, { includeSchema: true });
+            } else {
+                console.log('🤖 Processing Natural Language Query via Agent...');
+                // Use Agent DIRECTLY for Natural Language (bypasses processQuery snapshot logic)
+                try {
+                    const agentResponse = await mcpService.processQueryWithAgent(args.query);
+
+                    // Agent should return a natural language response string
+                    console.log('✅ Agent response type:', typeof agentResponse);
+                    console.log('✅ Agent response preview:', JSON.stringify(agentResponse).substring(0, 200));
+
+                    // Return the agent's response as-is (should be argumentative text)
+                    result = {
+                        data: agentResponse,
+                        sqlScript: "-- Executed via LLM Agent with tool calling"
+                    };
+                } catch (agentError) {
+                    console.error('❌ Agent error:', agentError);
+                    result = {
+                        error: true,
+                        message: `Error del agente LLM: ${agentError.message}`
+                    };
+                }
+            }
+
+            res.json({
+                jsonrpc: '2.0',
+                id: req.body.id,
+                result: {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify(result, null, 2)
+                    }]
+                }
+            });
+        } else if (name === 'get_database_schema') {
+            if (!mcpService) {
+                throw new Error('MCPService not initialized');
+            }
+            const schema = await mcpService.getDatabaseSchema();
+            res.json({
+                jsonrpc: '2.0',
+                id: req.body.id,
+                result: {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify(schema, null, 2)
+                    }]
+                }
+            });
+        } else if (name === 'analyze_github_repo') {
+            if (!mcpService) {
+                throw new Error('MCPService not initialized');
+            }
+            // Nueva herramienta para analizar y calificar repositorios de GitHub
+            console.log('🐙 Analyzing GitHub repository:', args.repoUrl);
+
+            try {
+                const result = await mcpService.analyzeGitHubRepo(args.repoUrl, {
+                    taskDescription: args.taskDescription,
+                    gradingCriteria: args.gradingCriteria,
+                    focusAreas: args.focusAreas,
+                    maxFiles: args.maxFiles
+                });
+
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify(result, null, 2)
+                        }]
+                    }
+                });
+            } catch (githubError) {
+                console.error('❌ GitHub analysis error:', githubError);
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: JSON.stringify({
+                                error: true,
+                                message: `Error analizando repositorio: ${githubError.message}`,
+                                hint: mcpService.getGitHubErrorHint ? mcpService.getGitHubErrorHint(githubError.message) : null
+                            }, null, 2)
+                        }]
+                    }
+                });
+            }
+        } else {
+            res.status(404).json({
+                jsonrpc: '2.0',
+                id: req.body.id,
+                error: {
+                    code: -32601,
+                    message: `Tool not found: ${name}`
+                }
+            });
+        }
+    } catch (error) {
+        console.error('❌ Tool call error:', error);
+        // Devolvemos un JSON válido con el error para que el cliente Android lo procese
+        // en lugar de un 500 genérico que rompe el flujo JSON-RPC
+        res.json({
+            jsonrpc: '2.0',
+            id: req.body.id,
+            result: {
+                content: [{
+                    type: 'text',
+                    // Incluimos "SQL Error" para que el regex de Android lo detecte
+                    text: `❌ Error executing tool: ${error.message}\nHint: Check table names and SQL syntax.`
+                }]
+            }
+        });
     }
-    
-    const { repoUrl, taskDescription, criteria, fileTypes, maxFiles } = value;
-    
-    logger.info(`📦 Analyzing repository: ${repoUrl}`);
-    logger.info(`📝 Task description: ${taskDescription.substring(0, 100)}...`);
-    
-    // Analyze repository with MCP service
-    const analysisResult = await mcpService.analyzeGitHubRepo(repoUrl, {
-      criteria,
-      fileTypes,
-      taskDescription,
-      maxFiles
-    });
-    
-    logger.info(`✅ Analysis completed successfully for ${repoUrl}`);
-    logger.info(`📊 Grade: ${analysisResult.grade || 'N/A'}/100`);
-    
-    // Return analysis result
-    res.json({
-      success: true,
-      repository: analysisResult.repository || {
-        fullName: repoUrl.replace(/^https?:\/\/github\.com\//, ''),
-        url: repoUrl
-      },
-      grade: analysisResult.grade || 0,
-      feedback: analysisResult.feedback || 'No feedback available',
-      strengths: analysisResult.strengths || [],
-      improvements: analysisResult.improvements || [],
-      detailedAnalysis: analysisResult.detailedAnalysis || '',
-      filesAnalyzed: analysisResult.filesAnalyzed || [],
-      statistics: analysisResult.statistics || {}
-    });
-    
-  } catch (error) {
-    logger.error(`❌ Error analyzing GitHub repository: ${error.message}`);
-    logger.error(error.stack);
-    
-    // Send user-friendly error response
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to analyze repository',
-      hint: getGitHubErrorHint(error.message)
-    });
-  }
 });
-
-/**
- * Helper function to provide helpful error hints
- */
-function getGitHubErrorHint(errorMessage) {
-  if (!errorMessage) {
-    return 'Asegúrate de que el servidor MCP esté ejecutándose y que la URL sea válida.';
-  }
-  
-  if (errorMessage.includes('404') || errorMessage.includes('Not Found')) {
-    return 'El repositorio no existe o es privado. Verifica la URL y que el repositorio sea público.';
-  }
-  
-  if (errorMessage.includes('403') || errorMessage.includes('rate limit')) {
-    return 'Límite de peticiones a GitHub alcanzado. Configura un GITHUB_TOKEN en las variables de entorno.';
-  }
-  
-  if (errorMessage.includes('Invalid GitHub URL')) {
-    return 'URL de GitHub inválida. Usa el formato: https://github.com/usuario/repositorio';
-  }
-  
-  if (errorMessage.includes('LLM') || errorMessage.includes('API')) {
-    return 'El servicio de IA no está disponible. Verifica la configuración de la API Key.';
-  }
-  
-  return 'Error al acceder al repositorio. Verifica que la URL sea correcta y el repositorio sea público.';
-}
 
 export default router;
