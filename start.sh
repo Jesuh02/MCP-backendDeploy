@@ -47,10 +47,12 @@ echo "✅ Both servers started in background. API_PID: $API_PID, MCP_PID: $MCP_P
 
 # Trap signals to kill child processes gracefully
 # We use || true to suppress errors if processes are already dead
-trap 'echo "🛑 Stopping container..."; kill $API_PID $MCP_PID 2>/dev/null || true; exit 0' SIGINT SIGTERM
+# MODIFIED: Do NOT exit on signal. Just log it. This keeps the container alive for debugging.
+trap 'echo "🛑 Received signal (SIGINT/SIGTERM). Ignoring to keep container alive..."' SIGINT SIGTERM
 
 # Keep script running forever using a robust loop
 # This prevents the container from exiting even if child processes crash/restart
+echo "✅ Container startup complete. Entering keep-alive loop."
 while true; do
     sleep 1000
 done
