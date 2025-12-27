@@ -433,7 +433,7 @@ Asegúrate de generar ${needed} preguntas nuevas.`;
                             const mcpService = new MCPService();
                             // We save ALL accumulated questions because we already filtered them against history.
                             // So they are all "new" for this user.
-                            await mcpService.saveReinforcementHistory(userId, courseId, accumulatedQuestions);
+                            await mcpService.saveReinforcementHistory(userId, courseId, accumulatedQuestions, topicId, taskId);
                         } catch (e) {
                             console.warn('⚠️ Failed to save history:', e.message);
                         }
