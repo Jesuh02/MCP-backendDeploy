@@ -11,7 +11,7 @@ export { default as excelRoutes } from './excelRoutes.js';
 export function configureRoutes(app) {
     const routes = [
         { path: '/', router: notificationRoutes }, // Enabled by user request
-        // { path: '/', router: llmRoutes }, // Register LLM routes at root (e.g. /procesar-prompt)
+        { path: '/', router: llmRoutes }, // Register LLM routes at root (e.g. /procesar-prompt)
         { path: '/', router: excelRoutes } // Register Excel routes at root (e.g. /generate-excel)
     ];
 
