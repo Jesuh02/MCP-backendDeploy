@@ -70,8 +70,14 @@ router.post('/generate-excel', async (req, res) => {
         console.log(`📊 Generating Excel for query: "${query}" (User: ${userId})`);
 
         // 1. Get Data
-        // We use processQuery which handles natural language -> SQL -> Data
-        const result = await mcpService.processQuery(query);
+        // Use processQueryToData to ensure we get actual data via SQL generation
+        let result;
+        try {
+            result = await mcpService.processQueryToData(query);
+        } catch (e) {
+            console.warn("⚠️ processQueryToData failed, falling back to processQuery:", e.message);
+            result = await mcpService.processQuery(query);
+        }
         
         if (result.error) {
             return res.status(400).json({ error: result.message, hint: result.hint });
