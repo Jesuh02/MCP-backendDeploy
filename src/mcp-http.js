@@ -37,21 +37,29 @@ app.use((req, res, next) => {
 });
 
 // ============================================================
-// 🏥 CRITICAL: Health check endpoint MUST be defined FIRST
+// 🏥 CRITICAL: Health check endpoints MUST be defined FIRST
 // This ensures Railway can verify the container is healthy
 // even before services are initialized
 // ============================================================
 app.get('/health', (req, res) => {
-    console.log('🏥 Health check requested from:', req.ip);
+    console.log('🏥 /health requested from:', req.ip);
     res.status(200).json({
         status: 'ok',
-        server: 'YisusCompany by YisusFactory MCP Server',
+        server: 'MCP Server',
         version: '1.0.0',
         timestamp: new Date().toISOString(),
         port: PORT
     });
-    console.log('✅ Health check response sent (200 OK)');
+    console.log('✅ /health response sent (200 OK)');
 });
+
+// Alternative health check for Railway
+app.get('/_health', (req, res) => {
+    console.log('🏥 /_health requested from:', req.ip);
+    res.status(200).send('OK');
+});
+
+console.log('✅ Health check endpoints registered: /health, /_health');
 
 // Initialize services AFTER health check endpoint
 const supabase = SupabaseService.getInstance();
@@ -62,8 +70,10 @@ try {
     console.error('❌ Failed to initialize MCPService:', error);
 }
 
+console.log('📍 Configuring routes...');
 // Configure Routes (Excel, Notifications, LLM, MCP)
 configureRoutes(app);
+console.log('✅ All routes configured');
 
 // Compatibility route: accept legacy client POSTs to /procesar-prompt
 app.post('/procesar-prompt', async (req, res) => {
