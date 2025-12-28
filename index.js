@@ -1482,9 +1482,12 @@ function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, newGrad
  * Plantilla: Notificación de nuevo curso
  */
 function generateNewCourseEmailHTML(userName, creatorUsername, courseTitle, thumbnailUrl) {
+    // Gmail y otros clientes bloquean imágenes externas por defecto
+    // Usamos un diseño visual sin imágenes para evitar advertencias de seguridad
     const thumbnailSection = thumbnailUrl ? `
-            <div style="text-align: center; margin: 24px 0;">
-                <img src="${thumbnailUrl}" alt="" aria-hidden="true" role="presentation" style="max-width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+            <div style="text-align: center; margin: 24px 0; background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%); padding: 40px; border-radius: 12px; border: 2px solid #0ea5e9;">
+                <div style="font-size: 64px; margin-bottom: 16px;">🎓</div>
+                <p style="margin: 0; color: #0c4a6e; font-size: 14px; font-weight: 600;">Vista previa disponible en la app</p>
             </div>
             ` : '';
     
