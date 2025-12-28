@@ -39,6 +39,16 @@ const require = createRequire(
 const pdf = require('pdf-parse');
 
 const app = express();
+// LOGGING CRÍTICO PARA DEPURACIÓN EN RAILWAY
+console.log('=================================================');
+console.log('🚀 INICIANDO SERVIDOR - DIAGNÓSTICO DE ARRANQUE');
+console.log('=================================================');
+console.log(`📌 NODE_ENV: ${process.env.NODE_ENV}`);
+console.log(`📌 PORT (env): ${process.env.PORT}`);
+console.log(`📌 RAILWAY_STATIC_URL: ${process.env.RAILWAY_STATIC_URL}`);
+console.log(`📌 PUBLIC_URL: ${process.env.PUBLIC_URL}`);
+console.log('=================================================');
+
 const PORT = process.env.PORT || 3001;
 const MAX_TOKENS = 4096;
 
@@ -78,7 +88,19 @@ app.get('/_health', (req, res) => {
     res.status(200).send('OK');
 });
 
-console.log('🏥 Healthcheck endpoints registered (/health, /_health)');
+// Endpoint de diagnóstico para verificar variables de entorno (sin revelar secretos)
+app.get('/debug-env', (req, res) => {
+    res.json({
+        port: process.env.PORT,
+        node_env: process.env.NODE_ENV,
+        railway_static_url: process.env.RAILWAY_STATIC_URL,
+        host: process.env.HOST,
+        allowed_origins: process.env.ALLOWED_ORIGINS,
+        timestamp: new Date().toISOString()
+    });
+});
+
+console.log('🏥 Healthcheck endpoints registered (/health, /_health, /debug-env)');
 
 // Initialize Firebase Admin (with error handling)
 let admin;
