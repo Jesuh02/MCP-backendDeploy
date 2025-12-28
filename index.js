@@ -70,13 +70,7 @@ app.get('/', (req, res) => {
 
 app.get('/health', (req, res) => {
     console.log(`💓 Healthcheck received from ${req.ip}`);
-    try {
-        res.status(200).json({ status: 'ok' });
-        console.log('✅ Healthcheck response sent (200 OK)');
-    } catch (error) {
-        console.error('❌ Error sending healthcheck response:', error);
-        res.status(500).send('Internal Server Error');
-    }
+    res.status(200).send('OK');
 });
 
 // Also respond to / for basic health checks
