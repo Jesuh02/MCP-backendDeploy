@@ -7167,3 +7167,8 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ UNHANDLED REJECTION:', reason);
     console.error('⚠️ Ignoring error to keep server alive.');
 });
+
+// 🟢 KEEP PROCESS ALIVE (User Request)
+setInterval(() => {
+  // console.log("🟢 Process alive"); // Uncomment for debug
+}, 30000);
