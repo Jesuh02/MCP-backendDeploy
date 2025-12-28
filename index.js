@@ -7138,14 +7138,23 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 server.setTimeout(300000);
 
 // ============================================================
-// 🛡️ INDESTRUCTIBLE MODE: Ignore Shutdown Signals
+// 🛡️ SHUTDOWN HANDLING
 // ============================================================
+// Allow graceful shutdown
 process.on('SIGTERM', () => {
-    console.log('🛑 SIGTERM received in index.js. IGNORING to keep container alive.');
+    console.log('🛑 SIGTERM received. Shutting down gracefully...');
+    server.close(() => {
+        console.log('✅ Server closed.');
+        process.exit(0);
+    });
 });
 
 process.on('SIGINT', () => {
-    console.log('🛑 SIGINT received in index.js. IGNORING to keep container alive.');
+    console.log('🛑 SIGINT received. Shutting down gracefully...');
+    server.close(() => {
+        console.log('✅ Server closed.');
+        process.exit(0);
+    });
 });
 
 // Global Error Handler to prevent crash
