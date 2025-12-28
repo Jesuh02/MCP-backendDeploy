@@ -69,6 +69,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
+    console.log(`💓 Healthcheck received from ${req.ip}`);
     res.status(200).json({
         status: 'ok',
         server: 'yisuscompany-mcp-server',

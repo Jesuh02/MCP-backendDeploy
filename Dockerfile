@@ -16,7 +16,7 @@ COPY . .
 RUN mkdir -p logs
 
 # Expose main port (Railway will use PORT env variable)
-EXPOSE 3000 3001
+EXPOSE 3000
 
 # Disable Dockerfile HEALTHCHECK to let Railway handle it via UI configuration
 # HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=10 \
