@@ -7145,6 +7145,12 @@ const server = app.listen(PORT, '0.0.0.0', () => {
         initializeReinforcementHistoryTable().catch(err => console.error('⚠️ Failed to init history table:', err.message));
     }, 5000);
     */
+
+    // Heartbeat log to confirm process is alive
+    setInterval(() => {
+        const memUsage = process.memoryUsage();
+        console.log(`💓 Heartbeat: Server is alive. Memory: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`);
+    }, 10000);
 });
 
 // Set server timeout to 5 minutes to prevent 502 on long LLM tasks
