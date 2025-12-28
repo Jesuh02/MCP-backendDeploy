@@ -449,9 +449,23 @@ let R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '';
 // Fallback: Try to read .env file directly if variables are missing
 if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
     try {
-        const envPath = path.resolve(process.cwd(), '.env');
-        if (fs.existsSync(envPath)) {
-            const envConfig = fs.readFileSync(envPath, 'utf8');
+        // Try multiple paths for robustness
+        const paths = [
+            path.resolve(process.cwd(), '.env'),
+            path.resolve('/app', '.env'),
+            '.env'
+        ];
+        
+        let envConfig = null;
+        for (const p of paths) {
+            if (fs.existsSync(p)) {
+                console.log(`🔍 index.js: Found .env at ${p}`);
+                envConfig = fs.readFileSync(p, 'utf8');
+                break;
+            }
+        }
+
+        if (envConfig) {
             const parseEnv = (key) => {
                 // Robust regex: Start of line, key, optional spaces, =, optional spaces, optional quote, value, optional quote
                 const regex = new RegExp(`^\\s*${key}\\s*=\\s*["']?([^"'\r\n]+)["']?`, 'm');
