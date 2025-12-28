@@ -65,11 +65,17 @@ app.use((req, res, next) => {
 // even before all other services are initialized
 // ============================================================
 app.get('/', (req, res) => {
-    res.status(200).send('OK');
+    res.status(200).send('YisusCompany MCP Server is Running');
 });
 
 app.get('/health', (req, res) => {
-    res.status(200).send('OK');
+    res.status(200).json({
+        status: 'ok',
+        server: 'yisuscompany-mcp-server',
+        version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
 });
 
 // Also respond to / for basic health checks
@@ -78,7 +84,6 @@ app.get('/_health', (req, res) => {
 });
 
 console.log('🏥 Healthcheck endpoints registered (/health, /_health)');
-console.log("🟢 HTTP server READY (healthcheck OK)");
 
 // Initialize Firebase Admin (with error handling)
 let admin;
@@ -221,27 +226,21 @@ async function callDeepSeek(systemPrompt, userPrompt) {
 
 // Initialize MCPService for GitHub analysis
 let mcpService = null;
-// Initialization moved to background to prevent blocking startup
-setTimeout(() => {
-    try {
-        mcpService = new MCPService();
-        console.log('✅ MCPService initialized for GitHub analysis (Background)');
-    } catch (error) {
-        console.error('❌ Failed to initialize MCPService:', error.message);
-    }
-}, 1500);
+try {
+    mcpService = new MCPService();
+    console.log('✅ MCPService initialized for GitHub analysis');
+} catch (error) {
+    console.error('❌ Failed to initialize MCPService:', error.message);
+}
 
 // Initialize SupabaseService
 let supabaseService = null;
-// Initialization moved to background to prevent blocking startup
-setTimeout(() => {
-    try {
-        supabaseService = SupabaseService.getInstance();
-        console.log('✅ SupabaseService initialized (Background)');
-    } catch (error) {
-        console.error('❌ Failed to initialize SupabaseService:', error.message);
-    }
-}, 1000);
+try {
+    supabaseService = SupabaseService.getInstance();
+    console.log('✅ SupabaseService initialized');
+} catch (error) {
+    console.error('❌ Failed to initialize SupabaseService:', error.message);
+}
 
 // ============================================================
 // 📚 REINFORCEMENT LEARNING HISTORY TABLE INITIALIZATION
@@ -7139,23 +7138,20 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 server.setTimeout(300000);
 
 // ============================================================
-// 🛡️ SHUTDOWN HANDLING
+// 🛡️ GRACEFUL SHUTDOWN - Railway Compatible
 // ============================================================
-// Allow graceful shutdown
 process.on('SIGTERM', () => {
-    console.log('🛑 SIGTERM received. Shutting down gracefully...');
+    console.log('🛑 SIGTERM received. Starting graceful shutdown...');
     server.close(() => {
-        console.log('✅ Server closed.');
+        console.log('✅ Server closed gracefully');
         process.exit(0);
     });
-});
-
-process.on('SIGINT', () => {
-    console.log('🛑 SIGINT received. Shutting down gracefully...');
-    server.close(() => {
-        console.log('✅ Server closed.');
-        process.exit(0);
-    });
+    
+    // Force shutdown after 30 seconds
+    setTimeout(() => {
+        console.error('⚠️ Forced shutdown after timeout');
+        process.exit(1);
+    }, 30000);
 });
 
 // Global Error Handler to prevent crash
@@ -7168,8 +7164,3 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ UNHANDLED REJECTION:', reason);
     console.error('⚠️ Ignoring error to keep server alive.');
 });
-
-// 🟢 KEEP PROCESS ALIVE (User Request)
-setInterval(() => {
-  // console.log("🟢 Process alive"); // Uncomment for debug
-}, 30000);
