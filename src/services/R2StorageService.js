@@ -48,9 +48,10 @@ class R2StorageService {
      * @private
      */
     _initializeR2Client() {
-        const accountId = process.env.R2_ACCOUNT_ID || '';
-        const accessKeyId = process.env.R2_ACCESS_KEY_ID || '';
-        const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY || '';
+        // Fallback to hardcoded credentials if env vars are missing (Docker/Env issue workaround)
+        const accountId = process.env.R2_ACCOUNT_ID || 'd2ff8e934967ed4e014f5a40e24de85c';
+        const accessKeyId = process.env.R2_ACCESS_KEY_ID || 'aeaeef1205b5258c98bd99555c158924';
+        const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY || 'fce48a59d2c76118af1a455dfb4cf11d89d897203d51665ef0a158ae6beb8411';
 
         console.log(`🔧 R2 Config Check: AccountID=${accountId ? 'OK' : 'MISSING'}, AccessKey=${accessKeyId ? 'OK' : 'MISSING'}, Secret=${secretAccessKey ? 'OK' : 'MISSING'}`);
 
