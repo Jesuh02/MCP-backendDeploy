@@ -10,6 +10,6 @@
     "healthcheckPath": "/health",
     "healthcheckTimeout": 120,
     "healthcheckInterval": 30,
-    "startPeriod": 60
+    "startPeriod": 120
   }
 }

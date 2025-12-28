@@ -285,7 +285,7 @@ async function initializeReinforcementHistoryTable() {
 
         if (error) {
             // Try direct table creation if RPC fails
-            console.log('⚠️ RPC method failed, trying direct table creation...');
+            console.log('ℹ️ RPC exec_sql not available, checking if table exists...');
             const { error: directError } = await supabaseService.client
                 .from('reinforcement_question_history')
                 .select('id')
@@ -305,8 +305,8 @@ async function initializeReinforcementHistoryTable() {
     }
 }
 
-// Initialize the table
-initializeReinforcementHistoryTable();
+// Initialize the table - MOVED to app.listen callback
+// initializeReinforcementHistoryTable();
 
 /**
  * Get reinforcement question history for a user-course combination
@@ -7129,6 +7129,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`   • POST /tools/list (MCP)`);
     console.log(`   • POST /tools/call (MCP)`);
     console.log('='.repeat(60));
+
+    // Initialize the table after server starts
+    initializeReinforcementHistoryTable().catch(err => console.error('⚠️ Failed to init history table:', err.message));
 });
 
 // Set server timeout to 5 minutes to prevent 502 on long LLM tasks
