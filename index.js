@@ -439,9 +439,9 @@ function extractCourseIdFromRequest(reqBody) {
 
 // Initialize S3 Client for Cloudflare R2
 let r2Client = null;
-const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '';
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '';
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || 'd2ff8e934967ed4e014f5a40e24de85c';
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || 'aeaeef1205b5258c98bd99555c158924';
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || 'fce48a59d2c76118af1a455dfb4cf11d89d897203d51665ef0a158ae6beb8411';
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'yisuscompany-files';
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || 'https://pub-9f393625246c4018b5613be60b01bda1.r2.dev';
 
