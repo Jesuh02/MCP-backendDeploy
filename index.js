@@ -7187,17 +7187,9 @@ server.headersTimeout = 120 * 1000 + 1000;
 // ============================================================
 // 🛡️ GRACEFUL SHUTDOWN - Railway Compatible
 // ============================================================
-let heartbeatInterval;
-
-// Heartbeat log to confirm process is alive
-heartbeatInterval = setInterval(() => {
-    const memUsage = process.memoryUsage();
-    console.log(`💓 Heartbeat: Server is alive. Memory: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`);
-}, 10000);
 
 process.on('SIGTERM', () => {
     console.log('🛑 SIGTERM received. Starting graceful shutdown...');
-    if (heartbeatInterval) clearInterval(heartbeatInterval);
     
     server.close(() => {
         console.log('✅ Server closed gracefully');
