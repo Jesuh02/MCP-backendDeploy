@@ -75,13 +75,17 @@ router.post('/generate-excel', async (req, res) => {
         let result;
         try {
             console.log(`⏱️ [${Date.now() - startTime}ms] Starting processQueryToData...`);
-            result = await mcpService.processQueryToData(query);
+            result = await mcpService.processQueryToData(query, userId);
             console.log(`⏱️ [${Date.now() - startTime}ms] processQueryToData complete.`);
         } catch (e) {
             console.warn("⚠️ processQueryToData failed, falling back to processQuery:", e.message);
             result = await mcpService.processQuery(query);
         }
         
+        if (typeof result === 'string') {
+            return res.status(400).json({ error: result });
+        }
+
         if (result.error) {
             return res.status(400).json({ error: result.message, hint: result.hint });
         }

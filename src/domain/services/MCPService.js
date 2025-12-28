@@ -469,8 +469,8 @@ export class MCPService {
      * Process a natural language query to get raw data (for Excel/Reports)
      * Uses LLM to generate SQL, executes it, and returns the rows.
      */
-    async processQueryToData(query) {
-        logger.info(`📊 Processing query to data: "${query}"`);
+    async processQueryToData(query, userId = null) {
+        logger.info(`📊 Processing query to data: "${query}" (User: ${userId})`);
 
         if (!this.llmService || !this.llmService.model) {
             throw new Error("LLM Service not available for SQL generation");
@@ -514,7 +514,7 @@ Output ONLY SQL in code block:
 \`\`\`sql
 SELECT ...
 \`\`\``),
-                    new HumanMessage(`SQL for: ${query}`)
+                    new HumanMessage(`SQL for: ${query}${userId ? `\nContext: Current User ID is '${userId}'` : ''}`)
                 ];
             } else {
                  // Retry prompt with feedback
