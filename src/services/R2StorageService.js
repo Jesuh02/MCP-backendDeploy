@@ -65,7 +65,6 @@ class R2StorageService {
                 const paths = [
                     path.resolve(process.cwd(), '.env'),
                     path.resolve('/app', '.env'),
-                    path.resolve(__dirname, '../../.env'), // Assuming src/services
                     '.env'
                 ];
                 
