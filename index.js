@@ -27,6 +27,7 @@ import { S3Client, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/clien
 import { NotificationService } from './src/services/NotificationService.js';
 import { R2StorageService } from './src/services/R2StorageService.js';
 import { UserService } from './src/services/UserService.js';
+import excelRoutes from './src/interfaces/routes/excelRoutes.js';
 // Note: Additional refactored modules available:
 // - notificationRoutes: ./src/interfaces/routes/notificationRoutes.js
 // - fileUtils: ./src/utils/fileUtils.js  
@@ -68,6 +69,9 @@ app.use((req, res, next) => {
     }
     next();
 });
+
+// Register Excel Routes
+app.use('/excel', excelRoutes);
 
 // ============================================================
 // 🏥 CRITICAL: Healthcheck endpoint MUST be defined FIRST
@@ -5004,11 +5008,11 @@ Responde considerando el contexto académico disponible si es relevante para la 
                     respuestaFinal = 'Lo siento, en este momento no obtuve una respuesta del modelo. Intenta nuevamente.';
                 }
 
-                // If this was a reinforcement generation request, attempt to filter out
-                // any questions that are duplicates of the user's history.
+                // If this was a reinforcement generation request, attempt to shuffle options
+                // and filter out any questions that are duplicates of the user's history.
                 try {
-                    if (isReinforcementLearningRequest(prompt) && historyQuestionsList && historyQuestionsList.length) {
-                        console.log('🔁 Post-processing LLM output to remove duplicates against history...');
+                    if (isReinforcementLearningRequest(prompt)) {
+                        console.log('🔁 Post-processing LLM output (Shuffling & Filtering)...');
                         // Try to parse LLM output as JSON array
                         let parsed = null;
                         try {
@@ -5022,21 +5026,77 @@ Responde considerando el contexto académico disponible si es relevante para la 
                         }
 
                         if (Array.isArray(parsed)) {
-                            const seen = new Set(historyQuestionsList.map(s => s.toLowerCase()));
-                            const filtered = parsed.filter(item => {
-                                const text = (item && (item.question || item.text || item.pregunta)) ? (item.question || item.text || item.pregunta) : (typeof item === 'string' ? item : '');
-                                const t = (text || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
-                                return t && !seen.has(t);
+                            // 1. SHUFFLE OPTIONS
+                            const shuffle = (arr) => {
+                                for (let i = arr.length - 1; i > 0; i--) {
+                                    const j = Math.floor(Math.random() * (i + 1));
+                                    [arr[i], arr[j]] = [arr[j], arr[i]];
+                                }
+                            };
+
+                            parsed = parsed.map((q) => {
+                                try {
+                                    if (!q || !Array.isArray(q.options)) return q;
+                                    
+                                    // Determine original correct index
+                                    let origIdx = 0;
+                                    if (typeof q.correctIndex === 'number') {
+                                        origIdx = q.correctIndex;
+                                    } else if (typeof q.correctIndex === 'string') {
+                                        if (/^\d+$/.test(q.correctIndex)) {
+                                            origIdx = parseInt(q.correctIndex, 10);
+                                        } else {
+                                            const map = { 'a': 0, 'b': 1, 'c': 2, 'd': 3, 'A': 0, 'B': 1, 'C': 2, 'D': 3 };
+                                            if (q.correctIndex in map) {
+                                                origIdx = map[q.correctIndex];
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Validate bounds
+                                    if (origIdx < 0 || origIdx >= q.options.length) origIdx = 0;
+
+                                    const origCorrect = q.options[origIdx];
+                                    const newOptions = q.options.slice();
+                                    
+                                    // Shuffle the options
+                                    shuffle(newOptions);
+                                    
+                                    // Find new index of the correct answer
+                                    let newIndex = newOptions.findIndex(o => o === origCorrect);
+                                    if (newIndex === -1) newIndex = 0;
+                                    
+                                    return {
+                                        ...q,
+                                        options: newOptions,
+                                        correctIndex: newIndex
+                                    };
+                                } catch (e) {
+                                    return q;
+                                }
                             });
 
-                            if (filtered.length !== parsed.length) {
-                                console.log(`✅ Filtrado de duplicados aplicado. ${parsed.length - filtered.length} elementos eliminados.`);
-                                respuestaFinal = JSON.stringify(filtered);
+                            // 2. FILTER DUPLICATES (if history exists)
+                            let filtered = parsed;
+                            if (historyQuestionsList && historyQuestionsList.length) {
+                                const seen = new Set(historyQuestionsList.map(s => s.toLowerCase()));
+                                filtered = parsed.filter(item => {
+                                    const text = (item && (item.question || item.text || item.pregunta)) ? (item.question || item.text || item.pregunta) : (typeof item === 'string' ? item : '');
+                                    const t = (text || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
+                                    return t && !seen.has(t);
+                                });
+                                
+                                if (filtered.length !== parsed.length) {
+                                    console.log(`✅ Filtrado de duplicados aplicado. ${parsed.length - filtered.length} elementos eliminados.`);
+                                }
                             }
+
+                            // Always update respuestaFinal because we shuffled options
+                            respuestaFinal = JSON.stringify(filtered);
                         }
                     }
                 } catch (postErr) {
-                    console.warn('⚠️ Error en filtrado post-LLM (silencioso):', postErr.message || postErr);
+                    console.warn('⚠️ Error en filtrado/shuffling post-LLM (silencioso):', postErr.message || postErr);
                 }
 
                 // ENVIAR NOTIFICACIÓN PUSH Y EMAIL SI HAY USER_ID
