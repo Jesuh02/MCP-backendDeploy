@@ -7143,9 +7143,11 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60));
 
     // Initialize the table after server starts - NON-BLOCKING
+    /*
     setTimeout(() => {
         initializeReinforcementHistoryTable().catch(err => console.error('⚠️ Failed to init history table:', err.message));
     }, 5000);
+    */
 });
 
 // Set server timeout to 5 minutes to prevent 502 on long LLM tasks
