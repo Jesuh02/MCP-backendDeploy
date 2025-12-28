@@ -61,6 +61,11 @@ class R2StorageService {
         // Fallback: Try to read .env file directly if variables are missing (Robustness fix)
         if (!accountId || !accessKeyId || !secretAccessKey) {
             try {
+                console.log(`🔍 DEBUG: Current directory: ${process.cwd()}`);
+                try {
+                    console.log(`🔍 DEBUG: Files in /app: ${fs.readdirSync('/app').join(', ')}`);
+                } catch (e) { console.log(`🔍 DEBUG: Could not list /app: ${e.message}`); }
+
                 // Try multiple paths
                 const paths = [
                     path.resolve(process.cwd(), '.env'),
