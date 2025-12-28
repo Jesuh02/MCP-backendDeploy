@@ -1,49 +1,36 @@
-version: '3.8'
+FROM node:20-alpine
 
-services:
-  mcp-server:
-    build: .
-    container_name: tareamov-mcp-server
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-      - "3001:3001"
-    environment:
-      - NODE_ENV=production
-      - PORT=3001
-      - MCP_HTTP_PORT=3000
-      - HOST=0.0.0.0
-    command: sh start.sh
-    env_file:
-      - .env
-    volumes:
-      - ./logs:/app/logs
-    networks:
-      - mcp-network
-    depends_on:
-      - redis
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
+# Set working directory
+WORKDIR /app
 
-  redis:
-    image: redis:7-alpine
-    container_name: tareamov-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    networks:
-      - mcp-network
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes
+# Copy package files
+COPY package*.json ./
 
-networks:
-  mcp-network:
-    driver: bridge
+# Install dependencies
+RUN npm ci --only=production
 
-volumes:
-  redis-data:
+# Copy source code
+COPY . .
+
+# Create logs directory
+RUN mkdir -p logs
+
+# Expose main port (Railway will use PORT env variable)
+EXPOSE 3000 3001
+
+# Health check - Use /health endpoint with longer start period for Railway
+# Railway healthcheck uses /health by default
+HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=10 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/health || exit 1
+
+# Make start script executable and fix CRLF line endings (Windows compatibility)
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
+
+# Force cache bust for start.sh updates
+ENV START_SCRIPT_VERSION=v5
+
+# Start the application
+CMD ["./start.sh"]
+
+# Start server (Run both API and MCP servers)
+CMD ["sh", "start.sh"]
