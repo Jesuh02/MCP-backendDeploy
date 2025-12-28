@@ -7101,7 +7101,9 @@ app.get('/listar-submissions/:taskId', async(req, res) => {
 });
 
 // Listen on all interfaces so the service is reachable from other devices on the LAN
+console.log(`⏳ Attempting to bind to PORT: ${PORT}`);
 const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ Server successfully bound to port ${PORT}`);
     const localIPs = getLocalIPAddress();
     console.log('='.repeat(60));
     console.log('🚀 Microservicio de distribución de contexto con DeepSeek v2.3');

@@ -15,9 +15,6 @@ COPY . .
 # Create logs directory
 RUN mkdir -p logs
 
-# Expose main port (Railway will use PORT env variable)
-EXPOSE 3000
-
 # Disable Dockerfile HEALTHCHECK to let Railway handle it via UI configuration
 # HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=10 \
 #   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/health || exit 1
