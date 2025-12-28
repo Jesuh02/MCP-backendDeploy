@@ -52,6 +52,8 @@ class R2StorageService {
         const accessKeyId = process.env.R2_ACCESS_KEY_ID || '';
         const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY || '';
 
+        console.log(`🔧 R2 Config Check: AccountID=${accountId ? 'OK' : 'MISSING'}, AccessKey=${accessKeyId ? 'OK' : 'MISSING'}, Secret=${secretAccessKey ? 'OK' : 'MISSING'}`);
+
         // Removed strict check to allow partial functionality if env vars are missing
         // but logged warning. Ideally we want it to work.
         if (accountId && accessKeyId && secretAccessKey) {
