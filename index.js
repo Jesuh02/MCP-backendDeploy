@@ -437,11 +437,32 @@ function extractCourseIdFromRequest(reqBody) {
 // CLOUDFLARE R2 SERVICE (S3-Compatible Storage)
 // ============================================================
 
+import fs from 'fs';
+import path from 'path';
+
 // Initialize S3 Client for Cloudflare R2
 let r2Client = null;
-const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '';
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '';
+let R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
+let R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '';
+let R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '';
+
+// Fallback: Try to read .env file directly if variables are missing
+if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
+    try {
+        const envPath = path.resolve(process.cwd(), '.env');
+        if (fs.existsSync(envPath)) {
+            const envConfig = fs.readFileSync(envPath, 'utf8');
+            const parseEnv = (key) => {
+                const match = envConfig.match(new RegExp(`${key}=["']?([^"'\n]+)["']?`));
+                return match ? match[1] : null;
+            };
+            if (!R2_ACCOUNT_ID) R2_ACCOUNT_ID = parseEnv('R2_ACCOUNT_ID') || '';
+            if (!R2_ACCESS_KEY_ID) R2_ACCESS_KEY_ID = parseEnv('R2_ACCESS_KEY_ID') || '';
+            if (!R2_SECRET_ACCESS_KEY) R2_SECRET_ACCESS_KEY = parseEnv('R2_SECRET_ACCESS_KEY') || '';
+        }
+    } catch (e) { console.error('Failed to read .env manually in index.js', e); }
+}
+
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'yisuscompany-files';
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || 'https://pub-9f393625246c4018b5613be60b01bda1.r2.dev';
 
