@@ -70,13 +70,13 @@ app.get('/', (req, res) => {
 
 app.get('/health', (req, res) => {
     console.log(`💓 Healthcheck received from ${req.ip}`);
-    res.status(200).json({
-        status: 'ok',
-        server: 'yisuscompany-mcp-server',
-        version: '1.0.0',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime()
-    });
+    try {
+        res.status(200).json({ status: 'ok' });
+        console.log('✅ Healthcheck response sent (200 OK)');
+    } catch (error) {
+        console.error('❌ Error sending healthcheck response:', error);
+        res.status(500).send('Internal Server Error');
+    }
 });
 
 // Also respond to / for basic health checks
