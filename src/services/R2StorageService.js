@@ -50,6 +50,10 @@ class R2StorageService {
      * @private
      */
     _initializeR2Client() {
+        this._tryInitR2();
+    }
+
+    _tryInitR2() {
         let accountId = process.env.R2_ACCOUNT_ID;
         let accessKeyId = process.env.R2_ACCESS_KEY_ID;
         let secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
@@ -57,12 +61,28 @@ class R2StorageService {
         // Fallback: Try to read .env file directly if variables are missing (Robustness fix)
         if (!accountId || !accessKeyId || !secretAccessKey) {
             try {
-                const envPath = path.resolve(process.cwd(), '.env');
-                console.log(`🔍 R2StorageService: Checking for .env at ${envPath} (CWD: ${process.cwd()})`);
-                if (fs.existsSync(envPath)) {
-                    console.log(`⚠️ R2StorageService: Env vars missing, reading .env manually from ${envPath}`);
-                    const envConfig = fs.readFileSync(envPath, 'utf8');
-                    console.log(`📄 .env content preview: ${envConfig.substring(0, 50)}...`);
+                // Try multiple paths
+                const paths = [
+                    path.resolve(process.cwd(), '.env'),
+                    path.resolve('/app', '.env'),
+                    path.resolve(__dirname, '../../.env'), // Assuming src/services
+                    '.env'
+                ];
+                
+                let envConfig = null;
+                let usedPath = null;
+
+                for (const p of paths) {
+                    if (fs.existsSync(p)) {
+                        console.log(`🔍 R2StorageService: Found .env at ${p}`);
+                        envConfig = fs.readFileSync(p, 'utf8');
+                        usedPath = p;
+                        break;
+                    }
+                }
+
+                if (envConfig) {
+                    console.log(`⚠️ R2StorageService: Env vars missing, reading .env manually from ${usedPath}`);
                     
                     // Simple manual parsing to extract keys
                     const parseEnv = (key) => {
@@ -76,7 +96,7 @@ class R2StorageService {
                     if (!accessKeyId) accessKeyId = parseEnv('R2_ACCESS_KEY_ID');
                     if (!secretAccessKey) secretAccessKey = parseEnv('R2_SECRET_ACCESS_KEY');
                 } else {
-                    console.warn(`⚠️ .env file not found at ${envPath}`);
+                    console.warn(`⚠️ .env file not found in any checked path: ${paths.join(', ')}`);
                 }
             } catch (e) {
                 console.error('❌ Failed to read .env manually:', e);
@@ -144,7 +164,11 @@ class R2StorageService {
      */
     async uploadFile(content, objectKey, contentType = 'application/octet-stream') {
         if (!this.r2Client) {
-            throw new Error('R2 Client not configured');
+            console.warn('⚠️ R2 Client not configured, attempting lazy initialization...');
+            this._tryInitR2();
+            if (!this.r2Client) {
+                throw new Error('R2 Client not configured');
+            }
         }
 
         console.log(`📤 Uploading file to R2: ${objectKey} (${contentType})`);
