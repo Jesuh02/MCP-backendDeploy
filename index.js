@@ -7147,30 +7147,46 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     */
 
     // Heartbeat log to confirm process is alive
+    // Moved to global scope for cleanup
+    /*
     setInterval(() => {
         const memUsage = process.memoryUsage();
         console.log(`💓 Heartbeat: Server is alive. Memory: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`);
     }, 10000);
+    */
 });
 
 // Set server timeout to 5 minutes to prevent 502 on long LLM tasks
 server.setTimeout(300000);
+// Fix for Keep-Alive race conditions with Load Balancers (Railway/AWS/etc)
+server.keepAliveTimeout = 120 * 1000;
+server.headersTimeout = 120 * 1000 + 1000;
 
 // ============================================================
 // 🛡️ GRACEFUL SHUTDOWN - Railway Compatible
 // ============================================================
+let heartbeatInterval;
+
+// Heartbeat log to confirm process is alive
+heartbeatInterval = setInterval(() => {
+    const memUsage = process.memoryUsage();
+    console.log(`💓 Heartbeat: Server is alive. Memory: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`);
+}, 10000);
+
 process.on('SIGTERM', () => {
     console.log('🛑 SIGTERM received. Starting graceful shutdown...');
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    
     server.close(() => {
         console.log('✅ Server closed gracefully');
         process.exit(0);
     });
     
-    // Force shutdown after 30 seconds
+    // Force shutdown after 10 seconds (reduced from 30 to be snappier)
     setTimeout(() => {
         console.error('⚠️ Forced shutdown after timeout');
         process.exit(1);
-    }, 30000);
+    }, 10000);
 });
 
 // Global Error Handler to prevent crash
