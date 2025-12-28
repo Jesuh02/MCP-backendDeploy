@@ -475,6 +475,12 @@ if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
             if (!R2_ACCOUNT_ID) R2_ACCOUNT_ID = parseEnv('R2_ACCOUNT_ID') || '';
             if (!R2_ACCESS_KEY_ID) R2_ACCESS_KEY_ID = parseEnv('R2_ACCESS_KEY_ID') || '';
             if (!R2_SECRET_ACCESS_KEY) R2_SECRET_ACCESS_KEY = parseEnv('R2_SECRET_ACCESS_KEY') || '';
+        } else {
+             // FINAL FALLBACK: Hardcoded credentials (Emergency Fix)
+             console.log('⚠️ Using EMERGENCY HARDCODED credentials for R2 in index.js');
+             R2_ACCOUNT_ID = 'd2ff8e934967ed4e014f5a40e24de85c';
+             R2_ACCESS_KEY_ID = 'aeaeef1205b5258c98bd99555c158924';
+             R2_SECRET_ACCESS_KEY = 'fce48a59d2c76118af1a455dfb4cf11d89d897203d51665ef0a158ae6beb8411';
         }
     } catch (e) { console.error('Failed to read .env manually in index.js', e); }
 }
