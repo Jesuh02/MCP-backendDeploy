@@ -1482,12 +1482,22 @@ function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, newGrad
  * Plantilla: Notificación de nuevo curso
  */
 function generateNewCourseEmailHTML(userName, creatorUsername, courseTitle, thumbnailUrl) {
-    // Gmail y otros clientes bloquean imágenes externas por defecto
-    // Usamos un diseño visual sin imágenes para evitar advertencias de seguridad
+    // Diseño robusto que se ve bien con o sin imágenes cargadas
+    // Usa un contenedor con fondo atractivo que sirve como fallback
     const thumbnailSection = thumbnailUrl ? `
-            <div style="text-align: center; margin: 24px 0; background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%); padding: 40px; border-radius: 12px; border: 2px solid #0ea5e9;">
-                <div style="font-size: 64px; margin-bottom: 16px;">🎓</div>
-                <p style="margin: 0; color: #0c4a6e; font-size: 14px; font-weight: 600;">Vista previa disponible en la app</p>
+            <div style="text-align: center; margin: 24px 0; background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%); padding: 24px; border-radius: 12px; border: 2px solid #0ea5e9;">
+                <div style="position: relative; width: 100%; max-width: 500px; margin: 0 auto; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                    <img src="${thumbnailUrl}" 
+                         alt="Vista previa del curso: ${courseTitle}" 
+                         title="${courseTitle}"
+                         style="width: 100%; height: auto; display: block; border: none; outline: none;" 
+                         width="500" 
+                         height="280"
+                         loading="eager" />
+                </div>
+                <p style="margin: 12px 0 0 0; color: #0c4a6e; font-size: 13px; font-style: italic;">
+                    📸 Vista previa del curso
+                </p>
             </div>
             ` : '';
     
