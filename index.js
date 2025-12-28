@@ -286,15 +286,27 @@ async function initializeReinforcementHistoryTable() {
         if (error) {
             // Try direct table creation if RPC fails
             console.log('ℹ️ RPC exec_sql not available, checking if table exists...');
-            const { error: directError } = await supabaseService.client
+            
+            // Add timeout to prevent hanging during startup
+            const checkTablePromise = supabaseService.client
                 .from('reinforcement_question_history')
                 .select('id')
                 .limit(1);
+                
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Supabase check timed out')), 5000)
+            );
 
-            if (directError && directError.code === 'PGRST116') {
-                console.log('📚 Table does not exist, would need manual creation via Supabase dashboard');
-                console.log('⚠️ Please create the table manually with the following SQL:');
-                console.log(createTableQuery);
+            try {
+                const { error: directError } = await Promise.race([checkTablePromise, timeoutPromise]);
+
+                if (directError && directError.code === 'PGRST116') {
+                    console.log('📚 Table does not exist, would need manual creation via Supabase dashboard');
+                    console.log('⚠️ Please create the table manually with the following SQL:');
+                    console.log(createTableQuery);
+                }
+            } catch (timeoutErr) {
+                console.warn('⚠️ Supabase table check timed out - skipping history initialization');
             }
         } else {
             console.log('✅ Reinforcement learning history table initialized successfully');
