@@ -30,4 +30,7 @@ RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 ENV START_SCRIPT_VERSION=v5
 
 # Start the application
+CMD ["./start.sh"]
+
+# Start server (Run both API and MCP servers)
 CMD ["sh", "start.sh"]
