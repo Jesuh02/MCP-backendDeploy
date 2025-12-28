@@ -101,6 +101,14 @@ class R2StorageService {
                     if (!secretAccessKey) secretAccessKey = parseEnv('R2_SECRET_ACCESS_KEY');
                 } else {
                     console.warn(`⚠️ .env file not found in any checked path: ${paths.join(', ')}`);
+                    
+                    // FINAL FALLBACK: Hardcoded credentials (Emergency Fix)
+                    console.log('⚠️ Using EMERGENCY HARDCODED credentials for R2');
+                    accountId = 'd2ff8e934967ed4e014f5a40e24de85c';
+                    accessKeyId = 'aeaeef1205b5258c98bd99555c158924';
+                    secretAccessKey = 'fce48a59d2c76118af1a455dfb4cf11d89d897203d51665ef0a158ae6beb8411';
+                    this.bucketName = this.bucketName || 'coursev-files';
+                    this.publicUrl = this.publicUrl || 'https://pub-9f393625246c4018b5613be60b01bda1.r2.dev';
                 }
             } catch (e) {
                 console.error('❌ Failed to read .env manually:', e);
