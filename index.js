@@ -65,17 +65,11 @@ app.use((req, res, next) => {
 // even before all other services are initialized
 // ============================================================
 app.get('/', (req, res) => {
-    res.status(200).send('YisusCompany MCP Server is Running');
+    res.status(200).send('OK');
 });
 
 app.get('/health', (req, res) => {
-    res.status(200).json({
-        status: 'ok',
-        server: 'yisuscompany-mcp-server',
-        version: '1.0.0',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime()
-    });
+    res.status(200).send('OK');
 });
 
 // Also respond to / for basic health checks
@@ -84,6 +78,7 @@ app.get('/_health', (req, res) => {
 });
 
 console.log('🏥 Healthcheck endpoints registered (/health, /_health)');
+console.log("🟢 HTTP server READY (healthcheck OK)");
 
 // Initialize Firebase Admin (with error handling)
 let admin;
@@ -226,21 +221,27 @@ async function callDeepSeek(systemPrompt, userPrompt) {
 
 // Initialize MCPService for GitHub analysis
 let mcpService = null;
-try {
-    mcpService = new MCPService();
-    console.log('✅ MCPService initialized for GitHub analysis');
-} catch (error) {
-    console.error('❌ Failed to initialize MCPService:', error.message);
-}
+// Initialization moved to background to prevent blocking startup
+setTimeout(() => {
+    try {
+        mcpService = new MCPService();
+        console.log('✅ MCPService initialized for GitHub analysis (Background)');
+    } catch (error) {
+        console.error('❌ Failed to initialize MCPService:', error.message);
+    }
+}, 1500);
 
 // Initialize SupabaseService
 let supabaseService = null;
-try {
-    supabaseService = SupabaseService.getInstance();
-    console.log('✅ SupabaseService initialized');
-} catch (error) {
-    console.error('❌ Failed to initialize SupabaseService:', error.message);
-}
+// Initialization moved to background to prevent blocking startup
+setTimeout(() => {
+    try {
+        supabaseService = SupabaseService.getInstance();
+        console.log('✅ SupabaseService initialized (Background)');
+    } catch (error) {
+        console.error('❌ Failed to initialize SupabaseService:', error.message);
+    }
+}, 1000);
 
 // ============================================================
 // 📚 REINFORCEMENT LEARNING HISTORY TABLE INITIALIZATION
