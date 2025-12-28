@@ -54,6 +54,7 @@ trap 'echo "🛑 Received signal (SIGINT/SIGTERM). Ignoring to keep container al
 echo "✅ Container startup complete. Entering keep-alive loop."
 while true; do
     # Sleep for a long time, but not forever so we can catch signals
-    sleep 10
-    echo "💓 Heartbeat: Container is still alive..."
+    sleep 60
+    # Heartbeat silenced to reduce log noise
+    # echo "💓 Heartbeat: Container is still alive..."
 done
