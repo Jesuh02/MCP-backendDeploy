@@ -453,8 +453,10 @@ if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
         if (fs.existsSync(envPath)) {
             const envConfig = fs.readFileSync(envPath, 'utf8');
             const parseEnv = (key) => {
-                const match = envConfig.match(new RegExp(`${key}=["']?([^"'\n]+)["']?`));
-                return match ? match[1] : null;
+                // Robust regex: Start of line, key, optional spaces, =, optional spaces, optional quote, value, optional quote
+                const regex = new RegExp(`^\\s*${key}\\s*=\\s*["']?([^"'\r\n]+)["']?`, 'm');
+                const match = envConfig.match(regex);
+                return match ? match[1].trim() : null;
             };
             if (!R2_ACCOUNT_ID) R2_ACCOUNT_ID = parseEnv('R2_ACCOUNT_ID') || '';
             if (!R2_ACCESS_KEY_ID) R2_ACCESS_KEY_ID = parseEnv('R2_ACCESS_KEY_ID') || '';
