@@ -8,6 +8,8 @@
 
 import { S3Client, GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
 
 // ============================================================
@@ -48,9 +50,34 @@ class R2StorageService {
      * @private
      */
     _initializeR2Client() {
-        const accountId = process.env.R2_ACCOUNT_ID || '';
-        const accessKeyId = process.env.R2_ACCESS_KEY_ID || '';
-        const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY || '';
+        let accountId = process.env.R2_ACCOUNT_ID;
+        let accessKeyId = process.env.R2_ACCESS_KEY_ID;
+        let secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+
+        // Fallback: Try to read .env file directly if variables are missing (Robustness fix)
+        if (!accountId || !accessKeyId || !secretAccessKey) {
+            try {
+                const envPath = path.resolve(process.cwd(), '.env');
+                if (fs.existsSync(envPath)) {
+                    console.log(`⚠️ R2StorageService: Env vars missing, reading .env manually from ${envPath}`);
+                    const envConfig = fs.readFileSync(envPath, 'utf8');
+                    
+                    // Simple manual parsing to extract keys
+                    const parseEnv = (key) => {
+                        const match = envConfig.match(new RegExp(`${key}=["']?([^"'\n]+)["']?`));
+                        return match ? match[1] : null;
+                    };
+
+                    if (!accountId) accountId = parseEnv('R2_ACCOUNT_ID');
+                    if (!accessKeyId) accessKeyId = parseEnv('R2_ACCESS_KEY_ID');
+                    if (!secretAccessKey) secretAccessKey = parseEnv('R2_SECRET_ACCESS_KEY');
+                } else {
+                    console.warn(`⚠️ .env file not found at ${envPath}`);
+                }
+            } catch (e) {
+                console.error('❌ Failed to read .env manually:', e);
+            }
+        }
 
         console.log(`🔧 R2 Config Check: AccountID=${accountId ? 'OK' : 'MISSING'}, AccessKey=${accessKeyId ? 'OK' : 'MISSING'}, Secret=${secretAccessKey ? 'OK' : 'MISSING'}`);
 
