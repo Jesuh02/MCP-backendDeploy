@@ -5032,6 +5032,7 @@ Responde considerando el contexto académico disponible si es relevante para la 
                 // If this request is asking to generate reinforcement (multiple-choice) questions,
                 // fetch the user's existing question history for the course and instruct the LLM
                 // explicitly NOT to repeat or paraphrase any of those questions.
+                // NOW WITH SEMANTIC CONCEPT ANALYSIS
                 let historyQuestionsList = [];
                 try {
                     const courseIdVal = extractCourseIdFromRequest(req.body) || null;
@@ -5045,9 +5046,23 @@ Responde considerando el contexto académico disponible si es relevante para la 
                                 .map(s => s.replace(/\s+/g, ' ').trim());
 
                             if (historyQuestionsList.length) {
-                                const snippet = historyQuestionsList.slice(-50).map((q, i) => `${i + 1}. ${q}`).join('\n');
-                                promptCompleto += `\n\nEXISTING_QUESTIONS_DO_NOT_REPEAT:\n${snippet}\n\nINSTRUCCIÓN: NO repitas, parafrasees ni generes preguntas sustantivamente equivalentes a las listadas arriba. Genera SÓLO preguntas nuevas y únicas. Si no es posible, responde con un array JSON vacío []`;
-                                console.log(`✅ Añadido bloque de historial (${historyQuestionsList.length} preguntas) al prompt para evitar repeticiones`);
+                                // Extract concepts from historical questions
+                                const conceptsEvaluated = new Set();
+                                const questionsWithConcepts = historyQuestionsList.slice(-50).map((q, i) => {
+                                    const concepts = mcpService ? mcpService.extractConceptsFromQuestion(q) : [];
+                                    concepts.forEach(c => conceptsEvaluated.add(c));
+                                    return `${i + 1}. "${q}" → Evalúa: [${concepts.join(', ')}]`;
+                                });
+                                
+                                const conceptsList = Array.from(conceptsEvaluated).join(', ');
+                                promptCompleto += `\n\n⚠️ HISTORIAL DE PREGUNTAS YA REALIZADAS:\n`;
+                                promptCompleto += `IMPORTANTE: NO generes preguntas que evalúen los MISMOS CONCEPTOS, aunque uses palabras diferentes.\n\n`;
+                                promptCompleto += `CONCEPTOS YA EVALUADOS (evitar completamente):\n${questionsWithConcepts.join('\n')}\n\n`;
+                                promptCompleto += `📌 RESUMEN: Ya se evaluaron estos ${conceptsEvaluated.size} conceptos:\n${conceptsList}\n\n`;
+                                promptCompleto += `INSTRUCCIÓN CRÍTICA: Debes generar preguntas sobre CONCEPTOS DIFERENTES a los listados arriba.\n`;
+                                promptCompleto += `NO es suficiente cambiar la redacción - debes evaluar TEMAS Y CONCEPTOS DISTINTOS.\n`;
+                                promptCompleto += `Si no es posible generar preguntas sobre conceptos nuevos, responde con un array JSON vacío []\n`;
+                                console.log(`✅ Añadido análisis semántico de historial: ${historyQuestionsList.length} preguntas, ${conceptsEvaluated.size} conceptos únicos evaluados`);
                             }
                         }
                     }
@@ -5133,17 +5148,55 @@ Responde considerando el contexto académico disponible si es relevante para la 
                             });
 
                             // 2. FILTER DUPLICATES (if history exists)
+                            // NOW WITH SEMANTIC CONCEPT COMPARISON
                             let filtered = parsed;
                             if (historyQuestionsList && historyQuestionsList.length) {
+                                // Exact text match (old method)
                                 const seen = new Set(historyQuestionsList.map(s => s.toLowerCase()));
+                                
+                                // Concept-based filtering (new method)
+                                const historyConcepts = new Map();
+                                historyQuestionsList.forEach(hq => {
+                                    const concepts = mcpService ? mcpService.extractConceptsFromQuestion(hq) : [];
+                                    historyConcepts.set(hq.toLowerCase(), concepts);
+                                });
+                                
                                 filtered = parsed.filter(item => {
                                     const text = (item && (item.question || item.text || item.pregunta)) ? (item.question || item.text || item.pregunta) : (typeof item === 'string' ? item : '');
                                     const t = (text || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
-                                    return t && !seen.has(t);
+                                    
+                                    // Filter 1: Exact text match
+                                    if (seen.has(t)) {
+                                        console.log(`🚫 Duplicate exact text filtered: "${text}"`);
+                                        return false;
+                                    }
+                                    
+                                    // Filter 2: Concept overlap check
+                                    const newConcepts = mcpService ? mcpService.extractConceptsFromQuestion(text) : [];
+                                    
+                                    // Check if new question evaluates similar concepts
+                                    for (const [histQuestion, histConcepts] of historyConcepts) {
+                                        if (histConcepts.length === 0 || newConcepts.length === 0) continue;
+                                        
+                                        // Calculate concept overlap percentage
+                                        const commonConcepts = newConcepts.filter(c => histConcepts.includes(c));
+                                        const overlapPercentage = commonConcepts.length / Math.min(histConcepts.length, newConcepts.length);
+                                        
+                                        // If more than 70% of concepts overlap, consider it a duplicate
+                                        if (overlapPercentage > 0.7) {
+                                            console.log(`🚫 Duplicate concept filtered: "${text}"`);
+                                            console.log(`   Similar to: "${histQuestion}"`);
+                                            console.log(`   Overlapping concepts: [${commonConcepts.join(', ')}] (${Math.round(overlapPercentage * 100)}% overlap)`);
+                                            return false;
+                                        }
+                                    }
+                                    
+                                    return t.length > 0;
                                 });
                                 
                                 if (filtered.length !== parsed.length) {
-                                    console.log(`✅ Filtrado de duplicados aplicado. ${parsed.length - filtered.length} elementos eliminados.`);
+                                    console.log(`✅ Filtrado de duplicados aplicado (texto + conceptos). ${parsed.length - filtered.length} elementos eliminados.`);
+                                    console.log(`   Preguntas originales: ${parsed.length}, Preguntas únicas: ${filtered.length}`);
                                 }
                             }
 

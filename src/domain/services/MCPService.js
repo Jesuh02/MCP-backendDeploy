@@ -88,6 +88,108 @@ export class MCPService {
     }
 
     /**
+     * Extract key concepts from questions for semantic comparison
+     * Returns an object with questions and their extracted concepts
+     */
+    async getReinforcementQuestionsWithConcepts(userId, courseId) {
+        const questions = await this.getReinforcementQuestionsText(userId, courseId);
+        if (!questions.length) return { questions: [], concepts: [] };
+
+        const conceptsSet = new Set();
+        const questionConcepts = [];
+
+        questions.forEach(question => {
+            // Extract concepts: technical terms, programming keywords, etc.
+            const concepts = this.extractConceptsFromQuestion(question);
+            questionConcepts.push({
+                question,
+                concepts
+            });
+            concepts.forEach(c => conceptsSet.add(c));
+        });
+
+        return {
+            questions: questionConcepts,
+            concepts: Array.from(conceptsSet)
+        };
+    }
+
+    /**
+     * Extract key concepts from a question
+     * Identifies programming terms, technical concepts, and topic keywords
+     */
+    extractConceptsFromQuestion(question) {
+        const concepts = [];
+        const lower = question.toLowerCase();
+
+        // Programming concepts
+        const programmingTerms = [
+            'variable', 'función', 'funcion', 'clase', 'objeto', 'método', 'metodo',
+            'array', 'lista', 'diccionario', 'bucle', 'loop', 'if', 'else',
+            'ciclo', 'iteración', 'iteracion', 'recursión', 'recursion',
+            'algoritmo', 'estructura de datos', 'puntero', 'referencia',
+            'herencia', 'polimorfismo', 'encapsulación', 'encapsulacion',
+            'interfaz', 'clase abstracta', 'constructor', 'destructor',
+            'scope', 'ámbito', 'ambito', 'closure', 'callback', 'promesa',
+            'async', 'await', 'sincronía', 'asincronia', 'thread', 'hilo',
+            'proceso', 'memoria', 'heap', 'stack', 'pila', 'cola', 'queue',
+            'árbol', 'arbol', 'grafo', 'hash', 'tabla hash', 'ordenamiento',
+            'búsqueda', 'busqueda', 'complejidad', 'big o', 'recursividad',
+            'parámetro', 'parametro', 'argumento', 'return', 'retorno',
+            'tipo de dato', 'string', 'número', 'numero', 'booleano', 'boolean',
+            'null', 'undefined', 'exception', 'excepción', 'error', 'try', 'catch'
+        ];
+
+        // Web/Mobile concepts
+        const webMobileTerms = [
+            'html', 'css', 'javascript', 'react', 'vue', 'angular', 'node',
+            'express', 'api', 'rest', 'http', 'endpoint', 'request', 'response',
+            'json', 'xml', 'ajax', 'fetch', 'axios', 'dom', 'evento', 'event',
+            'componente', 'props', 'state', 'hook', 'lifecycle', 'render',
+            'virtual dom', 'spa', 'ssr', 'csr', 'routing', 'enrutamiento',
+            'android', 'ios', 'flutter', 'react native', 'kotlin', 'swift',
+            'activity', 'fragment', 'view', 'layout', 'intent', 'bundle'
+        ];
+
+        // Database concepts
+        const databaseTerms = [
+            'base de datos', 'database', 'sql', 'query', 'consulta', 'select',
+            'insert', 'update', 'delete', 'join', 'tabla', 'table', 'columna',
+            'fila', 'row', 'índice', 'indice', 'clave primaria', 'primary key',
+            'foreign key', 'clave foránea', 'transacción', 'transaccion',
+            'normalización', 'normalizacion', 'relación', 'relacion'
+        ];
+
+        const allTerms = [...programmingTerms, ...webMobileTerms, ...databaseTerms];
+
+        // Find matching terms
+        allTerms.forEach(term => {
+            if (lower.includes(term)) {
+                concepts.push(term);
+            }
+        });
+
+        // Also extract question type indicators
+        if (lower.includes('qué es') || lower.includes('que es') || lower.includes('what is')) {
+            concepts.push('DEFINICIÓN');
+        }
+        if (lower.includes('cómo') || lower.includes('como') || lower.includes('how')) {
+            concepts.push('PROCEDIMIENTO');
+        }
+        if (lower.includes('cuál es la diferencia') || lower.includes('diferencia entre')) {
+            concepts.push('COMPARACIÓN');
+        }
+        if (lower.includes('ventaja') || lower.includes('desventaja') || lower.includes('beneficio')) {
+            concepts.push('ANÁLISIS');
+        }
+        if (lower.includes('ejemplo') || lower.includes('example')) {
+            concepts.push('EJEMPLO');
+        }
+
+        return [...new Set(concepts)];
+    }
+
+    /**
      * Save new reinforcement learning questions to history
      * Uses INSERT to support log-based schema (multiple rows per user/course)
      */
