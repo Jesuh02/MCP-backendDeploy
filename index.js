@@ -5745,6 +5745,19 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
     }
 });
 
+/**
+ * Formatea el tamaño de un archivo en bytes a una cadena legible (KB, MB, GB)
+ * @param {number} bytes - Tamaño en bytes
+ * @returns {string} - Tamaño formateado
+ */
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
 // Función para obtener la IP local del servidor automáticamente
 function getLocalIPAddress() {
     // const { networkInterfaces } = require('os');
