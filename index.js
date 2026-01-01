@@ -4786,10 +4786,12 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                     
                     // Force usage of MCPService (create new instance if global is null)
                     const serviceToUse = mcpService || new MCPService();
-                    console.log(`🔍 Calling MCPService.getReinforcementHistory for user ${userId} course ${courseId}...`);
+                    console.log(`🔍 Calling MCPService.getReinforcementQuestionsText for user ${userId} course ${courseId}...`);
                     
                     try {
-                        questionHistory = await serviceToUse.getReinforcementHistory(userId, courseId);
+                        // Use getReinforcementQuestionsText to get clean text directly
+                        const questionsText = await serviceToUse.getReinforcementQuestionsText(userId, courseId);
+                        questionHistory = questionsText || [];
                     } catch (serviceErr) {
                         console.error('❌ Error calling MCPService:', serviceErr);
                         // Fallback to legacy if needed, though MCPService is preferred
@@ -4798,7 +4800,7 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                     
                     console.log(`📚 Retrieved ${questionHistory.length} previous questions from history`);
                     
-                    // Normalize history to strings
+                    // Normalize history to strings (in case legacy fallback returned objects)
                     const historyStrings = questionHistory.map(h => {
                          if (!h) return null;
                          if (typeof h === 'string') return h;
@@ -4828,7 +4830,18 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 - LAS PREGUNTAS DEBEN SER TÉCNICAS Y RELACIONADAS CON PROGRAMACIÓN
 - FORMATO JSON ESTRICTO SIN MARKDOWN, SIN TEXTO EXTRA
 
-HISTORIAL DE PREGUNTAS ANTERIORES (NO REPETIR NINGUNA):
+CRITERIOS ESTRICTOS DE NO REPETICIÓN (ANTI-DUPLICADOS):
+Las nuevas preguntas NUNCA pueden ser lo mismo ni literalmente ni gramaticalmente que las anteriores.
+Se considera repetida y PROHIBIDA si cumple cualquiera de estos puntos:
+1. Mismo objetivo de evaluación: Busca identificar lo mismo sin cambiar enfoque.
+2. Mismo contexto y referencia: Se basa en el mismo marco sin nuevo escenario.
+3. Diferencias solo gramaticales: Cambiar palabras sin cambiar el concepto (ej: "una oportunidad" vs "una de las oportunidades").
+4. Misma respuesta esperada: Si la misma respuesta sirve para ambas.
+5. No aporta variación cognitiva: Opera al mismo nivel (recordar/identificar) sin pedir análisis o comparación distinta.
+
+Debes generar preguntas TOTALMENTE DISTINTAS a lo anteriormente visto.
+
+HISTORIAL DE PREGUNTAS ANTERIORES (PROHIBIDO REPETIR O PARAFRASEAR):
 ${recentHistory.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
 CONTEXTO DEL CURSO:
@@ -4882,7 +4895,11 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                         if (retries > 0) {
                             console.log(`🔄 Retry attempt ${retries}/${MAX_RETRIES} for diverse questions...`);
                             // Construct a stronger negative prompt for the retry
-                            const retryPrompt = promptCompleto + `\n\n⚠️ CRITICAL INSTRUCTION: The previous attempt generated duplicate questions which were rejected. GENERATE COMPLETELY NEW QUESTIONS. Do NOT use any of the topics or phrasings from the history provided above. Focus on different aspects of the content.`;
+                            const retryPrompt = promptCompleto + `\n\n⚠️ INSTRUCCIÓN CRÍTICA: El intento anterior generó preguntas repetidas o muy similares.
+GENERA PREGUNTAS TOTALMENTE NUEVAS.
+NO uses los mismos temas, frases ni enfoques del historial.
+Céntrate en aspectos del contenido que NO hayan sido evaluados antes.
+Recuerda: Diferencias solo gramaticales NO son suficientes.`;
                             respuestaFinal = await callDeepSeek(null, retryPrompt);
                         }
 
