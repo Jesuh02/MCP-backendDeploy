@@ -1690,6 +1690,26 @@ const userServiceInstance = UserService.getInstance();
 console.log('✅ Refactored services initialized: NotificationService, R2StorageService, UserService');
 
 /**
+ * Registra un token FCM para un usuario
+ * Permite múltiples dispositivos por usuario
+ */
+app.post('/register-fcm-token', async (req, res) => {
+    const { userId, token, deviceType } = req.body;
+
+    if (!userId || !token) {
+        return res.status(400).json({ error: 'userId and token are required' });
+    }
+
+    try {
+        await supabaseService.registerFCMToken(userId, token, deviceType || 'android');
+        res.json({ success: true, message: 'Token registered successfully' });
+    } catch (error) {
+        console.error('❌ Error registering FCM token:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * Envía una notificación push a un usuario específico vía FCM
  * ACTUALIZADO: Usa sendEachForMulticast en lugar de sendMulticast (deprecado)
  */
@@ -1700,26 +1720,16 @@ async function sendPushNotification(userId, title, body, data = {}) {
     }
 
     try {
-        // 1. Obtener los tokens del usuario desde Supabase
-        const { data: tokens, error } = await supabaseService.client
-            .from('user_fcm_tokens')
-            .select('token')
-            .eq('user_id', userId);
-
-        if (error) {
-            console.error('❌ Error obteniendo tokens FCM:', error.message);
-            return;
-        }
+        // 1. Obtener los tokens del usuario desde Supabase (usando método centralizado)
+        const tokens = await supabaseService.getUserFCMTokens(userId);
 
         if (!tokens || tokens.length === 0) {
             console.log(`ℹ️ El usuario ${userId} no tiene tokens FCM registrados.`);
             return;
         }
 
-        const registrationTokens = tokens.map(t => t.token);
-
         // Eliminar duplicados si los hay
-        const uniqueTokens = [...new Set(registrationTokens)];
+        const uniqueTokens = [...new Set(tokens)];
 
         // 2. Construir el mensaje base (sin tokens, se agregan individualmente)
         const baseMessage = {
@@ -1773,10 +1783,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
         // Limpiar tokens inválidos
         if (failedTokens.length > 0) {
             console.log('🧹 Limpiando tokens inválidos:', failedTokens.length);
-            await supabaseService.client
-                .from('user_fcm_tokens')
-                .delete()
-                .in('token', failedTokens);
+            await supabaseService.removeInvalidFCMTokens(failedTokens);
         }
 
     } catch (error) {
@@ -3675,20 +3682,16 @@ app.post('/send-push-notification', async(req, res) => {
             });
         }
 
-        // Obtener FCM token del usuario desde Supabase
-        const { data: tokens, error: tokenError } = await supabaseService.client
-            .from('user_fcm_tokens')
-            .select('token')
-            .eq('user_id', userId)
-            .order('last_updated', { ascending: false });
+        // Obtener FCM token del usuario desde Supabase (usando método centralizado)
+        const tokens = await supabaseService.getUserFCMTokens(userId);
 
-        if (tokenError || !tokens || tokens.length === 0) {
+        if (!tokens || tokens.length === 0) {
             console.warn(`⚠️ No se encontró FCM token para userId ${userId}`);
             return res.status(404).json({ error: 'No FCM token found for user' });
         }
 
         // Intentar enviar a todos los tokens del usuario (puede tener múltiples dispositivos)
-        const sendPromises = tokens.map(async({ token }) => {
+        const sendPromises = tokens.map(async(token) => {
             try {
                 const message = {
                     notification: {
@@ -3727,10 +3730,7 @@ app.post('/send-push-notification', async(req, res) => {
                 // Si el token es inválido, eliminarlo de la base de datos
                 if (error.code === 'messaging/invalid-registration-token' ||
                     error.code === 'messaging/registration-token-not-registered') {
-                    await supabaseService.client
-                        .from('user_fcm_tokens')
-                        .delete()
-                        .eq('token', token);
+                    await supabaseService.removeInvalidFCMTokens([token]);
                     console.log(`🗑️ Token inválido eliminado de la base de datos`);
                 }
 
@@ -3783,15 +3783,11 @@ app.post('/send-notification', async(req, res) => {
         // 1. ENVIAR PUSH NOTIFICATION
         try {
             if (admin && admin.messaging) {
-                // Obtener FCM token del usuario desde Supabase
-                const { data: tokens, error: tokenError } = await supabaseService.client
-                    .from('user_fcm_tokens')
-                    .select('token')
-                    .eq('user_id', userId)
-                    .order('last_updated', { ascending: false });
+                // Obtener FCM token del usuario desde Supabase (usando método centralizado)
+                const tokens = await supabaseService.getUserFCMTokens(userId);
 
-                if (!tokenError && tokens && tokens.length > 0) {
-                    const sendPromises = tokens.map(async({ token }) => {
+                if (tokens && tokens.length > 0) {
+                    const sendPromises = tokens.map(async(token) => {
                         try {
                             const pushMessage = {
                                 notification: {

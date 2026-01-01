@@ -374,6 +374,73 @@ CREATE TABLE public.videos (
     }
 
     /**
+     * Register or update an FCM token for a user
+     * Supports multiple devices per user
+     */
+    async registerFCMToken(userId, token, deviceType = 'android') {
+        try {
+            const { data, error } = await this.client
+                .from('user_fcm_tokens')
+                .upsert({
+                    user_id: userId,
+                    token: token,
+                    device_type: deviceType,
+                    last_updated: new Date().toISOString()
+                }, {
+                    onConflict: 'user_id,token'
+                })
+                .select();
+
+            if (error) throw error;
+            
+            logger.info(`✅ FCM token registered for user ${userId}`);
+            return data;
+        } catch (error) {
+            logger.error('Error registering FCM token:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get all FCM tokens for a specific user
+     */
+    async getUserFCMTokens(userId) {
+        try {
+            const { data, error } = await this.client
+                .from('user_fcm_tokens')
+                .select('token')
+                .eq('user_id', userId);
+
+            if (error) throw error;
+
+            return data.map(t => t.token);
+        } catch (error) {
+            logger.error(`Error fetching FCM tokens for user ${userId}:`, error);
+            return [];
+        }
+    }
+
+    /**
+     * Remove invalid FCM tokens
+     */
+    async removeInvalidFCMTokens(tokens) {
+        if (!tokens || tokens.length === 0) return;
+        
+        try {
+            const { error } = await this.client
+                .from('user_fcm_tokens')
+                .delete()
+                .in('token', tokens);
+
+            if (error) throw error;
+            
+            logger.info(`🗑️ Removed ${tokens.length} invalid FCM tokens`);
+        } catch (error) {
+            logger.error('Error removing invalid FCM tokens:', error);
+        }
+    }
+
+    /**
      * Execute RAG query with vector similarity search
      */
     async executeRAGQuery(query, topK = 5) {
