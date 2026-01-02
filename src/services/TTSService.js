@@ -135,6 +135,47 @@ class TTSService {
     }
 
     /**
+     * Stream audio directly from OpenAI
+     * @param {string} text - Text to convert
+     * @param {Object} options - TTS options
+     * @returns {Promise<Stream>} - Audio stream
+     */
+    async stream(text, options = {}) {
+        if (!this.isAvailable()) {
+            throw new Error('TTS service not available. Please configure OPENAI_API_KEY.');
+        }
+
+        const sanitizedText = this._sanitizeText(text);
+        if (!sanitizedText || sanitizedText.length === 0) {
+            throw new Error('Text is required for TTS synthesis.');
+        }
+
+        const config = {
+            voice: options.voice || this.defaultVoice,
+            model: options.model || this.defaultModel,
+            response_format: options.format || this.defaultFormat,
+            speed: Math.min(Math.max(options.speed || this.defaultSpeed, 0.25), 4.0)
+        };
+
+        try {
+            console.log(`🎤 TTSService: Streaming ${sanitizedText.length} chars with voice "${config.voice}"`);
+            
+            const response = await this.openai.audio.speech.create({
+                model: config.model,
+                voice: config.voice,
+                input: sanitizedText,
+                response_format: config.response_format,
+                speed: config.speed
+            });
+
+            return response.body;
+        } catch (error) {
+            console.error('❌ TTSService stream error:', error.message);
+            throw new Error(`TTS streaming failed: ${error.message}`);
+        }
+    }
+
+    /**
      * Synthesize text and return as base64 for easy transport
      * @param {string} text - Text to convert
      * @param {Object} options - TTS options
