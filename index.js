@@ -28,6 +28,7 @@ import { NotificationService } from './src/services/NotificationService.js';
 import { R2StorageService } from './src/services/R2StorageService.js';
 import { UserService } from './src/services/UserService.js';
 import excelRoutes from './src/interfaces/routes/excelRoutes.js';
+import ttsRoutes from './src/interfaces/routes/ttsRoutes.js';
 // Note: Additional refactored modules available:
 // - notificationRoutes: ./src/interfaces/routes/notificationRoutes.js
 // - fileUtils: ./src/utils/fileUtils.js  
@@ -72,6 +73,9 @@ app.use((req, res, next) => {
 
 // Register Excel Routes
 app.use('/excel', excelRoutes);
+
+// Register TTS Routes (Text-to-Speech with natural human voices)
+app.use('/tts', ttsRoutes);
 
 // ============================================================
 // 🏥 CRITICAL: Healthcheck endpoint MUST be defined FIRST
@@ -307,14 +311,14 @@ async function initializeReinforcementHistoryTable() {
         if (error) {
             // Try direct table creation if RPC fails
             console.log('ℹ️ RPC exec_sql not available, checking if table exists...');
-            
+
             // Add timeout to prevent hanging during startup
             const checkTablePromise = supabaseService.client
                 .from('reinforcement_question_history')
                 .select('id')
                 .limit(1);
-                
-            const timeoutPromise = new Promise((_, reject) => 
+
+            const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Supabase check timed out')), 5000)
             );
 
@@ -349,7 +353,7 @@ async function getReinforcementQuestionHistory(userId, courseId) {
     if (mcpService) {
         return await mcpService.getReinforcementHistory(userId, courseId);
     }
-    
+
     // Fallback logic
     if (!supabaseService) {
         console.warn('⚠️ SupabaseService not available for history retrieval');
@@ -362,9 +366,9 @@ async function getReinforcementQuestionHistory(userId, courseId) {
             .select('questions')
             .eq('user_id', userId)
             .eq('course_id', courseId);
-            
+
         if (error) throw error;
-        
+
         let combined = [];
         if (data && Array.isArray(data)) {
             data.forEach(row => {
@@ -416,11 +420,11 @@ function isReinforcementLearningRequest(prompt) {
 
     const lowerPrompt = prompt.toLowerCase();
     return lowerPrompt.includes('refuerzo') ||
-           lowerPrompt.includes('reinforcement') ||
-           lowerPrompt.includes('preguntas de selección múltiple') ||
-           lowerPrompt.includes('preguntas de opción múltiple') ||
-           lowerPrompt.includes('multiple-choice') ||
-           ((lowerPrompt.includes('genera') || lowerPrompt.includes('crear') || lowerPrompt.includes('hacer')) && lowerPrompt.includes('preguntas'));
+        lowerPrompt.includes('reinforcement') ||
+        lowerPrompt.includes('preguntas de selección múltiple') ||
+        lowerPrompt.includes('preguntas de opción múltiple') ||
+        lowerPrompt.includes('multiple-choice') ||
+        ((lowerPrompt.includes('genera') || lowerPrompt.includes('crear') || lowerPrompt.includes('hacer')) && lowerPrompt.includes('preguntas'));
 }
 
 /**
@@ -455,7 +459,7 @@ if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
             path.resolve('/app', '.env'),
             '.env'
         ];
-        
+
         let envConfig = null;
         for (const p of paths) {
             if (fs.existsSync(p)) {
@@ -476,11 +480,11 @@ if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
             if (!R2_ACCESS_KEY_ID) R2_ACCESS_KEY_ID = parseEnv('R2_ACCESS_KEY_ID') || '';
             if (!R2_SECRET_ACCESS_KEY) R2_SECRET_ACCESS_KEY = parseEnv('R2_SECRET_ACCESS_KEY') || '';
         } else {
-             // FINAL FALLBACK: Hardcoded credentials (Emergency Fix)
-             console.log('⚠️ Using EMERGENCY HARDCODED credentials for R2 in index.js');
-             R2_ACCOUNT_ID = 'd2ff8e934967ed4e014f5a40e24de85c';
-             R2_ACCESS_KEY_ID = 'aeaeef1205b5258c98bd99555c158924';
-             R2_SECRET_ACCESS_KEY = 'fce48a59d2c76118af1a455dfb4cf11d89d897203d51665ef0a158ae6beb8411';
+            // FINAL FALLBACK: Hardcoded credentials (Emergency Fix)
+            console.log('⚠️ Using EMERGENCY HARDCODED credentials for R2 in index.js');
+            R2_ACCOUNT_ID = 'd2ff8e934967ed4e014f5a40e24de85c';
+            R2_ACCESS_KEY_ID = 'aeaeef1205b5258c98bd99555c158924';
+            R2_SECRET_ACCESS_KEY = 'fce48a59d2c76118af1a455dfb4cf11d89d897203d51665ef0a158ae6beb8411';
         }
     } catch (e) { console.error('Failed to read .env manually in index.js', e); }
 }
@@ -539,8 +543,8 @@ async function fetchR2File(objectKey) {
 
         // Procesar según tipo de contenido
         let content;
-        if (contentType.includes('text') || 
-            contentType.includes('json') || 
+        if (contentType.includes('text') ||
+            contentType.includes('json') ||
             contentType.includes('javascript') ||
             contentType.includes('xml') ||
             objectKey.endsWith('.txt') ||
@@ -688,7 +692,7 @@ async function getSubmissionFileContent(fileUri, fileName, submissionId = null) 
 
     // OPCIÓN 2: Determinar si es una URL de R2 e intentar descargar
     const isR2Url = fileUri && (
-        fileUri.includes('.r2.dev') || 
+        fileUri.includes('.r2.dev') ||
         fileUri.includes('.r2.cloudflarestorage.com') ||
         fileUri.includes('pub-')
     );
@@ -726,7 +730,7 @@ async function getSubmissionFileContent(fileUri, fileName, submissionId = null) 
 
             const buffer = Buffer.from(response.data);
             const contentType = response.headers['content-type'] || 'application/octet-stream';
-            
+
             let content;
             if (contentType.includes('text') || isTextFile(fileName)) {
                 content = buffer.toString('utf-8');
@@ -762,7 +766,7 @@ async function getSubmissionFileContent(fileUri, fileName, submissionId = null) 
 
             const buffer = Buffer.from(response.data);
             const contentType = response.headers['content-type'] || 'application/octet-stream';
-            
+
             let content;
             if (contentType.includes('text') || isTextFile(fileName)) {
                 content = buffer.toString('utf-8');
@@ -806,7 +810,7 @@ function isTextFile(fileName) {
  */
 function getFileTypeFromName(fileName) {
     const lowerName = (fileName || '').toLowerCase();
-    
+
     if (lowerName.endsWith('.pdf')) return 'pdf';
     if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) return 'docx';
     if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) return 'excel';
@@ -824,11 +828,11 @@ function getFileTypeFromName(fileName) {
     if (lowerName.endsWith('.md')) return 'markdown';
     if (lowerName.endsWith('.csv')) return 'csv';
     if (lowerName.endsWith('.zip') || lowerName.endsWith('.rar')) return 'archive';
-    if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') || 
+    if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') ||
         lowerName.endsWith('.png') || lowerName.endsWith('.gif')) return 'image';
-    if (lowerName.endsWith('.mp4') || lowerName.endsWith('.avi') || 
+    if (lowerName.endsWith('.mp4') || lowerName.endsWith('.avi') ||
         lowerName.endsWith('.mov')) return 'video';
-    
+
     return 'unknown';
 }
 
@@ -876,7 +880,7 @@ function extractGitHubUrl(fileName) {
 async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('🐙 INICIANDO ANÁLISIS DE REPOSITORIO GITHUB...');
     console.log('   📦 URL:', repoUrl);
-    console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
+    console.log('   📋 Tarea:', taskDescription ? .substring(0, 100) || 'Sin descripción');
 
     if (!mcpService) {
         throw new Error('MCPService no está disponible');
@@ -891,7 +895,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
 
         return result;
     } catch (error) {
@@ -1277,14 +1281,14 @@ function generateGradeEmailHTML(studentName, taskName, grade, feedback, gradedBy
     const gradeNum = parseFloat(grade);
     const gradeClass = gradeNum >= 7 ? '' : gradeNum >= 5 ? 'medium' : 'low';
     const gradeEmoji = gradeNum >= 9 ? '🏆' : gradeNum >= 7 ? '⭐' : gradeNum >= 5 ? '📝' : '📚';
-    const motivationalText = gradeNum >= 7 
-        ? '¡Excelente trabajo! Sigue así.' 
-        : gradeNum >= 5 
-            ? 'Buen esfuerzo. ¡Puedes mejorar!' 
-            : 'No te desanimes. ¡Sigue practicando!';
-    
+    const motivationalText = gradeNum >= 7 ?
+        '¡Excelente trabajo! Sigue así.' :
+        gradeNum >= 5 ?
+        'Buen esfuerzo. ¡Puedes mejorar!' :
+        'No te desanimes. ¡Sigue practicando!';
+
     const gradeFormatted = typeof grade === 'number' ? grade.toFixed(1) : grade;
-    
+
     const feedbackSection = feedback ? `
             <div class="feedback-box new">
                 <div class="feedback-label">💬 Feedback del profesor</div>
@@ -1355,16 +1359,16 @@ function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, newGrad
     const oldGradeNum = parseFloat(oldGrade);
     const gradeImproved = newGradeNum > oldGradeNum;
     const changeEmoji = gradeImproved ? '📈' : newGradeNum < oldGradeNum ? '📉' : '🔄';
-    const changeText = gradeImproved 
-        ? '¡Tu calificación ha mejorado!' 
-        : newGradeNum < oldGradeNum 
-            ? 'Tu calificación ha sido ajustada' 
-            : 'Tu calificación ha sido actualizada';
-    
+    const changeText = gradeImproved ?
+        '¡Tu calificación ha mejorado!' :
+        newGradeNum < oldGradeNum ?
+        'Tu calificación ha sido ajustada' :
+        'Tu calificación ha sido actualizada';
+
     const oldGradeFormatted = typeof oldGrade === 'number' ? oldGrade.toFixed(1) : oldGrade;
     const newGradeFormatted = typeof newGrade === 'number' ? newGrade.toFixed(1) : newGrade;
     const dateFormatted = new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
-    
+
     // Secciones condicionales
     let feedbackSection = '';
     if (oldFeedback || newFeedback) {
@@ -1376,7 +1380,7 @@ function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, newGrad
                     <p class="feedback-text" style="text-decoration: line-through; color: #94a3b8;">"${oldFeedback}"</p>
                 </div>
                 ` : '';
-        
+
         let newFeedbackHTML = newFeedback ? `
                 <div class="feedback-box new">
                     <div class="feedback-label">
@@ -1385,7 +1389,7 @@ function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, newGrad
                     <p class="feedback-text">"${newFeedback}"</p>
                 </div>
                 ` : '';
-        
+
         feedbackSection = `
             <div style="margin: 24px 0;">
                 <p style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-bottom: 16px; font-weight: 600; text-align: center;">
@@ -1500,7 +1504,7 @@ function generateNewCourseEmailHTML(userName, creatorUsername, courseTitle, thum
                 </p>
             </div>
             ` : '';
-    
+
     return `
 <!DOCTYPE html>
 <html>
@@ -1567,9 +1571,9 @@ function generateGenericEmailHTML(title, message, type, senderUsername) {
         'new_task': { icon: '📋', color: '#8b5cf6', gradient: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)' },
         'default': { icon: '🔔', color: '#6366f1', gradient: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' }
     };
-    
+
     const config = typeConfig[type] || typeConfig['default'];
-    
+
     const senderSection = senderUsername ? `
             <div class="card" style="border-left-color: ${config.color};">
                 <p class="card-title">👤 De</p>
@@ -1633,7 +1637,7 @@ app.use(bodyParser.json({ limit: '50mb' }));
 // ============================================================
 
 // Reinforcement history endpoints (save and fetch)
-app.post('/reinforcement-history', async (req, res) => {
+app.post('/reinforcement-history', async(req, res) => {
     try {
         const { userId, courseId, questions } = req.body || {};
         if (!userId || !courseId || !questions) {
@@ -1646,10 +1650,10 @@ app.post('/reinforcement-history', async (req, res) => {
             await mcpService.saveReinforcementHistory(Number(userId), Number(courseId), questions);
             return res.json({ success: true, message: 'Reinforcement history saved' });
         } else {
-             // Fallback if MCPService not initialized (should not happen)
-             console.warn('⚠️ MCPService not available, falling back to legacy save');
-             await saveReinforcementQuestionHistory(Number(userId), Number(courseId), questions);
-             return res.json({ success: true, message: 'Reinforcement history saved (legacy)' });
+            // Fallback if MCPService not initialized (should not happen)
+            console.warn('⚠️ MCPService not available, falling back to legacy save');
+            await saveReinforcementQuestionHistory(Number(userId), Number(courseId), questions);
+            return res.json({ success: true, message: 'Reinforcement history saved (legacy)' });
         }
     } catch (err) {
         console.error('Error saving reinforcement history:', err);
@@ -1657,7 +1661,7 @@ app.post('/reinforcement-history', async (req, res) => {
     }
 });
 
-app.get('/reinforcement-history/:userId/:courseId', async (req, res) => {
+app.get('/reinforcement-history/:userId/:courseId', async(req, res) => {
     try {
         const userId = Number(req.params.userId);
         const courseId = Number(req.params.courseId);
@@ -1667,11 +1671,11 @@ app.get('/reinforcement-history/:userId/:courseId', async (req, res) => {
 
         // Use MCPService for fetching history
         if (mcpService) {
-             const history = await mcpService.getReinforcementHistory(userId, courseId);
-             return res.json({ success: true, data: history });
+            const history = await mcpService.getReinforcementHistory(userId, courseId);
+            return res.json({ success: true, data: history });
         } else {
-             const history = await getReinforcementQuestionHistory(userId, courseId);
-             return res.json({ success: true, data: history });
+            const history = await getReinforcementQuestionHistory(userId, courseId);
+            return res.json({ success: true, data: history });
         }
     } catch (err) {
         console.error('Error fetching reinforcement history:', err);
@@ -1693,7 +1697,7 @@ console.log('✅ Refactored services initialized: NotificationService, R2Storage
  * Registra un token FCM para un usuario
  * Permite múltiples dispositivos por usuario
  */
-app.post('/register-fcm-token', async (req, res) => {
+app.post('/register-fcm-token', async(req, res) => {
     const { userId, token, deviceType } = req.body;
 
     if (!userId || !token) {
@@ -1748,10 +1752,10 @@ async function sendPushNotification(userId, title, body, data = {}) {
         // sendEach y sendEachForMulticast fallan con 404 en versiones antiguas
         // Solución: enviar uno por uno con send() que siempre funciona
         console.log(`📨 Enviando ${uniqueTokens.length} notificaciones push individualmente...`);
-        
+
         const results = [];
         const failedTokens = [];
-        
+
         for (let i = 0; i < uniqueTokens.length; i++) {
             const token = uniqueTokens[i];
             try {
@@ -1765,7 +1769,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
             } catch (sendError) {
                 results.push({ success: false, error: sendError });
                 console.warn(`   ⚠️ Token ${i + 1}/${uniqueTokens.length} falló: ${sendError.code || sendError.message}`);
-                
+
                 // Solo eliminar tokens con errores de registro inválido
                 const errorCode = sendError.code;
                 if (errorCode === 'messaging/invalid-registration-token' ||
@@ -1775,7 +1779,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
                 }
             }
         }
-        
+
         const successCount = results.filter(r => r.success).length;
         const failureCount = results.filter(r => !r.success).length;
         console.log(`📨 Notificaciones enviadas a usuario ${userId}: ${successCount} éxitos, ${failureCount} fallos`);
@@ -2209,7 +2213,7 @@ async function sendEmailNotification(userId, subject, text) {
             // Dominio verificado en https://resend.com/domains
             const fromEmail = 'YisusCompany@yisuscompany.com';
             const fromName = 'CourseV'; // Nombre que aparece en el cliente de email
-            
+
             try {
                 const resendResponse = await axios.post('https://api.resend.com/emails', {
                     from: `${fromName} <${fromEmail}>`,
@@ -2230,7 +2234,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
+                console.error('❌ Error con Resend:', resendError.response ? .data || resendError.message);
                 // Fallback - reintentar con el mismo dominio verificado
                 console.log('🔄 Reintentando envío de email...');
                 try {
@@ -2248,7 +2252,7 @@ async function sendEmailNotification(userId, subject, text) {
                     console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
+                    console.error('❌ Fallback también falló:', fallbackError.response ? .data || fallbackError.message);
                 }
             }
         }
@@ -2262,7 +2266,7 @@ async function sendEmailNotification(userId, subject, text) {
                     to: [{ email: userEmail }],
                     subject: `📚 ${subject}`
                 }],
-                from: { 
+                from: {
                     email: process.env.SENDGRID_FROM_EMAIL || 'yisuscompany@yisuscompany.com',
                     name: 'YisusCompany'
                 },
@@ -2339,43 +2343,43 @@ app.post('/analizar-entrega', async(req, res) => {
     // 🔍 VALIDACIÓN DE CONTENIDO VACÍO O SIN CONTENIDO REAL
     // Si la tarea no tiene contenido, automáticamente calificación = 0
     // ============================================================
-    
+
     // Función para verificar si el contenido está realmente vacío o es inválido
     const esContenidoVacio = (content) => {
         if (!content) return true;
-        
+
         // Limpiar espacios, saltos de línea y caracteres especiales
         const contenidoLimpio = content
             .replace(/\s+/g, '') // Eliminar espacios y saltos de línea
             .replace(/[\r\n\t]/g, '') // Eliminar caracteres de control
             .replace(/[^\w\u00C0-\u024F]/g, '') // Solo letras y números (incluye acentos)
             .trim();
-        
+
         // Verificar si está vacío o tiene muy poco contenido significativo
         if (contenidoLimpio.length < 20) return true;
-        
+
         // Verificar patrones de contenido vacío o placeholder
         const patronesVacios = [
-            /^[\s\n\r\t]*$/,  // Solo espacios
+            /^[\s\n\r\t]*$/, // Solo espacios
             /^(null|undefined|none|empty|vacío|vacio)$/i,
-            /^\[\s*\]$/,  // Array vacío
-            /^\{\s*\}$/,  // Objeto vacío
-            /^""$/,  // String vacío
-            /^''$/,  // String vacío
+            /^\[\s*\]$/, // Array vacío
+            /^\{\s*\}$/, // Objeto vacío
+            /^""$/, // String vacío
+            /^''$/, // String vacío
             /^sin\s*contenido/i,
             /^no\s*content/i,
             /^empty\s*file/i,
             /^archivo\s*vacío/i,
             /^archivo\s*vacio/i
         ];
-        
+
         for (const patron of patronesVacios) {
             if (patron.test(content.trim())) return true;
         }
-        
+
         return false;
     };
-    
+
     // Verificar si el contenido está vacío
     if (esContenidoVacio(fileContent)) {
         console.log(`⚠️ Submission ${submissionId}: Contenido vacío detectado - Calificación: 0`);
@@ -2877,7 +2881,7 @@ app.post('/feedback-entrega', async(req, res) => {
         // En lugar de usar reglas de lenguaje frágiles (regex), le pedimos al LLM que decida
         // si la pregunta amerita una calificación o es solo una consulta.
         // Esto se hace en el PROMPT.
-        
+
         const promptLlama = `INSTRUCCIONES PARA ASISTENTE EDUCATIVO HÍBRIDO:
 
 INSTRUCCIONES CRÍTICAS:
@@ -3134,7 +3138,7 @@ app.get('/app-link', async(req, res) => {
  * GET /download-apk
  */
 app.get('/download-apk', (req, res) => {
-     const apkPath = './app-debug.apk';
+    const apkPath = './app-debug.apk';
     const fs = require('fs');
 
     // Verificar si el APK existe
@@ -3276,7 +3280,7 @@ app.post('/notify-course-creation', async(req, res) => {
                             courseTitle,
                             courseThumbnailUrl
                         );
-                        
+
                         await axios.post('https://api.resend.com/emails', {
                             from: `YisusCompany <${senderEmail}>`,
                             to: user.email,
@@ -3323,17 +3327,17 @@ app.post('/notify-course-creation', async(req, res) => {
  * Si isModification=true, muestra comparación entre nota/feedback anterior y nuevo
  */
 app.post('/notify-grade', async(req, res) => {
-    const { studentId, taskName, grade, feedback, gradedByUsername, oldGrade, oldFeedback, isModification } = req.body;
+            const { studentId, taskName, grade, feedback, gradedByUsername, oldGrade, oldFeedback, isModification } = req.body;
 
-    if (!studentId || !taskName || grade === undefined) {
-        return res.status(400).json({ error: 'studentId, taskName y grade son requeridos' });
-    }
+            if (!studentId || !taskName || grade === undefined) {
+                return res.status(400).json({ error: 'studentId, taskName y grade son requeridos' });
+            }
 
-    const isUpdate = isModification === true || (oldGrade !== undefined && oldGrade !== null);
-    
-    console.log(`📊 Notificando calificación al estudiante ${studentId}`);
-    console.log(`   📝 Tarea: ${taskName}`);
-    console.log(`   📈 Nota: ${grade}/10 ${isUpdate ? `(anterior: ${oldGrade}/10)` : '(nueva)'}`);
+            const isUpdate = isModification === true || (oldGrade !== undefined && oldGrade !== null);
+
+            console.log(`📊 Notificando calificación al estudiante ${studentId}`);
+            console.log(`   📝 Tarea: ${taskName}`);
+            console.log(`   📈 Nota: ${grade}/10 ${isUpdate ? `(anterior: ${oldGrade}/10)` : '(nueva)'}`);
     console.log(`   👤 Calificado por: ${gradedByUsername || 'Profesor'}`);
 
     try {
