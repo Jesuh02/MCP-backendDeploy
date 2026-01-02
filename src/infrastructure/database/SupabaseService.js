@@ -787,7 +787,7 @@ CREATE TABLE public.videos (
                 logger.info('📤 OUTPUT (fallback parser):', JSON.stringify({
                     query: sqlQuery,
                     results: data,
-                    rowCount: data ? .length || 0
+                    rowCount: data?.length || 0
                 }, null, 2));
 
                 return data;
