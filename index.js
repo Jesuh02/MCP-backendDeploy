@@ -38,6 +38,7 @@ import { createRequire } from 'module';
 const require = createRequire(
     import.meta.url);
 const pdf = require('pdf-parse');
+const xlsx = require('xlsx');
 
 const app = express();
 // LOGGING CRÍTICO PARA DEPURACIÓN EN RAILWAY
@@ -4196,6 +4197,39 @@ app.post('/procesar-prompt', async(req, res) => {
                                              augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (Librería PDF no disponible) ---`;
                                         }
                                     }
+                                    // Handle Excel
+                                    else if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls') || (fileData.contentType || '').includes('spreadsheet') || (fileData.contentType || '').includes('excel')) {
+                                        try {
+                                            console.log(`📊 Intentando analizar Excel: ${file.name} (${formatFileSize(fileData.size)})`);
+                                            const buffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                            
+                                            const workbook = xlsx.read(buffer, { type: 'buffer' });
+                                            let excelContent = '';
+                                            
+                                            workbook.SheetNames.forEach(sheetName => {
+                                                const sheet = workbook.Sheets[sheetName];
+                                                const csv = xlsx.utils.sheet_to_csv(sheet);
+                                                if (csv && csv.trim().length > 0) {
+                                                    excelContent += `\n--- Hoja: ${sheetName} ---\n${csv}\n`;
+                                                }
+                                            });
+                                            
+                                            if (excelContent.trim().length > 0) {
+                                                // Limit text length to avoid token overflow (e.g., 50k chars)
+                                                const contentSnippet = excelContent.substring(0, 50000);
+                                                const truncated = excelContent.length > 50000 ? `... [truncado, total ${excelContent.length} chars]` : '';
+                                                
+                                                augmentedPrompt += `\n\n--- Contenido del archivo del curso (Excel): ${file.name} ---\n${contentSnippet}${truncated}`;
+                                                console.log(`✅ Excel analizado exitosamente: ${file.name} (${contentSnippet.length} chars)`);
+                                            } else {
+                                                console.warn(`⚠️ Excel analizado pero sin contenido: ${file.name}`);
+                                                augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (Excel vacío) ---`;
+                                            }
+                                        } catch (e) {
+                                            console.error(`❌ Error analizando Excel ${file.name}:`, e.message);
+                                            augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (Error al leer Excel: ${e.message}) ---`;
+                                        }
+                                    }
                                     // Handle Text
                                     else if (!fileData.isBase64 && fileData.contentType && fileData.contentType.startsWith('text/')) {
                                         // Incluir TODO el contenido del archivo (sin limitar por tokens)
@@ -5016,7 +5050,7 @@ Recuerda: Diferencias solo gramaticales NO son suficientes.`;
 - FORMATO EDUCATIVO Y PROFESIONAL
 - RESPUESTA CLARA Y COMPRENSIBLE
 
-PREGUNTA DEL USUARIO: ${prompt}`;
+PREGUNTA DEL USUARIO: ${augmentedPrompt}`;
 
                 if (taskDescription && taskDescription.trim() && fileContent && fileContent.trim()) {
                     promptCompleto = `INSTRUCCIONES CRÍTICAS:
@@ -5032,7 +5066,7 @@ CONTEXTO ACADÉMICO DISPONIBLE:
 Descripción de la tarea: ${taskDescription}
 Contenido entregado: ${fileContent}
 
-Pregunta del usuario: ${prompt}
+Pregunta del usuario: ${augmentedPrompt}
 
 Responde considerando el contexto académico disponible si es relevante para la pregunta. SIEMPRE EN ESPAÑOL.`;
                 }
