@@ -102,7 +102,7 @@ export class SupabaseService {
             if (error) throw error;
 
             // Assuming rol_id 3 = admin (adjust based on your schema)
-            return data ? .rol_id === 3;
+            return data?.rol_id === 3;
         } catch (error) {
             logger.error(`Error checking admin status for user ${userId}:`, error);
             return false;
