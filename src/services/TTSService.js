@@ -110,6 +110,7 @@ class TTSService {
 
         try {
             console.log(`🎤 TTSService: Synthesizing ${sanitizedText.length} chars with voice "${config.voice}"`);
+            console.log(`   Model: ${config.model}, Speed: ${config.speed}, Format: ${config.response_format}`);
 
             const response = await this.openai.audio.speech.create({
                 model: config.model,
@@ -126,6 +127,9 @@ class TTSService {
             return buffer;
         } catch (error) {
             console.error('❌ TTSService synthesis error:', error.message);
+            if (error.response) {
+                console.error('   Details:', JSON.stringify(error.response.data || {}));
+            }
             throw new Error(`TTS synthesis failed: ${error.message}`);
         }
     }
