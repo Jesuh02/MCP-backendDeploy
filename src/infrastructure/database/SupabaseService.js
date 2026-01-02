@@ -16,43 +16,23 @@ export class SupabaseService {
         }
 
         const supabaseUrl = process.env.SUPABASE_URL;
-        // 🔒 SECURITY FIX: Use ANON_KEY by default to enforce Row Level Security (RLS)
-        // SERVICE_KEY bypasses RLS and should ONLY be used for admin operations
-        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
-        const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+        const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
 
-        if (!supabaseUrl || !supabaseAnonKey) {
+        if (!supabaseUrl || !supabaseKey) {
             console.error('❌ Supabase credentials missing!');
             console.error('   Required environment variables:');
             console.error('   - SUPABASE_URL (current:', supabaseUrl ? 'SET' : 'NOT SET', ')');
-            console.error('   - SUPABASE_ANON_KEY (current:', supabaseAnonKey ? 'SET' : 'NOT SET', ')');
+            console.error('   - SUPABASE_SERVICE_KEY or SUPABASE_KEY (current:', supabaseKey ? 'SET' : 'NOT SET', ')');
             console.error('   Configure these in Railway Dashboard > Variables');
-            throw new Error('Supabase credentials not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in Railway environment variables');
+            throw new Error('Supabase credentials not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY/SUPABASE_KEY in Railway environment variables');
         }
 
-        // 🛡️ Main client uses ANON_KEY - enforces RLS policies
-        this.client = createClient(supabaseUrl, supabaseAnonKey, {
+        this.client = createClient(supabaseUrl, supabaseKey, {
             auth: {
                 autoRefreshToken: true,
                 persistSession: false
             }
         });
-
-        // 🔐 Admin client with SERVICE_KEY (only for trusted server operations)
-        // This client bypasses RLS - use with extreme caution
-        this.adminClient = supabaseServiceKey ?
-            createClient(supabaseUrl, supabaseServiceKey, {
-                auth: {
-                    autoRefreshToken: true,
-                    persistSession: false
-                }
-            }) :
-            null;
-
-        this.supabaseUrl = supabaseUrl;
-        this.hasAdminAccess = !!supabaseServiceKey;
-
-        logger.info(`✅ Supabase initialized (RLS: ${this.hasAdminAccess ? 'Available with admin client' : 'Enforced'})`);
 
         SupabaseService.instance = this;
     }
@@ -62,51 +42,6 @@ export class SupabaseService {
             SupabaseService.instance = new SupabaseService();
         }
         return SupabaseService.instance;
-    }
-
-    /**
-     * Get admin client (bypasses RLS - use ONLY for trusted operations)
-     * @param {string} requesterRole - Role of the requester (for audit logging)
-     * @returns {Object} Admin Supabase client
-     * @throws {Error} If admin access not available or requester not authorized
-     */
-    getAdminClient(requesterRole = null) {
-        if (!this.adminClient) {
-            throw new Error('Admin access not configured. SUPABASE_SERVICE_KEY not set.');
-        }
-
-        // 🚨 AUDIT LOG: Record admin client usage
-        logger.warn(`⚠️ ADMIN CLIENT ACCESSED by role: ${requesterRole || 'UNKNOWN'}`);
-
-        // TODO: Add stricter validation here (e.g., only allow rol_id === 3)
-        // For now, we log and allow, but this should be restricted
-
-        return this.adminClient;
-    }
-
-    /**
-     * Check if a user has admin privileges
-     * @param {number} userId - User ID to check
-     * @returns {Promise<boolean>}
-     */
-    async isUserAdmin(userId) {
-        if (!userId) return false;
-
-        try {
-            const { data, error } = await this.client
-                .from('usuarios')
-                .select('rol_id')
-                .eq('id', userId)
-                .single();
-
-            if (error) throw error;
-
-            // Assuming rol_id 3 = admin (adjust based on your schema)
-            return data?.rol_id === 3;
-        } catch (error) {
-            logger.error(`Error checking admin status for user ${userId}:`, error);
-            return false;
-        }
     }
 
     /**
@@ -610,289 +545,262 @@ CREATE TABLE public.videos (
      * Get comprehensive database context for AI
      */
     async getComprehensiveContext(userQuery = '') {
+        try {
+            const schema = await this.getDatabaseSchema();
+
+            // Build context string
+            let context = '# YisusCompany Database Context\n\n';
+            context += '## Available Tables:\n\n';
+
+            for (const [table, info] of Object.entries(schema)) {
+                if (info.exists) {
+                    context += `- **${table}**: ${info.count} records\n`;
+                }
+            }
+
+            context += '\n## Critical Information:\n';
+            context += '- **Valid Roles**: usuario, admin\n';
+            context += '- **Primary Features**: Educational platform with courses, videos, tasks\n\n';
+
+            // Add RAG results if query provided
+            if (userQuery) {
+                const ragResults = await this.executeRAGQuery(userQuery, 3);
+                if (ragResults.length > 0) {
+                    context += '## Relevant Information (from knowledge base):\n\n';
+                    ragResults.forEach((result, index) => {
+                        context += `${index + 1}. ${result.content}\n`;
+                        context += `   (Similarity: ${(result.similarity * 100).toFixed(1)}%)\n\n`;
+                    });
+                }
+            }
+
+            return context;
+        } catch (error) {
+            logger.error('Error building comprehensive context:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Health check for Supabase connection
+     */
+    async healthCheck() {
+        try {
+            const start = Date.now();
+            await this.testConnection();
+            const latency = Date.now() - start;
+
+            return {
+                status: 'healthy',
+                latency: `${latency}ms`,
+                timestamp: new Date().toISOString()
+            };
+        } catch (error) {
+            return {
+                status: 'unhealthy',
+                error: error.message,
+                timestamp: new Date().toISOString()
+            };
+        }
+    }
+
+    /**
+     * Execute raw SQL query using Supabase RPC
+     * This allows executing arbitrary SQL queries
+     * Note: Requires a Postgres function 'execute_sql' in your database
+     * Or we parse simple SELECT queries and use PostgREST API
+     */
+    async executeRawSQL(sqlQuery) {
+        try {
+            // Log the full query being executed
+            logger.info(`🔍 Executing raw SQL...`);
+            logger.info('📥 INPUT:', JSON.stringify({ query: sqlQuery }, null, 2));
+
+            // Remove trailing semicolon if present (common issue with RPC)
+            if (sqlQuery.trim().endsWith(';')) {
+                sqlQuery = sqlQuery.trim().slice(0, -1);
+            }
+
+            // 1. Try to execute via RPC 'execute_sql' (Preferred for complex queries)
             try {
-                const schema = await this.getDatabaseSchema();
-
-                // Build context string
-                let context = '# YisusCompany Database Context\n\n';
-                context += '## Available Tables:\n\n';
-
-                for (const [table, info] of Object.entries(schema)) {
-                    if (info.exists) {
-                        context += `- **${table}**: ${info.count} records\n`;
-                    }
+                const { data, error } = await this.client.rpc('execute_sql', { query: sqlQuery });
+                if (!error) {
+                    // Log the full output with query and results
+                    logger.info('📤 OUTPUT:', JSON.stringify({
+                        query: sqlQuery,
+                        results: data,
+                        rowCount: data ? .length || 0
+                    }, null, 2));
+                    logger.info('✅ Executed via RPC execute_sql');
+                    return data;
                 }
 
-                context += '\n## Critical Information:\n';
-                context += '- **Valid Roles**: usuario, admin\n';
-                context += '- **Primary Features**: Educational platform with courses, videos, tasks\n\n';
+                // If error is a SQL syntax error (e.g. column missing), throw it immediately
+                // so the LLM can self-correct. Only fallback if RPC itself is missing.
+                if (error.code !== 'PGRST202' && !error.message.includes('function') && !error.message.includes('not found')) {
+                    logger.warn(`RPC execute_sql failed with specific SQL error: ${error.message}`);
+                    throw new Error(`SQL Error: ${error.message}`);
+                }
+            } catch (rpcError) {
+                // If it was the specific SQL error we threw above, rethrow it
+                if (rpcError.message.startsWith('SQL Error:')) {
+                    throw rpcError;
+                }
+                // Fallback to parser only if RPC is missing
+                logger.warn('RPC execute_sql not available, falling back to limited client-side parsing');
+            }
 
-                // Add RAG results if query provided
-                if (userQuery) {
+            // 2. Fallback: Parse simple SELECT queries client-side
+            // First, remove trailing semicolon if present
+            let trimmedQuery = sqlQuery.trim();
+            if (trimmedQuery.endsWith(';')) {
+                trimmedQuery = trimmedQuery.slice(0, -1).trim();
+            }
 
-                    *
-                    🔒SECURITY: Uses regular client(with RLS) by
-                    default *
-                    @param { string }
-                    sqlQuery - SQL query to execute *
-                        @param { number | null }
-                    requesterId - ID of user making request(
-                            for validation) *
-                        @returns { Promise < Array > }
-                    Query results
-                        *
-                        /
-                    async executeRawSQL(sqlQuery, requesterId = null) {
-                        try {
-                            // 🛡️ SECURITY CHECK: Validate dangerous operations
-                            const lowerQuery = sqlQuery.toLowerCase().trim();
-                            const isDangerous = lowerQuery.includes('drop ') ||
-                                lowerQuery.includes('delete ') ||
-                                lowerQuery.includes('truncate ') ||
-                                lowerQuery.includes('alter ') ||
-                                lowerQuery.includes('create ') ||
-                                lowerQuery.includes('update ');
+            const lowerTrimmedQuery = trimmedQuery.toLowerCase();
 
-                            if (isDangerous) {
-                                logger.error(`🚨 BLOCKED dangerous SQL query from user ${requesterId}: ${sqlQuery.substring(0, 100)}`);
-                                throw new Error('Dangerous SQL operations (DROP, DELETE, UPDATE, etc.) are not allowed via this interface');
-                            }
+            // Match: SELECT ... FROM table_name ...
+            const selectMatch = lowerTrimmedQuery.match(/^select\s+(.+?)\s+from\s+(\w+)(.*)$/i);
 
-                            // Log the full query being executed
-                            logger.info(`🔍 Executing raw SQL (requester: ${requesterId || 'system'})...`);
-                            logger.info('📥 INPUT:', JSON.stringify({ query: sqlQuery }, null, 2));
+            if (selectMatch) {
+                const columns = selectMatch[1].trim();
+                const tableName = selectMatch[2].trim();
+                let rest = selectMatch[3].trim();
 
-                            // Remove trailing semicolon if present (common issue with RPC)
-                            if (sqlQuery.trim().endsWith(';')) {
-                                sqlQuery = sqlQuery.trim().slice(0, -1);
-                            }
+                // Remove semicolon from rest as well
+                if (rest.endsWith(';')) {
+                    rest = rest.slice(0, -1).trim();
+                }
 
-                            // 1. Try to execute via RPC 'execute_sql' (Preferred for complex queries)
-                            // Uses regular client with RLS enforcement
-                            throw error;
+                // Check for unsupported complex clauses in fallback mode
+                if (rest.includes('join') || rest.includes('group by') || rest.includes('select') || rest.includes('(')) {
+                    // Instead of blocking, we try to execute it anyway via RPC (which already failed) or throw a helpful error
+                    throw new Error("Complex query failed via RPC and is not supported by client-side parser. Please simplify your query or check table/column names.");
+                }
+
+                // Build query using Supabase client
+                let query = this.client.from(tableName);
+
+                // Handle SELECT *
+                if (columns === '*') {
+                    query = query.select('*');
+                } else {
+                    // Clean columns (remove aliases like 'as x' because PostgREST doesn't support them in select())
+                    // Also remove table prefixes like 'u.username' -> 'username'
+                    const cleanColumns = columns.split(',').map(c => {
+                        let col = c.trim().split(/\s+as\s+/i)[0]; // Remove alias
+                        if (col.includes('.')) {
+                            col = col.split('.')[1]; // Remove table prefix
                         }
+                        return col;
+                    }).join(',');
+                    query = query.select(cleanColumns);
+                }
+
+                // Parse WHERE clause
+                const whereMatch = rest.match(/where\s+(.+?)(?:order\s+by|limit|$)/i);
+                if (whereMatch) {
+                    let whereClause = whereMatch[1].trim();
+                    if (whereClause.endsWith(';')) {
+                        whereClause = whereClause.slice(0, -1).trim();
                     }
 
-                    /**
-                     * Health check for Supabase connection
-                     */
-                    async healthCheck() {
-                        try {
-                            const start = Date.now();
-                            await this.testConnection();
-                            const latency = Date.now() - start;
-
-                            return {
-                                status: 'healthy',
-                                latency: `${latency}ms`,
-                                timestamp: new Date().toISOString()
-                            };
-                        } catch (error) {
-                            return {
-                                status: 'unhealthy',
-                                error: error.message,
-                                timestamp: new Date().toISOString()
-                            };
-                        }
+                    // Handle 'IS NULL'
+                    const isNullMatch = whereClause.match(/(\w+)\s+is\s+null/i);
+                    if (isNullMatch) {
+                        query = query.is(isNullMatch[1], null);
                     }
+                    // Handle 'IS NOT NULL'
+                    else if (whereClause.match(/(\w+)\s+is\s+not\s+null/i)) {
+                        const match = whereClause.match(/(\w+)\s+is\s+not\s+null/i);
+                        query = query.not(match[1], 'is', null);
+                    }
+                    // Handle comparison operators (>=, <=, >, <, =, <>)
+                    else {
+                        const opMatch = whereClause.match(/(\w+)\s*([<>=!]+)\s*([^\s;]+)/i);
+                        if (opMatch) {
+                            const column = opMatch[1];
+                            const operator = opMatch[2];
+                            let value = opMatch[3];
+                            value = value.replace(/^['"]|['"]$/g, '').replace(/;$/g, '').trim();
 
-                    /**
-                     * Execute raw SQL query using Supabase RPC
-                     * This allows executing arbitrary SQL queries
-                     * Note: Requires a Postgres function 'execute_sql' in your database
-                     * Or we parse simple SELECT queries and use PostgREST API
-                     */
-                    async executeRawSQL(sqlQuery) {
-                        try {
-                            // Log the full query being executed
-                            logger.info(`🔍 Executing raw SQL...`);
-                            logger.info('📥 INPUT:', JSON.stringify({ query: sqlQuery }, null, 2));
-
-                            // Remove trailing semicolon if present (common issue with RPC)
-                            if (sqlQuery.trim().endsWith(';')) {
-                                sqlQuery = sqlQuery.trim().slice(0, -1);
+                            const lowerVal = String(value).toLowerCase();
+                            let finalValue;
+                            if (lowerVal === 'true') finalValue = true;
+                            else if (lowerVal === 'false') finalValue = false;
+                            else if (lowerVal === 'null') finalValue = null;
+                            else {
+                                const numValue = Number(value);
+                                finalValue = isNaN(numValue) ? value : numValue;
                             }
 
-                            // 1. Try to execute via RPC 'execute_sql' (Preferred for complex queries)
-                            try {
-                                const { data, error } = await this.client.rpc('execute_sql', { query: sqlQuery });
-                                if (!error) {
-                                    // Log the full output with query and results
-                                    logger.info('📤 OUTPUT:', JSON.stringify({
-                                        query: sqlQuery,
-                                        results: data,
-                                        rowCount: data ? .length || 0
-                                    }, null, 2));
-                                    logger.info('✅ Executed via RPC execute_sql');
-                                    return data;
-                                }
-
-                                // If error is a SQL syntax error (e.g. column missing), throw it immediately
-                                // so the LLM can self-correct. Only fallback if RPC itself is missing.
-                                if (error.code !== 'PGRST202' && !error.message.includes('function') && !error.message.includes('not found')) {
-                                    logger.warn(`RPC execute_sql failed with specific SQL error: ${error.message}`);
-                                    throw new Error(`SQL Error: ${error.message}`);
-                                }
-                            } catch (rpcError) {
-                                // If it was the specific SQL error we threw above, rethrow it
-                                if (rpcError.message.startsWith('SQL Error:')) {
-                                    throw rpcError;
-                                }
-                                // Fallback to parser only if RPC is missing
-                                logger.warn('RPC execute_sql not available, falling back to limited client-side parsing');
+                            switch (operator) {
+                                case '=':
+                                    query = query.eq(column, finalValue);
+                                    break;
+                                case '!=':
+                                case '<>':
+                                    query = query.neq(column, finalValue);
+                                    break;
+                                case '>':
+                                    query = query.gt(column, finalValue);
+                                    break;
+                                case '<':
+                                    query = query.lt(column, finalValue);
+                                    break;
+                                case '>=':
+                                    query = query.gte(column, finalValue);
+                                    break;
+                                case '<=':
+                                    query = query.lte(column, finalValue);
+                                    break;
+                                default:
+                                    query = query.eq(column, finalValue); // Fallback
                             }
-
-                            // 2. Fallback: Parse simple SELECT queries client-side
-                            // First, remove trailing semicolon if present
-                            let trimmedQuery = sqlQuery.trim();
-                            if (trimmedQuery.endsWith(';')) {
-                                trimmedQuery = trimmedQuery.slice(0, -1).trim();
-                            }
-
-                            const lowerTrimmedQuery = trimmedQuery.toLowerCase();
-
-                            // Match: SELECT ... FROM table_name ...
-                            const selectMatch = lowerTrimmedQuery.match(/^select\s+(.+?)\s+from\s+(\w+)(.*)$/i);
-
-                            if (selectMatch) {
-                                const columns = selectMatch[1].trim();
-                                const tableName = selectMatch[2].trim();
-                                let rest = selectMatch[3].trim();
-
-                                // Remove semicolon from rest as well
-                                if (rest.endsWith(';')) {
-                                    rest = rest.slice(0, -1).trim();
-                                }
-
-                                // Check for unsupported complex clauses in fallback mode
-                                if (rest.includes('join') || rest.includes('group by') || rest.includes('select') || rest.includes('(')) {
-                                    // Instead of blocking, we try to execute it anyway via RPC (which already failed) or throw a helpful error
-                                    throw new Error("Complex query failed via RPC and is not supported by client-side parser. Please simplify your query or check table/column names.");
-                                }
-
-                                // Build query using Supabase client
-                                let query = this.client.from(tableName);
-
-                                // Handle SELECT *
-                                if (columns === '*') {
-                                    query = query.select('*');
-                                } else {
-                                    // Clean columns (remove aliases like 'as x' because PostgREST doesn't support them in select())
-                                    // Also remove table prefixes like 'u.username' -> 'username'
-                                    const cleanColumns = columns.split(',').map(c => {
-                                        let col = c.trim().split(/\s+as\s+/i)[0]; // Remove alias
-                                        if (col.includes('.')) {
-                                            col = col.split('.')[1]; // Remove table prefix
-                                        }
-                                        return col;
-                                    }).join(',');
-                                    query = query.select(cleanColumns);
-                                }
-
-                                // Parse WHERE clause
-                                const whereMatch = rest.match(/where\s+(.+?)(?:order\s+by|limit|$)/i);
-                                if (whereMatch) {
-                                    let whereClause = whereMatch[1].trim();
-                                    if (whereClause.endsWith(';')) {
-                                        whereClause = whereClause.slice(0, -1).trim();
-                                    }
-
-                                    // Handle 'IS NULL'
-                                    const isNullMatch = whereClause.match(/(\w+)\s+is\s+null/i);
-                                    if (isNullMatch) {
-                                        query = query.is(isNullMatch[1], null);
-                                    }
-                                    // Handle 'IS NOT NULL'
-                                    else if (whereClause.match(/(\w+)\s+is\s+not\s+null/i)) {
-                                        const match = whereClause.match(/(\w+)\s+is\s+not\s+null/i);
-                                        query = query.not(match[1], 'is', null);
-                                    }
-                                    // Handle comparison operators (>=, <=, >, <, =, <>)
-                                    else {
-                                        const opMatch = whereClause.match(/(\w+)\s*([<>=!]+)\s*([^\s;]+)/i);
-                                        if (opMatch) {
-                                            const column = opMatch[1];
-                                            const operator = opMatch[2];
-                                            let value = opMatch[3];
-                                            value = value.replace(/^['"]|['"]$/g, '').replace(/;$/g, '').trim();
-
-                                            const lowerVal = String(value).toLowerCase();
-                                            let finalValue;
-                                            if (lowerVal === 'true') finalValue = true;
-                                            else if (lowerVal === 'false') finalValue = false;
-                                            else if (lowerVal === 'null') finalValue = null;
-                                            else {
-                                                const numValue = Number(value);
-                                                finalValue = isNaN(numValue) ? value : numValue;
-                                            }
-
-                                            switch (operator) {
-                                                case '=':
-                                                    query = query.eq(column, finalValue);
-                                                    break;
-                                                case '!=':
-                                                case '<>':
-                                                    query = query.neq(column, finalValue);
-                                                    break;
-                                                case '>':
-                                                    query = query.gt(column, finalValue);
-                                                    break;
-                                                case '<':
-                                                    query = query.lt(column, finalValue);
-                                                    break;
-                                                case '>=':
-                                                    query = query.gte(column, finalValue);
-                                                    break;
-                                                case '<=':
-                                                    query = query.lte(column, finalValue);
-                                                    break;
-                                                default:
-                                                    query = query.eq(column, finalValue); // Fallback
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Parse ORDER BY clause
-                                const orderByMatch = rest.match(/order\s+by\s+(\w+)(?:\s+(asc|desc))?/i);
-                                if (orderByMatch) {
-                                    const column = orderByMatch[1];
-                                    const direction = orderByMatch[2] ? orderByMatch[2].toLowerCase() : 'asc';
-                                    query = query.order(column, { ascending: direction === 'asc' });
-                                }
-
-                                // Parse LIMIT clause
-                                const limitMatch = rest.match(/limit\s+(\d+)/i);
-                                if (limitMatch) {
-                                    query = query.limit(parseInt(limitMatch[1]));
-                                }
-
-                                // Execute query
-                                const { data, error } = await query;
-
-                                if (error) {
-                                    logger.error('SQL execution error:', error);
-                                    throw error;
-                                }
-
-                                // Log output for fallback parser
-                                logger.info('📤 OUTPUT (fallback parser):', JSON.stringify({
-                                    query: sqlQuery,
-                                    results: data,
-                                    rowCount: data ? .length || 0
-                                }, null, 2));
-
-                                return data;
-                            }
-
-                            // If we can't parse it, throw error
-                            throw new Error('Complex SQL queries (JOIN, GROUP BY, SUBQUERIES) are NOT supported. You MUST retrieve raw data and perform aggregations/joins in your reasoning.');
-
-                        } catch (error) {
-                            logger.error('Error executing raw SQL:', error);
-                            throw error;
                         }
                     }
                 }
 
-                export default SupabaseService;
+                // Parse ORDER BY clause
+                const orderByMatch = rest.match(/order\s+by\s+(\w+)(?:\s+(asc|desc))?/i);
+                if (orderByMatch) {
+                    const column = orderByMatch[1];
+                    const direction = orderByMatch[2] ? orderByMatch[2].toLowerCase() : 'asc';
+                    query = query.order(column, { ascending: direction === 'asc' });
+                }
+
+                // Parse LIMIT clause
+                const limitMatch = rest.match(/limit\s+(\d+)/i);
+                if (limitMatch) {
+                    query = query.limit(parseInt(limitMatch[1]));
+                }
+
+                // Execute query
+                const { data, error } = await query;
+
+                if (error) {
+                    logger.error('SQL execution error:', error);
+                    throw error;
+                }
+
+                // Log output for fallback parser
+                logger.info('📤 OUTPUT (fallback parser):', JSON.stringify({
+                    query: sqlQuery,
+                    results: data,
+                    rowCount: data ? .length || 0
+                }, null, 2));
+
+                return data;
+            }
+
+            // If we can't parse it, throw error
+            throw new Error('Complex SQL queries (JOIN, GROUP BY, SUBQUERIES) are NOT supported. You MUST retrieve raw data and perform aggregations/joins in your reasoning.');
+
+        } catch (error) {
+            logger.error('Error executing raw SQL:', error);
+            throw error;
+        }
+    }
+}
+
+export default SupabaseService;
