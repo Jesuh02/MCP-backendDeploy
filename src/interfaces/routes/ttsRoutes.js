@@ -106,20 +106,95 @@ router.post('/stream', async(req, res) => {
         res.setHeader('Transfer-Encoding', 'chunked');
         res.setHeader('Cache-Control', 'no-cache');
 
-        const buffer = await ttsService.synthesize(text, {
+        const stream = await ttsService.stream(text, {
             voice,
             model,
             format: audioFormat,
             speed
         });
 
-        res.send(buffer);
+        // Pipe the stream to response
+        // OpenAI SDK returns a web standard ReadableStream, we need to convert or handle it
+        // Node.js response is a WritableStream
+        
+        if (stream.pipe) {
+            // If it's a Node stream
+            stream.pipe(res);
+        } else {
+            // If it's a Web Stream (fetch API style)
+            const reader = stream.getReader();
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                res.write(Buffer.from(value));
+            }
+            res.end();
+        }
+
     } catch (error) {
         console.error('❌ TTS stream error:', error.message);
-        res.status(500).json({
-            success: false,
-            error: error.message
+        // If headers sent, we can't send JSON error
+        if (!res.headersSent) {
+            res.status(500).json({
+                success: false,
+                error: error.message
+            });
+        } else {
+            res.end();
+        }
+    }
+});
+
+/**
+ * GET /tts/stream
+ * Stream audio via GET request (easier for MediaPlayer)
+ */
+router.get('/stream', async(req, res) => {
+    try {
+        const { text, voice, model, format, speed } = req.query;
+
+        if (!text || typeof text !== 'string' || text.trim().length === 0) {
+            return res.status(400).send('Text is required');
+        }
+
+        const ttsService = getTTSService();
+
+        if (!ttsService.isAvailable()) {
+            return res.status(503).send('TTS service unavailable');
+        }
+
+        const audioFormat = format || 'mp3';
+        const contentType = ttsService._getContentType(audioFormat);
+
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Transfer-Encoding', 'chunked');
+        
+        const stream = await ttsService.stream(text, {
+            voice,
+            model,
+            format: audioFormat,
+            speed: speed ? parseFloat(speed) : undefined
         });
+
+        if (stream.pipe) {
+            stream.pipe(res);
+        } else {
+            const reader = stream.getReader();
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                res.write(Buffer.from(value));
+            }
+            res.end();
+        }
+
+    } catch (error) {
+        console.error('❌ TTS GET stream error:', error.message);
+        if (!res.headersSent) {
+            res.status(500).send(error.message);
+        } else {
+            res.end();
+        }
     }
 });
 
