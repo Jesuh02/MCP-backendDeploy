@@ -1825,7 +1825,7 @@ A continuación se muestra el contenido del repositorio para análisis:`;
         lines.push('1. **Reformula tu pregunta** de manera más específica');
         lines.push('2. **Pregunta por una tabla a la vez** (ej: "¿cuántos usuarios hay?")');
         lines.push('3. **Usa límites explícitos** (ej: "dame los últimos 10 cursos")');
-        lines.push('4. **Pregunta consultas simples** como conteos o listas cortas\n');
+        lines.push('4. **Pregunta consultas simples** como conteos o listas cortas.\n');
         
         lines.push('### 📊 Consultas que funcionan bien:\n');
         lines.push('- "¿Cuántos usuarios hay?"');
