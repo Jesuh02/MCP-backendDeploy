@@ -59,7 +59,7 @@ class TTSService {
             this.openai = new OpenAI({ apiKey });
             console.log('✅ TTSService: OpenAI client initialized');
         } else {
-            console.warn('⚠️ TTSService: OPENAI_API_KEY not configured. TTS will not work.');
+            // console.warn('⚠️ TTSService: OPENAI_API_KEY not configured. TTS will not work.');
         }
     }
 
