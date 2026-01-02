@@ -6,7 +6,7 @@
  */
 
 import express from 'express';
-import { getTTSService, OpenAIVoices, AudioFormats } from '../services/TTSService.js';
+import { getTTSService, OpenAIVoices, AudioFormats } from '../../services/TTSService.js';
 
 const router = express.Router();
 
