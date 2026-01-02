@@ -895,7 +895,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
 
         return result;
     } catch (error) {
@@ -2234,7 +2234,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response ? .data || resendError.message);
+                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
                 // Fallback - reintentar con el mismo dominio verificado
                 console.log('🔄 Reintentando envío de email...');
                 try {
@@ -2252,7 +2252,7 @@ async function sendEmailNotification(userId, subject, text) {
                     console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response ? .data || fallbackError.message);
+                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
                 }
             }
         }
