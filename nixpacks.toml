@@ -1,0 +1,14 @@
+# Nixpacks configuration for Railway
+# This tells Railway to install FFmpeg during build
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "ffmpeg-full"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = ["echo 'Build complete'"]
+
+[start]
+cmd = "node index.js"

@@ -87,10 +87,6 @@ router.post('/analyze', upload.single('video'), async(req, res) => {
         console.log('═══════════════════════════════════════════════════════════');
         console.log('📊 VIDEO METADATA');
         console.log('═══════════════════════════════════════════════════════════');
-        console.log(`\n✅ [FFmpeg Analysis] Completed in ${analysisTime}ms`);
-        console.log('═══════════════════════════════════════════════════════════');
-        console.log('📊 VIDEO METADATA');
-        console.log('═══════════════════════════════════════════════════════════');
         console.log(`   📊 Resolution: ${metadata.video?.width}x${metadata.video?.height}`);
         console.log(`   ⏱️  Duration: ${metadata.duration}s`);
         console.log(`   📈 Bitrate: ${(metadata.bitrate / 1000).toFixed(0)}kbps`);

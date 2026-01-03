@@ -56,12 +56,20 @@ console.log(`   FFMPEG_PATH: ${process.env.FFMPEG_PATH || 'system default'}`);
 console.log(`   FFPROBE_PATH: ${process.env.FFPROBE_PATH || 'system default'}`);
 try {
     const { execSync } = require('child_process');
-    const ffmpegVersion = execSync(process.env.FFMPEG_PATH || 'ffmpeg -version').toString().split('\n')[0];
-    const ffprobeVersion = execSync(process.env.FFPROBE_PATH || 'ffprobe -version').toString().split('\n')[0];
+    const ffmpegCmd = process.env.FFMPEG_PATH ? `${process.env.FFMPEG_PATH} -version` : 'ffmpeg -version';
+    const ffprobeCmd = process.env.FFPROBE_PATH ? `${process.env.FFPROBE_PATH} -version` : 'ffprobe -version';
+    
+    const ffmpegVersion = execSync(ffmpegCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).split('\n')[0];
+    const ffprobeVersion = execSync(ffprobeCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).split('\n')[0];
+    
     console.log(`   ✅ FFmpeg: ${ffmpegVersion}`);
     console.log(`   ✅ FFprobe: ${ffprobeVersion}`);
 } catch (e) {
     console.log(`   ⚠️ FFmpeg not found or not accessible: ${e.message}`);
+    console.log(`   📋 To fix this on Railway:`);
+    console.log(`      1. Create nixpacks.toml file with: nixPkgs = ["nodejs_20", "ffmpeg-full"]`);
+    console.log(`      2. Or set FFMPEG_PATH environment variable to custom binary location`);
+    console.log(`   ⚠️ Video processing features will be DISABLED until FFmpeg is installed`);
 }
 console.log('=================================================');
 
