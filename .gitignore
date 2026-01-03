@@ -46,3 +46,6 @@ app-debug.apk
 .env-raildway.json
 movil-*.json
 serviceAccountKey.json
+.env-raildway.json
+*.json
+movil-77c19-firebase-adminsdk-fbsvc-5d81f25b08.json
