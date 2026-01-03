@@ -94,10 +94,10 @@ router.post('/analyze', upload.single('video'), async(req, res) => {
                 fileSize: metadata.fileSize,
                 fileSizeMB: (metadata.fileSize / (1024 * 1024)).toFixed(2),
                 resolution: metadata.video ? `${metadata.video.width}x${metadata.video.height}` : null,
-                fps: metadata.video ? .fps,
+                fps: metadata.video?.fps,
                 bitrate: metadata.bitrate,
-                videoCodec: metadata.video ? .codec,
-                audioCodec: metadata.audio ? .codec
+                videoCodec: metadata.video?.codec,
+                audioCodec: metadata.audio?.codec
             },
             compression: compressionDecision,
             recommendedQualities: targetQualities.map(q => q.name)
@@ -107,7 +107,7 @@ router.post('/analyze', upload.single('video'), async(req, res) => {
         console.error('❌ Video analysis error:', error);
 
         // Cleanup on error
-        if (req.file ? .path) {
+        if (req.file?.path) {
             await fs.unlink(req.file.path).catch(() => {});
         }
 
@@ -284,7 +284,7 @@ router.post('/process', upload.single('video'), async(req, res) => {
         console.error('❌ Video processing error:', error);
 
         // Cleanup on error
-        if (req.file ? .path) {
+        if (req.file?.path) {
             await fs.unlink(req.file.path).catch(() => {});
         }
 
