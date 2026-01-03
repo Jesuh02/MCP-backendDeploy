@@ -44,3 +44,5 @@ serviceAccountKey.json
 .railway-env.json
 app-debug.apk
 .env-raildway.json
+movil-*.json
+serviceAccountKey.json
