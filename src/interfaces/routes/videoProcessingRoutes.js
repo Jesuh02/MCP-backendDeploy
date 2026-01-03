@@ -15,8 +15,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
 import os from 'os';
-import { VideoProcessingService } from '../services/VideoProcessingService.js';
-import { R2StorageService } from '../services/R2StorageService.js';
+import { VideoProcessingService } from '../../services/VideoProcessingService.js';
+import { R2StorageService } from '../../services/R2StorageService.js';
 
 const router = express.Router();
 
