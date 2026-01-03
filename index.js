@@ -900,7 +900,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
 
         return result;
     } catch (error) {
