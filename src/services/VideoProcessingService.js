@@ -135,6 +135,10 @@ class VideoProcessingService extends EventEmitter {
      * @returns {Promise<Object>} Video metadata
      */
     async getVideoMetadata(inputPath) {
+        console.log('🔍 [FFmpeg Metadata] Analyzing video with ffprobe...');
+        console.log(`   📂 Input: ${inputPath}`);
+        console.log(`   🛠️ FFprobe: ${this.ffprobePath}`);
+        
         return new Promise((resolve, reject) => {
             const args = [
                 '-v', 'quiet',
@@ -301,7 +305,11 @@ class VideoProcessingService extends EventEmitter {
     async transcodeToHLS(inputPath, outputDir, options = {}) {
         const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        console.log(`🎬 Starting HLS transcode job: ${jobId}`);
+        console.log('🎬 [FFmpeg HLS Transcode] Starting job...');
+        console.log(`   🆔 Job ID: ${jobId}`);
+        console.log(`   📂 Input: ${inputPath}`);
+        console.log(`   📁 Output: ${outputDir}`);
+        console.log(`   🛠️ FFmpeg: ${this.ffmpegPath}`);
 
         this.processingJobs.set(jobId, {
             status: 'processing',

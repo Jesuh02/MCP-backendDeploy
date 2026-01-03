@@ -51,6 +51,18 @@ console.log(`📌 NODE_ENV: ${process.env.NODE_ENV}`);
 console.log(`📌 PORT (env): ${process.env.PORT}`);
 console.log(`📌 RAILWAY_STATIC_URL: ${process.env.RAILWAY_STATIC_URL}`);
 console.log(`📌 PUBLIC_URL: ${process.env.PUBLIC_URL}`);
+console.log('\n🎬 FFmpeg Configuration:');
+console.log(`   FFMPEG_PATH: ${process.env.FFMPEG_PATH || 'system default'}`);
+console.log(`   FFPROBE_PATH: ${process.env.FFPROBE_PATH || 'system default'}`);
+try {
+    const { execSync } = require('child_process');
+    const ffmpegVersion = execSync(process.env.FFMPEG_PATH || 'ffmpeg -version').toString().split('\n')[0];
+    const ffprobeVersion = execSync(process.env.FFPROBE_PATH || 'ffprobe -version').toString().split('\n')[0];
+    console.log(`   ✅ FFmpeg: ${ffmpegVersion}`);
+    console.log(`   ✅ FFprobe: ${ffprobeVersion}`);
+} catch (e) {
+    console.log(`   ⚠️ FFmpeg not found or not accessible: ${e.message}`);
+}
 console.log('=================================================');
 
 const PORT = process.env.PORT || 3001;
@@ -79,8 +91,37 @@ app.use('/excel', excelRoutes);
 // Register TTS Routes (Text-to-Speech with natural human voices)
 app.use('/tts', ttsRoutes);
 
+// Middleware de logging para todas las requests de video
+app.use('/video', (req, res, next) => {
+    const timestamp = new Date().toISOString();
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`🎬 [${timestamp}] VIDEO REQUEST`);
+    console.log(`   Method: ${req.method}`);
+    console.log(`   Path: ${req.path}`);
+    console.log(`   Full URL: ${req.originalUrl}`);
+    console.log(`   Content-Type: ${req.headers['content-type']}`);
+    if (req.body && Object.keys(req.body).length > 0) {
+        console.log(`   Body Keys: ${Object.keys(req.body).join(', ')}`);
+    }
+    if (req.file) {
+        console.log(`   File Upload:`);
+        console.log(`      - Name: ${req.file.originalname}`);
+        console.log(`      - Size: ${(req.file.size / (1024 * 1024)).toFixed(2)} MB`);
+        console.log(`      - Type: ${req.file.mimetype}`);
+    }
+    console.log('='.repeat(60));
+    next();
+});
+
 // Register Video Processing Routes (FFmpeg HLS transcoding and compression)
 app.use('/video', videoProcessingRoutes);
+console.log('🎬 Video processing routes registered at /video');
+console.log('   📹 Available endpoints:');
+console.log('      POST /video/analyze - Analyze video for compression');
+console.log('      POST /video/process - Process video (HLS/compression)');
+console.log('      POST /video/process-url - Process from URL');
+console.log('      GET  /video/status/:jobId - Get job status');
+console.log('      GET  /video/qualities - Get quality presets');
 
 // ============================================================
 // 🏥 CRITICAL: Healthcheck endpoint MUST be defined FIRST
