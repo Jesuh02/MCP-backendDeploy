@@ -27,8 +27,10 @@ import { S3Client, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/clien
 import { NotificationService } from './src/services/NotificationService.js';
 import { R2StorageService } from './src/services/R2StorageService.js';
 import { UserService } from './src/services/UserService.js';
+import { VideoProcessingService } from './src/services/VideoProcessingService.js';
 import excelRoutes from './src/interfaces/routes/excelRoutes.js';
 import ttsRoutes from './src/interfaces/routes/ttsRoutes.js';
+import videoProcessingRoutes from './src/interfaces/routes/videoProcessingRoutes.js';
 // Note: Additional refactored modules available:
 // - notificationRoutes: ./src/interfaces/routes/notificationRoutes.js
 // - fileUtils: ./src/utils/fileUtils.js  
@@ -76,6 +78,9 @@ app.use('/excel', excelRoutes);
 
 // Register TTS Routes (Text-to-Speech with natural human voices)
 app.use('/tts', ttsRoutes);
+
+// Register Video Processing Routes (FFmpeg HLS transcoding and compression)
+app.use('/video', videoProcessingRoutes);
 
 // ============================================================
 // 🏥 CRITICAL: Healthcheck endpoint MUST be defined FIRST
@@ -880,7 +885,7 @@ function extractGitHubUrl(fileName) {
 async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('🐙 INICIANDO ANÁLISIS DE REPOSITORIO GITHUB...');
     console.log('   📦 URL:', repoUrl);
-    console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
+    console.log('   📋 Tarea:', taskDescription ? .substring(0, 100) || 'Sin descripción');
 
     if (!mcpService) {
         throw new Error('MCPService no está disponible');
@@ -895,7 +900,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
 
         return result;
     } catch (error) {
@@ -2234,7 +2239,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
+                console.error('❌ Error con Resend:', resendError.response ? .data || resendError.message);
                 // Fallback - reintentar con el mismo dominio verificado
                 console.log('🔄 Reintentando envío de email...');
                 try {
@@ -2252,7 +2257,7 @@ async function sendEmailNotification(userId, subject, text) {
                     console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
+                    console.error('❌ Fallback también falló:', fallbackError.response ? .data || fallbackError.message);
                 }
             }
         }
