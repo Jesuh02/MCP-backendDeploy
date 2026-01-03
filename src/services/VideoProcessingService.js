@@ -164,13 +164,13 @@ class VideoProcessingService extends EventEmitter {
 
                 try {
                     const metadata = JSON.parse(stdout);
-                    const videoStream = metadata.streams ? .find(s => s.codec_type === 'video');
-                    const audioStream = metadata.streams ? .find(s => s.codec_type === 'audio');
+                    const videoStream = metadata.streams?.find(s => s.codec_type === 'video');
+                    const audioStream = metadata.streams?.find(s => s.codec_type === 'audio');
 
                     resolve({
-                        duration: parseFloat(metadata.format ? .duration || 0),
-                        fileSize: parseInt(metadata.format ? .size || 0),
-                        bitrate: parseInt(metadata.format ? .bit_rate || 0),
+                        duration: parseFloat(metadata.format?.duration || 0),
+                        fileSize: parseInt(metadata.format?.size || 0),
+                        bitrate: parseInt(metadata.format?.bit_rate || 0),
                         video: videoStream ? {
                             codec: videoStream.codec_name,
                             width: videoStream.width,
@@ -205,9 +205,9 @@ class VideoProcessingService extends EventEmitter {
     shouldCompress(metadata, options = {}) {
         const { isScreenRecording = false, isFromMobile = true } = options;
         const fileSizeMB = metadata.fileSize / (1024 * 1024);
-        const height = metadata.video ? .height || 0;
+        const height = metadata.video?.height || 0;
         const duration = metadata.duration || 0;
-        const fps = metadata.video ? .fps || 30;
+        const fps = metadata.video?.fps || 30;
 
         // Check if it's a screen recording (typically lower FPS)
         if (isScreenRecording || fps <= COMPRESSION_THRESHOLDS.SCREEN_RECORDING_THRESHOLD) {
@@ -267,7 +267,7 @@ class VideoProcessingService extends EventEmitter {
      * @returns {Array} Array of quality presets to generate
      */
     getTargetQualities(metadata) {
-        const sourceHeight = metadata.video ? .height || 720;
+        const sourceHeight = metadata.video?.height || 720;
         const qualities = [];
 
         // Always include LOW for poor connections
@@ -377,7 +377,7 @@ class VideoProcessingService extends EventEmitter {
             this.processingJobs.set(jobId, {
                 status: 'failed',
                 error: error.message,
-                startTime: this.processingJobs.get(jobId) ? .startTime,
+                startTime: this.processingJobs.get(jobId)?.startTime,
                 endTime: Date.now()
             });
 
@@ -560,7 +560,7 @@ class VideoProcessingService extends EventEmitter {
      */
     async cleanupJob(jobId) {
         const job = this.processingJobs.get(jobId);
-        if (job ? .outputDir) {
+        if (job?.outputDir) {
             try {
                 await fs.rm(job.outputDir, { recursive: true, force: true });
                 console.log(`🧹 Cleaned up job: ${jobId}`);
