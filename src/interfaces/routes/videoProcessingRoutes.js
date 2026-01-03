@@ -72,14 +72,33 @@ router.post('/analyze', upload.single('video'), async(req, res) => {
         const videoService = VideoProcessingService.getInstance();
         const { isScreenRecording, isFromMobile } = req.body;
 
+        console.log('🎬 [FFmpeg Analysis] Starting video analysis...');
+        console.log(`   📁 File: ${req.file.originalname}`);
+        console.log(`   📏 Size: ${(req.file.size / (1024 * 1024)).toFixed(2)} MB`);
+        console.log(`   🔧 FFmpeg path check: ${process.env.FFMPEG_PATH || 'system default'}`);
+        
         // Get video metadata
+        const startTime = Date.now();
         const metadata = await videoService.getVideoMetadata(req.file.path);
+        const analysisTime = Date.now() - startTime;
+        
+        console.log(`✅ [FFmpeg Analysis] Completed in ${analysisTime}ms`);
+        console.log(`   📊 Resolution: ${metadata.video?.width}x${metadata.video?.height}`);
+        console.log(`   ⏱️  Duration: ${metadata.duration}s`);
+        console.log(`   📈 Bitrate: ${(metadata.bitrate / 1000).toFixed(0)}kbps`);
 
         // Determine if compression is needed
         const compressionDecision = videoService.shouldCompress(metadata, {
             isScreenRecording: isScreenRecording === 'true',
             isFromMobile: isFromMobile !== 'false' // Default to true
         });
+        
+        console.log('🤔 [Compression Decision]');
+        console.log(`   Should Compress: ${compressionDecision.shouldCompress ? '✅ YES' : '❌ NO'}`);
+        console.log(`   Reason: ${compressionDecision.reason}`);
+        if (compressionDecision.shouldCompress) {
+            console.log(`   💾 Estimated savings: ${compressionDecision.estimatedSavings}`);
+        }
 
         // Get target qualities if HLS is recommended
         const targetQualities = videoService.getTargetQualities(metadata);
@@ -170,9 +189,18 @@ router.post('/process', upload.single('video'), async(req, res) => {
 
         if (actualProcessType === 'hls') {
             // Generate HLS adaptive streaming
-            console.log(`🎬 Generating HLS for video ${videoId}...`);
-
+            console.log('\n🎬 [FFmpeg HLS] Starting adaptive streaming generation...');
+            console.log(`   🆔 Video ID: ${videoId}`);
+            console.log(`   👤 User: ${username}`);
+            console.log(`   📊 Source: ${metadata.video?.width}x${metadata.video?.height} @ ${(metadata.bitrate / 1000).toFixed(0)}kbps`);
+            
+            const hlsStartTime = Date.now();
             result = await videoService.transcodeToHLS(req.file.path, outputDir);
+            const hlsTime = Date.now() - hlsStartTime;
+            
+            console.log(`✅ [FFmpeg HLS] Completed in ${(hlsTime / 1000).toFixed(1)}s`);
+            console.log(`   📺 Generated qualities: ${result.qualities.map(q => q.quality).join(', ')}`);
+            console.log(`   📁 Total variants: ${result.qualities.length}`);
 
             // Upload all files to R2
             const baseKey = `videos/${username}/${videoId}/hls`;
@@ -222,12 +250,20 @@ router.post('/process', upload.single('video'), async(req, res) => {
 
         } else if (actualProcessType === 'compress') {
             // Simple compression to 720p
-            console.log(`🗜️ Compressing video ${videoId}...`);
+            console.log('\n🗜️ [FFmpeg Compression] Starting video compression...');
+            console.log(`   🆔 Video ID: ${videoId}`);
+            console.log(`   📊 Original: ${(metadata.fileSize / (1024 * 1024)).toFixed(2)} MB`);
 
             const outputPath = path.join(outputDir, 'compressed.mp4');
             await fs.mkdir(outputDir, { recursive: true });
 
+            const compressStartTime = Date.now();
             const compressionResult = await videoService.compressVideo(req.file.path, outputPath);
+            const compressTime = Date.now() - compressStartTime;
+            
+            console.log(`✅ [FFmpeg Compression] Completed in ${(compressTime / 1000).toFixed(1)}s`);
+            console.log(`   💾 Size reduced: ${(compressionResult.originalSize / (1024 * 1024)).toFixed(2)} MB → ${(compressionResult.newSize / (1024 * 1024)).toFixed(2)} MB`);
+            console.log(`   📉 Compression ratio: ${compressionResult.compressionRatio}`);
 
             // Upload to R2
             const compressedContent = await fs.readFile(outputPath);
