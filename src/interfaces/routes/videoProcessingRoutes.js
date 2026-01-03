@@ -75,17 +75,29 @@ router.post('/analyze', upload.single('video'), async(req, res) => {
         console.log('🎬 [FFmpeg Analysis] Starting video analysis...');
         console.log(`   📁 File: ${req.file.originalname}`);
         console.log(`   📏 Size: ${(req.file.size / (1024 * 1024)).toFixed(2)} MB`);
-        console.log(`   🔧 FFmpeg path check: ${process.env.FFMPEG_PATH || 'system default'}`);
+        console.log(`   🔧 FFmpeg path: ${process.env.FFMPEG_PATH || 'system default'}`);
+        console.log(`   🔧 FFprobe path: ${process.env.FFPROBE_PATH || 'system default'}`);
         
         // Get video metadata
         const startTime = Date.now();
         const metadata = await videoService.getVideoMetadata(req.file.path);
         const analysisTime = Date.now() - startTime;
         
-        console.log(`✅ [FFmpeg Analysis] Completed in ${analysisTime}ms`);
+        console.log(`\n✅ [FFmpeg Analysis] Completed in ${analysisTime}ms`);
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('📊 VIDEO METADATA');
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log(`\n✅ [FFmpeg Analysis] Completed in ${analysisTime}ms`);
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('📊 VIDEO METADATA');
+        console.log('═══════════════════════════════════════════════════════════');
         console.log(`   📊 Resolution: ${metadata.video?.width}x${metadata.video?.height}`);
         console.log(`   ⏱️  Duration: ${metadata.duration}s`);
         console.log(`   📈 Bitrate: ${(metadata.bitrate / 1000).toFixed(0)}kbps`);
+        console.log(`   🎥 Video Codec: ${metadata.video?.codec || 'unknown'}`);
+        console.log(`   🎵 Audio Codec: ${metadata.audio?.codec || 'unknown'}`);
+        console.log(`   🖼️  FPS: ${metadata.video?.fps || 'unknown'}`);
+        console.log('═══════════════════════════════════════════════════════════\n');
 
         // Determine if compression is needed
         const compressionDecision = videoService.shouldCompress(metadata, {
