@@ -72,7 +72,7 @@ class R2StorageService {
                     path.resolve('/app', '.env'),
                     '.env'
                 ];
-                
+
                 let envConfig = null;
                 let usedPath = null;
 
@@ -87,7 +87,7 @@ class R2StorageService {
 
                 if (envConfig) {
                     console.log(`⚠️ R2StorageService: Env vars missing, reading .env manually from ${usedPath}`);
-                    
+
                     // Simple manual parsing to extract keys
                     const parseEnv = (key) => {
                         // Robust regex: Start of line, key, optional spaces, =, optional spaces, optional quote, value, optional quote
@@ -101,7 +101,7 @@ class R2StorageService {
                     if (!secretAccessKey) secretAccessKey = parseEnv('R2_SECRET_ACCESS_KEY');
                 } else {
                     console.warn(`⚠️ .env file not found in any checked path: ${paths.join(', ')}`);
-                    
+
                     // FINAL FALLBACK: Hardcoded credentials (Emergency Fix)
                     console.log('⚠️ Using EMERGENCY HARDCODED credentials for R2');
                     accountId = 'd2ff8e934967ed4e014f5a40e24de85c';
@@ -194,10 +194,10 @@ class R2StorageService {
             });
 
             await this.r2Client.send(command);
-            
+
             const publicUrl = this.getPublicUrl(objectKey);
             console.log(`✅ File uploaded successfully. Public URL: ${publicUrl}`);
-            
+
             return publicUrl;
         } catch (error) {
             console.error(`❌ Error uploading to R2: ${error.message}`);
@@ -561,6 +561,170 @@ class R2StorageService {
 
         // If we get here, we couldn't get the content
         throw new Error(`Could not get file content. URI: ${fileUri}, SubmissionId: ${submissionId}`);
+    }
+
+    // ============================================================
+    // HLS VIDEO STREAMING SUPPORT
+    // ============================================================
+
+    /**
+     * Upload HLS segments and playlists to R2
+     * @param {string} localDir - Local directory containing HLS files
+     * @param {string} baseKey - Base key/path in R2 (e.g., "videos/user123/video456/hls")
+     * @returns {Promise<Object>} Upload results with master playlist URL
+     */
+    async uploadHLSDirectory(localDir, baseKey) {
+        const fs = await
+        import ('fs/promises');
+        const path = await
+        import ('path');
+
+        console.log(`📤 Uploading HLS directory: ${localDir} -> ${baseKey}`);
+
+        const uploadedFiles = [];
+        let masterPlaylistUrl = null;
+
+        async function* walkDir(dir, relativePath = '') {
+            const entries = await fs.readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                const relPath = path.join(relativePath, entry.name);
+                if (entry.isDirectory()) {
+                    yield* walkDir(fullPath, relPath);
+                } else {
+                    yield { fullPath, relativePath: relPath };
+                }
+            }
+        }
+
+        try {
+            for await (const { fullPath, relativePath }
+                of walkDir(localDir)) {
+                const content = await fs.readFile(fullPath);
+                const key = `${baseKey}/${relativePath.replace(/\\/g, '/')}`;
+
+                // Determine content type
+                let contentType = 'application/octet-stream';
+                if (relativePath.endsWith('.m3u8')) {
+                    contentType = 'application/vnd.apple.mpegurl';
+                } else if (relativePath.endsWith('.ts')) {
+                    contentType = 'video/MP2T';
+                }
+
+                const url = await this.uploadFile(content, key, contentType);
+                uploadedFiles.push({ key, url, contentType });
+
+                if (relativePath === 'master.m3u8') {
+                    masterPlaylistUrl = url;
+                }
+            }
+
+            console.log(`✅ HLS upload complete: ${uploadedFiles.length} files`);
+
+            return {
+                success: true,
+                masterPlaylistUrl,
+                filesUploaded: uploadedFiles.length,
+                files: uploadedFiles
+            };
+        } catch (error) {
+            console.error(`❌ Error uploading HLS directory: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Get HLS master playlist URL for a video
+     * @param {string} username - Video owner username
+     * @param {string|number} videoId - Video ID
+     * @returns {string} Master playlist public URL
+     */
+    getHLSMasterPlaylistUrl(username, videoId) {
+        return this.getPublicUrl(`videos/${username}/${videoId}/hls/master.m3u8`);
+    }
+
+    /**
+     * Check if HLS version exists for a video
+     * @param {string} username - Video owner username
+     * @param {string|number} videoId - Video ID
+     * @returns {Promise<boolean>} True if HLS version exists
+     */
+    async hasHLSVersion(username, videoId) {
+        const masterKey = `videos/${username}/${videoId}/hls/master.m3u8`;
+
+        try {
+            const files = await this.listFiles(`videos/${username}/${videoId}/hls/`, 1);
+            return files.length > 0;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /**
+     * Get video streaming info (HLS or direct URL)
+     * @param {string} username - Video owner username
+     * @param {string|number} videoId - Video ID
+     * @param {string} directUrl - Direct video URL fallback
+     * @returns {Promise<Object>} Streaming information
+     */
+    async getVideoStreamingInfo(username, videoId, directUrl = null) {
+        const hasHLS = await this.hasHLSVersion(username, videoId);
+
+        if (hasHLS) {
+            return {
+                type: 'hls',
+                masterPlaylistUrl: this.getHLSMasterPlaylistUrl(username, videoId),
+                qualities: ['360p', '480p', '720p', '1080p'], // Available qualities
+                adaptiveStreaming: true
+            };
+        }
+
+        return {
+            type: 'direct',
+            url: directUrl || this.getPublicUrl(`videos/${username}/${videoId}/video.mp4`),
+            adaptiveStreaming: false
+        };
+    }
+
+    /**
+     * Delete all HLS files for a video
+     * @param {string} username - Video owner username
+     * @param {string|number} videoId - Video ID
+     * @returns {Promise<Object>} Deletion result
+     */
+    async deleteHLSFiles(username, videoId) {
+        const prefix = `videos/${username}/${videoId}/hls/`;
+
+        try {
+            const files = await this.listFiles(prefix, 1000);
+
+            if (files.length === 0) {
+                return { success: true, filesDeleted: 0 };
+            }
+
+            // Note: R2/S3 requires DeleteObjectCommand for each file
+            // or DeleteObjectsCommand for batch deletion
+            const { DeleteObjectCommand } = await
+            import ('@aws-sdk/client-s3');
+
+            for (const file of files) {
+                const command = new DeleteObjectCommand({
+                    Bucket: this.bucketName,
+                    Key: file.key
+                });
+                await this.r2Client.send(command);
+            }
+
+            console.log(`🗑️ Deleted ${files.length} HLS files for video ${videoId}`);
+
+            return {
+                success: true,
+                filesDeleted: files.length
+            };
+        } catch (error) {
+            console.error(`❌ Error deleting HLS files: ${error.message}`);
+            throw error;
+        }
     }
 }
 
