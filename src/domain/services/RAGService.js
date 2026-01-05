@@ -6,16 +6,62 @@
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { CacheService } from '../../infrastructure/cache/CacheService.js';
 import { logger } from '../../infrastructure/logging/Logger.js';
+import { EmbeddingService } from '../../infrastructure/ai/EmbeddingService.js';
+import { DocumentProcessor } from './DocumentProcessor.js';
 
 export class RAGService {
   constructor() {
     this.supabase = SupabaseService.getInstance();
     this.cache = CacheService.getInstance();
+    this.embeddingService = EmbeddingService.getInstance();
+    this.documentProcessor = new DocumentProcessor();
     this.topK = parseInt(process.env.RAG_TOP_K) || 5;
     this.chunkSize = parseInt(process.env.RAG_CHUNK_SIZE) || 1000;
-    this.enabled = process.env.RAG_ENABLED === 'true';
+    this.enabled = process.env.RAG_ENABLED !== 'false';
   }
   
+  /**
+   * Ingest a file into the knowledge base
+   * Splits text, generates embeddings, and stores in DB
+   */
+  async ingestFile(content, metadata = {}) {
+    if (!content || !this.enabled) return 0;
+
+    try {
+        logger.info(`Ingesting file: ${metadata.fileName || 'unknown'}`);
+        
+        // 1. Split text into chunks
+        const chunks = await this.documentProcessor.splitText(content);
+        logger.info(`Split document into ${chunks.length} chunks`);
+
+        // 2. Generate embeddings and store
+        // Process in batches to avoid rate limits
+        const batchSize = 10;
+        let storedCount = 0;
+
+        for (let i = 0; i < chunks.length; i += batchSize) {
+            const batch = chunks.slice(i, i + batchSize);
+            
+            try {
+                const embeddings = await this.embeddingService.embedDocuments(batch);
+                
+                for (let j = 0; j < batch.length; j++) {
+                    await this.supabase.insertKnowledgeBase(batch[j], metadata, embeddings[j]);
+                    storedCount++;
+                }
+            } catch (e) {
+                logger.error(`Error processing batch ${i}:`, e);
+            }
+        }
+        
+        logger.info(`Successfully stored ${storedCount} chunks`);
+        return storedCount;
+    } catch (error) {
+        logger.error('Error ingesting file:', error);
+        throw error;
+    }
+  }
+
   /**
    * Search knowledge base with semantic similarity
    */
@@ -40,21 +86,26 @@ export class RAGService {
         return cached;
       }
       
-      // Execute vector search
-      const results = await this.supabase.executeRAGQuery(query, topK);
+      // 1. Generate embedding for query
+      const embedding = await this.embeddingService.embedQuery(query);
       
-      // Filter by threshold
-      const filtered = results.filter(r => r.similarity >= threshold);
+      // 2. Execute vector search
+      const results = await this.supabase.matchDocuments(embedding, threshold, topK);
       
       // Cache results
-      this.cache.set(cacheKey, filtered, 1800); // 30 minutes
+      this.cache.set(cacheKey, results, 1800); // 30 minutes
       
-      logger.info(`RAG search returned ${filtered.length} results for query: ${query}`);
+      logger.info(`RAG search returned ${results.length} results for query: ${query}`);
       
-      return filtered;
+      return results;
     } catch (error) {
       logger.error('RAG search error:', error);
-      throw error;
+      // Fallback to keyword search if embedding fails
+      try {
+          return await this.supabase.executeRAGQuery(query, topK);
+      } catch (e) {
+          return [];
+      }
     }
   }
   
@@ -114,19 +165,7 @@ export class RAGService {
    * Add content to knowledge base
    */
   async addKnowledge(content, metadata = {}) {
-    try {
-      const result = await this.supabase.insertKnowledgeBase(content, metadata);
-      
-      logger.info('Knowledge added to base:', { id: result.id });
-      
-      // Invalidate relevant caches
-      this.cache.flush();
-      
-      return result;
-    } catch (error) {
-      logger.error('Error adding knowledge:', error);
-      throw error;
-    }
+    return this.ingestFile(content, metadata);
   }
   
   /**

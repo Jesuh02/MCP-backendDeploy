@@ -15,6 +15,7 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { LLMService } from './src/infrastructure/ai/LLMService.js';
 import { MCPService } from './src/domain/services/MCPService.js';
 import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
+import { RAGService } from './src/domain/services/RAGService.js';
 
 // AWS SDK for Cloudflare R2 (S3-compatible)
 import { S3Client, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
@@ -319,6 +320,15 @@ try {
     console.log('✅ SupabaseService initialized');
 } catch (error) {
     console.error('❌ Failed to initialize SupabaseService:', error.message);
+}
+
+// Initialize RAGService
+let ragService = null;
+try {
+    ragService = new RAGService();
+    console.log('✅ RAGService initialized');
+} catch (error) {
+    console.error('❌ Failed to initialize RAGService:', error.message);
 }
 
 // ============================================================
@@ -4256,10 +4266,41 @@ app.post('/procesar-prompt', async(req, res) => {
                                     }
                                     // Handle Text
                                     else if (!fileData.isBase64 && fileData.contentType && fileData.contentType.startsWith('text/')) {
-                                        // Incluir TODO el contenido del archivo (sin limitar por tokens)
                                         const contentSnippet = fileData.content;
-                                        augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} ---\n${contentSnippet}`;
-                                        console.log(`✅ Contenido completo de ${file.name} añadido al prompt (${contentSnippet.length} chars)`);
+                                        
+                                        // RAG IMPLEMENTATION: If content is too large (> 20k chars), use RAG
+                                        if (contentSnippet.length > 20000 && ragService) {
+                                            console.log(`📚 Content too large (${contentSnippet.length} chars), using RAG...`);
+                                            try {
+                                                // 1. Ingest file
+                                                await ragService.ingestFile(contentSnippet, { 
+                                                    fileName: file.name, 
+                                                    submissionId: submissionId,
+                                                    taskId: taskId 
+                                                });
+                                                
+                                                // 2. Retrieve relevant context
+                                                const relevantChunks = await ragService.search(prompt, { topK: 5 });
+                                                
+                                                if (relevantChunks.length > 0) {
+                                                    augmentedPrompt += `\n\n--- Contexto relevante del archivo ${file.name} (RAG) ---\n`;
+                                                    relevantChunks.forEach((chunk, idx) => {
+                                                        augmentedPrompt += `[Fragmento ${idx+1}]: ${chunk.content}\n\n`;
+                                                    });
+                                                    console.log(`✅ Added ${relevantChunks.length} RAG chunks to prompt`);
+                                                } else {
+                                                    const truncated = contentSnippet.substring(0, 20000);
+                                                    augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} (Truncado) ---\n${truncated}\n...[resto omitido]`;
+                                                }
+                                            } catch (ragError) {
+                                                console.error('❌ RAG Error:', ragError);
+                                                const truncated = contentSnippet.substring(0, 20000);
+                                                augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} (Truncado/RAG Falló) ---\n${truncated}\n...[resto omitido]`;
+                                            }
+                                        } else {
+                                            augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} ---\n${contentSnippet}`;
+                                            console.log(`✅ Contenido completo de ${file.name} añadido al prompt (${contentSnippet.length} chars)`);
+                                        }
                                     } else {
                                         augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (${fileData.contentType || 'tipo desconocido'}) ---`;
                                         console.log(`ℹ️ Archivo ${file.name} es binario o no textual, solo referencia añadida`);

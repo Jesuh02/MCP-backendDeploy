@@ -441,17 +441,47 @@ CREATE TABLE public.videos (
     }
 
     /**
+     * Match documents using vector similarity
+     */
+    async matchDocuments(embedding, matchThreshold = 0.7, matchCount = 5, filter = {}) {
+        try {
+            const { data, error } = await this.client
+                .rpc('match_documents', {
+                    query_embedding: embedding,
+                    match_threshold: matchThreshold,
+                    match_count: matchCount,
+                    filter: filter
+                });
+
+            if (error) {
+                // Fallback to search_knowledge_base if match_documents doesn't exist
+                logger.warn('match_documents RPC failed, trying search_knowledge_base fallback...');
+                return this.executeRAGQuery(null, matchCount, embedding);
+            }
+
+            return data || [];
+        } catch (error) {
+            logger.error('Error matching documents:', error);
+            return [];
+        }
+    }
+
+    /**
      * Execute RAG query with vector similarity search
      */
-    async executeRAGQuery(query, topK = 5) {
+    async executeRAGQuery(query, topK = 5, embedding = null) {
         try {
+            const rpcParams = {
+                match_threshold: 0.7,
+                match_count: topK
+            };
+
+            if (query) rpcParams.query_text = query;
+            if (embedding) rpcParams.query_embedding = embedding;
+
             // Call the vector search RPC function
             const { data, error } = await this.client
-                .rpc('search_knowledge_base', {
-                    query_text: query,
-                    match_threshold: 0.7,
-                    match_count: topK
-                });
+                .rpc('search_knowledge_base', rpcParams);
 
             if (error) throw error;
 
@@ -521,15 +551,21 @@ CREATE TABLE public.videos (
     /**
      * Insert data into knowledge base for RAG
      */
-    async insertKnowledgeBase(content, metadata = {}) {
+    async insertKnowledgeBase(content, metadata = {}, embedding = null) {
         try {
+            const payload = {
+                content,
+                metadata,
+                created_at: new Date().toISOString()
+            };
+            
+            if (embedding) {
+                payload.embedding = embedding;
+            }
+
             const { data, error } = await this.client
                 .from('knowledge_base')
-                .insert([{
-                    content,
-                    metadata,
-                    created_at: new Date().toISOString()
-                }])
+                .insert([payload])
                 .select();
 
             if (error) throw error;
