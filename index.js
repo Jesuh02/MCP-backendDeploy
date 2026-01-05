@@ -32,6 +32,7 @@ import { VideoProcessingService } from './src/services/VideoProcessingService.js
 import excelRoutes from './src/interfaces/routes/excelRoutes.js';
 import ttsRoutes from './src/interfaces/routes/ttsRoutes.js';
 import videoProcessingRoutes from './src/interfaces/routes/videoProcessingRoutes.js';
+import ragRoutes from './src/interfaces/routes/RAGRoutes.js';
 // Note: Additional refactored modules available:
 // - notificationRoutes: ./src/interfaces/routes/notificationRoutes.js
 // - fileUtils: ./src/utils/fileUtils.js  
@@ -99,6 +100,15 @@ app.use('/excel', excelRoutes);
 
 // Register TTS Routes (Text-to-Speech with natural human voices)
 app.use('/tts', ttsRoutes);
+
+// Register RAG Routes (Retrieval-Augmented Generation)
+app.use('/api/v1/rag', ragRoutes);
+console.log('📚 RAG routes registered at /api/v1/rag');
+console.log('   📖 Available endpoints:');
+console.log('      GET  /api/v1/rag/status - Check RAG service status');
+console.log('      POST /api/v1/rag/ingest - Ingest document into RAG');
+console.log('      POST /api/v1/rag/search - Search knowledge base');
+console.log('      POST /api/v1/rag/context - Build context for LLM');
 
 // Middleware de logging para todas las requests de video
 app.use('/video', (req, res, next) => {
@@ -4206,6 +4216,39 @@ app.post('/procesar-prompt', async(req, res) => {
         console.log('🤖 Model:', model || 'NO ESPECIFICADO');
 
         // ============================================================
+        // 🔥 EXTRAER INFORMACIÓN DEL CONTEXTO PRIMERO (ANTES DE PROCESAR ARCHIVOS)
+        // Esto es necesario para que el RAG pueda usar taskTitle y taskDescription
+        // ============================================================
+        let extractedTaskName = '';
+        let extractedProfessorDescription = '';
+        let extractedFileName = '';
+        let extractedSummary = '';
+
+        if (taskDescription) {
+            // Extraer nombre de la tarea
+            const taskMatch = taskDescription.match(/📋\s*TAREA:\s*([^\n]+)/);
+            if (taskMatch) extractedTaskName = taskMatch[1].trim();
+
+            // Extraer descripción del profesor
+            const descMatch = taskDescription.match(/📝\s*DESCRIPCIÓN(?:\s+DEL\s+PROFESOR)?[:\s]*\n?([\s\S]*?)(?=\n📎|\n📄|$)/i);
+            if (descMatch) extractedProfessorDescription = descMatch[1].trim();
+
+            // Extraer nombre del archivo
+            const fileMatch = taskDescription.match(/📎\s*ARCHIVO[^:]*:\s*([^\n]+)/);
+            if (fileMatch) extractedFileName = fileMatch[1].trim();
+
+            // Extraer resumen del contenido
+            const summaryMatch = taskDescription.match(/📄\s*RESUMEN[^:]*:\s*([\s\S]+?)$/);
+            if (summaryMatch) extractedSummary = summaryMatch[1].trim();
+
+            console.log('🔍 INFORMACIÓN EXTRAÍDA DEL CONTEXTO:');
+            console.log('   - Tarea:', extractedTaskName || '(no encontrado)');
+            console.log('   - Descripción profesor:', extractedProfessorDescription ? extractedProfessorDescription.substring(0, 100) + '...' : '(no encontrado)');
+            console.log('   - Archivo:', extractedFileName || '(no encontrado)');
+            console.log('   - Resumen:', extractedSummary ? extractedSummary.substring(0, 100) + '...' : '(no encontrado)');
+        }
+
+        // ============================================================
         // 🔥 NUEVO: PROCESAR jsonContent PARA ARCHIVOS ADJUNTOS DEL CURSO
         // Si viene jsonContent con archivos del curso, descargarlos y añadir al prompt
         // ============================================================
@@ -4363,62 +4406,30 @@ app.post('/procesar-prompt', async(req, res) => {
             }
         }
 
-        // 🔥 MEJORA: Extraer información estructurada del taskDescription si tiene formato con emojis
-        // El cliente Android envía taskDescription en formato:
-        // "📋 TAREA: nombre\n📝 DESCRIPCIÓN DEL PROFESOR:\ndescripción\n📎 ARCHIVO: archivo.ext\n📄 RESUMEN: resumen"
-        let extractedTaskName = '';
-        let extractedProfessorDescription = '';
-        let extractedFileName = '';
-        let extractedSummary = '';
-
-        if (taskDescription) {
-            // Extraer nombre de la tarea
-            const taskMatch = taskDescription.match(/📋\s*TAREA:\s*([^\n]+)/);
-            if (taskMatch) extractedTaskName = taskMatch[1].trim();
-
-            // Extraer descripción del profesor
-            const descMatch = taskDescription.match(/📝\s*DESCRIPCIÓN(?:\s+DEL\s+PROFESOR)?[:\s]*\n?([\s\S]*?)(?=\n📎|\n📄|$)/i);
-            if (descMatch) extractedProfessorDescription = descMatch[1].trim();
-
-            // Extraer nombre del archivo
-            const fileMatch = taskDescription.match(/📎\s*ARCHIVO[^:]*:\s*([^\n]+)/);
-            if (fileMatch) extractedFileName = fileMatch[1].trim();
-
-            // Extraer resumen del contenido
-            const summaryMatch = taskDescription.match(/📄\s*RESUMEN[^:]*:\s*([\s\S]+?)$/);
-            if (summaryMatch) extractedSummary = summaryMatch[1].trim();
-
-            console.log('🔍 INFORMACIÓN EXTRAÍDA DEL CONTEXTO:');
-            console.log('   - Tarea:', extractedTaskName || '(no encontrado)');
-            console.log('   - Descripción profesor:', extractedProfessorDescription ? extractedProfessorDescription.substring(0, 100) + '...' : '(no encontrado)');
-            console.log('   - Archivo:', extractedFileName || '(no encontrado)');
-            console.log('   - Resumen:', extractedSummary ? extractedSummary.substring(0, 100) + '...' : '(no encontrado)');
-            
-            // 🔥 NUEVO: Intentar extraer URL de R2 del taskDescription si hay una
-            if ((!fileContent || fileContent.trim().length < 50)) {
-                const r2UrlMatch = taskDescription.match(/(https?:\/\/[^\s]*\.r2\.dev[^\s]*)/);
-                if (r2UrlMatch) {
-                    const r2Url = r2UrlMatch[1];
-                    console.log(`🔗 URL de R2 detectada en taskDescription: ${r2Url}`);
-                    
-                    try {
-                        const fileData = await getSubmissionFileContent(r2Url, extractedFileName || 'archivo.txt', null);
-                        if (fileData && fileData.content) {
-                            fileContent = fileData.content;
-                            console.log(`✅ Contenido descargado desde URL en taskDescription: ${fileContent.length} caracteres`);
-                        }
-                    } catch (urlError) {
-                        console.log(`⚠️ Error descargando desde URL en taskDescription: ${urlError.message}`);
+        // 🔥 NUEVO: Intentar extraer URL de R2 del taskDescription si hay una
+        if (taskDescription && (!fileContent || fileContent.trim().length < 50)) {
+            const r2UrlMatch = taskDescription.match(/(https?:\/\/[^\s]*\.r2\.dev[^\s]*)/);
+            if (r2UrlMatch) {
+                const r2Url = r2UrlMatch[1];
+                console.log(`🔗 URL de R2 detectada en taskDescription: ${r2Url}`);
+                
+                try {
+                    const fileData = await getSubmissionFileContent(r2Url, extractedFileName || 'archivo.txt', null);
+                    if (fileData && fileData.content) {
+                        fileContent = fileData.content;
+                        console.log(`✅ Contenido descargado desde URL en taskDescription: ${fileContent.length} caracteres`);
                     }
+                } catch (urlError) {
+                    console.log(`⚠️ Error descargando desde URL en taskDescription: ${urlError.message}`);
                 }
             }
-                }
+        }
 
-                // ============================================================
-                // LLM REQUEST START: instrucción fija para generación de preguntas
-                // Insertamos un encabezado que obliga al modelo a usar TODO el contenido
-                // de los archivos del curso (tareas y temas) y a devolver un JSON estructurado.
-                const llmRequestHeader = `LLM REQUEST START:
+        // ============================================================
+        // LLM REQUEST START: instrucción fija para generación de preguntas
+        // Insertamos un encabezado que obliga al modelo a usar TODO el contenido
+        // de los archivos del curso (tareas y temas) y a devolver un JSON estructurado.
+        const llmRequestHeader = `LLM REQUEST START:
 Por favor, EXTRAIGA y UTILICE TODO el contenido de los archivos del curso entregados por el docente (tareas, temas, materiales, descripciones, enunciados). Si en esta petición se incluyen archivos o su contenido (adjuntos / jsonContent), priorice y base TODAS las preguntas en ese contenido. No invente contenidos adicionales sobre el curso; si falta información relevante, indique explícitamente que no hay suficiente información para generar preguntas concretas.
 
 FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
