@@ -4245,12 +4245,50 @@ app.post('/procesar-prompt', async(req, res) => {
                                                 const data = await Promise.race([pdfPromise, timeoutPromise]);
                                                 
                                                 if (data.text && data.text.trim().length > 0) {
-                                                    // Limit text length to avoid token overflow (e.g., 50k chars)
-                                                    const contentSnippet = data.text.substring(0, 50000);
-                                                    const truncated = data.text.length > 50000 ? `... [truncado, total ${data.text.length} chars]` : '';
+                                                    // 🔥 RAG IMPLEMENTATION FOR PDF: Use RAG if content exceeds 15k chars
+                                                    const pdfText = data.text;
+                                                    const RAG_THRESHOLD_PDF = 15000; // 15k chars threshold for RAG
                                                     
-                                                    augmentedPrompt += `\n\n--- Contenido del archivo del curso (PDF): ${file.name} ---\n${contentSnippet}${truncated}`;
-                                                    console.log(`✅ PDF analizado exitosamente: ${file.name} (${contentSnippet.length} chars)`);
+                                                    if (pdfText.length > RAG_THRESHOLD_PDF && ragService && ragService.isReady()) {
+                                                        console.log(`📚 PDF content too large (${pdfText.length} chars), using RAG...`);
+                                                        try {
+                                                            // 1. Ingest PDF content
+                                                            const ingestResult = await ragService.ingestDocument(pdfText, { 
+                                                                fileName: file.name, 
+                                                                fileType: 'pdf',
+                                                                courseId: extractCourseIdFromRequest(req.body),
+                                                                taskId: taskId 
+                                                            });
+                                                            console.log(`✅ PDF ingested: ${ingestResult.chunksStored} chunks stored`);
+                                                            
+                                                            // 2. Build context using RAG (retrieves only relevant chunks)
+                                                            const ragContext = await ragService.buildContext(prompt, {
+                                                                courseId: extractCourseIdFromRequest(req.body),
+                                                                taskId: taskId,
+                                                                taskTitle: extractedTaskName,
+                                                                taskDescription: extractedProfessorDescription,
+                                                                topK: 7 // Get more chunks for questions
+                                                            });
+                                                            
+                                                            if (ragContext && ragContext.length > 100) {
+                                                                augmentedPrompt += `\n\n${ragContext}`;
+                                                                console.log(`✅ Added RAG context from PDF (${ragContext.length} chars)`);
+                                                            } else {
+                                                                // Fallback: truncate if RAG didn't find relevant content
+                                                                const truncated = pdfText.substring(0, 20000);
+                                                                augmentedPrompt += `\n\n--- Contenido del PDF ${file.name} (Truncado a 20k) ---\n${truncated}\n...[resto omitido, total ${pdfText.length} chars]`;
+                                                            }
+                                                        } catch (ragError) {
+                                                            console.error('❌ RAG Error for PDF:', ragError);
+                                                            // Fallback: truncate content
+                                                            const truncated = pdfText.substring(0, 20000);
+                                                            augmentedPrompt += `\n\n--- Contenido del PDF ${file.name} (Truncado/RAG Falló) ---\n${truncated}\n...[resto omitido]`;
+                                                        }
+                                                    } else {
+                                                        // Small PDF: include full content (under threshold)
+                                                        augmentedPrompt += `\n\n--- Contenido del archivo del curso (PDF): ${file.name} ---\n${pdfText}`;
+                                                        console.log(`✅ PDF analizado exitosamente (full): ${file.name} (${pdfText.length} chars)`);
+                                                    }
                                                 } else {
                                                     console.warn(`⚠️ PDF analizado pero sin texto (posible escaneado): ${file.name}`);
                                                     augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (PDF escaneado o vacío) ---`;
@@ -4264,40 +4302,48 @@ app.post('/procesar-prompt', async(req, res) => {
                                              augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (Librería PDF no disponible) ---`;
                                         }
                                     }
-                                    // Handle Text
+                                    // Handle Text Files
                                     else if (!fileData.isBase64 && fileData.contentType && fileData.contentType.startsWith('text/')) {
                                         const contentSnippet = fileData.content;
+                                        const RAG_THRESHOLD_TEXT = 15000; // 15k chars threshold for RAG
                                         
-                                        // RAG IMPLEMENTATION: If content is too large (> 20k chars), use RAG
-                                        if (contentSnippet.length > 20000 && ragService) {
-                                            console.log(`📚 Content too large (${contentSnippet.length} chars), using RAG...`);
+                                        // 🔥 RAG IMPLEMENTATION FOR TEXT: Use RAG if content exceeds threshold
+                                        if (contentSnippet.length > RAG_THRESHOLD_TEXT && ragService && ragService.isReady()) {
+                                            console.log(`📚 Text content too large (${contentSnippet.length} chars), using RAG...`);
                                             try {
-                                                // 1. Ingest file
-                                                await ragService.ingestFile(contentSnippet, { 
+                                                // 1. Ingest text file
+                                                const ingestResult = await ragService.ingestDocument(contentSnippet, { 
                                                     fileName: file.name, 
-                                                    submissionId: submissionId,
+                                                    fileType: file.name.split('.').pop() || 'txt',
+                                                    courseId: extractCourseIdFromRequest(req.body),
                                                     taskId: taskId 
                                                 });
+                                                console.log(`✅ Text file ingested: ${ingestResult.chunksStored} chunks stored`);
                                                 
-                                                // 2. Retrieve relevant context
-                                                const relevantChunks = await ragService.search(prompt, { topK: 5 });
+                                                // 2. Build context using RAG
+                                                const ragContext = await ragService.buildContext(prompt, {
+                                                    courseId: extractCourseIdFromRequest(req.body),
+                                                    taskId: taskId,
+                                                    taskTitle: extractedTaskName,
+                                                    taskDescription: extractedProfessorDescription,
+                                                    topK: 7
+                                                });
                                                 
-                                                if (relevantChunks.length > 0) {
-                                                    augmentedPrompt += `\n\n--- Contexto relevante del archivo ${file.name} (RAG) ---\n`;
-                                                    relevantChunks.forEach((chunk, idx) => {
-                                                        augmentedPrompt += `[Fragmento ${idx+1}]: ${chunk.content}\n\n`;
-                                                    });
-                                                    console.log(`✅ Added ${relevantChunks.length} RAG chunks to prompt`);
+                                                if (ragContext && ragContext.length > 100) {
+                                                    augmentedPrompt += `\n\n${ragContext}`;
+                                                    console.log(`✅ Added RAG context from text file (${ragContext.length} chars)`);
                                                 } else {
+                                                    // Fallback: truncate
                                                     const truncated = contentSnippet.substring(0, 20000);
-                                                    augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} (Truncado) ---\n${truncated}\n...[resto omitido]`;
+                                                    augmentedPrompt += `\n\n--- Contenido del archivo ${file.name} (Truncado) ---\n${truncated}\n...[resto omitido]`;
                                                 }
                                             } catch (ragError) {
-                                                console.error('❌ RAG Error:', ragError);
+                                                console.error('❌ RAG Error for text:', ragError);
                                                 const truncated = contentSnippet.substring(0, 20000);
-                                                augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} (Truncado/RAG Falló) ---\n${truncated}\n...[resto omitido]`;
+                                                augmentedPrompt += `\n\n--- Contenido del archivo ${file.name} (Truncado/RAG Falló) ---\n${truncated}\n...[resto omitido]`;
                                             }
                                         } else {
+                                            // Small file: include full content
                                             augmentedPrompt += `\n\n--- Contenido del archivo del curso: ${file.name} ---\n${contentSnippet}`;
                                             console.log(`✅ Contenido completo de ${file.name} añadido al prompt (${contentSnippet.length} chars)`);
                                         }
@@ -4920,6 +4966,58 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                     const questionCountMatch = prompt.match(/genera\s+(\d+)/i);
                     const questionCount = questionCountMatch ? parseInt(questionCountMatch[1]) : 5;
 
+                    // ═══════════════════════════════════════════════════════════════════
+                    // TOKEN LIMIT PROTECTION: Max 100k tokens to stay under DeepSeek's 131k limit
+                    // Reserve 30k for response + system prompt overhead
+                    // ═══════════════════════════════════════════════════════════════════
+                    const MAX_CONTEXT_TOKENS = 100000;
+                    let contextForPrompt = augmentedPrompt;
+                    
+                    // Check token count of augmentedPrompt
+                    const augmentedTokens = encode(contextForPrompt).length;
+                    console.log(`📊 Augmented prompt tokens: ${augmentedTokens}`);
+                    
+                    if (augmentedTokens > MAX_CONTEXT_TOKENS) {
+                        console.warn(`⚠️ Context too large (${augmentedTokens} tokens), truncating to ${MAX_CONTEXT_TOKENS}...`);
+                        
+                        // Try to use RAG to get only relevant content instead of truncating
+                        if (ragService && ragService.isReady()) {
+                            console.log('📚 Attempting to use RAG for context reduction...');
+                            try {
+                                const ragContext = await ragService.buildContext(prompt, {
+                                    courseId: courseId,
+                                    taskTitle: extractedTaskName,
+                                    taskDescription: extractedProfessorDescription,
+                                    topK: 10, // Get more chunks for question generation
+                                    maxTokens: 25000 // ~100k chars
+                                });
+                                
+                                if (ragContext && ragContext.length > 500) {
+                                    contextForPrompt = ragContext;
+                                    console.log(`✅ RAG reduced context to ~${encode(ragContext).length} tokens`);
+                                } else {
+                                    // Fallback: truncate by characters (rough estimate: 4 chars per token)
+                                    const maxChars = MAX_CONTEXT_TOKENS * 4;
+                                    contextForPrompt = augmentedPrompt.substring(0, maxChars) + 
+                                        '\n\n...[CONTENIDO TRUNCADO PARA EVITAR LÍMITE DE TOKENS]';
+                                    console.log(`⚠️ RAG context insufficient, truncated to ${maxChars} chars`);
+                                }
+                            } catch (ragError) {
+                                console.error('❌ RAG context building failed:', ragError);
+                                // Fallback truncation
+                                const maxChars = MAX_CONTEXT_TOKENS * 4;
+                                contextForPrompt = augmentedPrompt.substring(0, maxChars) + 
+                                    '\n\n...[CONTENIDO TRUNCADO PARA EVITAR LÍMITE DE TOKENS]';
+                            }
+                        } else {
+                            // No RAG available, use simple truncation
+                            const maxChars = MAX_CONTEXT_TOKENS * 4;
+                            contextForPrompt = augmentedPrompt.substring(0, maxChars) + 
+                                '\n\n...[CONTENIDO TRUNCADO PARA EVITAR LÍMITE DE TOKENS]';
+                            console.log(`⚠️ RAG not available, truncated to ${maxChars} chars`);
+                        }
+                    }
+
                     // Build prompt with history to avoid repetitions
                     let promptCompleto = `INSTRUCCIONES CRÍTICAS PARA GENERAR PREGUNTAS DE REFORZAMIENTO:
 - GENERA ${questionCount} PREGUNTAS DE SELECCIÓN MÚLTIPLE (A, B, C, D) PARA REFORZAR CONOCIMIENTOS
@@ -4944,7 +5042,7 @@ HISTORIAL DE PREGUNTAS ANTERIORES (PROHIBIDO REPETIR O PARAFRASEAR):
 ${recentHistory.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
 CONTEXTO DEL CURSO:
-${augmentedPrompt}
+${contextForPrompt}
 
 FORMATO DE RESPUESTA JSON ESTRICTO:
 [
@@ -4959,6 +5057,15 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                     console.log('📝 PROMPT ENVIADO A LLM (Inicio):', promptCompleto.substring(0, 500) + '...');
                     const tokensPrompt = encode(promptCompleto).length;
                     console.log('[REINFORCEMENT DeepSeek v2.3] TOKENS CONSUMIDOS:', tokensPrompt);
+                    
+                    // Final safety check - if still over limit, emergency truncate
+                    if (tokensPrompt > 120000) {
+                        console.error(`🚨 EMERGENCY: Prompt still too large (${tokensPrompt} tokens). Hard truncating...`);
+                        const emergencyMaxChars = 350000; // ~87k tokens
+                        promptCompleto = promptCompleto.substring(0, emergencyMaxChars) + 
+                            '\n\n[TRUNCADO DE EMERGENCIA]\n\nRespuesta JSON requerida:';
+                        console.log(`🚨 Emergency truncation applied. New length: ${encode(promptCompleto).length} tokens`);
+                    }
 
                     // Call DeepSeek for reinforcement questions
                     let respuestaFinal;
