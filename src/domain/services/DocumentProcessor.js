@@ -71,11 +71,33 @@ export class DocumentProcessor extends IDocumentProcessor {
         try {
             let buffer = content;
             if (typeof content === 'string') {
-                // Check if it's base64
-                if (content.match(/^[A-Za-z0-9+/=]+$/)) {
+                // Check if content looks like HTML (error page from R2/server)
+                if (content.includes('<!DOCTYPE') || content.includes('<html') || content.includes('<?xml')) {
+                    throw new Error('Received HTML/XML instead of PDF binary - likely a server error or missing file');
+                }
+                
+                // Check if it's base64 encoded
+                if (content.match(/^[A-Za-z0-9+/=]+$/) && content.length > 100) {
                     buffer = Buffer.from(content, 'base64');
                 } else {
-                    buffer = Buffer.from(content, 'utf-8');
+                    // Could be raw binary as string
+                    buffer = Buffer.from(content, 'binary');
+                }
+            }
+
+            // Validate that it looks like a PDF (magic bytes: %PDF)
+            const pdfMagic = buffer.slice(0, 5).toString('ascii');
+            if (!pdfMagic.startsWith('%PDF')) {
+                // Check if it's base64 that wasn't detected
+                try {
+                    const decoded = Buffer.from(buffer.toString('utf8'), 'base64');
+                    if (decoded.slice(0, 5).toString('ascii').startsWith('%PDF')) {
+                        buffer = decoded;
+                    } else {
+                        throw new Error(`Invalid PDF: File does not start with %PDF magic bytes (found: ${pdfMagic})`);
+                    }
+                } catch {
+                    throw new Error(`Invalid PDF: File does not start with %PDF magic bytes (found: ${pdfMagic})`);
                 }
             }
 
