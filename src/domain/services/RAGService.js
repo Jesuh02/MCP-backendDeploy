@@ -1,284 +1,487 @@
 /**
- * RAG Service - Retrieval-Augmented Generation
- * Implements vector search and semantic retrieval from Supabase
+ * RAGService - Retrieval-Augmented Generation
+ * 
+ * SOLID Principles Applied:
+ * - S: This service orchestrates RAG operations (single responsibility: RAG flow)
+ * - O: Open for extension via dependency injection of providers
+ * - L: All providers implement interfaces, can be substituted
+ * - I: Uses focused interfaces (IEmbeddingProvider, IVectorStore, IDocumentProcessor)
+ * - D: Depends on abstractions (interfaces), not concrete implementations
+ * 
+ * RAG Flow:
+ * 1. Document Ingestion: PDF → Extract Text → Split Chunks → Generate Embeddings → Store
+ * 2. Query: Question → Embedding → Vector Search → Retrieve Relevant Chunks → LLM Context
  */
 
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
+import { SupabaseVectorStore } from '../../infrastructure/database/SupabaseVectorStore.js';
 import { CacheService } from '../../infrastructure/cache/CacheService.js';
-import { logger } from '../../infrastructure/logging/Logger.js';
 import { EmbeddingService } from '../../infrastructure/ai/EmbeddingService.js';
 import { DocumentProcessor } from './DocumentProcessor.js';
+import { logger } from '../../infrastructure/logging/Logger.js';
 
 export class RAGService {
-  constructor() {
-    this.supabase = SupabaseService.getInstance();
-    this.cache = CacheService.getInstance();
-    this.embeddingService = EmbeddingService.getInstance();
-    this.documentProcessor = new DocumentProcessor();
+  constructor(options = {}) {
+    // Dependency Injection - allows swapping implementations
+    this.supabase = options.supabase || SupabaseService.getInstance();
+    this.vectorStore = options.vectorStore || SupabaseVectorStore.getInstance();
+    this.cache = options.cache || CacheService.getInstance();
+    this.embeddingService = options.embeddingService || EmbeddingService.getInstance();
+    this.documentProcessor = options.documentProcessor || new DocumentProcessor({
+      chunkSize: parseInt(process.env.RAG_CHUNK_SIZE) || 800,
+      chunkOverlap: parseInt(process.env.RAG_CHUNK_OVERLAP) || 150
+    });
+
     this.topK = parseInt(process.env.RAG_TOP_K) || 5;
-    this.chunkSize = parseInt(process.env.RAG_CHUNK_SIZE) || 1000;
+    this.threshold = parseFloat(process.env.RAG_THRESHOLD) || 0.7;
     this.enabled = process.env.RAG_ENABLED !== 'false';
+    this.maxContextTokens = parseInt(process.env.RAG_MAX_CONTEXT_TOKENS) || 30000;
   }
-  
+
   /**
-   * Ingest a file into the knowledge base
-   * Splits text, generates embeddings, and stores in DB
+   * Check if RAG service is ready
    */
-  async ingestFile(content, metadata = {}) {
-    if (!content || !this.enabled) return 0;
+  isReady() {
+    return this.enabled && this.embeddingService.isReady();
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════
+   * DOCUMENT INGESTION PIPELINE
+   * PDF → Extract Text → Split Chunks → Generate Embeddings → Store
+   * ═══════════════════════════════════════════════════════════════════
+   */
+
+  /**
+   * Ingest a document into the RAG system
+   * @param {Buffer|string} content - Document content
+   * @param {object} metadata - Document metadata (courseId, topicId, taskId, fileName, fileType)
+   * @returns {Promise<{success: boolean, chunksStored: number, error?: string}>}
+   */
+  async ingestDocument(content, metadata = {}) {
+    if (!this.enabled) {
+      return { success: false, chunksStored: 0, error: 'RAG is disabled' };
+    }
+
+    const startTime = Date.now();
+    logger.info(`📥 Starting document ingestion: ${metadata.fileName || 'unknown'}`);
 
     try {
-        logger.info(`Ingesting file: ${metadata.fileName || 'unknown'}`);
+      // Step 1: Extract text from document
+      const extractedText = await this.documentProcessor.extractText(
+        content, 
+        metadata.fileType || this._detectFileType(metadata.fileName)
+      );
+
+      if (!extractedText || extractedText.length < 50) {
+        return { 
+          success: false, 
+          chunksStored: 0, 
+          error: 'Document is empty or could not be parsed' 
+        };
+      }
+
+      logger.info(`📄 Extracted ${extractedText.length} characters from document`);
+
+      // Step 2: Split into chunks
+      const chunks = await this.documentProcessor.splitText(extractedText);
+      logger.info(`✂️ Split into ${chunks.length} chunks`);
+
+      if (chunks.length === 0) {
+        return { success: false, chunksStored: 0, error: 'No valid chunks created' };
+      }
+
+      // Step 3: Delete existing chunks for this document (avoid duplicates)
+      if (metadata.fileName) {
+        await this.vectorStore.delete({ 
+          fileName: metadata.fileName,
+          courseId: metadata.courseId,
+          taskId: metadata.taskId
+        });
+      }
+
+      // Step 4: Generate embeddings and store (in batches)
+      const batchSize = 5;
+      let storedCount = 0;
+
+      for (let i = 0; i < chunks.length; i += batchSize) {
+        const batch = chunks.slice(i, i + batchSize);
         
-        // 1. Split text into chunks
-        const chunks = await this.documentProcessor.splitText(content);
-        logger.info(`Split document into ${chunks.length} chunks`);
-
-        // 2. Generate embeddings and store
-        // Process in batches to avoid rate limits
-        const batchSize = 10;
-        let storedCount = 0;
-
-        for (let i = 0; i < chunks.length; i += batchSize) {
-            const batch = chunks.slice(i, i + batchSize);
+        try {
+          // Generate embeddings for batch
+          const embeddings = await this.embeddingService.embedDocuments(batch);
+          
+          // Store each chunk with its embedding
+          for (let j = 0; j < batch.length; j++) {
+            const chunkMetadata = {
+              ...metadata,
+              chunkIndex: i + j,
+              totalChunks: chunks.length
+            };
             
-            try {
-                const embeddings = await this.embeddingService.embedDocuments(batch);
-                
-                for (let j = 0; j < batch.length; j++) {
-                    await this.supabase.insertKnowledgeBase(batch[j], metadata, embeddings[j]);
-                    storedCount++;
-                }
-            } catch (e) {
-                logger.error(`Error processing batch ${i}:`, e);
-            }
+            await this.vectorStore.store(batch[j], embeddings[j], chunkMetadata);
+            storedCount++;
+          }
+          
+          // Progress log
+          if ((i + batchSize) % 20 === 0) {
+            logger.info(`   Progress: ${Math.min(i + batchSize, chunks.length)}/${chunks.length} chunks stored`);
+          }
+        } catch (batchError) {
+          logger.error(`Error processing batch ${i}:`, batchError);
+          // Continue with next batch
         }
-        
-        logger.info(`Successfully stored ${storedCount} chunks`);
-        return storedCount;
+      }
+
+      const duration = Date.now() - startTime;
+      logger.info(`✅ Document ingestion complete: ${storedCount}/${chunks.length} chunks in ${duration}ms`);
+
+      // Clear related cache
+      this._invalidateCache(metadata);
+
+      return { 
+        success: true, 
+        chunksStored: storedCount,
+        totalChunks: chunks.length,
+        duration
+      };
+
     } catch (error) {
-        logger.error('Error ingesting file:', error);
-        throw error;
+      logger.error('❌ Document ingestion failed:', error);
+      return { 
+        success: false, 
+        chunksStored: 0, 
+        error: error.message 
+      };
     }
   }
 
   /**
-   * Search knowledge base with semantic similarity
+   * Ingest multiple documents (e.g., all files in a course)
+   */
+  async ingestDocuments(documents) {
+    const results = [];
+    for (const doc of documents) {
+      const result = await this.ingestDocument(doc.content, doc.metadata);
+      results.push(result);
+    }
+    return results;
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════
+   * QUERY / RETRIEVAL PIPELINE  
+   * Question → Embedding → Vector Search → Relevant Chunks
+   * ═══════════════════════════════════════════════════════════════════
+   */
+
+  /**
+   * Search for relevant document chunks
+   * @param {string} query - The search query / question
+   * @param {object} options - Search options
+   * @returns {Promise<object[]>} - Array of relevant chunks with similarity scores
    */
   async search(query, options = {}) {
+    const {
+      topK = this.topK,
+      threshold = this.threshold,
+      courseId = null,
+      topicId = null,
+      taskId = null
+    } = options;
+
+    if (!this.enabled) {
+      logger.warn('RAG is disabled, returning empty results');
+      return [];
+    }
+
+    // Check cache
+    const cacheKey = `rag:search:${query}:${courseId}:${topicId}:${taskId}:${topK}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      logger.debug('🎯 RAG cache hit');
+      return cached;
+    }
+
     try {
-      const {
-        topK = this.topK,
-        threshold = 0.7,
-        includeMetadata = true
-      } = options;
-      
-      if (!this.enabled) {
-        logger.warn('RAG is disabled');
-        return [];
-      }
-      
-      // Check cache first
-      const cacheKey = `rag:${query}:${topK}`;
-      const cached = this.cache.get(cacheKey);
-      if (cached) {
-        logger.debug('RAG cache hit');
-        return cached;
-      }
-      
-      // 1. Generate embedding for query
-      const embedding = await this.embeddingService.embedQuery(query);
-      
-      // 2. Execute vector search
-      const results = await this.supabase.matchDocuments(embedding, threshold, topK);
-      
+      logger.info(`🔍 RAG Search: "${query.substring(0, 50)}..."`);
+
+      // Generate embedding for query
+      const queryEmbedding = await this.embeddingService.embedQuery(query);
+
+      // Search vector store
+      const results = await this.vectorStore.search(
+        queryEmbedding,
+        topK,
+        threshold,
+        { courseId, topicId, taskId }
+      );
+
       // Cache results
-      this.cache.set(cacheKey, results, 1800); // 30 minutes
-      
-      logger.info(`RAG search returned ${results.length} results for query: ${query}`);
-      
+      this.cache.set(cacheKey, results, 900); // 15 minutes
+
+      logger.info(`🎯 Found ${results.length} relevant chunks (threshold: ${threshold})`);
       return results;
+
     } catch (error) {
       logger.error('RAG search error:', error);
-      // Fallback to keyword search if embedding fails
-      try {
-          return await this.supabase.executeRAGQuery(query, topK);
-      } catch (e) {
-          return [];
-      }
+      return [];
     }
   }
-  
+
   /**
-   * Build context from database for a specific query
+   * ═══════════════════════════════════════════════════════════════════
+   * CONTEXT BUILDING FOR LLM
+   * Combines retrieved chunks into optimized context for the LLM
+   * ═══════════════════════════════════════════════════════════════════
+   */
+
+  /**
+   * Build context from relevant chunks for LLM
+   * @param {string} query - The user's question
+   * @param {object} options - Context options
+   * @returns {Promise<string>} - Formatted context string
    */
   async buildContext(query, options = {}) {
+    const {
+      courseId = null,
+      topicId = null,
+      taskId = null,
+      taskTitle = null,
+      taskDescription = null,
+      topK = this.topK,
+      maxTokens = this.maxContextTokens
+    } = options;
+
     try {
-      const {
-        includeSchema = true,
-        includeRAG = true,
-        includeStats = true
-      } = options;
-      
+      // Build search query combining user query with task context
+      let enhancedQuery = query;
+      if (taskTitle) enhancedQuery += ` ${taskTitle}`;
+      if (taskDescription) enhancedQuery += ` ${taskDescription}`;
+
+      // Search for relevant chunks
+      const chunks = await this.search(enhancedQuery, {
+        topK,
+        courseId,
+        topicId,
+        taskId
+      });
+
+      if (chunks.length === 0) {
+        logger.warn('No relevant chunks found for context');
+        return '';
+      }
+
+      // Build context string with token limit
       let context = '';
-      
-      // Add database schema
-      if (includeSchema) {
-        const schema = await this.supabase.getDatabaseSchema();
-        context += '# Database Schema\n\n';
+      let estimatedTokens = 0;
+      const tokensPerChar = 0.25; // Rough estimate: 4 chars per token
+
+      context += '═══════════════════════════════════════════════════════════\n';
+      context += '📚 CONTEXTO RELEVANTE DEL MATERIAL DEL CURSO (RAG)\n';
+      context += '═══════════════════════════════════════════════════════════\n\n';
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const chunkText = chunk.content || chunk.text || '';
+        const similarity = chunk.similarity || 0;
         
-        for (const [table, info] of Object.entries(schema)) {
-          if (info.exists) {
-            context += `- **${table}**: ${info.count} records\n`;
-          }
-        }
-        context += '\n';
-      }
-      
-      // Add RAG results
-      if (includeRAG && query) {
-        const ragResults = await this.search(query, { topK: 3 });
+        const chunkEntry = `📄 Fragmento ${i + 1} (${Math.round(similarity * 100)}% relevante):\n${chunkText}\n\n`;
         
-        if (ragResults.length > 0) {
-          context += '# Relevant Information\n\n';
-          ragResults.forEach((result, idx) => {
-            context += `## Result ${idx + 1} (${(result.similarity * 100).toFixed(1)}% match)\n`;
-            context += `${result.content}\n\n`;
-          });
+        const chunkTokens = Math.ceil(chunkEntry.length * tokensPerChar);
+        
+        if (estimatedTokens + chunkTokens > maxTokens) {
+          logger.info(`Context truncated at ${i} chunks to fit token limit`);
+          break;
         }
+
+        context += chunkEntry;
+        estimatedTokens += chunkTokens;
       }
-      
-      // Add system rules
-      context += '# System Rules\n\n';
-      context += '- **Valid Roles**: usuario, admin (ONLY)\n';
-      context += '- **Total Tables**: 14\n';
-      context += '- **Platform**: Educational system with courses, videos, tasks\n\n';
-      
+
+      context += '═══════════════════════════════════════════════════════════\n';
+      context += `Total: ${chunks.length} fragmentos recuperados del material del curso.\n`;
+      context += 'INSTRUCCIÓN: Usa ÚNICAMENTE la información de estos fragmentos para responder.\n';
+      context += '═══════════════════════════════════════════════════════════\n';
+
+      logger.info(`📝 Built context with ~${estimatedTokens} estimated tokens from ${chunks.length} chunks`);
       return context;
+
     } catch (error) {
       logger.error('Error building RAG context:', error);
-      throw error;
+      return '';
     }
   }
-  
+
   /**
-   * Add content to knowledge base
+   * Build smart context that analyzes the query to determine data needs
    */
-  async addKnowledge(content, metadata = {}) {
-    return this.ingestFile(content, metadata);
-  }
-  
-  /**
-   * Get table-specific context
-   */
-  async getTableContext(tableName, filters = {}) {
-    try {
-      const cacheKey = `table:${tableName}:${JSON.stringify(filters)}`;
-      
-      return await this.cache.getOrSet(cacheKey, async () => {
-        const data = await this.supabase.getTableContext(tableName, filters, 50);
-        return data;
-      }, 600); // 10 minutes
-      
-    } catch (error) {
-      logger.error(`Error getting context for ${tableName}:`, error);
-      throw error;
+  async buildSmartContext(query, options = {}) {
+    const analysis = this.analyzeQuery(query);
+    
+    // If query is about schema, don't use RAG
+    if (analysis.requiresSchema && !analysis.requiresRAG) {
+      return this._buildSchemaContext();
     }
+
+    // Build RAG context with analysis hints
+    return this.buildContext(query, {
+      ...options,
+      topK: analysis.tables.length > 0 ? this.topK + 2 : this.topK
+    });
   }
-  
+
   /**
-   * Smart query analysis - determine what data to fetch
+   * Analyze query to determine what kind of data is needed
    */
   analyzeQuery(query) {
-    const lowerQuery = query.toLowerCase();
+    const lowerQuery = (query || '').toLowerCase();
     
     const analysis = {
       tables: [],
       intent: 'general',
       requiresRAG: true,
-      requiresSchema: false
+      requiresSchema: false,
+      keywords: []
     };
-    
-    // Table detection
+
+    // Detect table references
     const tableKeywords = {
-      'usuarios': ['usuario', 'user', 'cuenta'],
-      'personas': ['persona', 'personal', 'perfil'],
-      'courses': ['curso', 'course', 'clase'],
-      'videos': ['video', 'multimedia'],
-      'tasks': ['tarea', 'task', 'actividad'],
-      'topics': ['tema', 'topic', 'módulo'],
-      'subscriptions': ['suscripción', 'seguir', 'subscription'],
-      'roles': ['rol', 'role', 'permiso']
+      'courses': ['curso', 'course', 'clase', 'materia'],
+      'tasks': ['tarea', 'task', 'actividad', 'ejercicio', 'práctica'],
+      'topics': ['tema', 'topic', 'módulo', 'unidad', 'capítulo'],
+      'videos': ['video', 'clase grabada', 'multimedia'],
+      'usuarios': ['usuario', 'estudiante', 'alumno', 'profesor']
     };
-    
+
     for (const [table, keywords] of Object.entries(tableKeywords)) {
-      if (keywords.some(kw => lowerQuery.includes(kw))) {
-        analysis.tables.push(table);
+      for (const kw of keywords) {
+        if (lowerQuery.includes(kw)) {
+          analysis.tables.push(table);
+          analysis.keywords.push(kw);
+          break;
+        }
       }
     }
-    
-    // Intent detection
-    if (lowerQuery.includes('esquema') || lowerQuery.includes('estructura') || 
-        lowerQuery.includes('tablas')) {
+
+    // Detect intent
+    if (/esquema|estructura|tablas|base de datos/i.test(lowerQuery)) {
       analysis.intent = 'schema';
       analysis.requiresSchema = true;
       analysis.requiresRAG = false;
-    } else if (lowerQuery.includes('cuántos') || lowerQuery.includes('total') || 
-               lowerQuery.includes('count')) {
+    } else if (/cuántos|total|count|estadísticas/i.test(lowerQuery)) {
       analysis.intent = 'statistics';
-    } else if (lowerQuery.includes('busca') || lowerQuery.includes('encuentra') || 
-               lowerQuery.includes('search')) {
+    } else if (/busca|encuentra|search|similar/i.test(lowerQuery)) {
       analysis.intent = 'search';
+    } else if (/genera|crea|preguntas|quiz|examen/i.test(lowerQuery)) {
+      analysis.intent = 'generation';
     }
-    
+
     return analysis;
   }
-  
+
   /**
-   * Comprehensive context builder with smart query analysis
+   * ═══════════════════════════════════════════════════════════════════
+   * UTILITY METHODS
+   * ═══════════════════════════════════════════════════════════════════
    */
-  async buildSmartContext(query) {
+
+  /**
+   * Check if a document has already been ingested
+   */
+  async isDocumentIngested(metadata) {
+    return this.vectorStore.exists({
+      fileName: metadata.fileName,
+      courseId: metadata.courseId,
+      taskId: metadata.taskId
+    });
+  }
+
+  /**
+   * Get document stats
+   */
+  async getDocumentStats(filter = {}) {
+    // This would query the vector store for stats
+    // Implementation depends on your needs
+    return {
+      totalDocuments: 0,
+      totalChunks: 0
+    };
+  }
+
+  /**
+   * Clear cache for specific context
+   */
+  _invalidateCache(metadata) {
+    // Invalidate all related cache keys
+    if (this.cache.flush) {
+      this.cache.flush();
+    }
+  }
+
+  /**
+   * Detect file type from filename
+   */
+  _detectFileType(fileName) {
+    if (!fileName) return 'txt';
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    return ext || 'txt';
+  }
+
+  /**
+   * Build schema context (for schema queries)
+   */
+  async _buildSchemaContext() {
     try {
-      const analysis = this.analyzeQuery(query);
+      const schema = await this.supabase.getDatabaseSchema();
+      let context = '# Database Schema\n\n';
       
-      logger.info('Query analysis:', analysis);
-      
-      let context = '';
-      
-      // Build context based on analysis
-      if (analysis.requiresSchema) {
-        context += await this.buildContext(query, {
-          includeSchema: true,
-          includeRAG: false
-        });
-      } else if (analysis.tables.length > 0) {
-        // Fetch specific table data
-        context += '# Relevant Data\n\n';
-        
-        for (const table of analysis.tables) {
-          const data = await this.getTableContext(table);
-          context += `## ${table} (${data.length} records)\n`;
-          context += '```json\n';
-          context += JSON.stringify(data.slice(0, 10), null, 2);
-          context += '\n```\n\n';
+      for (const [table, info] of Object.entries(schema)) {
+        if (info.exists) {
+          context += `- **${table}**: ${info.count} records\n`;
         }
-      }
-      
-      // Always include RAG if enabled
-      if (analysis.requiresRAG) {
-        const ragContext = await this.buildContext(query, {
-          includeSchema: false,
-          includeRAG: true
-        });
-        context += ragContext;
       }
       
       return context;
     } catch (error) {
-      logger.error('Error building smart context:', error);
-      throw error;
+      return '';
+    }
+  }
+
+  /**
+   * Legacy method for backwards compatibility
+   */
+  async addKnowledge(content, metadata = {}) {
+    return this.ingestDocument(content, metadata);
+  }
+
+  /**
+   * Legacy method for backwards compatibility  
+   */
+  async ingestFile(content, metadata = {}) {
+    return this.ingestDocument(content, metadata);
+  }
+
+  /**
+   * Get table context (legacy compatibility)
+   */
+  async getTableContext(tableName, filters = {}) {
+    try {
+      const cacheKey = `table:${tableName}:${JSON.stringify(filters)}`;
+      
+      const cached = this.cache.get(cacheKey);
+      if (cached) return cached;
+
+      const data = await this.supabase.getTableContext(tableName, filters, 50);
+      
+      this.cache.set(cacheKey, data, 600);
+      return data;
+    } catch (error) {
+      logger.error(`Error getting context for ${tableName}:`, error);
+      return [];
     }
   }
 }
 
 export default RAGService;
+

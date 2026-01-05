@@ -2,6 +2,83 @@
 
 Este microservicio en Node.js permite dividir o resumir el contexto de prompts enviados al modelo Granite/Ollama, asegurando que no se exceda el límite de 4096 tokens.
 
+## 🚀 Nueva Característica: RAG (Retrieval-Augmented Generation)
+
+El microservicio ahora incluye un sistema RAG completo que evita el error de límite de tokens del LLM (131k tokens en DeepSeek). En lugar de enviar documentos completos, el sistema:
+
+1. **Procesa documentos** (PDF, TXT, código) → Extrae texto
+2. **Divide en chunks** (800-1000 caracteres) → Fragmentos semánticos
+3. **Genera embeddings** → Vectores numéricos para búsqueda
+4. **Almacena en vector DB** → Supabase con pgvector
+5. **Busca fragmentos relevantes** → Solo lo relacionado con la pregunta
+6. **Envía al LLM** → Contexto optimizado (NO el documento completo)
+
+### Arquitectura SOLID del RAG
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     RAG PIPELINE (SOLID)                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  📄 Document    ─►  📝 DocumentProcessor (IDocumentProcessor)   │
+│     Input           - extractText(pdf/txt/code)                 │
+│                     - splitText(chunks)                         │
+│                                                                 │
+│       ▼                                                         │
+│                                                                 │
+│  📊 Chunks      ─►  🔢 EmbeddingService (IEmbeddingProvider)    │
+│                     - embedQuery(text)                          │
+│                     - embedDocuments(texts[])                   │
+│                     - Supports: OpenAI, DeepSeek, Ollama        │
+│                                                                 │
+│       ▼                                                         │
+│                                                                 │
+│  💾 Storage     ─►  🗄️ SupabaseVectorStore (IVectorStore)       │
+│                     - store(content, embedding, metadata)       │
+│                     - search(embedding, topK, threshold)        │
+│                     - delete(filter)                            │
+│                                                                 │
+│       ▼                                                         │
+│                                                                 │
+│  🔍 Query       ─►  🤖 RAGService (Orchestrator)                │
+│                     - ingestDocument()                          │
+│                     - search()                                  │
+│                     - buildContext()                            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Configuración del RAG
+
+1. **Habilitar pgvector en Supabase**:
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS vector;
+   ```
+
+2. **Ejecutar el script de configuración**:
+   ```bash
+   # El script está en: scripts/setup_rag_tables.sql
+   # Ejecutarlo en el SQL Editor de Supabase
+   ```
+
+3. **Variables de entorno**:
+   ```env
+   # RAG Configuration
+   RAG_ENABLED=true
+   RAG_CHUNK_SIZE=800
+   RAG_CHUNK_OVERLAP=150
+   RAG_TOP_K=5
+   RAG_THRESHOLD=0.7
+   RAG_MAX_CONTEXT_TOKENS=30000
+
+   # Embedding Provider (priority: OpenAI > DeepSeek > Ollama > Fallback)
+   OPENAI_API_KEY=sk-your-openai-key  # Best for embeddings
+   # OR
+   DEEPSEEK_API_KEY=your-deepseek-key
+   # OR
+   OLLAMA_BASE_URL=http://localhost:11434
+   ```
+
 ## ¿Cómo funciona?
 - Recibe un prompt completo desde la app móvil (por ejemplo, desde `AIAnalysisService.kt`).
 - Si el prompt supera los 4096 tokens:
