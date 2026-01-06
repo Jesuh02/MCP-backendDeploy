@@ -4973,9 +4973,13 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                         console.log('📝 Sample of history injected:', recentHistory[0].substring(0, 50) + '...');
                     }
 
-                    // Extract question count from prompt (default to 5)
+                    // Extract question count from prompt (default to 10 for reinforcement)
                     const questionCountMatch = prompt.match(/genera\s+(\d+)/i);
-                    const questionCount = questionCountMatch ? parseInt(questionCountMatch[1]) : 5;
+                    let minQuestions = questionCountMatch ? parseInt(questionCountMatch[1]) : 10;
+                    if (minQuestions < 10) minQuestions = 10;
+                    
+                    // Request extra questions (buffer) to handle deduplication filtering
+                    const questionCount = minQuestions + 5;
 
                     // ═══════════════════════════════════════════════════════════════════
                     // TOKEN LIMIT PROTECTION: Max 100k tokens to stay under DeepSeek's 131k limit
@@ -5136,6 +5140,9 @@ Recuerda: Diferencias solo gramaticales NO son suficientes.`;
                                     const normalize = (str) => (str || '').toString().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
                                     const historySet = new Set(historyStrings.map(q => normalize(q)));
                                     
+                                    // Identificar las preguntas que fueron eliminadas para posible recuperación
+                                    const parsedQuestions = [...generatedQuestions]; // Copia de backup
+                                    
                                     // Filter out duplicates
                                     generatedQuestions = generatedQuestions.filter(q => {
                                         const qText = q.question || q.pregunta || (typeof q === 'string' ? q : JSON.stringify(q));
@@ -5146,6 +5153,27 @@ Recuerda: Diferencias solo gramaticales NO son suficientes.`;
                                     
                                     if (generatedQuestions.length < initialCount) {
                                         console.log(`♻️ DEDUPLICATION: Removed ${initialCount - generatedQuestions.length} duplicate questions found in full history.`);
+                                    }
+
+                                    // RESTORATION LOGIC: Ensure we meet the minimum target
+                                    // If we dropped below minQuestions, verify if we can restore some (as last resort to meet quota)
+                                    if (generatedQuestions.length < minQuestions && initialCount >= minQuestions) {
+                                        console.log(`⚠️ Filtering reduced count to ${generatedQuestions.length} (below ${minQuestions}). Restoring non-duplicate questions from buffer...`);
+                                        const needed = minQuestions - generatedQuestions.length;
+                                        
+                                        // Identify what was removed
+                                        const currentSet = new Set(generatedQuestions);
+                                        const removed = parsedQuestions.filter(q => !currentSet.has(q));
+                                        
+                                        // Restore enough to meet target
+                                        const toRestore = removed.slice(0, needed);
+                                        generatedQuestions = [...generatedQuestions, ...toRestore];
+                                        console.log(`✅ Restored ${toRestore.length} questions. Final count: ${generatedQuestions.length}`);
+                                    }
+                                    
+                                    // Slice to exact requested amount if we have extra
+                                    if (generatedQuestions.length > minQuestions) {
+                                        generatedQuestions = generatedQuestions.slice(0, minQuestions);
                                     }
 
                                     // Check if we have valid questions left
