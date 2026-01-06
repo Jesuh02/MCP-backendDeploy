@@ -6138,9 +6138,17 @@ app.get('/mcp/sse', (req, res) => {
 
     // CRITICAL: Send endpoint info to client using the correct MCP SSE format
     // VS Code expects: event: endpoint\ndata: <URL>\n\n
-    const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
+    // Dynamic base URL detection to support Localhost and Railway
+    let baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
         ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-        : 'https://mcp-backenddeploy-production.up.railway.app';
+        : (process.env.PUBLIC_URL || 'https://mcp-backenddeploy-production.up.railway.app');
+    
+    // Fallback: If running locally or without explicit env vars, use request headers
+    if (!process.env.RAILWAY_PUBLIC_DOMAIN && !process.env.PUBLIC_URL && req.headers.host) {
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+        baseUrl = `${protocol}://${req.headers.host}`;
+    }
+
     const endpointUrl = `${baseUrl}/mcp/message?sessionId=${sessionId}`;
     
     // Send the endpoint event - this tells VS Code where to POST messages
