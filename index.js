@@ -6260,41 +6260,23 @@ app.post('/mcp/message', async(req, res) => {
     const sseConn = mcpSseConnections.get(sessionId);
     const sseResponse = sseConn?.response;
     
-    // Verify session exists
-    if (!sseConn || !sseResponse) {
-        console.error(`❌ SSE session not found: ${sessionId}`);
-        console.error(`   Available sessions: [${Array.from(mcpSseConnections.keys()).join(', ')}]`);
-        console.error(`   Hint: The client needs to reconnect to /mcp/sse to get a new session`);
-        return res.status(400).json({ 
-            jsonrpc: '2.0', 
-            id, 
-            error: { 
-                code: -32000, 
-                message: `Session not found: ${sessionId}. Please reconnect to /mcp/sse.`,
-                data: {
-                    availableSessions: mcpSseConnections.size,
-                    hint: 'Reconnect to GET /mcp/sse to establish a new session'
-                }
-            } 
-        });
-    }
-    
-    // Verify SSE connection is still open
-    if (sseResponse.writableEnded || !sseResponse.writable) {
-        console.error(`❌ SSE connection closed for session: ${sessionId}`);
-        mcpSseConnections.delete(sessionId);
-        return res.status(400).json({ 
-            jsonrpc: '2.0', 
-            id, 
-            error: { code: -32000, message: 'SSE connection closed. Please reconnect.' } 
-        });
-    }
-    
-    // Update last activity timestamp
-    sseConn.lastActivity = Date.now();
+    // Check if session exists (standard flow) or if we need to fallback (stateless)
+    // This allows tool execution even if the server restarted (in-memory session lost)
+    const isSessionMissing = !sseConn || !sseResponse;
+    const isConnClosed = sseResponse && (sseResponse.writableEnded || !sseResponse.writable);
+    const useStatelessFallback = isSessionMissing || isConnClosed;
 
+    if (useStatelessFallback) {
+        console.warn(`⚠️ Session warning for ${sessionId}: Missing=${isSessionMissing}, Closed=${isConnClosed}`);
+        console.warn(`   Attempting stateless execution fallback (returning JSON body instead of SSE)`);
+    } else {
+        // Update last activity timestamp for valid sessions
+        sseConn.lastActivity = Date.now();
+    }
+    
     // For notifications (no id), just acknowledge
     if (id === undefined || id === null) {
+
         if (method === 'notifications/initialized' || method === 'initialized') {
             console.log(`📨 MCP Initialized notification received`);
         }
@@ -6430,25 +6412,33 @@ app.post('/mcp/message', async(req, res) => {
         // Build JSON-RPC response
         const response = { jsonrpc: '2.0', id, result };
         
-        // Send response via SSE stream (this is the MCP protocol requirement)
-        sseResponse.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
-        console.log(`✅ MCP Response sent via SSE for: ${method}`);
-        
-        // Return 202 Accepted to acknowledge receipt
-        res.status(202).send('Accepted');
+        // STANDARD MCP over SSE: Write to the event stream
+        if (!useStatelessFallback && sseResponse) {
+            sseResponse.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
+            console.log(`✅ MCP Response sent via SSE for: ${method}`);
+            res.status(202).send('Accepted');
+        } else {
+             // FALLBACK HTTP JSON: Return directly in the body
+            // This allows recovery if session was lost/restarted
+            console.log(`✅ MCP Response sent via HTTP Body (Stateless) for: ${method}`);
+            res.json(response);
+        }
 
     } catch (error) {
         console.error(`❌ MCP Error (${method}):`, error);
         const errorResponse = { jsonrpc: '2.0', id, error: { code: -32603, message: error.message } };
         
-        // Send error via SSE
-        try {
-            sseResponse.write(`event: message\ndata: ${JSON.stringify(errorResponse)}\n\n`);
-        } catch (sseErr) {
-            console.error(`❌ Could not write error to SSE: ${sseErr.message}`);
+        // Send error via available channel
+        if (!useStatelessFallback && sseResponse) {
+            try {
+                sseResponse.write(`event: message\ndata: ${JSON.stringify(errorResponse)}\n\n`);
+            } catch (sseErr) {
+                console.error(`❌ Could not write error to SSE: ${sseErr.message}`);
+            }
+            res.status(202).send('Accepted');
+        } else {
+            res.json(errorResponse);
         }
-        
-        res.status(202).send('Accepted');
     }
 });
 
