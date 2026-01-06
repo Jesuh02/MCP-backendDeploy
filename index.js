@@ -6017,6 +6017,28 @@ function getLocalIPAddress() {
 // Store active SSE connections for MCP
 const mcpSseConnections = new Map();
 
+// Cleanup stale MCP SSE sessions every 5 minutes
+setInterval(() => {
+    const now = Date.now();
+    const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+    let cleanedCount = 0;
+    
+    for (const [sessionId, conn] of mcpSseConnections.entries()) {
+        const isStale = (now - conn.lastActivity) > SESSION_TIMEOUT;
+        const isConnectionDead = conn.response?.writableEnded || !conn.response?.writable;
+        
+        if (isStale || isConnectionDead) {
+            mcpSseConnections.delete(sessionId);
+            cleanedCount++;
+            console.log(`🧹 Cleaned stale MCP session: ${sessionId} (stale: ${isStale}, dead: ${isConnectionDead})`);
+        }
+    }
+    
+    if (cleanedCount > 0) {
+        console.log(`🧹 MCP Session cleanup: removed ${cleanedCount} sessions, ${mcpSseConnections.size} active`);
+    }
+}, 5 * 60 * 1000);
+
 /**
  * 🔌 MCP SSE Endpoint - Server-Sent Events for VS Code MCP clients
  * This allows VS Code from ANY machine to connect to this MCP server
@@ -6074,6 +6096,7 @@ app.get('/mcp/sse', (req, res) => {
 
     console.log(`📡 MCP SSE Session established: ${sessionId}`);
     console.log(`   Endpoint URL: ${endpointUrl}`);
+    console.log(`   Total active sessions: ${mcpSseConnections.size}`);
 
     // Send ping every 15 seconds to keep connection alive (Railway has ~5 min timeout)
     const pingInterval = setInterval(() => {
@@ -6112,6 +6135,7 @@ app.get('/mcp/sse', (req, res) => {
         console.log(`🔌 SSE Response closed: ${sessionId}`);
         clearInterval(pingInterval);
         mcpSseConnections.delete(sessionId);
+        console.log(`   Remaining sessions: ${mcpSseConnections.size}`);
     });
 
     // Cleanup on request close
@@ -6119,6 +6143,49 @@ app.get('/mcp/sse', (req, res) => {
         console.log(`🔌 MCP SSE Connection closed: ${sessionId}`);
         clearInterval(pingInterval);
         mcpSseConnections.delete(sessionId);
+        console.log(`   Remaining sessions: ${mcpSseConnections.size}`);
+    });
+});
+
+// Endpoint to check active MCP sessions (for debugging)
+app.get('/mcp/sessions', (req, res) => {
+    const sessions = [];
+    const now = Date.now();
+    for (const [sessionId, conn] of mcpSseConnections.entries()) {
+        sessions.push({
+            sessionId,
+            createdAt: new Date(conn.createdAt).toISOString(),
+            lastActivity: new Date(conn.lastActivity).toISOString(),
+            ageMs: now - conn.createdAt,
+            idleMs: now - conn.lastActivity,
+            isWritable: conn.response?.writable && !conn.response?.writableEnded
+        });
+    }
+    res.json({ 
+        activeSessions: sessions.length, 
+        sessions,
+        serverUptime: process.uptime()
+    });
+});
+
+// Endpoint to verify if a session is still valid
+app.get('/mcp/session/:sessionId', (req, res) => {
+    const { sessionId } = req.params;
+    const sseConn = mcpSseConnections.get(sessionId);
+    
+    if (!sseConn) {
+        return res.status(404).json({ valid: false, reason: 'Session not found' });
+    }
+    
+    if (sseConn.response?.writableEnded || !sseConn.response?.writable) {
+        mcpSseConnections.delete(sessionId);
+        return res.status(410).json({ valid: false, reason: 'Session connection closed' });
+    }
+    
+    return res.json({ 
+        valid: true, 
+        createdAt: new Date(sseConn.createdAt).toISOString(),
+        lastActivity: new Date(sseConn.lastActivity).toISOString()
     });
 });
 
@@ -6135,6 +6202,7 @@ app.post('/mcp/message', async(req, res) => {
     const { method, params, id } = req.body;
 
     console.log(`🔌 MCP Message: ${method} (session: ${sessionId}, id: ${id})`);
+    console.log(`   Active sessions: ${mcpSseConnections.size} -> [${Array.from(mcpSseConnections.keys()).slice(0, 5).join(', ')}${mcpSseConnections.size > 5 ? '...' : ''}]`);
 
     // Get SSE connection object (contains response and metadata)
     const sseConn = mcpSseConnections.get(sessionId);
@@ -6143,10 +6211,19 @@ app.post('/mcp/message', async(req, res) => {
     // Verify session exists
     if (!sseConn || !sseResponse) {
         console.error(`❌ SSE session not found: ${sessionId}`);
+        console.error(`   Available sessions: [${Array.from(mcpSseConnections.keys()).join(', ')}]`);
+        console.error(`   Hint: The client needs to reconnect to /mcp/sse to get a new session`);
         return res.status(400).json({ 
             jsonrpc: '2.0', 
             id, 
-            error: { code: -32000, message: `Session not found: ${sessionId}. Please reconnect.` } 
+            error: { 
+                code: -32000, 
+                message: `Session not found: ${sessionId}. Please reconnect to /mcp/sse.`,
+                data: {
+                    availableSessions: mcpSseConnections.size,
+                    hint: 'Reconnect to GET /mcp/sse to establish a new session'
+                }
+            } 
         });
     }
     
