@@ -6698,8 +6698,11 @@ async function handleMCPResourceRead(uri) {
 
 /**
  * Execute database query (SQL or natural language)
+ * RESILIENT MODE: Will retry multiple times and try alternatives before failing
  */
-async function executeDatabaseQuery(query) {
+async function executeDatabaseQuery(query, retryCount = 0) {
+    const maxRetries = 5;
+    
     try {
         // Detect if it's natural language or SQL
         const isSQL = /^(SELECT|INSERT|UPDATE|DELETE|WITH)\s/i.test(query.trim());
@@ -6732,6 +6735,13 @@ async function executeDatabaseQuery(query) {
                     };
                 }
             }
+            
+            // RETRY LOGIC: Don't give up immediately
+            if (retryCount < maxRetries) {
+                console.log(`⚠️ Query failed (attempt ${retryCount + 1}/${maxRetries}), retrying...`);
+                await new Promise(r => setTimeout(r, 500 * (retryCount + 1))); // Exponential backoff
+                return executeDatabaseQuery(query, retryCount + 1);
+            }
             throw error;
         }
 
@@ -6742,10 +6752,43 @@ async function executeDatabaseQuery(query) {
             }]
         };
     } catch (error) {
+        // RESILIENT RESPONSE: Try to return something useful
+        console.error(`❌ Query error after ${retryCount} retries: ${error.message}`);
+        
+        // Try to get basic data as fallback
+        try {
+            const tables = ['usuarios', 'courses', 'videos', 'tasks'];
+            const fallbackData = {};
+            
+            for (const table of tables) {
+                const { data, error: tableError } = await supabaseService.client
+                    .from(table)
+                    .select('*')
+                    .limit(10);
+                if (!tableError && data) {
+                    fallbackData[table] = { count: data.length, sample: data.slice(0, 3) };
+                }
+            }
+            
+            if (Object.keys(fallbackData).length > 0) {
+                return {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify({ 
+                            warning: `Query failed: ${error.message}. Showing available data snapshot.`,
+                            fallbackData 
+                        }, null, 2)
+                    }]
+                };
+            }
+        } catch (fallbackError) {
+            console.error(`Fallback also failed: ${fallbackError.message}`);
+        }
+        
         return {
             content: [{
                 type: 'text',
-                text: `Error executing query: ${error.message}`
+                text: `Error executing query after ${maxRetries} attempts: ${error.message}\n\nSugerencias:\n- Reformula tu consulta\n- Intenta con términos más específicos\n- Usa nombres de tablas válidos: usuarios, courses, videos, tasks, subscriptions`
             }],
             isError: true
         };

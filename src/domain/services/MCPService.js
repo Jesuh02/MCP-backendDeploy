@@ -599,8 +599,8 @@ export class MCPService {
         const freshSchema = await this.getDatabaseSchema();
         const schemaText = JSON.stringify(freshSchema.schema, null, 2);
 
-        // 2. Generate SQL Loop
-        const maxRetries = 3;
+        // 2. Generate SQL Loop - NEVER GIVE UP
+        const maxRetries = 10; // Increased to 10 for persistence
         let attempt = 0;
         let lastError = null;
         let lastSQL = null;
@@ -689,7 +689,27 @@ SELECT ...
             }
         }
         
-        throw new Error(`Failed to generate working SQL after ${maxRetries} attempts.`);
+        // NEVER FAIL - Return fallback data instead of throwing
+        logger.warn(`⚠️ SQL generation failed after ${maxRetries} attempts. Returning fallback snapshot.`);
+        try {
+            const snapshot = await this.generateDataSnapshot(query, { 
+                isBusinessQuestion: this.isBusinessIntent(query), 
+                reason: `SQL fallback after ${maxRetries} failed attempts` 
+            });
+            return { 
+                data: snapshot.data, 
+                sql: 'FALLBACK_SNAPSHOT', 
+                errorHistory,
+                message: `No se pudo generar SQL válido después de ${maxRetries} intentos. Mostrando datos de respaldo.`
+            };
+        } catch (fallbackError) {
+            return { 
+                data: { error: 'No data available', attempts: errorHistory }, 
+                sql: 'FALLBACK_FAILED',
+                errorHistory,
+                message: `Error persistente: ${lastError}. Intenta reformular tu consulta.`
+            };
+        }
     }
 
     /**
@@ -782,7 +802,8 @@ ${schemaText}
                 logger.info("📊 Query requires data - proceeding with SQL generation...");
 
                 // STEP 2: Generate SQL (with retry logic for errors)
-                const maxRetries = 3; // Increased from 2 to 3 for better error recovery
+                // PERSISTENCE MODE: Will try many times before giving up
+                const maxRetries = 10; // Increased significantly - NEVER GIVE UP
                 let attempt = 0;
                 let lastError = null;
                 let lastSQL = null; // Track the SQL that failed
@@ -923,7 +944,34 @@ SELECT ...
                         });
 
                         if (attempt === maxRetries) {
-                            // Final attempt failed - return detailed error report
+                            // Final attempt failed - DON'T STOP, try alternative approach
+                            logger.warn(`⚠️ Max retries reached. Attempting fallback with data snapshot...`);
+                            
+                            // Try to generate a data snapshot as fallback
+                            try {
+                                const snapshot = await this.generateDataSnapshot(query, {
+                                    isBusinessQuestion: this.isBusinessIntent(query),
+                                    reason: `SQL fallback after ${maxRetries} failed attempts`
+                                });
+                                
+                                if (snapshot && snapshot.data) {
+                                    const summaryText = this.buildMarketingSummary(snapshot.data);
+                                    return `## ⚠️ Nota: Se usaron datos de respaldo
+
+No se pudo ejecutar SQL personalizado después de ${maxRetries} intentos.
+Mostrando datos generales disponibles:
+
+${summaryText}
+
+---
+**Errores encontrados:**
+${errorHistory.map(e => `- Intento ${e.attempt}: ${e.error}`).join('\n')}`;
+                                }
+                            } catch (fallbackErr) {
+                                logger.error(`Fallback also failed: ${fallbackErr.message}`);
+                            }
+                            
+                            // If even fallback fails, return helpful error report
                             const errorReport = this.generateErrorReport(errorHistory, query);
                             return errorReport;
                         }
@@ -1076,12 +1124,44 @@ Después de la tabla, añade un breve análisis.
                 return analysis;
             }
 
-            // Should never reach here, but just in case
-            return `No se pudieron obtener resultados después de ${maxRetries} intentos.`;
+            // Fallback: Generate data snapshot if we reach here without results
+            logger.warn(`⚠️ Reached end without results. Generating fallback snapshot...`);
+            try {
+                const snapshot = await this.generateDataSnapshot(query, {
+                    isBusinessQuestion: this.isBusinessIntent(query),
+                    reason: 'End-of-function fallback'
+                });
+                if (snapshot && snapshot.data) {
+                    return this.buildMarketingSummary(snapshot.data);
+                }
+            } catch (e) {
+                logger.error(`Final fallback failed: ${e.message}`);
+            }
+            return `No se pudieron obtener resultados después de ${maxRetries} intentos. Por favor reformula tu consulta o intenta con una pregunta más específica.`;
 
         } catch (error) {
             logger.error(`❌ Agent error: ${error.message}`);
-            return `Error procesando la consulta: ${error.message}`;
+            
+            // DON'T GIVE UP - Try to return something useful
+            try {
+                logger.info(`🔄 Attempting recovery after agent error...`);
+                const snapshot = await this.generateDataSnapshot(query, {
+                    isBusinessQuestion: this.isBusinessIntent(query),
+                    reason: `Recovery from error: ${error.message}`
+                });
+                if (snapshot && snapshot.data) {
+                    return `## ⚠️ Ocurrió un error, pero aquí están los datos disponibles:
+
+${this.buildMarketingSummary(snapshot.data)}
+
+---
+_Error original: ${error.message}_`;
+                }
+            } catch (recoveryError) {
+                logger.error(`Recovery also failed: ${recoveryError.message}`);
+            }
+            
+            return `Error procesando la consulta: ${error.message}\n\nSugerencias:\n- Intenta reformular tu pregunta\n- Usa términos más específicos\n- Prueba con una consulta más simple`;
         }
     }
 
