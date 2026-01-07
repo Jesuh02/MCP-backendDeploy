@@ -946,14 +946,16 @@ SELECT ...
                             new SystemMessage(`Eres un asistente de análisis de datos EXCLUSIVAMENTE para la base de datos de YisusCompany.
 
 🚫 **REGLAS CRÍTICAS - NUNCA VIOLAR:**
-1. SOLO analiza los datos que se te proporcionan en los resultados SQL
+1. SOLO analiza los datos que se te proporcionan en los resultados
 2. NUNCA inventes, imagines o supongas datos que no están en los resultados
 3. Si los resultados están vacíos, di "No se encontraron datos" - NO inventes ejemplos
 4. NO respondas preguntas fuera del contexto de la base de datos consultada
 5. SIEMPRE basa tus análisis en los números EXACTOS de los resultados
 6. Si un dato no existe en los resultados, di "Este dato no está disponible" - NUNCA lo inventes
-7. 🚨 NUNCA incluyas secciones como "## Acción inmediata" o "Ejecutar las consultas..." 
-8. 🚨 LOS DATOS YA FUERON EJECUTADOS - presenta RESULTADOS, no sugerencias de consultas
+7. 🚨 NUNCA incluyas secciones como "## Acción inmediata", "## Ejemplos de SQL" o "Ejecutar las consultas..." 
+8. 🚨 LOS DATOS YA FUERON OBTENIDOS - presenta RESULTADOS y ANÁLISIS, no código SQL
+9. 🚨 NO muestres consultas SQL al usuario - enfócate en DATOS y CONCLUSIONES
+10. 🚨 Presenta los datos en TABLAS MARKDOWN limpias y profesionales
 
 📊 **ESQUEMA DE BASE DE DATOS:**
 ${schemaText}
@@ -995,8 +997,13 @@ Después de la tabla, añade un breve análisis.
                 ];
 
                 const analysisResponse = await this.llmService.generateResponse(analysisMessages, []);
-                const analysis = analysisResponse.content || "Análisis no disponible";
-                logger.info("✅ Analysis complete");
+                let analysis = analysisResponse.content || "Análisis no disponible";
+                
+                // 🧹 CLEAN UP: Remove any SQL blocks from the analysis (user doesn't want to see SQL)
+                analysis = analysis.replace(/```sql[\s\S]*?```/gi, '');
+                analysis = analysis.replace(/## Ejemplos de SQL[\s\S]*?(?=##|$)/gi, '');
+                
+                logger.info("✅ Analysis complete (SQL blocks removed)");
                 
                 // 🚨 POST-ANALYSIS VALIDATION: Detect and auto-execute any suggested SQL
                 if (analysis.includes('```sql') || 
@@ -1033,23 +1040,31 @@ Después de la tabla, añade un breve análisis.
                             }
                         }
                         
-                        // Build results section
+                        // Build results section (WITHOUT showing SQL code)
                         if (autoResults.length > 0) {
                             const resultsSection = autoResults.map((r, idx) => {
                                 if (r.success) {
-                                    const dataTable = r.data && r.data.length > 0 
-                                        ? `\n\n**Resultados (${r.data.length} filas):**\n\`\`\`json\n${JSON.stringify(r.data, null, 2)}\n\`\`\``
-                                        : '\n\n⚠️ La consulta no retornó datos.';
-                                    return `### 📊 Consulta ${idx + 1} (ejecutada automáticamente)\n\`\`\`sql\n${r.sql}\n\`\`\`${dataTable}`;
+                                    if (r.data && r.data.length > 0) {
+                                        // Format data in a readable table format
+                                        const columns = Object.keys(r.data[0]);
+                                        const tableHeader = `| ${columns.map(c => `**${c}**`).join(' | ')} |\n| ${columns.map(() => ':---').join(' | ')} |`;
+                                        const tableRows = r.data.slice(0, 10).map(row => 
+                                            `| ${columns.map(col => row[col] ?? 'NULL').join(' | ')} |`
+                                        ).join('\n');
+                                        const moreRows = r.data.length > 10 ? `\n\n_... y ${r.data.length - 10} filas más_` : '';
+                                        return `### 📊 Datos obtenidos (${r.data.length} registros)\n\n${tableHeader}\n${tableRows}${moreRows}`;
+                                    } else {
+                                        return `### ℹ️ No se encontraron datos para esta consulta`;
+                                    }
                                 } else {
-                                    return `### ❌ Consulta ${idx + 1} (error)\n\`\`\`sql\n${r.sql}\n\`\`\`\n\n**Error:** ${r.error}`;
+                                    return `### ⚠️ No se pudieron obtener los datos: ${r.error}`;
                                 }
                             }).join('\n\n');
                             
-                            // Replace "Acción inmediata" section with actual results
+                            // Replace "Acción inmediata" section with actual data (NO SQL)
                             enhancedAnalysis = enhancedAnalysis.replace(
                                 /## (Acción inmediata|Ejemplos de SQL)[\s\S]*/i,
-                                `## 📊 Consultas ejecutadas automáticamente\n\n${resultsSection}`
+                                `## 📊 Datos de la base de datos\n\n${resultsSection}`
                             );
                             
                             logger.info(`✅ Enhanced analysis with ${autoResults.length} auto-executed queries`);
