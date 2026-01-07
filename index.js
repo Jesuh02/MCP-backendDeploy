@@ -6698,24 +6698,153 @@ async function handleMCPResourceRead(uri) {
 
 /**
  * Execute database query (SQL or natural language)
+ * IMPROVED: For natural language queries, uses LLM with schema to generate accurate SQL
  */
 async function executeDatabaseQuery(query) {
     try {
         // Detect if it's natural language or SQL
         const isSQL = /^(SELECT|INSERT|UPDATE|DELETE|WITH)\s/i.test(query.trim());
         
-        let sqlQuery = query;
         if (!isSQL) {
-            // Convert natural language to SQL using simple patterns
-            sqlQuery = convertNaturalLanguageToSQL(query);
+            // IMPROVED: Use LLM Agent with schema for natural language queries
+            // This ensures the response is ALWAYS grounded in real database data
+            console.log('📝 Natural language query detected, using LLM with schema...');
+            
+            if (mcpService && llmService) {
+                try {
+                    // 1. Get complete database schema FIRST
+                    const schemaResult = await getDatabaseSchema();
+                    const schemaText = schemaResult.content[0].text;
+                    console.log('📊 Schema retrieved for context');
+                    
+                    // 2. Get basic stats for context
+                    const stats = await getDatabaseStats();
+                    console.log('📈 Stats retrieved:', stats);
+                    
+                    // 3. Build a prompt that forces the LLM to use real data
+                    const systemPrompt = `Eres un asistente de base de datos para YisusCompany. Tu trabajo es responder preguntas ÚNICAMENTE usando datos REALES de la base de datos.
+
+ESQUEMA COMPLETO DE LA BASE DE DATOS:
+${schemaText}
+
+ESTADÍSTICAS ACTUALES:
+${JSON.stringify(stats, null, 2)}
+
+REGLAS CRÍTICAS:
+1. NUNCA inventes datos. Si no puedes obtener la información, di "No pude obtener esa información de la base de datos".
+2. Para responder preguntas sobre conteos, rankings, o datos específicos, DEBES generar y ejecutar SQL válido.
+3. Las tablas principales son: usuarios, courses, videos, tasks, task_submissions, subscriptions, comments, likes
+4. La tabla 'likes' es polimórfica: tiene 'likeable_type' (video/comment) y 'likeable_id'
+5. La tabla 'comments' tiene 'video_id' para relacionar comentarios con videos
+6. Para encontrar el video con más likes: SELECT likeable_id, COUNT(*) FROM likes WHERE likeable_type='video' GROUP BY likeable_id ORDER BY COUNT(*) DESC LIMIT 1
+7. Para encontrar el video con más comentarios: SELECT video_id, COUNT(*) FROM comments GROUP BY video_id ORDER BY COUNT(*) DESC LIMIT 1
+
+FORMATO DE RESPUESTA:
+- Si necesitas ejecutar SQL, genera el SQL y luego interpreta los resultados
+- Siempre incluye los datos reales que encontraste
+- Si hay un error, explica qué salió mal`;
+
+                    const userPrompt = `Consulta del usuario: ${query}
+
+Genera el SQL necesario para responder esta pregunta y proporciona la respuesta basada en los datos reales.`;
+
+                    // 4. Generate SQL using LLM
+                    const messages = [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt }
+                    ];
+                    
+                    const llmResponse = await llmService.generateResponse(messages, []);
+                    let responseText = llmResponse.content || llmResponse;
+                    
+                    // 5. Try to extract and execute any SQL from the response
+                    const sqlMatch = responseText.match(/```sql\s*\n?([\s\S]+?)\n?```/i) || 
+                                    responseText.match(/(SELECT[\s\S]+?(?:;|$))/i);
+                    
+                    if (sqlMatch) {
+                        const extractedSQL = sqlMatch[1].trim().replace(/;$/, '');
+                        console.log('🔍 Executing extracted SQL:', extractedSQL);
+                        
+                        try {
+                            // Execute the extracted SQL
+                            const { data: sqlData, error: sqlError } = await supabaseService.client.rpc('execute_sql', { query: extractedSQL });
+                            
+                            if (sqlError) {
+                                // Try direct query as fallback
+                                const tableMatch = extractedSQL.match(/FROM\s+(\w+)/i);
+                                if (tableMatch) {
+                                    const tableName = tableMatch[1];
+                                    const { data: tableData, error: tableError } = await supabaseService.client
+                                        .from(tableName)
+                                        .select('*')
+                                        .limit(100);
+                                    
+                                    if (!tableError && tableData) {
+                                        return {
+                                            content: [{
+                                                type: 'text',
+                                                text: JSON.stringify({
+                                                    query: query,
+                                                    sql_executed: extractedSQL,
+                                                    results: tableData,
+                                                    count: tableData.length,
+                                                    llm_analysis: responseText
+                                                }, null, 2)
+                                            }]
+                                        };
+                                    }
+                                }
+                                throw sqlError;
+                            }
+                            
+                            // Return combined result with LLM analysis and real data
+                            return {
+                                content: [{
+                                    type: 'text',
+                                    text: JSON.stringify({
+                                        query: query,
+                                        sql_executed: extractedSQL,
+                                        results: sqlData,
+                                        llm_analysis: responseText
+                                    }, null, 2)
+                                }]
+                            };
+                        } catch (execError) {
+                            console.error('❌ SQL execution error:', execError.message);
+                            // Return LLM response with error note
+                            return {
+                                content: [{
+                                    type: 'text',
+                                    text: `${responseText}\n\n⚠️ Nota: El SQL generado tuvo un error: ${execError.message}`
+                                }]
+                            };
+                        }
+                    }
+                    
+                    // No SQL found in response, return LLM analysis
+                    return {
+                        content: [{
+                            type: 'text',
+                            text: responseText
+                        }]
+                    };
+                    
+                } catch (llmError) {
+                    console.error('❌ LLM processing error:', llmError);
+                    // Fall back to simple conversion
+                }
+            }
+            
+            // Fallback: Convert natural language to SQL using simple patterns
+            query = convertNaturalLanguageToSQL(query);
         }
 
         // Execute via Supabase RPC or direct query
-        const { data, error } = await supabaseService.client.rpc('execute_sql', { query: sqlQuery });
+        const { data, error } = await supabaseService.client.rpc('execute_sql', { query: query });
         
         if (error) {
             // Fallback: try direct table query for simple cases
-            const tableMatch = sqlQuery.match(/FROM\s+(\w+)/i);
+            const tableMatch = query.match(/FROM\s+(\w+)/i);
             if (tableMatch) {
                 const tableName = tableMatch[1];
                 const { data: tableData, error: tableError } = await supabaseService.client
@@ -6727,7 +6856,7 @@ async function executeDatabaseQuery(query) {
                     return {
                         content: [{
                             type: 'text',
-                            text: JSON.stringify({ query: sqlQuery, results: tableData, count: tableData.length }, null, 2)
+                            text: JSON.stringify({ query: query, results: tableData, count: tableData.length }, null, 2)
                         }]
                     };
                 }
@@ -6738,7 +6867,7 @@ async function executeDatabaseQuery(query) {
         return {
             content: [{
                 type: 'text',
-                text: JSON.stringify({ query: sqlQuery, results: data }, null, 2)
+                text: JSON.stringify({ query: query, results: data }, null, 2)
             }]
         };
     } catch (error) {
@@ -6796,27 +6925,78 @@ function convertNaturalLanguageToSQL(query) {
 
 /**
  * Get database schema
+ * IMPROVED: Returns detailed schema with column types and relationships
  */
 async function getDatabaseSchema() {
     const tables = [
         'usuarios', 'personas', 'courses', 'videos', 'topics', 'content_items',
         'tasks', 'task_submissions', 'subscriptions', 'chat_messages',
-        'file_contexts', 'roles', 'recursos', 'rol_recursos', 'notifications'
+        'file_contexts', 'roles', 'recursos', 'rol_recursos', 'notifications',
+        'likes', 'comments'
     ];
 
     const schema = {};
+    const relationships = {
+        'courses.creator_user_id': 'usuarios.id',
+        'videos.course_id': 'courses.id',
+        'topics.course_id': 'courses.id',
+        'content_items.topic_id': 'topics.id',
+        'tasks.topic_id': 'topics.id',
+        'task_submissions.task_id': 'tasks.id',
+        'task_submissions.student_id': 'usuarios.id',
+        'subscriptions.subscriber_id': 'usuarios.id',
+        'subscriptions.creator_id': 'usuarios.id',
+        'likes.user_id': 'usuarios.id',
+        'likes.likeable_id': 'videos.id OR comments.id (polymorphic)',
+        'comments.video_id': 'videos.id',
+        'comments.user_id': 'usuarios.id'
+    };
+    
+    const tableDescriptions = {
+        'usuarios': 'Usuarios del sistema (id, usuario, email, avatar, created_at)',
+        'courses': 'Cursos creados (id, name, description, creator_user_id, thumbnail_url)',
+        'videos': 'Videos de cursos (id, title, description, video_url, course_id, thumbnail_uri)',
+        'likes': 'TABLA POLIMÓRFICA de likes (id, user_id, likeable_type, likeable_id). likeable_type puede ser "video" o "comment"',
+        'comments': 'Comentarios en videos (id, video_id, user_id, content, created_at)',
+        'tasks': 'Tareas de cursos (id, name, description, topic_id, due_date)',
+        'task_submissions': 'Entregas de tareas (id, task_id, student_id, file_uri, grade, feedback)',
+        'subscriptions': 'Suscripciones a creadores (id, subscriber_id, creator_id)'
+    };
+
     for (const table of tables) {
         try {
             const { data } = await supabaseService.client.from(table).select('*').limit(1);
             if (data && data.length > 0) {
-                schema[table] = Object.keys(data[0]);
+                schema[table] = {
+                    columns: Object.keys(data[0]),
+                    description: tableDescriptions[table] || 'No description',
+                    sample: data[0]
+                };
             } else {
-                schema[table] = ['(empty table)'];
+                // Try to get column info even if empty
+                const { data: emptyData, error } = await supabaseService.client.from(table).select('*').limit(0);
+                schema[table] = {
+                    columns: ['(empty table - no sample available)'],
+                    description: tableDescriptions[table] || 'Empty table'
+                };
             }
         } catch (e) {
-            schema[table] = ['(error reading table)'];
+            schema[table] = {
+                columns: ['(error reading table)'],
+                error: e.message
+            };
         }
     }
+
+    // Add relationship info
+    schema['_relationships'] = relationships;
+    schema['_important_notes'] = [
+        'La tabla likes es POLIMÓRFICA: usa likeable_type para saber si es like a video o comment',
+        'Para contar likes de videos: SELECT likeable_id, COUNT(*) FROM likes WHERE likeable_type=\'video\' GROUP BY likeable_id',
+        'Para contar comentarios: SELECT video_id, COUNT(*) FROM comments GROUP BY video_id',
+        'videos.course_id relaciona videos con cursos',
+        'task_submissions.student_id es el ID del estudiante (usuarios.id), NO username'
+    ];
 
     return { content: [{ type: 'text', text: JSON.stringify(schema, null, 2) }] };
 }
