@@ -736,6 +736,12 @@ Lo siento, solo puedo responder preguntas relacionadas con la **base de datos de
 
 **Tablas disponibles:** ${Object.keys(freshSchema.schema).join(', ')}
 
+**Ejemplos de preguntas válidas:**
+- "¿Cuántos usuarios hay registrados?"
+- "Dame la lista de cursos"
+- "¿Qué videos tiene el curso 5?"
+- "Muéstrame las últimas entregas de tareas"
+
 Por favor, reformula tu pregunta para que esté relacionada con la base de datos.`;
                 }
 
@@ -748,18 +754,24 @@ Por favor, reformula tu pregunta para que esté relacionada con la base de datos
                     const messages = [
                         new SystemMessage(`Eres un asistente especializado EXCLUSIVAMENTE en la base de datos de YisusCompany.
 
-**REGLA CRÍTICA:** Solo puedes responder preguntas relacionadas con la base de datos. 
-Si la pregunta no tiene relación con la base de datos, debes indicarlo amablemente.
+🚫 **REGLAS CRÍTICAS:**
+1. SOLO responde preguntas relacionadas con la base de datos
+2. USA ÚNICAMENTE la información del esquema proporcionado abajo
+3. NUNCA inventes tablas, columnas o datos que no existan en el esquema
+4. Si la pregunta no tiene relación con la BD, indícalo amablemente
+5. SIEMPRE verifica que la información esté en el esquema antes de mencionarla
 
-**ESQUEMA DE LA BASE DE DATOS:**
+**ESQUEMA DE LA BASE DE DATOS (FUENTE DE VERDAD):**
 ${schemaText}
 
 **INSTRUCCIONES:**
 1. Responde SIEMPRE en español
-2. Basa TODAS tus respuestas en el esquema proporcionado
-3. Si te preguntan sobre tablas, columnas o relaciones, usa el esquema exacto
-4. NO inventes tablas o columnas que no existan en el esquema
-5. Si la pregunta no es sobre la base de datos, indica que solo puedes ayudar con temas de BD`),
+2. Basa TODAS tus respuestas en el esquema proporcionado arriba
+3. Si te preguntan sobre tablas: lista SOLO las que aparecen en el esquema
+4. Si te preguntan sobre columnas: lista SOLO las que existen en esa tabla según el esquema
+5. NO inventes tablas o columnas que no existan en el esquema
+6. Si la pregunta no es sobre la base de datos, indica que solo puedes ayudar con temas de BD
+7. Cuando describas relaciones, VERIFICA que las foreign keys existan en el esquema`),
                         new HumanMessage(query)
                     ];
                     const response = await this.llmService.generateResponse(messages, []);
@@ -785,20 +797,29 @@ ${schemaText}
                     // Build prompt based on whether this is a retry
                     let sqlGenMessages;
                     if (attempt === 1) {
-                        // First attempt - clean prompt
+                        // First attempt - clean prompt with strict rules
                         sqlGenMessages = [
-                            new SystemMessage(`Generate PostgreSQL query using this schema:
+                            new SystemMessage(`Genera una consulta PostgreSQL usando EXCLUSIVAMENTE este esquema:
 
 ${schemaText}
 
-RULES:
-- Use ONLY columns from schema above
-- ALWAYS use table aliases (e.g., FROM usuarios u)
-- If using alias, reference it in SELECT (e.g., u.username NOT t.username)
-- For JOINs, verify foreign keys exist
-- For LIST queries (dame usuarios, lista de cursos, etc.), select ALL relevant columns
+🚫 **REGLAS CRÍTICAS - CUMPLIMIENTO OBLIGATORIO:**
+1. USA SOLAMENTE columnas que existan en el esquema anterior
+2. NUNCA inventes nombres de columnas que no aparezcan en el esquema
+3. SIEMPRE usa alias de tabla (ej: FROM usuarios u)
+4. Si usas alias, refiérelo en SELECT (ej: u.username NO t.username)
+5. Para JOINs, verifica que las foreign keys existan en el esquema
+6. Para consultas de LISTA (dame usuarios, lista de cursos, etc.), selecciona TODAS las columnas relevantes
+7. VERIFICA dos veces que cada columna mencionada existe en la tabla correspondiente
+8. Si tienes dudas sobre una columna, NO la uses - elige otra que SEPAS que existe
 
-Output ONLY SQL in code block:
+⚠️ EJEMPLOS DE ERRORES COMUNES A EVITAR:
+- ❌ usuarios.creator_user_id (NO EXISTE - esa columna está en courses)
+- ✅ courses.creator_user_id (CORRECTO)
+- ❌ task_submissions.student_username (NO EXISTE - usa student_id)
+- ✅ task_submissions.student_id (CORRECTO)
+
+Output SOLO SQL en bloque de código:
 \`\`\`sql
 SELECT ...
 \`\`\``),
@@ -913,16 +934,24 @@ SELECT ...
                     const analysisMessages = [
                             new SystemMessage(`Eres un asistente de análisis de datos EXCLUSIVAMENTE para la base de datos de YisusCompany.
 
-**REGLA FUNDAMENTAL:** Solo puedes analizar y responder sobre datos de la base de datos. 
-NO respondas preguntas que no estén relacionadas con los datos consultados.
+🚫 **REGLAS CRÍTICAS - NUNCA VIOLAR:**
+1. SOLO analiza los datos que se te proporcionan en los resultados SQL
+2. NUNCA inventes, imagines o supongas datos que no están en los resultados
+3. Si los resultados están vacíos, di "No se encontraron datos" - NO inventes ejemplos
+4. NO respondas preguntas fuera del contexto de la base de datos consultada
+5. SIEMPRE basa tus análisis en los números EXACTOS de los resultados
+6. Si un dato no existe en los resultados, di "Este dato no está disponible" - NUNCA lo inventes
 
-GUIDELINES:
-1. Start with summary (e.g., "Encontré X resultados...")
-2. ${isListQuery ? '**PRESENT DATA AS AESTHETIC TABLE**' : 'Explain key findings'}
-3. Provide context and insights BASED ON THE DATA
-4. Add recommendations if relevant TO THE DATA
-5. NEVER return raw JSON
-6. Si el usuario intenta desviar la conversación fuera del contexto de la BD, recuérdale amablemente que solo puedes ayudar con datos de la base de datos
+📊 **ESQUEMA DE BASE DE DATOS:**
+${schemaText}
+
+GUIDELINES PARA ANÁLISIS:
+1. Comienza con resumen basado EN LOS DATOS REALES (ej: "Encontré X resultados...")
+2. ${isListQuery ? '**PRESENTA DATOS EN TABLA MARKDOWN**' : 'Explica hallazgos BASADOS EN LOS DATOS'}
+3. Proporciona contexto SOLO sobre los resultados devueltos
+4. Agrega recomendaciones si son relevantes A LOS DATOS REALES
+5. NUNCA retornes JSON sin formato
+6. Si el usuario intenta desviar la conversación, recuérdale que solo puedes analizar la base de datos
 
 ${isListQuery ? `**FORMATO DE TABLA ESTÉTICA (OBLIGATORIO):**
 Presenta los datos en una tabla con el siguiente estilo EXACTO:
