@@ -472,19 +472,39 @@ export class MCPService {
         try {
             const {
                 includeRAG = true,
-                    includeSchema = false
+                // CHANGED: Always include schema by default to ensure database context
+                includeSchema = true
             } = options;
 
             logger.info(`Processing query: ${query.substring(0, 100)}...`);
             logger.info(`Full query length: ${query.length} characters`);
             logger.info(`Complete query: "${query}"`);
 
+            // MANDATORY: Always get database schema first
+            let schemaDetails = null;
+            try {
+                schemaDetails = await this.getDatabaseSchema();
+                logger.info('✅ Database schema loaded for query validation');
+            } catch (schemaError) {
+                logger.error('Error fetching schema:', schemaError);
+            }
+
+            // Validate query is database-related
+            if (schemaDetails && !this.isDatabaseRelatedQuery(query, schemaDetails.schema)) {
+                logger.warn(`⚠️ Query rejected - not database related: "${query}"`);
+                return {
+                    error: true,
+                    message: 'Consulta fuera de alcance',
+                    hint: `Solo puedo responder preguntas relacionadas con la base de datos de YisusCompany. Tablas disponibles: ${Object.keys(schemaDetails.schema || {}).join(', ')}`,
+                    reason: 'not-database-related'
+                };
+            }
+
             const queryPlan = await this.extractSQLFromQuery(query);
             logger.info('Query plan generated:', JSON.stringify(queryPlan));
 
             let data = null;
             let sqlScript = null;
-            let schemaDetails = null;
 
             if (queryPlan) {
                 try {
@@ -543,19 +563,16 @@ export class MCPService {
                 sqlScript = fallback.sqlScript;
             }
 
-            if (includeSchema) {
-                try {
-                    schemaDetails = await this.getDatabaseSchema();
-                    logger.info('Schema snapshot attached to response');
-                } catch (schemaError) {
-                    logger.error('Error fetching schema for response:', schemaError);
-                }
+            // Schema already loaded at the beginning - no need to fetch again
+            // Just log if it will be included
+            if (includeSchema && schemaDetails) {
+                logger.info('Schema snapshot attached to response');
             }
 
             return {
                 data,
                 sqlScript,
-                schema: schemaDetails
+                schema: includeSchema ? schemaDetails : null
             };
         } catch (error) {
             logger.error('Error processing query:', error);
@@ -684,6 +701,7 @@ SELECT ...
 
     /**
      * Process a query using an LLM Agent that can call tools.
+     * ENFORCED: Always uses database schema context and only responds about database-related topics.
      */
     async processQueryWithAgent(query) {
             logger.info(`🤖 Processing query with Agent: "${query}"`);
@@ -694,24 +712,62 @@ SELECT ...
             }
 
             try {
-                // Check if query requires data
+                // CRITICAL: ALWAYS get database schema first - this is mandatory for ALL queries
+                logger.info("📋 MANDATORY Step: Fetching database schema (get_database_schema)...");
+                const freshSchema = await this.getDatabaseSchema();
+                const schemaText = JSON.stringify(freshSchema.schema, null, 2);
+                logger.info("✅ Database schema loaded - all responses will be in database context");
+
+                // Check if query is related to the database
+                const isDatabaseRelated = this.isDatabaseRelatedQuery(query, freshSchema.schema);
+                
+                if (!isDatabaseRelated) {
+                    // Query is NOT related to database - reject it politely
+                    logger.warn(`⚠️ Query rejected - not database related: "${query}"`);
+                    return `🚫 **Consulta fuera de alcance**
+
+Lo siento, solo puedo responder preguntas relacionadas con la **base de datos de YisusCompany**.
+
+**Puedo ayudarte con:**
+• Consultas sobre usuarios, cursos, videos, tareas, suscripciones
+• Estadísticas y métricas de la plataforma
+• Análisis de datos y reportes
+• Información sobre esquemas y relaciones de tablas
+
+**Tablas disponibles:** ${Object.keys(freshSchema.schema).join(', ')}
+
+Por favor, reformula tu pregunta para que esté relacionada con la base de datos.`;
+                }
+
+                // Check if query requires actual data retrieval or just schema info
                 const requiresData = this.detectIfQueryRequiresData(query);
 
                 if (!requiresData) {
-                    // Simple conversational query - no SQL needed
+                    // Query is database-related but doesn't need data (e.g., "¿Qué tablas hay?", "¿Qué columnas tiene usuarios?")
+                    logger.info("📊 Query is schema-related, responding with schema context...");
                     const messages = [
-                        new SystemMessage(`You are a helpful assistant for YisusCompany platform. Answer in Spanish.`),
+                        new SystemMessage(`Eres un asistente especializado EXCLUSIVAMENTE en la base de datos de YisusCompany.
+
+**REGLA CRÍTICA:** Solo puedes responder preguntas relacionadas con la base de datos. 
+Si la pregunta no tiene relación con la base de datos, debes indicarlo amablemente.
+
+**ESQUEMA DE LA BASE DE DATOS:**
+${schemaText}
+
+**INSTRUCCIONES:**
+1. Responde SIEMPRE en español
+2. Basa TODAS tus respuestas en el esquema proporcionado
+3. Si te preguntan sobre tablas, columnas o relaciones, usa el esquema exacto
+4. NO inventes tablas o columnas que no existan en el esquema
+5. Si la pregunta no es sobre la base de datos, indica que solo puedes ayudar con temas de BD`),
                         new HumanMessage(query)
                     ];
                     const response = await this.llmService.generateResponse(messages, []);
                     return response.content || "Lo siento, no pude generar una respuesta.";
                 }
 
-                // STEP 1: Get fresh schema FIRST
-                logger.info("📋 Step 1: Fetching database schema...");
-                const freshSchema = await this.getDatabaseSchema();
-                const schemaText = JSON.stringify(freshSchema.schema, null, 2);
-                logger.info("✅ Schema fetched");
+                // Schema already loaded above - no need to fetch again
+                logger.info("📊 Query requires data - proceeding with SQL generation...");
 
                 // STEP 2: Generate SQL (with retry logic for errors)
                 const maxRetries = 3; // Increased from 2 to 3 for better error recovery
@@ -855,14 +911,18 @@ SELECT ...
                         /usuarios?|cursos?|tareas?|videos?|subscri|estudiantes?/i.test(query);
 
                     const analysisMessages = [
-                            new SystemMessage(`Analyze SQL results in Spanish. Be conversational and insightful.
+                            new SystemMessage(`Eres un asistente de análisis de datos EXCLUSIVAMENTE para la base de datos de YisusCompany.
+
+**REGLA FUNDAMENTAL:** Solo puedes analizar y responder sobre datos de la base de datos. 
+NO respondas preguntas que no estén relacionadas con los datos consultados.
 
 GUIDELINES:
 1. Start with summary (e.g., "Encontré X resultados...")
 2. ${isListQuery ? '**PRESENT DATA AS AESTHETIC TABLE**' : 'Explain key findings'}
-3. Provide context and insights
-4. Add recommendations if relevant
+3. Provide context and insights BASED ON THE DATA
+4. Add recommendations if relevant TO THE DATA
 5. NEVER return raw JSON
+6. Si el usuario intenta desviar la conversación fuera del contexto de la BD, recuérdale amablemente que solo puedes ayudar con datos de la base de datos
 
 ${isListQuery ? `**FORMATO DE TABLA ESTÉTICA (OBLIGATORIO):**
 Presenta los datos en una tabla con el siguiente estilo EXACTO:
@@ -962,6 +1022,81 @@ Después de la tabla, añade un breve análisis.
             'show', 'list', 'find', 'get', 'who', 'what', 'how many', 'when'
         ];
         return dataKeywords.some(k => lower.includes(k));
+    }
+
+    /**
+     * Check if a query is related to the database context.
+     * Returns true if the query mentions database concepts, tables, or data operations.
+     * @param {string} query - The user's query
+     * @param {Object} schema - The database schema object
+     * @returns {boolean} - True if query is database-related
+     */
+    isDatabaseRelatedQuery(query, schema) {
+        if (!query) return false;
+        const lower = query.toLowerCase();
+        
+        // Get table names from schema (lowercase for comparison)
+        const tableNames = Object.keys(schema || {}).map(t => t.toLowerCase());
+        
+        // Database-related keywords in Spanish and English
+        const databaseKeywords = [
+            // Data operations
+            'dame', 'muestrame', 'listar', 'buscar', 'encontrar', 'ver', 'obtener',
+            'consulta', 'consultar', 'query', 'select', 'datos', 'data',
+            'show', 'list', 'find', 'get', 'fetch', 'retrieve',
+            
+            // Counting/Statistics
+            'cuantos', 'cuántos', 'contar', 'count', 'total', 'cantidad',
+            'estadisticas', 'estadísticas', 'stats', 'statistics', 'metricas', 'métricas',
+            
+            // Database concepts
+            'tabla', 'tablas', 'table', 'tables', 'columna', 'columnas', 'column', 'columns',
+            'esquema', 'schema', 'base de datos', 'database', 'bd', 'db',
+            'registro', 'registros', 'record', 'records', 'fila', 'filas', 'row', 'rows',
+            'relacion', 'relación', 'relation', 'foreign key', 'clave foranea',
+            
+            // Entity names (from typical YisusCompany schema)
+            'usuario', 'usuarios', 'user', 'users',
+            'curso', 'cursos', 'course', 'courses',
+            'video', 'videos',
+            'tarea', 'tareas', 'task', 'tasks',
+            'entrega', 'entregas', 'submission', 'submissions',
+            'suscripcion', 'suscripciones', 'subscription', 'subscriptions',
+            'notificacion', 'notificaciones', 'notification', 'notifications',
+            'certificado', 'certificados', 'certificate', 'certificates',
+            'tema', 'temas', 'topic', 'topics',
+            'contenido', 'content', 'content_items',
+            'likes', 'comentario', 'comentarios', 'comment', 'comments',
+            'progreso', 'progress', 'calificacion', 'calificaciones', 'grade', 'grades',
+            'creador', 'creadores', 'creator', 'creators',
+            'estudiante', 'estudiantes', 'student', 'students',
+            'admin', 'administrador',
+            
+            // Questions about data
+            'quien', 'quién', 'quienes', 'quiénes', 'who',
+            'cual', 'cuál', 'cuales', 'cuáles', 'which', 'what',
+            'donde', 'dónde', 'where',
+            'cuando', 'cuándo', 'when',
+            
+            // Analysis keywords
+            'analisis', 'análisis', 'analysis', 'reporte', 'report',
+            'kpi', 'indicador', 'indicadores', 'business intelligence', 'bi',
+            'ventas', 'retencion', 'retención', 'conversion', 'conversión'
+        ];
+        
+        // Check if query contains any database keyword
+        const hasKeyword = databaseKeywords.some(keyword => lower.includes(keyword));
+        
+        // Check if query mentions any table name from schema
+        const mentionsTable = tableNames.some(table => lower.includes(table));
+        
+        // Check if query contains SQL-like syntax
+        const hasSQLSyntax = /\b(select|insert|update|delete|from|where|join|group by|order by)\b/i.test(query);
+        
+        // Log the detection result for debugging
+        logger.info(`🔍 isDatabaseRelatedQuery: hasKeyword=${hasKeyword}, mentionsTable=${mentionsTable}, hasSQLSyntax=${hasSQLSyntax}`);
+        
+        return hasKeyword || mentionsTable || hasSQLSyntax;
     }
 
     /**
