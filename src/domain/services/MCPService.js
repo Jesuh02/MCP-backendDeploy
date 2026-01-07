@@ -797,6 +797,9 @@ ${schemaText}
                     // Build prompt based on whether this is a retry
                     let sqlGenMessages;
                     if (attempt === 1) {
+                        // Detect if this is a Business Intelligence query
+                        const isBIQuery = this.isBusinessIntent(query);
+                        
                         // First attempt - clean prompt with strict rules
                         sqlGenMessages = [
                             new SystemMessage(`Genera una consulta PostgreSQL usando EXCLUSIVAMENTE este esquema:
@@ -813,6 +816,14 @@ ${schemaText}
 7. VERIFICA dos veces que cada columna mencionada existe en la tabla correspondiente
 8. Si tienes dudas sobre una columna, NO la uses - elige otra que SEPAS que existe
 
+${isBIQuery ? `\n🎯 **CONSULTA DE BUSINESS INTELLIGENCE DETECTADA:**
+Esta es una consulta analítica/estratégica. Genera SQL que retorne datos completos y útiles.
+- Incluye métricas agregadas (COUNT, AVG, SUM) cuando sea relevante
+- Ordena por las columnas más relevantes (DESC para ver los top)
+- Limita a TOP 10 o 20 si son rankings
+- Incluye todos los campos necesarios para análisis (id, title, price, creator, etc.)
+- NO generes múltiples consultas - crea UNA consulta comprehensiva que responda la pregunta completa
+` : ''}
 ⚠️ EJEMPLOS DE ERRORES COMUNES A EVITAR:
 - ❌ usuarios.creator_user_id (NO EXISTE - esa columna está en courses)
 - ✅ courses.creator_user_id (CORRECTO)
@@ -941,6 +952,8 @@ SELECT ...
 4. NO respondas preguntas fuera del contexto de la base de datos consultada
 5. SIEMPRE basa tus análisis en los números EXACTOS de los resultados
 6. Si un dato no existe en los resultados, di "Este dato no está disponible" - NUNCA lo inventes
+7. 🚨 NUNCA incluyas secciones como "## Acción inmediata" o "Ejecutar las consultas..." 
+8. 🚨 LOS DATOS YA FUERON EJECUTADOS - presenta RESULTADOS, no sugerencias de consultas
 
 📊 **ESQUEMA DE BASE DE DATOS:**
 ${schemaText}
@@ -984,6 +997,67 @@ Después de la tabla, añade un breve análisis.
                 const analysisResponse = await this.llmService.generateResponse(analysisMessages, []);
                 const analysis = analysisResponse.content || "Análisis no disponible";
                 logger.info("✅ Analysis complete");
+                
+                // 🚨 POST-ANALYSIS VALIDATION: Detect and auto-execute any suggested SQL
+                if (analysis.includes('```sql') || 
+                    analysis.toLowerCase().includes('ejecutar') ||
+                    analysis.toLowerCase().includes('acción inmediata')) {
+                    logger.warn("⚠️ Analysis contains SQL suggestions - AUTO-EXECUTING them");
+                    
+                    // Extract all SQL blocks from the analysis
+                    const sqlMatches = [...analysis.matchAll(/```sql\s*\n([\s\S]+?)\n```/gi)];
+                    
+                    if (sqlMatches.length > 0) {
+                        let enhancedAnalysis = analysis;
+                        const autoResults = [];
+                        
+                        for (const match of sqlMatches) {
+                            const suggestedSQL = match[1].trim();
+                            logger.info(`🔍 Auto-executing suggested SQL: ${suggestedSQL.substring(0, 100)}...`);
+                            
+                            try {
+                                const autoResult = await this.supabase.executeRawSQL(suggestedSQL);
+                                autoResults.push({
+                                    sql: suggestedSQL,
+                                    data: autoResult,
+                                    success: true
+                                });
+                                logger.info(`✅ Auto-execution successful: ${autoResult?.length || 0} rows`);
+                            } catch (autoError) {
+                                logger.error(`❌ Auto-execution failed:`, autoError);
+                                autoResults.push({
+                                    sql: suggestedSQL,
+                                    error: autoError.message,
+                                    success: false
+                                });
+                            }
+                        }
+                        
+                        // Build results section
+                        if (autoResults.length > 0) {
+                            const resultsSection = autoResults.map((r, idx) => {
+                                if (r.success) {
+                                    const dataTable = r.data && r.data.length > 0 
+                                        ? `\n\n**Resultados (${r.data.length} filas):**\n\`\`\`json\n${JSON.stringify(r.data, null, 2)}\n\`\`\``
+                                        : '\n\n⚠️ La consulta no retornó datos.';
+                                    return `### 📊 Consulta ${idx + 1} (ejecutada automáticamente)\n\`\`\`sql\n${r.sql}\n\`\`\`${dataTable}`;
+                                } else {
+                                    return `### ❌ Consulta ${idx + 1} (error)\n\`\`\`sql\n${r.sql}\n\`\`\`\n\n**Error:** ${r.error}`;
+                                }
+                            }).join('\n\n');
+                            
+                            // Replace "Acción inmediata" section with actual results
+                            enhancedAnalysis = enhancedAnalysis.replace(
+                                /## (Acción inmediata|Ejemplos de SQL)[\s\S]*/i,
+                                `## 📊 Consultas ejecutadas automáticamente\n\n${resultsSection}`
+                            );
+                            
+                            logger.info(`✅ Enhanced analysis with ${autoResults.length} auto-executed queries`);
+                            return enhancedAnalysis;
+                        }
+                    }
+                }
+                
                 return analysis;
             }
 
