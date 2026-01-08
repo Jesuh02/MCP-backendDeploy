@@ -38,8 +38,15 @@ router.post('/initiate', async (req, res) => {
         };
 
         const result = await PaymentService.initiatePayment(paymentData);
-        // Return flattened response to match Android DTO
-        res.json({ success: true, ...result });
+        // Map backend response fields to match Android PaymentInitiationResponse DTO
+        // Backend returns: { payment_url, reference, signature }
+        // Android expects: { urlBankPayment, transactionId, message }
+        res.json({ 
+            success: true, 
+            urlBankPayment: result.payment_url,
+            transactionId: result.reference,
+            message: "Redirigiendo a Wompi..."
+        });
     } catch (error) {
         console.error("Payment Init Error:", error);
         res.status(500).json({ success: false, message: error.message });
