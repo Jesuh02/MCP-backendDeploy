@@ -3382,6 +3382,19 @@ app.post('/notify-course-creation', async(req, res) => {
                     }
                 }
 
+                // Send Push Notification
+                try {
+                     const pushTitle = `${creatorUsername || 'Un creador'} subió un nuevo curso`;
+                     const pushBody = `Mira el nuevo curso "${courseTitle}"`;
+                     // Use the NotificationService instance available in scope
+                     await notificationServiceInstance.sendPushNotification(user.id, pushTitle, pushBody, {
+                         type: 'new_course',
+                         courseId: String(courseId)
+                     });
+                } catch (pushError) {
+                     console.warn(`⚠️ Failed to send push to ${user.id}:`, pushError.message);
+                }
+
                 successCount++;
             } catch (error) {
                 console.error(`Error notifying user ${user.id}:`, error.message);
@@ -4078,12 +4091,19 @@ app.post('/procesar-prompt', async(req, res) => {
 
         // ============================================================
         // 🔥 NUEVO: OBTENER CONTENIDO DESDE R2/SUPABASE SI NO VIENE EN EL REQUEST
-        // Si fileContent está vacío pero tenemos información de la submission,
-        // intentar obtener el contenido directamente desde el servidor
+        // Si fileContent está vacío, es muy corto, O ES UNA URL, intentar obtener el contenido
         // ============================================================
-        if ((!fileContent || fileContent.trim().length < 50) && supabaseService) {
-            console.log('🔍 FileContent vacío o muy corto, intentando obtener desde servidor...');
-            
+        const isUrlContent = fileContent && (fileContent.trim().startsWith('http://') || fileContent.trim().startsWith('https://')) && fileContent.trim().length < 500 && !fileContent.includes('\n');
+
+        if ((!fileContent || fileContent.trim().length < 50 || isUrlContent) && supabaseService) {
+            console.log('🔍 FileContent vacío, corto o es URL. Intentando fetch desde servidor...');
+             
+             // Si es una URL, aprovecharla directamente como pista si no tenemos fileUri
+             if (isUrlContent && !fileUri) {
+                  fileUri = fileContent.trim();
+                  console.log(`🔗 Usando URL del contenido como fileUri: ${fileUri}`);
+             }
+
             try {
                 let submission = null;
                 
@@ -4159,21 +4179,26 @@ app.post('/procesar-prompt', async(req, res) => {
                     }
                 }
                 
-                // Si encontramos la submission, obtener el contenido del archivo
-                if (submission && submission.file_uri) {
-                    console.log(`📥 Obteniendo contenido del archivo desde: ${submission.file_uri}`);
+                // Determinar URI final: priorizar DB, usar archivo detectado en URL como fallback
+                const finalFileUri = (submission && submission.file_uri) ? submission.file_uri : fileUri;
+                const finalSubmissionId = (submission && submission.id) ? submission.id : submissionId;
+                const finalFileName = (submission && submission.file_name) ? submission.file_name : 'archivo';
+
+                // Si tenemos una URI válida, intentar descargar contenido
+                if (finalFileUri) {
+                    console.log(`📥 Obteniendo contenido del archivo desde: ${finalFileUri}`);
                     
                     try {
                         const fileData = await getSubmissionFileContent(
-                            submission.file_uri,
-                            submission.file_name || 'archivo',
-                            submission.id
+                            finalFileUri,
+                            finalFileName,
+                            finalSubmissionId
                         );
                         
                         if (fileData && fileData.content) {
                             fileContent = fileData.content;
-                            fileUri = submission.file_uri;
-                            submissionId = submission.id;
+                            fileUri = finalFileUri;
+                            submissionId = finalSubmissionId;
                             
                             console.log(`✅ Contenido obtenido exitosamente: ${fileContent.length} caracteres`);
                             console.log(`📄 Fuente: ${fileData.source || 'desconocida'}`);
