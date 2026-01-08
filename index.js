@@ -737,53 +737,16 @@ async function getSubmissionFileContent(fileUri, fileName, submissionId = null) 
     console.log(`   URI: ${fileUri}`);
     console.log(`   SubmissionId: ${submissionId}`);
 
+    // [MODIFICADO] SE HA DESACTIVADO LA BÚSQUEDA EN FILE_CONTEXTS
+    // Motivo: El usuario reporta que file_contexts contiene URLs en lugar de contenido real
+    // y prefiere obtener el contenido original directamente de R2/HTTP.
+    /*
     // OPCIÓN 1: Intentar obtener el contenido desde file_contexts (más confiable)
     if (submissionId && supabaseService) {
-        try {
-            console.log(`🔍 Buscando contenido en file_contexts para submission ${submissionId}...`);
-            const { data: fileContext, error } = await supabaseService.client
-                .from('file_contexts')
-                .select('file_content, file_type, file_name, extracted_text, metadata, content_summary')
-                .eq('submission_id', submissionId)
-                .order('id', { ascending: false })
-                .limit(1)
-                .single();
-
-            if (!error && fileContext) {
-                // El contenido puede estar en file_content o extracted_text
-                let content = fileContext.file_content || fileContext.extracted_text;
-                if (content) {
-                    console.log(`✅ Contenido encontrado en file_contexts (${content.length} chars)`);
-                    
-                    // 🔥 CHECK SPECIFICALLY FOR URL IN CONTENT
-                    // Si el contenido es una URL (corta y empieza con http), no devolverla como contenido
-                    // sino forzar la descarga en las siguientes opciones.
-                    const isUrl = content.trim().length < 500 && (content.trim().startsWith('http://') || content.trim().startsWith('https://')) && !content.includes('\n');
-                    
-                    if (isUrl) {
-                        console.log(`⚠️ El contenido en DB parece ser una URL, ignorando DB y procediendo a descargar: ${content}`);
-                        // No retornamos aquí, dejamos que continúe a las opciones de descarga
-                    } else {
-                        return {
-                            content: content,
-                            contentType: 'text/plain',
-                            size: content.length,
-                            isBase64: false,
-                            fileType: fileContext.file_type || getFileTypeFromName(fileName || fileContext.file_name),
-                            fileName: fileContext.file_name || fileName,
-                            metadata: fileContext.metadata,
-                            summary: fileContext.content_summary,
-                            extractedText: fileContext.extracted_text,
-                            source: 'file_contexts'
-                        };
-                    }
-                }
-            }
-            console.log(`⚠️ No se encontró contenido en file_contexts: ${error?.message || 'sin datos o contenido vacío'}`);
-        } catch (fcError) {
-            console.log(`⚠️ Error buscando en file_contexts: ${fcError.message}`);
-        }
+        // ... (código comentado)
     }
+    */
+    console.log("⚠️ Saltando búsqueda en file_contexts por instrucción explícita. Procediendo a descargar.");
 
     // OPCIÓN 2: Determinar si es una URL de R2 e intentar descargar
     const isR2Url = fileUri && (
