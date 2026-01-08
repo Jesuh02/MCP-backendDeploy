@@ -751,21 +751,32 @@ async function getSubmissionFileContent(fileUri, fileName, submissionId = null) 
 
             if (!error && fileContext) {
                 // El contenido puede estar en file_content o extracted_text
-                const content = fileContext.file_content || fileContext.extracted_text;
+                let content = fileContext.file_content || fileContext.extracted_text;
                 if (content) {
                     console.log(`✅ Contenido encontrado en file_contexts (${content.length} chars)`);
-                    return {
-                        content: content,
-                        contentType: 'text/plain',
-                        size: content.length,
-                        isBase64: false,
-                        fileType: fileContext.file_type || getFileTypeFromName(fileName || fileContext.file_name),
-                        fileName: fileContext.file_name || fileName,
-                        metadata: fileContext.metadata,
-                        summary: fileContext.content_summary,
-                        extractedText: fileContext.extracted_text,
-                        source: 'file_contexts'
-                    };
+                    
+                    // 🔥 CHECK SPECIFICALLY FOR URL IN CONTENT
+                    // Si el contenido es una URL (corta y empieza con http), no devolverla como contenido
+                    // sino forzar la descarga en las siguientes opciones.
+                    const isUrl = content.trim().length < 500 && (content.trim().startsWith('http://') || content.trim().startsWith('https://')) && !content.includes('\n');
+                    
+                    if (isUrl) {
+                        console.log(`⚠️ El contenido en DB parece ser una URL, ignorando DB y procediendo a descargar: ${content}`);
+                        // No retornamos aquí, dejamos que continúe a las opciones de descarga
+                    } else {
+                        return {
+                            content: content,
+                            contentType: 'text/plain',
+                            size: content.length,
+                            isBase64: false,
+                            fileType: fileContext.file_type || getFileTypeFromName(fileName || fileContext.file_name),
+                            fileName: fileContext.file_name || fileName,
+                            metadata: fileContext.metadata,
+                            summary: fileContext.content_summary,
+                            extractedText: fileContext.extracted_text,
+                            source: 'file_contexts'
+                        };
+                    }
                 }
             }
             console.log(`⚠️ No se encontró contenido en file_contexts: ${error?.message || 'sin datos o contenido vacío'}`);
