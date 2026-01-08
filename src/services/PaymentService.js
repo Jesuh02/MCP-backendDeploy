@@ -222,6 +222,29 @@ class PaymentService {
         const status = result.data?.status;
         const transactionId = result.data?.id;
 
+        // Validar si la transacción fue aprobada de forma inmediata (Sandbox, Saldo, etc.)
+        // y actualizar la base de datos de inmediato.
+         if (status === 'APPROVED' || status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') {
+            console.log(`⚡ Transaction completed immediately with status: ${status}`);
+            
+            // Map status for DB
+            let dbStatus = 'PENDING';
+            if (status === 'APPROVED') dbStatus = 'APPROVED';
+            else if (status === 'DECLINED') dbStatus = 'REJECTED';
+            else if (status === 'ERROR' || status === 'VOIDED') dbStatus = 'FAILED';
+            
+            // Update transaction record in DB
+            await this._updateTransactionStatus(referenceCode, dbStatus, transactionId);
+            
+            // Check completeness and Grant access if APPROVED
+            if (dbStatus === 'APPROVED') {
+                 const completeness = await this._checkPaymentCompleteness(paymentData.userId, paymentData.courseId);
+                 if (completeness.isComplete) {
+                     await this._grantCourseAccess(paymentData.userId, paymentData.courseId);
+                 }
+            }
+        }
+
         // FIX: If transaction is immediately APPROVED (e.g. Sandbox), Wompi does NOT return a bank URL.
         // Also, sometimes Sandbox returns PENDING without URL for certain banks.
         // We must provide a fallback URL so the Mobile App has something to open.
