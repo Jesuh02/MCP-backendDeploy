@@ -38,7 +38,8 @@ router.post('/initiate', async (req, res) => {
         };
 
         const result = await PaymentService.initiatePayment(paymentData);
-        res.json({ success: true, data: result });
+        // Return flattened response to match Android DTO
+        res.json({ success: true, ...result });
     } catch (error) {
         console.error("Payment Init Error:", error);
         res.status(500).json({ success: false, message: error.message });
