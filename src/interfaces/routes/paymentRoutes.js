@@ -60,4 +60,20 @@ router.post('/webhook', async (req, res) => {
     }
 });
 
+/**
+ * GET /status/:transactionId
+ * Checks the status of a specific transaction.
+ * Polls Wompi directly if necessary (useful for sandbox/no-webhook envs).
+ */
+router.get('/status/:transactionId', async (req, res) => {
+    try {
+        const { transactionId } = req.params;
+        const result = await PaymentService.getTransactionStatus(transactionId);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error("Status Check Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 export default router;
