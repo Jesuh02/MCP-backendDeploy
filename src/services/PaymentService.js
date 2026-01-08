@@ -335,9 +335,14 @@ class PaymentService {
 
         await this._updateTransactionStatus(reference, dbStatus, transactionId);
 
-        // 3. If Approved, Grant Access
+        // 3. If Approved, Check Amount and Grant Access if Complete
         if (dbStatus === 'APPROVED') {
-            await this._grantCourseAccess(userId, courseId);
+            const completeness = await this._checkPaymentCompleteness(userId, courseId);
+            if (completeness.isComplete) {
+                await this._grantCourseAccess(userId, courseId);
+            } else {
+                console.log(`⚠️ Payment Approved but partial/insufficient. Paid: ${completeness.paid} / Required: ${completeness.required}`);
+            }
         }
     }
 
@@ -346,70 +351,140 @@ class PaymentService {
      * Useful when webhooks fail or in local/sandbox environments.
      */
     async getTransactionStatus(transactionId) {
-        // 1. First check local DB
-        // We check both by external_reference (Wompi ID) and potentially the reference code logic if needed
+        // 1. First check local DB by external_reference (Wompi ID)
         let { data: tx } = await this.supabase.client
             .from('transactions')
             .select('*')
             .eq('external_reference', transactionId)
             .maybeSingle();
 
-        if (tx && tx.status === 'APPROVED') {
-            return { status: 'APPROVED', source: 'DB' };
-        }
-
-        // 2. If not approved in DB, query Wompi API
+        // 2. Poll Wompi if needed (if not final or explicitly requested)
+        // For simplicity, we always poll Wompi to be sure in Sandbox
+        let wompiResult = null;
         try {
             console.log(`🔎 Polling Wompi for status: ${transactionId}`);
-            // Use Public Key for GET requests to Wompi
-            // Also supports Sandbox URL automatically via this.wompiUrl
             const response = await fetch(`${this.wompiUrl}/transactions/${transactionId}`, {
                 method: 'GET'
-            }); // Public endpoint usually doesn't need auth, or accepts public key
+            }); 
             
             const result = await response.json();
-
             if (result.data) {
-                const wompiStatus = result.data.status; // APPROVED, DECLINED, ERROR, VOIDED
-                const reference = result.data.reference; // TX-...
-                
-                console.log(`🔄 Wompi Reported Status for ${transactionId}: ${wompiStatus}`);
-
-                // Map status
-                let dbStatus = 'PENDING';
-                if (wompiStatus === 'APPROVED') dbStatus = 'APPROVED';
-                else if (wompiStatus === 'DECLINED') dbStatus = 'REJECTED';
-                else if (wompiStatus === 'ERROR' || wompiStatus === 'VOIDED') dbStatus = 'FAILED';
-
-                // If status is final (Approved/Rejected) and DB is different, update DB
-                if (dbStatus !== 'PENDING') {
-                     // Parse Reference for User/Course
-                     const parts = reference.split('-');
-                     if (parts.length >= 4) {
-                         const userId = parts[2];
-                         const courseId = parts[3];
-
-                         // Update DB
-                         await this._updateTransactionStatus(reference, dbStatus, transactionId);
-                         
-                         // Grant Access
-                         if (dbStatus === 'APPROVED') {
-                             await this._grantCourseAccess(userId, courseId);
-                         }
-                     }
-                }
-
-                return { status: dbStatus, source: 'WOMPI' };
+                wompiResult = result.data;
             }
         } catch (error) {
             console.error("Error polling Wompi:", error);
         }
 
-        // Return current DB status if Wompi check failed
-        return { status: tx ? tx.status : 'UNKNOWN', source: 'DB_FALLBACK' };
+        let currentStatus = tx ? tx.status : 'UNKNOWN';
+        let reference = tx ? tx.external_reference : null; // This might be wrong field mapping, reference is usually 'reference' column
+        // In DB: external_reference maps to Wompi ID usually? 
+        // Let's use the reference code (TX-...) if available
+        let referenceCode = tx ? (tx.reference || tx.external_reference) : null; 
+        
+        let userId = tx ? tx.user_id : null;
+        let courseId = tx ? tx.course_id : null;
+
+        if (wompiResult) {
+            const wompiStatus = wompiResult.status;
+            referenceCode = wompiResult.reference; // Trust Wompi reference code
+            
+            // Map status
+            if (wompiStatus === 'APPROVED') currentStatus = 'APPROVED';
+            else if (wompiStatus === 'DECLINED') currentStatus = 'REJECTED';
+            else if (wompiStatus === 'ERROR' || wompiStatus === 'VOIDED') currentStatus = 'FAILED';
+
+            // Parse ID from reference if we didn't have it
+            if (!userId || !courseId) {
+                const parts = referenceCode.split('-');
+                if (parts.length >= 4) {
+                    userId = parts[2];
+                    courseId = parts[3];
+                }
+            }
+
+            // Update DB
+            // Use external_reference = transactionId to match the row
+            if (currentStatus !== 'PENDING') {
+                await this._updateTransactionStatus(referenceCode, currentStatus, transactionId);
+            }
+        }
+
+        const responseObj = { 
+            status: currentStatus, 
+            source: wompiResult ? 'WOMPI' : 'DB' 
+        };
+
+        // 3. Check for Completeness and Grant Access if Approved
+        if (currentStatus === 'APPROVED' && userId && courseId) {
+             const completeness = await this._checkPaymentCompleteness(userId, courseId);
+             
+             if (completeness.isComplete) {
+                 await this._grantCourseAccess(userId, courseId);
+                 responseObj.accessGranted = true;
+             } else {
+                 responseObj.accessGranted = false;
+                 responseObj.partial = true;
+             }
+             
+             // Attach financial details for frontend
+             responseObj.paymentDetails = {
+                 paid: completeness.paid,
+                 required: completeness.required,
+                 remaining: completeness.remaining,
+                 isComplete: completeness.isComplete
+             };
+        } else if (userId && courseId) {
+             // Even if not approved, return what we know about price
+              const completeness = await this._checkPaymentCompleteness(userId, courseId);
+              responseObj.paymentDetails = {
+                 paid: completeness.paid,
+                 required: completeness.required,
+                 remaining: completeness.remaining,
+                 isComplete: completeness.isComplete
+             };
+        }
+
+        return responseObj;
     }
 
     // --- Private Helpers ---
+
+    async _checkPaymentCompleteness(userId, courseId) {
+        // 1. Get Course Price
+        const { data: course, error: cErr } = await this.supabase.client
+            .from('courses')
+            .select('price')
+            .eq('id', courseId)
+            .single();
+        
+        if (cErr || !course) return { isComplete: false, error: 'Course not found', paid: 0, required: 0, remaining: 0 };
+
+        const price = parseFloat(course.price || 0);
+        if (price <= 0) return { isComplete: true, paid: 0, required: 0, remaining: 0 }; // Free course
+
+        // 2. Get Total Approved Payments
+        const { data: txs, error: tErr } = await this.supabase.client
+            .from('transactions')
+            .select('amount')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .eq('status', 'APPROVED');
+        
+        if (tErr) return { isComplete: false, error: 'DB Error', paid: 0, required: 0, remaining: 0 };
+
+        const totalPaid = txs.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
+        const remaining = Math.max(0, price - totalPaid);
+        
+        // Allow small margin of error (e.g. 100 COP)
+        const isComplete = remaining < 100; 
+
+        return { 
+            isComplete, 
+            paid: totalPaid, 
+            required: price, 
+            remaining 
+        };
+    }
 
     _getRedirectUrl() {
         let baseUrl = process.env.PUBLIC_URL || process.env.RAILWAY_STATIC_URL || 'https://mcp-backenddeploy-production.up.railway.app';
