@@ -39,13 +39,42 @@ class PaymentService {
      * 2. Calculate secure signature
      * 3. Send request to Wompi
      * 4. Persist initial transaction state PENDING
-     * @param {Object} paymentData - { userId, courseId, amount, ipAddress, userAgent, ... }
+     * @param {Object} paymentData - { userId, courseId, amount, ipAddress, userAgent, payerDocType, payerDocNumber, payerEmail, bankCode, ... }
      */
     async initiatePayment(paymentData) {
         // 1. Validation
         if (!paymentData.userId || !paymentData.courseId || !paymentData.amount) {
-            throw new Error('Invalid payment data');
+            throw new Error('Invalid payment data: Missing userId, courseId, or amount');
         }
+        
+        // Validate document fields (required by Wompi)
+        const docType = paymentData.payerDocType || 'CC';
+        const docNumber = paymentData.payerDocNumber;
+        if (!docNumber) {
+            throw new Error('Invalid payment data: Missing document number (payerDocNumber)');
+        }
+        
+        // Validate email
+        const email = paymentData.payerEmail || paymentData.email;
+        if (!email) {
+            throw new Error('Invalid payment data: Missing email');
+        }
+        
+        // Validate bank code
+        const bankCode = paymentData.bankCode;
+        if (!bankCode) {
+            throw new Error('Invalid payment data: Missing bankCode');
+        }
+
+        console.log('📝 Payment Request Data:', {
+            userId: paymentData.userId,
+            courseId: paymentData.courseId,
+            amount: paymentData.amount,
+            docType,
+            docNumber: docNumber ? `${docNumber.substring(0, 3)}***` : 'MISSING',
+            email: email ? `${email.substring(0, 3)}***` : 'MISSING',
+            bankCode
+        });
 
         const referenceCode = `TX-${Date.now()}-${paymentData.userId}-${paymentData.courseId}`;
         const currency = 'COP';
@@ -65,39 +94,49 @@ class PaymentService {
         const signatureString = `${referenceCode}${amountInCents}${currency}${this.wompiIntegritySecret}`;
         const signature = crypto.createHash('sha256').update(signatureString).digest('hex');
 
-        // 4. Return Data to Frontend for Wompi Widget or Direct API
-        // Unlike PayU XML, Wompi is often used with a Widget OR Rest API. 
-        // For direct PSE via API, we hit /transactions
+        // 4. Build Wompi payload with proper field mapping
+        // Map document types: Wompi accepts RC, TI, CC, TE, CE, NIT, PP, DNI
+        const validDocTypes = ['RC', 'TI', 'CC', 'TE', 'CE', 'NIT', 'PP', 'DNI'];
+        const wompiDocType = validDocTypes.includes(docType.toUpperCase()) ? docType.toUpperCase() : 'CC';
         
         const payload = {
-            acceptance_token: paymentData.acceptanceToken, // Required by Wompi
+            acceptance_token: paymentData.acceptanceToken, // May be null for PSE
             amount_in_cents: amountInCents,
             currency: currency,
             signature: signature,
-            customer_email: paymentData.email,
+            customer_email: email, // Map payerEmail -> customer_email
             payment_method: {
                 type: "PSE",
-                user_type: paymentData.payerDocType === 'NIT' ? 1 : 0, // 0 = Person, 1 = Company
+                user_type: wompiDocType === 'NIT' ? 1 : 0, // 0 = Person, 1 = Company
+                user_legal_id_type: wompiDocType, // Map payerDocType -> user_legal_id_type
+                user_legal_id: docNumber, // Map payerDocNumber -> user_legal_id
                 payment_description: `Course Purchase: ${paymentData.courseId}`,
-                sandbox_status: "APPROVED", // For testing only
-                financial_institution_code: paymentData.bankCode
+                financial_institution_code: bankCode
             },
             reference: referenceCode,
-            // Ensure redirect_url is a valid absolute URL
-            redirect_url: this._getRedirectUrl() 
+            redirect_url: this._getRedirectUrl()
         };
+        
+        // Add sandbox_status only in test mode
+        if (this.isTest) {
+            payload.payment_method.sandbox_status = "APPROVED";
+        }
 
-        // Note: Wompi API call requires Bearer token with Private Key
+        console.log('📤 Wompi Request Payload:', JSON.stringify(payload, null, 2));
+
+        // Note: Wompi API call requires Bearer token with Private Key for backend calls
         const response = await fetch(`${this.wompiUrl}/transactions`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${this.wompiPublicKey}`, // Public key for transactions usually? Or Private? Docs say Private for backend.
+                'Authorization': `Bearer ${this.wompiprivateKey}`, // Use PRIVATE key for backend transactions
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(payload)
         });
         
         const result = await response.json();
+        
+        console.log('📥 Wompi Response:', JSON.stringify(result, null, 2));
         
         if (result.error) {
             throw new Error(`Wompi Error: ${JSON.stringify(result.error)}`);
