@@ -233,10 +233,12 @@ class PaymentService {
         const transactionId = result.data?.id;
 
         // FIX: If transaction is immediately APPROVED (e.g. Sandbox), Wompi does NOT return a bank URL.
-        // We must provide a fallback URL (our own redirect URL) so the Mobile App has something to open.
-        if (status === 'APPROVED' && !bankUrl) {
-             bankUrl = `${this._getRedirectUrl()}?id=${transactionId}&env=test`;
-             console.log('✅ Auto-Approved Transaction. Generated fallback URL:', bankUrl);
+        // Also, sometimes Sandbox returns PENDING without URL for certain banks.
+        // We must provide a fallback URL so the Mobile App has something to open.
+        if ((status === 'APPROVED' || (status === 'PENDING' && this.isTest)) && !bankUrl) {
+             // Use the specific Wompi Link requested by USER as fallback
+             bankUrl = "https://checkout.wompi.co/l/VPOS_kN1kEQ?_gl=1*1xb4446*_gcl_au*MTUwODgzNzgyMy4xNzY3ODQzNTA0"; 
+             console.log(`✅ Sandbox Transaction (Status=${status}). Using User Provided Fallback URL:`, bankUrl);
         }
 
         return {
