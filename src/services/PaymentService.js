@@ -83,7 +83,8 @@ class PaymentService {
                 financial_institution_code: paymentData.bankCode
             },
             reference: referenceCode,
-            redirect_url: `${process.env.PUBLIC_URL}/payment/confirm` // Wompi redirects here
+            // Ensure redirect_url is a valid absolute URL
+            redirect_url: this._getRedirectUrl() 
         };
 
         // Note: Wompi API call requires Bearer token with Private Key
@@ -213,6 +214,22 @@ class PaymentService {
     }
 
     // --- Private Helpers ---
+
+    _getRedirectUrl() {
+        let baseUrl = process.env.PUBLIC_URL || process.env.RAILWAY_STATIC_URL || 'https://mcp-backenddeploy-production.up.railway.app';
+        
+        // Ensure https:// prefix if missing
+        if (!baseUrl.startsWith('http')) {
+            baseUrl = `https://${baseUrl}`;
+        }
+        
+        // Remove trailing slash if present to avoid double slashes
+        if (baseUrl.endsWith('/')) {
+            baseUrl = baseUrl.slice(0, -1);
+        }
+        
+        return `${baseUrl}/payment/confirm`;
+    }
 
     async _recordTransactionStart(txData) {
         // Insert into 'transactions' table via SupabaseService
