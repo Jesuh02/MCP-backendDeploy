@@ -33,6 +33,7 @@ import excelRoutes from './src/interfaces/routes/excelRoutes.js';
 import ttsRoutes from './src/interfaces/routes/ttsRoutes.js';
 import videoProcessingRoutes from './src/interfaces/routes/videoProcessingRoutes.js';
 import ragRoutes from './src/interfaces/routes/RAGRoutes.js';
+import paymentRoutes from './src/interfaces/routes/paymentRoutes.js';
 // Note: Additional refactored modules available:
 // - notificationRoutes: ./src/interfaces/routes/notificationRoutes.js
 // - fileUtils: ./src/utils/fileUtils.js  
@@ -141,6 +142,14 @@ console.log('      POST /video/process - Process video (HLS/compression)');
 console.log('      POST /video/process-url - Process from URL');
 console.log('      GET  /video/status/:jobId - Get job status');
 console.log('      GET  /video/qualities - Get quality presets');
+
+// Register Payment Routes (PayU/PSE)
+app.use('/api/payment', paymentRoutes);
+console.log('💳 Payment routes registered at /api/payment');
+console.log('   💸 Available endpoints:');
+console.log('      GET  /api/payment/banks - Get list of PSE banks');
+console.log('      POST /api/payment/initiate - Initiate a payment');
+console.log('      POST /api/payment/webhook - Payment confirmation webhook');
 
 // ============================================================
 // 🏥 CRITICAL: Healthcheck endpoint MUST be defined FIRST
