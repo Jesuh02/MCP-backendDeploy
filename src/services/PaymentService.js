@@ -13,21 +13,38 @@ class PaymentService {
     constructor() {
         this.supabase = SupabaseService.getInstance();
         
-        // Load credentials securely from environment, with provided fallbacks
-        this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY || 'pub_prod_Z2EDqHyoboyqtZeFM1o2LzMo29Y9IOZY'; 
-        this.wompiprivateKey = process.env.PAYU_API_KEY || 'prv_prod_1HtekzWgmIlKMDmsYLx9lChHFTdtZQ3k'; 
-        this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET || 'prod_integrity_lmrPPePMkcVxQh8TK3Xcmj4vIrh25ybG';
-        this.wompiEventSecret = process.env.PAYU_EVENT_SECRET || 'prod_events_mM1eK9OkFgrr9UYtgnnFVQGdlc4oFoGj';
+        // Load credentials securely from environment
+        const ENV_privateKey = process.env.PAYU_API_KEY;
         
-        // Force production URL as per provided production keys
-        this.isTest = false;
-        this.wompiUrl = 'https://production.wompi.co/v1'; 
+        // Detect environment based on key prefix
+        // If key starts with 'prv_test_', we MUST use Sandbox URL
+        // If key starts with 'prv_prod_', we MUST use Production URL
+        const isTestKey = ENV_privateKey && ENV_privateKey.startsWith('prv_test_');
+
+        if (isTestKey) {
+            this.wompiprivateKey = ENV_privateKey;
+            this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY || 'pub_test_key_placeholder'; // Use Env or Placeholder
+            this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET || 'test_integrity_secret';
+            this.wompiEventSecret = process.env.PAYU_EVENT_SECRET || 'test_event_secret';
+            
+            this.isTest = true;
+            this.wompiUrl = 'https://sandbox.wompi.co/v1';
+            console.log(`💳 Payment Service Initialized: Mode=SANDBOX (Test Key Detected), URL=${this.wompiUrl}`);
+        } else {
+            // Default to Production
+            this.wompiprivateKey = ENV_privateKey || 'prv_prod_1HtekzWgmIlKMDmsYLx9lChHFTdtZQ3k'; 
+            this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY || 'pub_prod_Z2EDqHyoboyqtZeFM1o2LzMo29Y9IOZY'; 
+            this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET || 'prod_integrity_lmrPPePMkcVxQh8TK3Xcmj4vIrh25ybG';
+            this.wompiEventSecret = process.env.PAYU_EVENT_SECRET || 'prod_events_mM1eK9OkFgrr9UYtgnnFVQGdlc4oFoGj';
+            
+            this.isTest = false;
+            this.wompiUrl = 'https://production.wompi.co/v1'; 
+            console.log(`💳 Payment Service Initialized: Mode=PRODUCTION, URL=${this.wompiUrl}`);
+        }
         
         // Cache for acceptance token
         this._cachedAcceptanceToken = null;
         this._acceptanceTokenExpiry = null;
-        
-        console.log(`💳 Payment Service Initialized: Mode=PRODUCTION, URL=${this.wompiUrl}`);
     }
 
     /**
