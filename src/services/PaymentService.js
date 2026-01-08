@@ -47,6 +47,12 @@ class PaymentService {
             throw new Error('Invalid payment data: Missing userId, courseId, or amount');
         }
         
+        // Wompi minimum amount validation: $1,500 COP
+        const WOMPI_MIN_AMOUNT_COP = 1500;
+        if (paymentData.amount < WOMPI_MIN_AMOUNT_COP) {
+            throw new Error(`El monto mínimo de pago es $${WOMPI_MIN_AMOUNT_COP.toLocaleString('es-CO')} COP. Monto recibido: $${paymentData.amount.toLocaleString('es-CO')} COP`);
+        }
+        
         // Log incoming data for debugging
         console.log('📥 Raw Payment Data Received:', JSON.stringify(paymentData, null, 2));
         
