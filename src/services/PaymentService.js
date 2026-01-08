@@ -43,13 +43,7 @@ class PaymentService {
      * Required for all transactions.
      */
     async _getAcceptanceToken() {
-        // Check if we have a valid cached token (cache for 1 hour to be safe)
-        const now = Date.now();
-        if (this._cachedAcceptanceToken && this._acceptanceTokenExpiry && now < this._acceptanceTokenExpiry) {
-            console.log('📋 Using cached acceptance token');
-            return this._cachedAcceptanceToken;
-        }
-
+        // Wompi acceptance tokens are single-use. Always fetch a new one.
         if (!this.wompiPublicKey) {
             throw new Error('Internal Error: WOMPI Public Key is not configured (PAYU_PUBLIC_KEY env var)');
         }
@@ -78,10 +72,6 @@ class PaymentService {
                 }
 
                 console.log('✅ Acceptance token obtained. Terms URL:', permalink);
-                
-                // Cache the token for 1 hour
-                this._cachedAcceptanceToken = acceptance_token;
-                this._acceptanceTokenExpiry = now + (60 * 60 * 1000); // 1 hour
                 
                 return acceptance_token;
             } else {
