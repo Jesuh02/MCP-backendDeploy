@@ -35,8 +35,8 @@ import videoProcessingRoutes from './src/interfaces/routes/videoProcessingRoutes
 import ragRoutes from './src/interfaces/routes/RAGRoutes.js';
 import paymentRoutes from './src/interfaces/routes/paymentRoutes.js';
 import PaymentService from './src/services/PaymentService.js';
+import notificationRoutes from './src/interfaces/routes/notificationRoutes.js';
 // Note: Additional refactored modules available:
-// - notificationRoutes: ./src/interfaces/routes/notificationRoutes.js
 // - fileUtils: ./src/utils/fileUtils.js  
 // - githubUtils: ./src/utils/githubUtils.js
 // - emailTemplates: ./src/templates/emailTemplates.js
@@ -148,6 +148,13 @@ console.log('      GET  /video/qualities - Get quality presets');
 app.use('/api/payment', paymentRoutes);
 console.log('💳 Payment routes registered at /api/payment');
 console.log('   💸 Available endpoints:');
+
+// Register Notification Routes
+app.use('/', notificationRoutes);
+console.log('🔔 Notification routes registered at /');
+console.log('   📢 Available endpoints:');
+console.log('      POST /notify-course-creation - Notify subscribers about new course');
+console.log('      POST /send-push-notification - Send generic push notification');
 console.log('      GET  /api/payment/banks - Get list of PSE banks');
 console.log('      POST /api/payment/initiate - Initiate a payment');
 console.log('      POST /api/payment/webhook - Payment confirmation webhook');
@@ -3255,12 +3262,10 @@ app.get('/download-apk', (req, res) => {
 });
 
 /**
- * Notifica a los suscriptores cuando un creador crea un nuevo curso
- * 1. Busca los suscriptores del creador.
- * 2. Guarda la notificación en la base de datos (tabla 'notifications').
- * 3. Envía emails con Resend a los suscriptores.
+ * [LEGACY] Notifica a los suscriptores cuando un creador crea un nuevo curso
+ * REPLACED BY notificationRoutes.js
  */
-app.post('/notify-course-creation', async(req, res) => {
+app.post('/notify-course-creation-LEGACY', async(req, res) => {
     try {
         const { creatorUserId, creatorUsername, courseId, courseTitle, courseThumbnailUrl } = req.body;
 
