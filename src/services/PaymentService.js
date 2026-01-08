@@ -13,28 +13,21 @@ class PaymentService {
     constructor() {
         this.supabase = SupabaseService.getInstance();
         
-        // Load credentials securely from environment
-        // The user provided Wompi-style keys (pub_test_, prv_test_).
-        // For robustness, we map them here.
-        this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY; 
-        this.wompiprivateKey = process.env.PAYU_API_KEY; 
-        this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET;
-        this.wompiEventSecret = process.env.PAYU_EVENT_SECRET;
+        // Load credentials securely from environment, with provided fallbacks
+        this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY || 'pub_prod_Z2EDqHyoboyqtZeFM1o2LzMo29Y9IOZY'; 
+        this.wompiprivateKey = process.env.PAYU_API_KEY || 'prv_prod_1HtekzWgmIlKMDmsYLx9lChHFTdtZQ3k'; 
+        this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET || 'prod_integrity_lmrPPePMkcVxQh8TK3Xcmj4vIrh25ybG';
+        this.wompiEventSecret = process.env.PAYU_EVENT_SECRET || 'prod_events_mM1eK9OkFgrr9UYtgnnFVQGdlc4oFoGj';
         
-        // Auto-detect environment based on key prefix (pub_test_ vs pub_prod_)
-        // This overrides NODE_ENV to allow testing in production deployments
-        const hasTestKey = this.wompiPublicKey && (this.wompiPublicKey.includes('test') || this.wompiPublicKey.includes('sbx'));
+        // Force production URL as per provided production keys
+        this.isTest = false;
+        this.wompiUrl = 'https://production.wompi.co/v1'; 
         
-        this.isTest = hasTestKey || process.env.NODE_ENV !== 'production';
-        this.wompiUrl = this.isTest 
-            ? 'https://sandbox.wompi.co/v1' 
-            : 'https://production.wompi.co/v1'; 
-        
-        // Cache for acceptance token (valid for ~24 hours typically)
+        // Cache for acceptance token
         this._cachedAcceptanceToken = null;
         this._acceptanceTokenExpiry = null;
         
-        console.log(`💳 Payment Service Initialized: Mode=${this.isTest ? 'TEST/SANDBOX' : 'PRODUCTION'}, URL=${this.wompiUrl}`);
+        console.log(`💳 Payment Service Initialized: Mode=PRODUCTION, URL=${this.wompiUrl}`);
     }
 
     /**
@@ -85,12 +78,9 @@ class PaymentService {
     }
 
     /**
-     * Start a payment transaction using Wompi (implied by the keys provided).
-     * 1. Validate inputs
-     * 2. Calculate secure signature
-     * 3. Send request to Wompi
-     * 4. Persist initial transaction state PENDING
-     * @param {Object} paymentData - { userId, courseId, amount, ipAddress, userAgent, payerDocType, payerDocNumber, payerEmail, bankCode, ... }
+     * Start a payment transaction using Wompi Checkout URL.
+     * Generates a signed URL for the frontend to redirect the user to.
+     * @param {Object} paymentData - { userId, courseId, amount, ... }
      */
     async initiatePayment(paymentData) {
         // 1. Validation
@@ -101,45 +91,14 @@ class PaymentService {
         // Wompi minimum amount validation: $1,500 COP
         const WOMPI_MIN_AMOUNT_COP = 1500;
         if (paymentData.amount < WOMPI_MIN_AMOUNT_COP) {
-            throw new Error(`El monto mínimo de pago es $${WOMPI_MIN_AMOUNT_COP.toLocaleString('es-CO')} COP. Monto recibido: $${paymentData.amount.toLocaleString('es-CO')} COP`);
+            throw new Error(`Amount must be at least ${WOMPI_MIN_AMOUNT_COP} COP`);
         }
         
-        // Log incoming data for debugging
-        console.log('📥 Raw Payment Data Received:', JSON.stringify(paymentData, null, 2));
-        
-        // Validate document fields (required by Wompi) - trim and check for empty
-        const docType = (paymentData.payerDocType || 'CC').toString().trim().toUpperCase();
-        const docNumber = (paymentData.payerDocNumber || '').toString().trim();
-        
-        if (!docNumber || docNumber.length < 3) {
-            throw new Error(`Invalid payment data: Missing or invalid document number (payerDocNumber). Received: "${paymentData.payerDocNumber}"`);
-        }
-        
-        // Validate email - trim and ensure it exists
-        const email = ((paymentData.payerEmail || paymentData.email) || '').toString().trim();
-        if (!email || !email.includes('@')) {
-            throw new Error(`Invalid payment data: Missing or invalid email. Received: "${paymentData.payerEmail}"`);
-        }
-        
-        // Validate bank code - ensure it's a string
-        const bankCode = (paymentData.bankCode || '').toString().trim();
-        if (!bankCode) {
-            throw new Error('Invalid payment data: Missing bankCode');
-        }
-
-        console.log('📝 Payment Request Data:', {
-            userId: paymentData.userId,
-            courseId: paymentData.courseId,
-            amount: paymentData.amount,
-            docType,
-            docNumber: docNumber ? `${docNumber.substring(0, 3)}***` : 'MISSING',
-            email: email ? `${email.substring(0, 3)}***` : 'MISSING',
-            bankCode
-        });
+        console.log('📥 Initiating Wompi Checkout for:', JSON.stringify({ userId: paymentData.userId, courseId: paymentData.courseId, amount: paymentData.amount }));
 
         const referenceCode = `TX-${Date.now()}-${paymentData.userId}-${paymentData.courseId}`;
         const currency = 'COP';
-        const amountInCents = Math.round(paymentData.amount * 100); // Wompi requires amounts in cents
+        const amountInCents = Math.round(paymentData.amount * 100); 
         
         // 2. Create Transaction in DB (Pending)
         await this._recordTransactionStart({
@@ -150,114 +109,20 @@ class PaymentService {
             status: 'PENDING'
         });
 
-        // 3. Generate Signature for Integrity (SHA256)
+        // 3. Generate Integrity Signature (SHA256)
         // Concatenation: reference + amountInCents + currency + integritySecret
         const signatureString = `${referenceCode}${amountInCents}${currency}${this.wompiIntegritySecret}`;
         const signature = crypto.createHash('sha256').update(signatureString).digest('hex');
 
-        // 4. Get acceptance token from Wompi (REQUIRED for all transactions)
-        const acceptanceToken = await this._getAcceptanceToken();
-        
-        // 5. Build Wompi payload with proper field mapping
-        // Map document types: Wompi accepts RC, TI, CC, TE, CE, NIT, PP, DNI
-        const validDocTypes = ['RC', 'TI', 'CC', 'TE', 'CE', 'NIT', 'PP', 'DNI'];
-        const wompiDocType = validDocTypes.includes(docType) ? docType : 'CC';
-        
-        console.log('📋 Document validation:', {
-            originalDocType: paymentData.payerDocType,
-            processedDocType: docType,
-            wompiDocType: wompiDocType,
-            originalDocNumber: paymentData.payerDocNumber,
-            processedDocNumber: docNumber
-        });
-        
-        const payload = {
-            acceptance_token: acceptanceToken, // Fetched from Wompi API
-            amount_in_cents: amountInCents,
-            currency: currency,
-            signature: signature,
-            customer_email: email, // Map payerEmail -> customer_email
-            payment_method: {
-                type: "PSE",
-                user_type: wompiDocType === 'NIT' ? 1 : 0, // 0 = Person, 1 = Company
-                user_legal_id_type: wompiDocType, // Map payerDocType -> user_legal_id_type
-                user_legal_id: String(docNumber), // Ensure it's a string for Wompi
-                payment_description: `Course Purchase: ${paymentData.courseId}`,
-                financial_institution_code: String(bankCode) // Ensure it's a string
-            },
+        // 4. Construct Wompi Checkout URL
+        const redirectUrl = this._getRedirectUrl();
+        const checkoutUrl = `https://checkout.wompi.co/p/?public-key=${this.wompiPublicKey}&currency=${currency}&amount-in-cents=${amountInCents}&reference=${referenceCode}&signature:integrity=${signature}&redirect-url=${encodeURIComponent(redirectUrl)}`;
+
+        // Return the URL for the frontend to open
+        return { 
+            payment_url: checkoutUrl,
             reference: referenceCode,
-            redirect_url: this._getRedirectUrl()
-        };
-        
-        // Add sandbox_status only in test mode
-        if (this.isTest) {
-             // Force APPROVED in Sandbox to ensure transaction completes
-             // This avoids "PENDING" states with missing URLs in some Sandbox bank simulations
-            payload.payment_method.sandbox_status = "APPROVED";
-        }
-
-        console.log('📤 Wompi Request Payload:', JSON.stringify(payload, null, 2));
-
-        // Note: Wompi API call requires Bearer token with Private Key for backend calls
-        const response = await fetch(`${this.wompiUrl}/transactions`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${this.wompiprivateKey}`, // Use PRIVATE key for backend transactions
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
-        
-        const result = await response.json();
-        
-        console.log('📥 Wompi Response:', JSON.stringify(result, null, 2));
-        
-        if (result.error) {
-            throw new Error(`Wompi Error: ${JSON.stringify(result.error)}`);
-        }
-        
-        // Return the bank URL
-        // Ensure we return null instead of undefined if URL is missing to prevent client JSON parsing issues
-        let bankUrl = result.data?.payment_method?.extra?.async_payment_url || null;
-        const status = result.data?.status;
-        const transactionId = result.data?.id;
-
-        // Validar si la transacción fue aprobada de forma inmediata (Sandbox, Saldo, etc.)
-        // y actualizar la base de datos de inmediato.
-         if (status === 'APPROVED' || status === 'DECLINED' || status === 'ERROR' || status === 'VOIDED') {
-            console.log(`⚡ Transaction completed immediately with status: ${status}`);
-            
-            // Map status for DB
-            let dbStatus = 'PENDING';
-            if (status === 'APPROVED') dbStatus = 'APPROVED';
-            else if (status === 'DECLINED') dbStatus = 'REJECTED';
-            else if (status === 'ERROR' || status === 'VOIDED') dbStatus = 'FAILED';
-            
-            // Update transaction record in DB
-            await this._updateTransactionStatus(referenceCode, dbStatus, transactionId);
-            
-            // Check completeness and Grant access if APPROVED
-            if (dbStatus === 'APPROVED') {
-                 const completeness = await this._checkPaymentCompleteness(paymentData.userId, paymentData.courseId);
-                 if (completeness.isComplete) {
-                     await this._grantCourseAccess(paymentData.userId, paymentData.courseId);
-                 }
-            }
-        }
-
-        // FIX: If transaction is immediately APPROVED (e.g. Sandbox), Wompi does NOT return a bank URL.
-        // Also, sometimes Sandbox returns PENDING without URL for certain banks.
-        // We must provide a fallback URL so the Mobile App has something to open.
-        if ((status === 'APPROVED' || (status === 'PENDING' && this.isTest)) && !bankUrl) {
-             // Use the specific Wompi Link requested by USER as fallback
-             bankUrl = "https://checkout.wompi.co/l/VPOS_kN1kEQ?_gl=1*1xb4446*_gcl_au*MTUwODgzNzgyMy4xNzY3ODQzNTA0"; 
-             console.log(`✅ Sandbox Transaction (Status=${status}). Using User Provided Fallback URL:`, bankUrl);
-        }
-
-        return {
-           urlBankPayment: bankUrl, // URL to redirect user to bank
-           transactionId: transactionId,
-           status: status
+            signature: signature
         };
     }
 
@@ -265,13 +130,24 @@ class PaymentService {
      * Get list of banks from Wompi for PSE.
      */
     async getBanksList() {
-        // Wompi doesn't provide banks endpoint like PayU
-        // Return a hardcoded list of Colombian banks for PSE
-        return [
-            { code: '1040', description: 'Banco Agrario' },
-            { code: '1507', description: 'NEQUI' },
-            { code: '1551', description: 'Daviplata' },
-            { code: '1001', description: 'Banco de Bogotá' },
+        // Wompi expects public key for getting banks (GET /v1/pse/financial_institutions)
+        try {
+            const response = await fetch(`${this.wompiUrl}/pse/financial_institutions`, {
+                 headers: { 'Authorization': `Bearer ${this.wompiPublicKey}` }
+            });
+            const result = await response.json();
+            if (result.data) return result.data;
+            return [];
+        } catch (e) {
+            console.error("Error fetching banks:", e);
+            // Fallback list
+            return [
+                { financial_institution_code: '1001', financial_institution_name: 'Banco de Bogotá' },
+                { financial_institution_code: '1051', financial_institution_name: 'Davivienda' },
+                { financial_institution_code: '1007', financial_institution_name: 'Bancolombia' },
+                { financial_institution_code: '1507', financial_institution_name: 'NEQUI' }
+            ];
+        }            { code: '1001', description: 'Banco de Bogotá' },
             { code: '1002', description: 'Banco Popular' },
             { code: '1019', description: 'Scotiabank Colpatria' },
             { code: '1051', description: 'Banco Davivienda' },
