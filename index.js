@@ -3272,7 +3272,7 @@ app.post('/notify-course-creation', async(req, res) => {
 
         // 1. Fetch subscribers from Supabase
         const subscribersResponse = await axios.get(
-            `${process.env.SUPABASE_URL}/rest/v1/subscriptions?subscriber_id=eq.${creatorUserId}&select=subscribed_to_id`, {
+            `${process.env.SUPABASE_URL}/rest/v1/subscriptions?creator_id=eq.${creatorUserId}&select=subscriber_id`, {
                 headers: {
                     'apikey': process.env.SUPABASE_KEY,
                     'Authorization': `Bearer ${process.env.SUPABASE_KEY}`
@@ -3288,7 +3288,7 @@ app.post('/notify-course-creation', async(req, res) => {
         }
 
         // 2. Get subscriber details (username, email)
-        const subscriberIds = subscribers.map(s => s.subscribed_to_id);
+        const subscriberIds = subscribers.map(s => s.subscriber_id);
         const usersResponse = await axios.get(
             `${process.env.SUPABASE_URL}/rest/v1/usuarios?id=in.(${subscriberIds.join(',')})&select=id,username,email`, {
                 headers: {
