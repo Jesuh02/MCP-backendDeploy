@@ -47,21 +47,25 @@ class PaymentService {
             throw new Error('Invalid payment data: Missing userId, courseId, or amount');
         }
         
-        // Validate document fields (required by Wompi)
-        const docType = paymentData.payerDocType || 'CC';
-        const docNumber = paymentData.payerDocNumber;
-        if (!docNumber) {
-            throw new Error('Invalid payment data: Missing document number (payerDocNumber)');
+        // Log incoming data for debugging
+        console.log('📥 Raw Payment Data Received:', JSON.stringify(paymentData, null, 2));
+        
+        // Validate document fields (required by Wompi) - trim and check for empty
+        const docType = (paymentData.payerDocType || 'CC').toString().trim().toUpperCase();
+        const docNumber = (paymentData.payerDocNumber || '').toString().trim();
+        
+        if (!docNumber || docNumber.length < 3) {
+            throw new Error(`Invalid payment data: Missing or invalid document number (payerDocNumber). Received: "${paymentData.payerDocNumber}"`);
         }
         
-        // Validate email
-        const email = paymentData.payerEmail || paymentData.email;
-        if (!email) {
-            throw new Error('Invalid payment data: Missing email');
+        // Validate email - trim and ensure it exists
+        const email = ((paymentData.payerEmail || paymentData.email) || '').toString().trim();
+        if (!email || !email.includes('@')) {
+            throw new Error(`Invalid payment data: Missing or invalid email. Received: "${paymentData.payerEmail}"`);
         }
         
-        // Validate bank code
-        const bankCode = paymentData.bankCode;
+        // Validate bank code - ensure it's a string
+        const bankCode = (paymentData.bankCode || '').toString().trim();
         if (!bankCode) {
             throw new Error('Invalid payment data: Missing bankCode');
         }
@@ -97,7 +101,15 @@ class PaymentService {
         // 4. Build Wompi payload with proper field mapping
         // Map document types: Wompi accepts RC, TI, CC, TE, CE, NIT, PP, DNI
         const validDocTypes = ['RC', 'TI', 'CC', 'TE', 'CE', 'NIT', 'PP', 'DNI'];
-        const wompiDocType = validDocTypes.includes(docType.toUpperCase()) ? docType.toUpperCase() : 'CC';
+        const wompiDocType = validDocTypes.includes(docType) ? docType : 'CC';
+        
+        console.log('📋 Document validation:', {
+            originalDocType: paymentData.payerDocType,
+            processedDocType: docType,
+            wompiDocType: wompiDocType,
+            originalDocNumber: paymentData.payerDocNumber,
+            processedDocNumber: docNumber
+        });
         
         const payload = {
             acceptance_token: paymentData.acceptanceToken, // May be null for PSE
@@ -109,9 +121,9 @@ class PaymentService {
                 type: "PSE",
                 user_type: wompiDocType === 'NIT' ? 1 : 0, // 0 = Person, 1 = Company
                 user_legal_id_type: wompiDocType, // Map payerDocType -> user_legal_id_type
-                user_legal_id: docNumber, // Map payerDocNumber -> user_legal_id
+                user_legal_id: String(docNumber), // Ensure it's a string for Wompi
                 payment_description: `Course Purchase: ${paymentData.courseId}`,
-                financial_institution_code: bankCode
+                financial_institution_code: String(bankCode) // Ensure it's a string
             },
             reference: referenceCode,
             redirect_url: this._getRedirectUrl()
