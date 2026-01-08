@@ -62,4 +62,35 @@ router.post('/send-push-notification', async (req, res) => {
     }
 });
 
+/**
+ * POST /notify-course-creation
+ * Notifies all subscribers of a creator about a new course.
+ * Called by Android app when a course is published.
+ */
+router.post('/notify-course-creation', async (req, res) => {
+    try {
+        const { creatorUserId, creatorUsername, courseId, courseTitle, courseThumbnailUrl } = req.body;
+
+        if (!creatorUserId || !courseId) {
+            return res.status(400).json({ error: 'Missing required fields (creatorUserId, courseId)' });
+        }
+
+        const result = await notificationService.notifySubscribersOfNewCourse(
+            creatorUserId,
+            creatorUsername || 'Un instructor',
+            {
+                id: courseId,
+                title: courseTitle || 'Nuevo curso',
+                thumbnailUri: courseThumbnailUrl
+            }
+        );
+
+        res.json({ success: true, ...result });
+
+    } catch (error) {
+        console.error('❌ Error handling course creation notification:', error);
+        res.status(500).json({ error: error.message, success: false });
+    }
+});
+
 export default router;

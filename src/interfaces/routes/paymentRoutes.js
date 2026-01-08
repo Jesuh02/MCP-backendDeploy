@@ -76,4 +76,19 @@ router.get('/status/:transactionId', async (req, res) => {
     }
 });
 
+/**
+ * GET /sync
+ * Manually triggers a reconciliation with Wompi to catch any missing transactions.
+ * Useful developer tool or cron job endpoint.
+ */
+router.get('/sync', async (req, res) => {
+    try {
+        const result = await PaymentService.syncRecentTransactions();
+        res.json(result);
+    } catch (error) {
+        console.error("Sync Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 export default router;

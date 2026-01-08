@@ -622,6 +622,97 @@ class NotificationService {
         console.log(`📊 Bulk notification results: ${results.pushSuccess}/${results.total} push, ${results.emailSuccess}/${results.total} email`);
         return results;
     }
+
+    /**
+     * Notify all subscribers of a specific creator about a new course.
+     * 
+     * @param {number} creatorUserId - ID of the creator
+     * @param {string} creatorUsername - Username of the creator
+     * @param {Object} courseData - { id, title, thumbnailUri }
+     * @returns {Promise<{success: number, total: number}>}
+     */
+    async notifySubscribersOfNewCourse(creatorUserId, creatorUsername, courseData) {
+        console.log(`📢 Notifying subscribers of ${creatorUsername} about new course: ${courseData.title}`);
+        
+        try {
+            // 1. Fetch Subscribers from Supabase
+            // Table: subscriptions (subscriber_id, creator_id)
+            const { data: subscribers, error } = await this.supabaseService.client
+                .from('subscriptions')
+                .select('subscriber_id')
+                .eq('creator_id', creatorUserId);
+
+            if (error) {
+                console.error('❌ Error fetching subscribers:', error.message);
+                throw error;
+            }
+
+            if (!subscribers || subscribers.length === 0) {
+                console.log('ℹ️ No subscribers found for this creator.');
+                return { success: 0, total: 0 };
+            }
+
+            const subscriberIds = subscribers.map(s => s.subscriber_id);
+            console.log(`👥 Found ${subscriberIds.length} subscribers.`);
+
+            // 2. Insert into 'notifications' table for In-App History
+            // Table: notifications (user_id, type, title, message, related_id, is_read, created_at)
+            const notificationsToInsert = subscriberIds.map(userId => ({
+                user_id: userId,
+                type: 'new_course', // Must match Android Notification.TYPE_NEW_COURSE
+                title: '¡Nuevo curso disponible!',
+                message: `${creatorUsername} ha publicado un nuevo curso: ${courseData.title}`,
+                related_id: courseData.id,
+                is_read: false,
+                created_at: new Date()
+            }));
+
+            const { error: insertError } = await this.supabaseService.client
+                .from('notifications')
+                .insert(notificationsToInsert);
+
+            if (insertError) {
+                console.error('❌ Error inserting notifications into DB:', insertError.message);
+                // We verify if some succeeded or fail hard? 
+                // Usually insert is all or nothing. We proceed to push/email anyway.
+            } else {
+                console.log('✅ In-App notifications inserted successfully.');
+            }
+
+            // 3. Send Push and Email Notifications
+            // Use sendBulkNotifications
+            const pushTitle = '¡Nuevo Curso!';
+            const pushMessage = `${creatorUsername} acaba de publicar "${courseData.title}". ¡Échale un vistazo!`;
+            
+            const results = await this.sendBulkNotifications(
+                subscriberIds, 
+                pushTitle, 
+                pushMessage,
+                {
+                    // Push data payload
+                    pushData: {
+                        type: 'new_course',
+                        courseId: String(courseData.id),
+                        creatorId: String(creatorUserId)
+                    },
+                    // Email template data
+                    type: 'new-course',
+                    templateData: {
+                        courseTitle: courseData.title,
+                        courseDescription: `No te pierdas el nuevo contenido de ${creatorUsername}.`,
+                        instructorName: creatorUsername,
+                        thumbnailUrl: courseData.thumbnailUri
+                    }
+                }
+            );
+
+            return { success: results.pushSuccess + results.emailSuccess, total: subscriberIds.length };
+
+        } catch (error) {
+            console.error('❌ Error in notifySubscribersOfNewCourse:', error.message);
+            return { success: 0, total: 0, error: error.message };
+        }
+    }
 }
 
 // Export singleton instance getter and class

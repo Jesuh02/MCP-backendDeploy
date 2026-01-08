@@ -34,6 +34,7 @@ import ttsRoutes from './src/interfaces/routes/ttsRoutes.js';
 import videoProcessingRoutes from './src/interfaces/routes/videoProcessingRoutes.js';
 import ragRoutes from './src/interfaces/routes/RAGRoutes.js';
 import paymentRoutes from './src/interfaces/routes/paymentRoutes.js';
+import PaymentService from './src/services/PaymentService.js';
 // Note: Additional refactored modules available:
 // - notificationRoutes: ./src/interfaces/routes/notificationRoutes.js
 // - fileUtils: ./src/utils/fileUtils.js  
@@ -7755,6 +7756,17 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`   • POST /tools/list (MCP)`);
     console.log(`   • POST /tools/call (MCP)`);
     console.log('='.repeat(60));
+
+    // Start Payment Sync Background Job (every 10 minutes)
+    setInterval(() => {
+        PaymentService.syncRecentTransactions()
+            .then(res => {
+                if(res.processed && res.processed.length > 0) {
+                    console.log(`💳 Background Sync: Updated ${res.processed.length} transactions`);
+                }
+            })
+            .catch(err => console.error('❌ Background Payment Sync Error:', err.message));
+    }, 10 * 60 * 1000);
 
     // Initialize the table after server starts - NON-BLOCKING
     /*

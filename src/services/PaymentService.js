@@ -147,29 +147,7 @@ class PaymentService {
                 { financial_institution_code: '1007', financial_institution_name: 'Bancolombia' },
                 { financial_institution_code: '1507', financial_institution_name: 'NEQUI' }
             ];
-        }            { code: '1001', description: 'Banco de Bogotá' },
-            { code: '1002', description: 'Banco Popular' },
-            { code: '1019', description: 'Scotiabank Colpatria' },
-            { code: '1051', description: 'Banco Davivienda' },
-            { code: '1052', description: 'Banco AV Villas' },
-            { code: '1059', description: 'Bancamia' },
-            { code: '1060', description: 'Banco Pichincha' },
-            { code: '1061', description: 'Bancoomeva' },
-            { code: '1062', description: 'Banco Falabella' },
-            { code: '1063', description: 'Banco Finandina' },
-            { code: '1064', description: 'Banco GNB Sudameris' },
-            { code: '1065', description: 'Banco Santander' },
-            { code: '1066', description: 'Banco Cooperativo Coopcentral' },
-            { code: '1067', description: 'Banco Caja Social' },
-            { code: '1303', description: 'Banco Caja Social' },
-            { code: '1292', description: 'Confiar' },
-            { code: '1289', description: 'Cotrafa' },
-            { code: '1283', description: 'Cooperativa Financiera de Antioquia' },
-            { code: '1058', description: 'Banco Procredit' },
-            { code: '1012', description: 'Banco GNB Colombia (antes BBVA)' },
-            { code: '1032', description: 'Banco Occidente' },
-            { code: '1013', description: 'Banco BBVA Colombia' }
-        ];
+        }
     }
 
     /**
@@ -344,6 +322,80 @@ class PaymentService {
         }
 
         return responseObj;
+    }
+
+    /**
+     * Sync recent transactions from Wompi API.
+     * Fetches the latest transactions and updates local DB.
+     * Useful for reconciliation.
+     */
+    async syncRecentTransactions() {
+        console.log('🔄 Starting Wompi Transaction Sync...');
+        try {
+            // Wompi API: GET /v1/transactions
+            // Requires Private Key
+            const response = await fetch(`${this.wompiUrl}/transactions`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${this.wompiprivateKey}`
+                }
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`Wompi Sync Failed: ${response.status} ${errText}`);
+            }
+
+            const json = await response.json();
+            const transactions = json.data; // Array of transactions
+            const results = [];
+
+            console.log(`🔄 Found ${transactions.length} recent transactions to check.`);
+
+            for (const tx of transactions) {
+                // We only care about APPROVED transactions that match our reference pattern
+                // Our reference: TX-{timestamp}-{userId}-{courseId}
+                const reference = tx.reference;
+                
+                if (!reference || !reference.startsWith('TX-')) {
+                    continue; // Skip transactions not initiated by our logic or with different format
+                }
+
+                const status = tx.status;
+                
+                // Parse Reference
+                const parts = reference.split('-');
+                if (parts.length < 4) continue;
+
+                const userId = parts[2];
+                const courseId = parts[3];
+
+                // Update DB entry
+                await this._updateTransactionStatus(reference, status, tx.id);
+
+                let action = 'Check';
+                if (status === 'APPROVED') {
+                    // Check if access is already granted, grant if not
+                    await this._grantCourseAccess(userId, courseId);
+                    action = 'GRANTED_ACCESS';
+                }
+
+                results.push({
+                    reference,
+                    status,
+                    userId,
+                    courseId,
+                    action
+                });
+            }
+
+            console.log(`✅ Sync Completed. Processed ${results.length} relevant transactions.`);
+            return { success: true, processed: results };
+
+        } catch (error) {
+            console.error("❌ Sync Error:", error);
+            return { success: false, error: error.message };
+        }
     }
 
     // --- Private Helpers ---
