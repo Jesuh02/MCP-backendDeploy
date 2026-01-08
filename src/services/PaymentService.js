@@ -341,6 +341,74 @@ class PaymentService {
         }
     }
 
+    /**
+     * Check transaction status directly from Wompi and update DB.
+     * Useful when webhooks fail or in local/sandbox environments.
+     */
+    async getTransactionStatus(transactionId) {
+        // 1. First check local DB
+        // We check both by external_reference (Wompi ID) and potentially the reference code logic if needed
+        let { data: tx } = await this.supabase.client
+            .from('transactions')
+            .select('*')
+            .eq('external_reference', transactionId)
+            .maybeSingle();
+
+        if (tx && tx.status === 'APPROVED') {
+            return { status: 'APPROVED', source: 'DB' };
+        }
+
+        // 2. If not approved in DB, query Wompi API
+        try {
+            console.log(`🔎 Polling Wompi for status: ${transactionId}`);
+            // Use Public Key for GET requests to Wompi
+            // Also supports Sandbox URL automatically via this.wompiUrl
+            const response = await fetch(`${this.wompiUrl}/transactions/${transactionId}`, {
+                method: 'GET'
+            }); // Public endpoint usually doesn't need auth, or accepts public key
+            
+            const result = await response.json();
+
+            if (result.data) {
+                const wompiStatus = result.data.status; // APPROVED, DECLINED, ERROR, VOIDED
+                const reference = result.data.reference; // TX-...
+                
+                console.log(`🔄 Wompi Reported Status for ${transactionId}: ${wompiStatus}`);
+
+                // Map status
+                let dbStatus = 'PENDING';
+                if (wompiStatus === 'APPROVED') dbStatus = 'APPROVED';
+                else if (wompiStatus === 'DECLINED') dbStatus = 'REJECTED';
+                else if (wompiStatus === 'ERROR' || wompiStatus === 'VOIDED') dbStatus = 'FAILED';
+
+                // If status is final (Approved/Rejected) and DB is different, update DB
+                if (dbStatus !== 'PENDING') {
+                     // Parse Reference for User/Course
+                     const parts = reference.split('-');
+                     if (parts.length >= 4) {
+                         const userId = parts[2];
+                         const courseId = parts[3];
+
+                         // Update DB
+                         await this._updateTransactionStatus(reference, dbStatus, transactionId);
+                         
+                         // Grant Access
+                         if (dbStatus === 'APPROVED') {
+                             await this._grantCourseAccess(userId, courseId);
+                         }
+                     }
+                }
+
+                return { status: dbStatus, source: 'WOMPI' };
+            }
+        } catch (error) {
+            console.error("Error polling Wompi:", error);
+        }
+
+        // Return current DB status if Wompi check failed
+        return { status: tx ? tx.status : 'UNKNOWN', source: 'DB_FALLBACK' };
+    }
+
     // --- Private Helpers ---
 
     _getRedirectUrl() {
