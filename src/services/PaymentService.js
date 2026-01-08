@@ -30,7 +30,68 @@ class PaymentService {
             ? 'https://sandbox.wompi.co/v1' 
             : 'https://production.wompi.co/v1'; 
         
+        // Cache for acceptance token (valid for ~24 hours typically)
+        this._cachedAcceptanceToken = null;
+        this._acceptanceTokenExpiry = null;
+        
         console.log(`💳 Payment Service Initialized: Mode=${this.isTest ? 'TEST/SANDBOX' : 'PRODUCTION'}, URL=${this.wompiUrl}`);
+    }
+
+    /**
+     * Fetch acceptance token from Wompi.
+     * This token represents user's acceptance of Wompi's terms & conditions.
+     * Required for all transactions.
+     */
+    async _getAcceptanceToken() {
+        // Check if we have a valid cached token (cache for 1 hour to be safe)
+        const now = Date.now();
+        if (this._cachedAcceptanceToken && this._acceptanceTokenExpiry && now < this._acceptanceTokenExpiry) {
+            console.log('📋 Using cached acceptance token');
+            return this._cachedAcceptanceToken;
+        }
+
+        if (!this.wompiPublicKey) {
+            throw new Error('Internal Error: WOMPI Public Key is not configured (PAYU_PUBLIC_KEY env var)');
+        }
+        
+        try {
+            const url = `${this.wompiUrl}/merchants/${this.wompiPublicKey}`;
+            console.log(`🔑 Fetching acceptance token from Wompi: ${url}`);
+            
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const result = await response.json();
+            // Log full response to debug "No está presente" issues
+            console.log('PaymentService: Merchant/Token Response:', JSON.stringify(result, null, 2));
+            
+            if (result.data && result.data.presigned_acceptance) {
+                const { acceptance_token, permalink } = result.data.presigned_acceptance;
+                
+                if (!acceptance_token) {
+                     console.error('❌ Acceptance token field is missing in response data:', result.data);
+                     throw new Error('Wompi returned success but acceptance_token is missing');
+                }
+
+                console.log('✅ Acceptance token obtained. Terms URL:', permalink);
+                
+                // Cache the token for 1 hour
+                this._cachedAcceptanceToken = acceptance_token;
+                this._acceptanceTokenExpiry = now + (60 * 60 * 1000); // 1 hour
+                
+                return acceptance_token;
+            } else {
+                console.error('❌ Failed to get acceptance token. Result:', JSON.stringify(result));
+                throw new Error('No se pudo obtener el token de aceptación de Wompi. Verifique la llave pública.');
+            }
+        } catch (error) {
+            console.error('❌ Error fetching acceptance token:', error);
+            throw new Error(`Error obteniendo token de aceptación: ${error.message}`);
+        }
     }
 
     /**
@@ -104,7 +165,10 @@ class PaymentService {
         const signatureString = `${referenceCode}${amountInCents}${currency}${this.wompiIntegritySecret}`;
         const signature = crypto.createHash('sha256').update(signatureString).digest('hex');
 
-        // 4. Build Wompi payload with proper field mapping
+        // 4. Get acceptance token from Wompi (REQUIRED for all transactions)
+        const acceptanceToken = await this._getAcceptanceToken();
+        
+        // 5. Build Wompi payload with proper field mapping
         // Map document types: Wompi accepts RC, TI, CC, TE, CE, NIT, PP, DNI
         const validDocTypes = ['RC', 'TI', 'CC', 'TE', 'CE', 'NIT', 'PP', 'DNI'];
         const wompiDocType = validDocTypes.includes(docType) ? docType : 'CC';
@@ -118,7 +182,7 @@ class PaymentService {
         });
         
         const payload = {
-            acceptance_token: paymentData.acceptanceToken, // May be null for PSE
+            acceptance_token: acceptanceToken, // Fetched from Wompi API
             amount_in_cents: amountInCents,
             currency: currency,
             signature: signature,
