@@ -102,136 +102,107 @@ class PaymentService {
            transactionId: result.data?.id
         };
     }
-                   "USER_TYPE": paymentData.userType // 'N' (Natural) or 'J' (Juridica)
-                }
-            }
-        };
-
-        // 5. Send to PayU
-        try {
-            const response = await fetch(this.payuUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
-            
-            const data = await response.json();
-            
-            // Check PayU response format
-            if (data.code === 'SUCCESS' && data.transactionResponse && data.transactionResponse.state === 'PENDING') {
-                 // Return the bank URL to the frontend so it can redirect the user
-                 return {
-                     status: 'INITIATED',
-                     bankUrl: data.transactionResponse.extraParameters.BANK_URL,
-                     transactionId: data.transactionResponse.transactionId,
-                     reference: referenceCode
-                 };
-            } else {
-                 throw new Error('PayU Error: ' + JSON.stringify(data));
-            }
-
-        } catch (e) {
-            console.error('Payment initiation failed', e);
-            // Optionally update DB status to FAILED
-            throw e;
-        }
-    }
 
     /**
-     * Get list of banks from PayU for PSE.
+     * Get list of banks from Wompi for PSE.
      */
     async getBanksList() {
-         const payload = {
-             language: "es",
-             command: "GET_BANKS_LIST",
-             merchant: {
-                 apiLogin: this.payuApiLogin,
-                 apiKey: this.payuApiKey
-             },
-             test: false,
-             bankListInformation: {
-                 paymentMethod: "PSE",
-                 paymentCountry: "CO"
-             }
-         };
-
-         try {
-             const response = await fetch(this.payuUrl, {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                 body: JSON.stringify(payload)
-             });
-             const data = await response.json();
-             
-             if (data.code === 'SUCCESS') {
-                 return data.banks;
-             }
-             return [];
-         } catch(e) {
-             console.error("Error fetching banks", e);
-             return [];
-         }
+        // Wompi doesn't provide banks endpoint like PayU
+        // Return a hardcoded list of Colombian banks for PSE
+        return [
+            { code: '1040', description: 'Banco Agrario' },
+            { code: '1507', description: 'NEQUI' },
+            { code: '1551', description: 'Daviplata' },
+            { code: '1001', description: 'Banco de Bogotá' },
+            { code: '1002', description: 'Banco Popular' },
+            { code: '1019', description: 'Scotiabank Colpatria' },
+            { code: '1051', description: 'Banco Davivienda' },
+            { code: '1052', description: 'Banco AV Villas' },
+            { code: '1059', description: 'Bancamia' },
+            { code: '1060', description: 'Banco Pichincha' },
+            { code: '1061', description: 'Bancoomeva' },
+            { code: '1062', description: 'Banco Falabella' },
+            { code: '1063', description: 'Banco Finandina' },
+            { code: '1064', description: 'Banco GNB Sudameris' },
+            { code: '1065', description: 'Banco Santander' },
+            { code: '1066', description: 'Banco Cooperativo Coopcentral' },
+            { code: '1067', description: 'Banco Caja Social' },
+            { code: '1303', description: 'Banco Caja Social' },
+            { code: '1292', description: 'Confiar' },
+            { code: '1289', description: 'Cotrafa' },
+            { code: '1283', description: 'Cooperativa Financiera de Antioquia' },
+            { code: '1058', description: 'Banco Procredit' },
+            { code: '1012', description: 'Banco GNB Colombia (antes BBVA)' },
+            { code: '1032', description: 'Banco Occidente' },
+            { code: '1013', description: 'Banco BBVA Colombia' }
+        ];
     }
 
     /**
-     * Verify Webhook Signature.
-     * Security critical: Ensures the request comes from PayU.
+     * Verify Webhook Signature from Wompi.
+     * Security critical: Ensures the request comes from Wompi.
      */
     verifyWebhookSignature(reqBody) {
-        // Validate signature: new_value ~ merchant_id ~ reference_sale ~ value ~ currency ~ state_pol 
-        // (Check PayU docs for exact order in webhook, it differs from request)
-        // Usually: apiKey ~ merchant_id ~ reference_sale ~ new_value ~ currency ~ state_pol
+        // Wompi signature verification
+        // signature = SHA256(event.data.transaction.id + event.data.transaction.status + event.data.transaction.amount_in_cents + event.timestamp + integritySecret)
+        const { event } = reqBody;
+        if (!event || !event.data || !event.data.transaction) {
+            return false;
+        }
         
-        const sign = reqBody.sign;
-        const merchantId = reqBody.merchant_id;
-        const referenceSale = reqBody.reference_sale;
-        const value = reqBody.value; // Format decimal correctly? PayU sends like 10000.00
-        const currency = reqBody.currency;
-        const statePol = reqBody.state_pol;
-
-        // Important: value in signature must end with .0 mostly
-        // Implementation detail: Construct string and hash md5, compare with sign.
-        // const raw = `${this.payuApiKey}~${merchantId}~${referenceSale}~${value}~${currency}~${statePol}`;
-        // const calculated = crypto.createHash('md5').update(raw).digest('hex');
-        // return calculated === sign;
+        const txId = event.data.transaction.id;
+        const status = event.data.transaction.status;
+        const amount = event.data.transaction.amount_in_cents;
+        const timestamp = event.timestamp;
+        const checksum = event.signature?.checksum;
         
-        return true; // Simplify for now, but in production MUST implement strict check
+        if (!checksum) return false;
+        
+        const signatureString = `${txId}${status}${amount}${timestamp}${this.wompiEventSecret}`;
+        const calculated = crypto.createHash('sha256').update(signatureString).digest('hex');
+        
+        return calculated === checksum;
     }
 
     /**
-     * Handle payment webhook update.
+     * Handle Wompi webhook update.
      * Updates transaction status and grants access if approved.
      */
     async handleWebhook(data) {
-        // 1. Verify security signature (omitted for brevity, see above)
-        // if (!this.verifyWebhookSignature(data)) throw new Error("Invalid signature");
+        // 1. Verify security signature
+        if (!this.verifyWebhookSignature(data)) {
+            throw new Error("Invalid webhook signature");
+        }
 
-        const reference = data.reference_sale;
-        const state = data.state_pol; // 4 = APPROVED, 6 = DECLINED, etc.
-        const transactionId = data.transaction_id;
+        const { event } = data;
+        const transaction = event.data.transaction;
+        const reference = transaction.reference;
+        const status = transaction.status; // APPROVED, DECLINED, PENDING, ERROR
+        const transactionId = transaction.id;
 
-        let status = 'PENDING';
-        if (state == 4) status = 'APPROVED';
-        else if (state == 6) status = 'REJECTED';
-        else if (state == 5) status = 'EXPIRED';
+        let dbStatus = 'PENDING';
+        if (status === 'APPROVED') dbStatus = 'APPROVED';
+        else if (status === 'DECLINED') dbStatus = 'REJECTED';
+        else if (status === 'ERROR') dbStatus = 'FAILED';
 
-        console.log(`💳 Webhook received for ${reference}: State ${state} -> ${status}`);
+        console.log(`💳 Wompi Webhook received for ${reference}: Status ${status} -> ${dbStatus}`);
 
-        // 2. Update Transaction in DB
-        // We need to parse user_id and course_id from reference or fetch from DB by reference
-        // Format was: TX-{timestamp}-{userId}-{courseId}
+        // 2. Parse userId and courseId from reference
+        // Format: TX-{timestamp}-{userId}-{courseId}
         const parts = reference.split('-');
+        if (parts.length < 4) {
+            console.error('Invalid reference format:', reference);
+            return;
+        }
+        
         const userId = parts[2];
         const courseId = parts[3];
 
-        await this._updateTransactionStatus(reference, status, transactionId);
+        await this._updateTransactionStatus(reference, dbStatus, transactionId);
 
-        // 3. If Approved, Grant Access (Insert into subscriptions)
-        if (status === 'APPROVED') {
-             await this._grantCourseAccess(userId, courseId);
+        // 3. If Approved, Grant Access
+        if (dbStatus === 'APPROVED') {
+            await this._grantCourseAccess(userId, courseId);
         }
     }
 
@@ -250,41 +221,28 @@ class PaymentService {
         }
     }
 
-    async _updateTransactionStatus(reference, status, payuTxId) {
+    async _updateTransactionStatus(reference, status, transactionId) {
         const { error } = await this.supabase.client
             .from('transactions')
-            .update({ status: status, external_reference: payuTxId, updated_at: new Date() })
-            .eq('external_reference', reference); // or match by ID if we parsed it
+            .update({ 
+                status: status, 
+                external_reference: transactionId, 
+                updated_at: new Date() 
+            })
+            .eq('external_reference', reference);
             
         if (error) console.error("DB Error updating transaction", error);
     }
 
     async _grantCourseAccess(userId, courseId) {
-        // Check if subscription exists
-        const { data: existing } = await this.supabase.client
-            .from('subscriptions')
-            .select('*')
-            .eq('subscriber_id', userId)
-            // Note: subscriptions table schema in context is (subscriber_id, creator_id)
-            // Your requirement implies course Access.
-            // If the schema (subscriber_id, creator_id) is strictly for "Following creators",
-            // then we need a 'course_enrollments' or 'course_access' table.
-            
-            // Assuming for now we persist logic logic in 'progreso_estudiante' or bespoke table if exists.
-            // Based on context Provided: 'progreso_estudiante' has (usuario_estudiante, curso_id). 
-            // This seems to be the enrollment table.
-            
-           // Let's use progreso_estudiante as "Enrollment"
-           // Or if you meant simple subscription to creator? Usually Premium course means enrollment.
-           
-           // Strategy: Insert into progreso_estudiante to unlock course.
-           const { error } = await this.supabase.client
-             .from('progreso_estudiante')
-             .upsert({ 
-                 usuario_estudiante: userId, 
-                 curso_id: courseId, 
-                 creado_en: new Date()
-             }, { onConflict: ['usuario_estudiante', 'curso_id'] });
+        // Strategy: Insert into progreso_estudiante to unlock course enrollment
+        const { error } = await this.supabase.client
+            .from('progreso_estudiante')
+            .upsert({ 
+                usuario_estudiante: userId, 
+                curso_id: courseId, 
+                creado_en: new Date()
+            }, { onConflict: ['usuario_estudiante', 'curso_id'] });
 
         if (error) console.error("Error granting course access", error);
         else console.log(`✅ Access granted for user ${userId} to course ${courseId}`);
