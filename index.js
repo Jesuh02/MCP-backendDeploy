@@ -178,6 +178,7 @@ app.get('/debug-env', (req, res) => {
         railway_static_url: process.env.RAILWAY_STATIC_URL,
         host: process.env.HOST,
         allowed_origins: process.env.ALLOWED_ORIGINS,
+        payu_configured: !!(process.env.PAYU_API_KEY && process.env.PAYU_PUBLIC_KEY),
         timestamp: new Date().toISOString()
     });
 });
