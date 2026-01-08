@@ -200,13 +200,11 @@ class PaymentService {
         };
         
         // Add sandbox_status only in test mode
-        // DISABLED: Sending sandbox_status=APPROVED prevents generation of async_payment_url for PSE
-        // To test the full flow (Redirection -> Bank -> Webhook), we must leave it as PENDING.
-        /* 
         if (this.isTest) {
+             // Force APPROVED in Sandbox to ensure transaction completes
+             // This avoids "PENDING" states with missing URLs in some Sandbox bank simulations
             payload.payment_method.sandbox_status = "APPROVED";
-        } 
-        */
+        }
 
         console.log('📤 Wompi Request Payload:', JSON.stringify(payload, null, 2));
 
@@ -230,12 +228,21 @@ class PaymentService {
         
         // Return the bank URL
         // Ensure we return null instead of undefined if URL is missing to prevent client JSON parsing issues
-        const bankUrl = result.data?.payment_method?.extra?.async_payment_url || null;
+        let bankUrl = result.data?.payment_method?.extra?.async_payment_url || null;
+        const status = result.data?.status;
+        const transactionId = result.data?.id;
+
+        // FIX: If transaction is immediately APPROVED (e.g. Sandbox), Wompi does NOT return a bank URL.
+        // We must provide a fallback URL (our own redirect URL) so the Mobile App has something to open.
+        if (status === 'APPROVED' && !bankUrl) {
+             bankUrl = `${this._getRedirectUrl()}?id=${transactionId}&env=test`;
+             console.log('✅ Auto-Approved Transaction. Generated fallback URL:', bankUrl);
+        }
 
         return {
            urlBankPayment: bankUrl, // URL to redirect user to bank
-           transactionId: result.data?.id,
-           status: result.data?.status
+           transactionId: transactionId,
+           status: status
         };
     }
 
