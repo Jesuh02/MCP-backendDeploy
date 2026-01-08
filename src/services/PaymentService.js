@@ -21,10 +21,16 @@ class PaymentService {
         this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET;
         this.wompiEventSecret = process.env.PAYU_EVENT_SECRET;
         
-        this.isTest = process.env.NODE_ENV !== 'production';
+        // Auto-detect environment based on key prefix (pub_test_ vs pub_prod_)
+        // This overrides NODE_ENV to allow testing in production deployments
+        const hasTestKey = this.wompiPublicKey && (this.wompiPublicKey.includes('test') || this.wompiPublicKey.includes('sbx'));
+        
+        this.isTest = hasTestKey || process.env.NODE_ENV !== 'production';
         this.wompiUrl = this.isTest 
             ? 'https://sandbox.wompi.co/v1' 
             : 'https://production.wompi.co/v1'; 
+        
+        console.log(`💳 Payment Service Initialized: Mode=${this.isTest ? 'TEST/SANDBOX' : 'PRODUCTION'}, URL=${this.wompiUrl}`);
     }
 
     /**
