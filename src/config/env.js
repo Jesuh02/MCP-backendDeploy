@@ -37,7 +37,10 @@ if (result.error) {
   const keys = Object.keys(result.parsed);
   console.log(`✅ Environment variables loaded from .env (${keys.length} keys found)`);
   // Log specific critical keys presence (without values)
-  const criticalKeys = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'];
+  const criticalKeys = [
+    'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
+    'PAYU_API_KEY', 'PAYU_PUBLIC_KEY', 'PAYU_INTEGRITY_SECRET', 'PAYU_EVENT_SECRET'
+  ];
   const missingKeys = criticalKeys.filter(k => !keys.includes(k));
   if (missingKeys.length > 0) {
     console.warn(`⚠️ Missing critical keys in .env: ${missingKeys.join(', ')}`);
