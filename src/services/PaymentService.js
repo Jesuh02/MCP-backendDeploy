@@ -132,8 +132,11 @@ class PaymentService {
         const signature = crypto.createHash('sha256').update(signatureString).digest('hex');
 
         // 4. Construct Wompi Checkout URL
-        const redirectUrl = this._getRedirectUrl();
-        const checkoutUrl = `https://checkout.wompi.co/p/?public-key=${this.wompiPublicKey}&currency=${currency}&amount-in-cents=${amountInCents}&reference=${referenceCode}&signature:integrity=${signature}&redirect-url=${encodeURIComponent(redirectUrl)}`;
+        // We use the specific VPOS link requested by the user, but we MUST append the reference
+        // to ensure we can track which user paid for which course.
+        // Standard Wompi links often accept 'reference' as query param.
+        const baseVposUrl = "https://checkout.wompi.co/l/VPOS_kN1kEQ";
+        const checkoutUrl = `${baseVposUrl}?reference=${referenceCode}`;
 
         // Return the URL for the frontend to open
         return { 
@@ -262,9 +265,7 @@ class PaymentService {
      * Useful when webhooks fail or in local/sandbox environments.
      */
     async getTransactionStatus(transactionReference) {
-        // Query Supabase by reference
-        // Matches the "App Kotlin consulta estado... GET /api/transactions/{reference}" requirement
-        
+        // 1. Query Supabase local status
         let { data: tx, error } = await this.supabase.client
             .from('transactions')
             .select('*')
@@ -272,7 +273,54 @@ class PaymentService {
             .maybeSingle();
             
         if (error || !tx) {
-             throw new Error("Transaction not found");
+             throw new Error("Transaction not found in database");
+        }
+
+        // 2. If locally pending, double-check with Wompi API (Live Verification)
+        // This solves the issue where webhook didn't arrive yet or failed
+        if (tx.status === 'pending') {
+            try {
+                const url = `${this.wompiUrl}/transactions?reference=${transactionReference}`;
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: { 'Authorization': `Bearer ${this.wompiprivateKey}` }
+                });
+
+                if (response.ok) {
+                    const json = await response.json();
+                    const transactions = json.data;
+                    
+                    // Find if any transaction with this reference is APPROVED
+                    const approvedTx = transactions.find(t => t.status === 'APPROVED');
+                    
+                    if (approvedTx) {
+                        console.log(`✅ Live check: Transaction ${transactionReference} is APPROVED on Wompi. Updating DB...`);
+                        
+                        // Parse Reference to get context
+                        const parts = transactionReference.split('_');
+                        if (parts.length >= 4) {
+                             const userId = parts[2];
+                             const courseId = parts[3];
+                             
+                             // Update Status & Grant Access
+                             await this._updateTransactionStatus(transactionReference, 'successful', approvedTx.id);
+                             await this._grantCourseAccess(userId, courseId);
+                             
+                             return { status: 'successful', reference: transactionReference };
+                        }
+                    } else if (transactions.length > 0) {
+                         // Check for failures
+                         const failedTx = transactions.find(t => t.status === 'DECLINED' || t.status === 'ERROR' || t.status === 'VOIDED');
+                         if (failedTx) {
+                             await this._updateTransactionStatus(transactionReference, 'failed', failedTx.id);
+                             return { status: 'failed', reference: transactionReference };
+                         }
+                    }
+                }
+            } catch (e) {
+                console.error("⚠️ Error performing live Wompi check:", e);
+                // Fallback to returning local status
+            }
         }
         
         return {
@@ -289,9 +337,32 @@ class PaymentService {
     async syncRecentTransactions() {
         console.log('🔄 Starting Wompi Transaction Sync...');
         try {
+            // Calculate date range (Last 15 days)
+            const now = new Date();
+            const untilDate = now.toISOString(); // e.g. 2023-10-27T10:00:00.000Z
+            
+            const fromDateObj = new Date();
+            fromDateObj.setDate(fromDateObj.getDate() - 15);
+            const fromDate = fromDateObj.toISOString();
+
+            // Prepare Query Params based on Wompi validation error
+            // Error said: "from_date", "until_date", "page", "page_size" are required
+            // Note: Wompi API V1 usually accepts ISO strings or unix. We'll use ISO.
+            // We append both common parameter sets to be safe: 'from/to' and 'from_date/until_date'
+            const queryParams = new URLSearchParams();
+            queryParams.append('page', '1');
+            queryParams.append('page_size', '50');
+            queryParams.append('from_date', fromDate); 
+            queryParams.append('until_date', untilDate);
+            // Also append standard params in case the error message keys were internal mappings
+            queryParams.append('from', fromDate);
+            queryParams.append('to', untilDate);
+
             // Wompi API: GET /v1/transactions
-            // Requires Private Key
-            const response = await fetch(`${this.wompiUrl}/transactions`, {
+            const url = `${this.wompiUrl}/transactions?${queryParams.toString()}`;
+            console.log(`🔗 Checking Wompi Transactions: ${url}`);
+
+            const response = await fetch(url, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${this.wompiprivateKey}`
@@ -307,21 +378,25 @@ class PaymentService {
             const transactions = json.data; // Array of transactions
             const results = [];
 
-            console.log(`🔄 Found ${transactions.length} recent transactions to check.`);
+            console.log(`🔄 Found ${transactions ? transactions.length : 0} recent transactions to check.`);
+            
+            if (!transactions) return { success: true, processed: 0, message: "No transactions found" };
 
             for (const tx of transactions) {
-                // We only care about APPROVED transactions that match our reference pattern
-                // Our reference: TX-{timestamp}-{userId}-{courseId}
+                // We only care about transactions that match our reference pattern
+                // Our reference format: ORDER_{timestamp}_{userId}_{courseId}
                 const reference = tx.reference;
                 
-                if (!reference || !reference.startsWith('TX-')) {
-                    continue; // Skip transactions not initiated by our logic or with different format
+                // Flexible check for ORDER_ prefix
+                if (!reference || !reference.startsWith('ORDER_')) {
+                    continue; 
                 }
 
                 const status = tx.status;
                 
-                // Parse Reference
-                const parts = reference.split('-');
+                // Parse Reference (Split by underscore)
+                const parts = reference.split('_');
+                // Expected: ["ORDER", "1234567890", "5", "107"] -> length 4
                 if (parts.length < 4) continue;
 
                 const userId = parts[2];
