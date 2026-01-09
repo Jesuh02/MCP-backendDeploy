@@ -43,7 +43,7 @@ router.post('/initiate', async (req, res) => {
         // Android expects: { urlBankPayment, transactionId, message }
         res.json({ 
             success: true, 
-            urlBankPayment: "https://checkout.wompi.co/l/VPOS_kN1kEQ", 
+            urlBankPayment: result.payment_url, 
             transactionId: result.reference,
             message: "Redirigiendo a Wompi..."
         });
