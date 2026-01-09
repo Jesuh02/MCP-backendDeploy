@@ -199,64 +199,150 @@ class PaymentService {
     /**
      * Handle Wompi webhook update.
      * Updates transaction status and grants access if approved.
+     * Wompi can send data in different formats depending on version/event type.
      */
     async handleWebhook(data) {
-        const { event } = data;
-        const transaction = event.data.transaction;
-
-        // 1. Basic Signature Validation (Optional but recommended)
-        // In local testing/ngrok this might fail if environment secrets aren't synced.
-        // For now, we trust the secure validation step below (API fetch).
-
-        const reference = transaction.reference;
-        const transactionId = transaction.id;
-
-        console.log(`💳 Wompi Webhook received for ${reference}. Validating with Wompi API...`);
-
-        // 2. SEGURIDAD EXTRA: Validar con API de Wompi directamente
-        // GET https://production.wompi.co/v1/transactions/{id}
-        let status = transaction.status; // Default to payload status
-        let wompiData = null;
-
         try {
-            const response = await fetch(`${this.wompiUrl}/transactions/${transactionId}`, {
-                 headers: { 'Authorization': `Bearer ${this.wompiPublicKey}` }
-            });
-            const result = await response.json();
+            console.log('📥 Webhook received:', JSON.stringify(data, null, 2));
             
-            if (result.data) {
-                wompiData = result.data;
-                status = wompiData.status; // Use confirmed status from API
-                console.log(`✅ Wompi API confirmed status: ${status}`);
-            } else {
-                console.warn("⚠️ Could not verify transaction with Wompi API. Using payload status.");
+            // Extract transaction from various possible payload structures
+            let transaction = null;
+            let reference = null;
+            let transactionId = null;
+            let status = null;
+            let amountInCents = null;
+            
+            // Format 1: { event: { data: { transaction: {...} } } }
+            if (data?.event?.data?.transaction) {
+                transaction = data.event.data.transaction;
             }
-        } catch (e) {
-            console.error("❌ Error verifying with Wompi API:", e);
-        }
-
-        // 3. Map status to our DB status
-        let dbStatus = 'pending';
-        if (status === 'APPROVED') dbStatus = 'successful';
-        else if (status === 'DECLINED') dbStatus = 'failed';
-        else if (status === 'ERROR') dbStatus = 'failed';
-        else if (status === 'VOIDED') dbStatus = 'failed';
-
-        // 4. Update Supabase
-        await this._updateTransactionStatus(reference, dbStatus, transactionId);
-
-        // 5. If Approved, Grant Access
-        if (dbStatus === 'successful') {
-            const parts = reference.split('_');
-             // Format: ORDER_{timestamp}_{userId}_{courseId}
-            if (parts.length >= 4) {
-                const userId = parts[2];
-                const courseId = parts[3];
-                console.log(`🎉 Payment successful. Granting access to User ${userId} for Course ${courseId}`);
-                await this._grantCourseAccess(userId, courseId);
-            } else {
-                console.error('Invalid reference format in webhook:', reference);
+            // Format 2: { data: { transaction: {...} } } - THIS IS THE WOMPI FORMAT
+            else if (data?.data?.transaction) {
+                transaction = data.data.transaction;
             }
+            // Format 3: Direct transaction object { transaction: {...} }
+            else if (data?.transaction) {
+                transaction = data.transaction;
+            }
+            // Format 4: The data itself is the transaction
+            else if (data?.id && data?.status) {
+                transaction = data;
+            }
+            
+            if (!transaction) {
+                console.error('❌ Webhook: Could not extract transaction from payload');
+                console.log('Payload structure:', Object.keys(data || {}));
+                return { success: false, message: 'Invalid transaction data' }; // Return proper response
+            }
+            
+            reference = transaction.reference || null;
+            transactionId = transaction.id;
+            status = transaction.status;
+            amountInCents = transaction.amount_in_cents;
+
+            console.log(`💳 Wompi Webhook: ID=${transactionId}, Status=${status}, Ref=${reference}, Amount=${amountInCents}`);
+
+            // Since this is the VPOS link without ORDER_ reference, try amount-based matching
+            if (!reference || !reference.startsWith('ORDER_')) {
+                console.log('⚠️ VPOS transaction detected. Attempting amount-based matching...');
+                
+                if (status === 'APPROVED' && amountInCents) {
+                    // Try to match with pending transactions by amount
+                    const amountInPesos = amountInCents / 100;
+                    
+                    const { data: pendingTxs } = await this.supabase.client
+                        .from('transactions')
+                        .select('*')
+                        .eq('status', 'pending')
+                        .eq('amount', amountInPesos)
+                        .order('created_at', { ascending: false })
+                        .limit(5); // Check last 5 pending transactions with this amount
+                    
+                    if (pendingTxs && pendingTxs.length > 0) {
+                        // Find the most recent unclaimed transaction
+                        for (const pendingTx of pendingTxs) {
+                            // Check if this Wompi transaction hasn't been claimed yet
+                            const { data: existingClaim } = await this.supabase.client
+                                .from('transactions')
+                                .select('id')
+                                .eq('wompi_transaction_id', transactionId)
+                                .maybeSingle();
+                            
+                            if (!existingClaim) {
+                                // Claim this transaction
+                                await this._updateTransactionStatusWithWompiId(
+                                    pendingTx.external_reference,
+                                    'successful',
+                                    transactionId
+                                );
+                                
+                                // Extract user and course from reference
+                                const parts = pendingTx.external_reference.split('_');
+                                if (parts.length >= 4) {
+                                    const userId = parts[2];
+                                    const courseId = parts[3];
+                                    await this._grantCourseAccess(userId, courseId);
+                                    console.log(`✅ VPOS payment claimed: User ${userId}, Course ${courseId}`);
+                                }
+                                
+                                return { success: true, message: 'VPOS payment processed' };
+                            }
+                        }
+                        
+                        console.log(`⚠️ VPOS transaction ${transactionId} already claimed or no pending match found`);
+                    } else {
+                        console.log(`⚠️ No pending transactions found for amount ${amountInPesos} COP`);
+                    }
+                }
+                
+                return { success: true, message: 'VPOS transaction logged' };
+            }
+
+            // Standard ORDER_ reference handling (if ever needed)
+            // 2. SEGURIDAD EXTRA: Validar con API de Wompi directamente
+            try {
+                const response = await fetch(`${this.wompiUrl}/transactions/${transactionId}`, {
+                     headers: { 'Authorization': `Bearer ${this.wompiprivateKey}` }
+                });
+                const result = await response.json();
+                
+                if (result.data) {
+                    status = result.data.status; // Use confirmed status from API
+                    console.log(`✅ Wompi API confirmed status: ${status}`);
+                }
+            } catch (e) {
+                console.error("❌ Error verifying with Wompi API:", e);
+            }
+
+            // 3. Map status to our DB status
+            let dbStatus = 'pending';
+            if (status === 'APPROVED') dbStatus = 'successful';
+            else if (status === 'DECLINED') dbStatus = 'failed';
+            else if (status === 'ERROR') dbStatus = 'failed';
+            else if (status === 'VOIDED') dbStatus = 'failed';
+
+            // 4. Update Supabase
+            await this._updateTransactionStatusWithWompiId(reference, dbStatus, transactionId);
+
+            // 5. If Approved, Grant Access
+            if (dbStatus === 'successful') {
+                const parts = reference.split('_');
+                 // Format: ORDER_{timestamp}_{userId}_{courseId}
+                if (parts.length >= 4) {
+                    const userId = parts[2];
+                    const courseId = parts[3];
+                    console.log(`🎉 Payment successful. Granting access to User ${userId} for Course ${courseId}`);
+                    await this._grantCourseAccess(userId, courseId);
+                } else {
+                    console.error('Invalid reference format in webhook:', reference);
+                }
+            }
+            
+            return { success: true, message: 'Webhook processed successfully' };
+            
+        } catch (error) {
+            console.error('❌ Webhook processing error:', error);
+            return { success: false, message: `Error: ${error.message}` };
         }
     }
 
