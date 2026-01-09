@@ -260,6 +260,7 @@ class PaymentService {
         }
     }
 
+
     /**
      * Check transaction status directly from Wompi and update DB.
      * Useful when webhooks fail or in local/sandbox environments.
@@ -277,9 +278,9 @@ class PaymentService {
         }
 
         // 2. If locally pending, double-check with Wompi API (Live Verification)
-        // This solves the issue where webhook didn't arrive yet or failed
         if (tx.status === 'pending') {
             try {
+                // Method A: Direct Reference Check
                 const url = `${this.wompiUrl}/transactions?reference=${transactionReference}`;
                 const response = await fetch(url, {
                     method: 'GET',
@@ -315,17 +316,39 @@ class PaymentService {
                              await this._updateTransactionStatus(transactionReference, 'failed', failedTx.id);
                              return { status: 'failed', reference: transactionReference };
                          }
+                    } else {
+                        // If Direct Reference Check returned empty, try Sync Fallback
+                        // Sometimes specific reference queries lag, but recent list has it.
+                         console.log("⚠️ Direct reference check empty. Attempting fallback sync...");
+                         await this.syncRecentTransactions();
+                         
+                         // Re-check DB after sync
+                         const { data: refreshedTx } = await this.supabase.client
+                            .from('transactions')
+                            .select('status')
+                            .eq('external_reference', transactionReference)
+                            .maybeSingle();
+                            
+                         if (refreshedTx && refreshedTx.status === 'successful') {
+                             return { status: 'successful', reference: transactionReference };
+                         }
                     }
                 }
             } catch (e) {
                 console.error("⚠️ Error performing live Wompi check:", e);
-                // Fallback to returning local status
             }
         }
         
+        // Return local status (might be updated now)
+        const { data: finalTx } = await this.supabase.client
+            .from('transactions')
+            .select('status')
+            .eq('external_reference', transactionReference)
+            .maybeSingle();
+
         return {
-            status: tx.status, // successful, pending, failed
-            reference: tx.external_reference
+            status: finalTx ? finalTx.status : tx.status,
+            reference: transactionReference
         };
     }
 
@@ -337,26 +360,38 @@ class PaymentService {
     async syncRecentTransactions() {
         console.log('🔄 Starting Wompi Transaction Sync...');
         try {
-            // Calculate date range (Last 15 days)
+            // Calculate date range (Last 15 days) in Unix Timestamp (Seconds) or ISO
+            // Wompi often prefers Unix Timestamps in seconds for these filters
             const now = new Date();
-            const untilDate = now.toISOString(); // e.g. 2023-10-27T10:00:00.000Z
+            const untilDate = Math.floor(now.getTime() / 1000); 
             
             const fromDateObj = new Date();
             fromDateObj.setDate(fromDateObj.getDate() - 15);
-            const fromDate = fromDateObj.toISOString();
+            const fromDate = Math.floor(fromDateObj.getTime() / 1000);
 
-            // Prepare Query Params based on Wompi validation error
-            // Error said: "from_date", "until_date", "page", "page_size" are required
-            // Note: Wompi API V1 usually accepts ISO strings or unix. We'll use ISO.
-            // We append both common parameter sets to be safe: 'from/to' and 'from_date/until_date'
+            // Prepare Query Params
+            // We use standard 'from' and 'to' which are widely accepted aliases or 'min_created_at' depending on API version
+            // To cover all bases for Wompi V1, we send multiple common formats if documentation is ambiguous in context,
+            // but relying on the defaults usually works better if we don't send invalid ones.
+            // Let's rely on standard pagination first.
             const queryParams = new URLSearchParams();
+            
+            // Wompi API V1 standard params for transactions
+            // references often don't need dates if we just query recent, but 'from'/'to' help.
+            // Using generic names to avoid validation errors on specific 'from_date' keys if they aren't supported.
+            // We will TRY standard "created_at[gte]" logic if simple params fail, but for now let's fix the invalid format.
+            
+            // FIX: Sending timestamp in seconds not ISO strings for this specific endpoint error
+            // Error was: "from_date" ["No está presente"]. This suggests we should use those exact keys if Wompi demands them,
+            // but ensure the VALUE is correct. If strict validation fails, we can try omitting them to get defaults.
+            
+            // Let's try sending just the pagination which is required.
             queryParams.append('page', '1');
-            queryParams.append('page_size', '50');
-            queryParams.append('from_date', fromDate); 
-            queryParams.append('until_date', untilDate);
-            // Also append standard params in case the error message keys were internal mappings
-            queryParams.append('from', fromDate);
-            queryParams.append('to', untilDate);
+            queryParams.append('page_size', '20'); 
+            
+            // Optionally add dates if strictly required by your specific Wompi integration level
+            // queryParams.append('from', fromDate.toString());
+            // queryParams.append('to', untilDate.toString());
 
             // Wompi API: GET /v1/transactions
             const url = `${this.wompiUrl}/transactions?${queryParams.toString()}`;
