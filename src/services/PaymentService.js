@@ -117,21 +117,21 @@ class PaymentService {
         const currency = 'COP';
         const amountInCents = Math.round(paymentData.amount * 100); 
         
-        // 2. Create Transaction in DB (Pending)
+        // 3. Create Transaction in DB (Pending) with DB-fetched price
         await this._recordTransactionStart({
             user_id: paymentData.userId,
             course_id: paymentData.courseId,
-            amount: paymentData.amount,
+            amount: coursePrice,
             external_reference: referenceCode,
             status: 'pending'
         });
 
-        // 3. Generate Integrity Signature (SHA256)
+        // 4. Generate Integrity Signature (SHA256)
         // Concatenation: reference + amountInCents + currency + integritySecret
         const signatureString = `${referenceCode}${amountInCents}${currency}${this.wompiIntegritySecret}`;
         const signature = crypto.createHash('sha256').update(signatureString).digest('hex');
 
-        // 4. Construct Wompi Checkout URL
+        // 5. Construct Wompi Checkout URL
         // We use the specific VPOS link requested by the user, but we MUST append the reference
         // to ensure we can track which user paid for which course.
         // Standard Wompi links often accept 'reference' as query param.
