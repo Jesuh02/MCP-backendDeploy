@@ -55,15 +55,23 @@ router.post('/initiate', async (req, res) => {
 
 /**
  * POST /webhook
- * Endpoint called by PayU/PSE to notify status changes.
+ * Endpoint called by Wompi to notify status changes.
  */
 router.post('/webhook', async (req, res) => {
     try {
-        await PaymentService.handleWebhook(req.body);
-        res.status(200).send('OK'); // PayU expects 200 OK
+        const result = await PaymentService.handleWebhook(req.body);
+        
+        // Wompi expects a proper JSON response
+        res.status(200).json({
+            success: result.success,
+            message: result.message
+        });
     } catch (error) {
         console.error("Webhook Error:", error);
-        res.status(500).send('Error processing webhook');
+        res.status(200).json({
+            success: false,
+            message: `Error: ${error.message}`
+        });
     }
 });
 
