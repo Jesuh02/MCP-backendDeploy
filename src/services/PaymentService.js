@@ -127,33 +127,16 @@ class PaymentService {
         });
 
         // 3. Generate Integrity Signature (SHA256)
-        // Wompi signature format: reference + amount_in_cents + currency + integrity_secret
+        // Concatenation: reference + amountInCents + currency + integritySecret
         const signatureString = `${referenceCode}${amountInCents}${currency}${this.wompiIntegritySecret}`;
         const signature = crypto.createHash('sha256').update(signatureString).digest('hex');
 
-        // 4. Construct Wompi STANDARD Checkout URL (NOT VPOS)
-        // IMPORTANT: Static VPOS links (checkout.wompi.co/l/VPOS_xxx) IGNORE query params!
-        // We MUST use the standard checkout URL format that accepts dynamic parameters.
-        // Format: https://checkout.wompi.co/p/?public-key=X&currency=COP&amount-in-cents=X&reference=X&signature:integrity=X
-        
-        const redirectUrl = this._getRedirectUrl();
-        
-        const checkoutParams = new URLSearchParams();
-        checkoutParams.append('public-key', this.wompiPublicKey);
-        checkoutParams.append('currency', currency);
-        checkoutParams.append('amount-in-cents', amountInCents.toString());
-        checkoutParams.append('reference', referenceCode);
-        checkoutParams.append('signature:integrity', signature);
-        checkoutParams.append('redirect-url', redirectUrl);
-        
-        // Use production or sandbox checkout based on environment
-        const checkoutBaseUrl = this.isTest 
-            ? 'https://checkout.wompi.co/p/' 
-            : 'https://checkout.wompi.co/p/';
-        
-        const checkoutUrl = `${checkoutBaseUrl}?${checkoutParams.toString()}`;
-        
-        console.log('🔗 Generated Wompi Checkout URL with reference:', referenceCode);
+        // 4. Construct Wompi Checkout URL
+        // We use the specific VPOS link requested by the user, but we MUST append the reference
+        // to ensure we can track which user paid for which course.
+        // Standard Wompi links often accept 'reference' as query param.
+        const baseVposUrl = "https://checkout.wompi.co/l/VPOS_kN1kEQ";
+        const checkoutUrl = `${baseVposUrl}?reference=${referenceCode}`;
 
         // Return the URL for the frontend to open
         return { 
@@ -280,7 +263,8 @@ class PaymentService {
 
     /**
      * Check transaction status directly from Wompi and update DB.
-     * Useful when webhooks fail or in local/sandbox environments.
+     * IMPORTANT: Since the VPOS link doesn't respect our reference parameter,
+     * we search by AMOUNT + RECENT DATE to find matching transactions.
      */
     async getTransactionStatus(transactionReference) {
         // 1. Query Supabase local status
@@ -294,11 +278,30 @@ class PaymentService {
              throw new Error("Transaction not found in database");
         }
 
-        // 2. If locally pending, double-check with Wompi API (Live Verification)
+        // 2. If locally pending, search for APPROVED transactions in Wompi by AMOUNT
         if (tx.status === 'pending') {
             try {
-                // Method A: Direct Reference Check
-                const url = `${this.wompiUrl}/transactions?reference=${transactionReference}`;
+                console.log(`🔍 Searching Wompi for APPROVED transactions matching amount: ${tx.amount} COP`);
+                
+                // Parse our reference to get userId and courseId
+                const parts = transactionReference.split('_');
+                const userId = parts.length >= 3 ? parts[2] : null;
+                const courseId = parts.length >= 4 ? parts[3] : null;
+                const expectedAmountCents = Math.round(tx.amount * 100);
+                
+                // Get recent transactions from Wompi (last 24 hours)
+                const now = new Date();
+                const fromDate = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
+                
+                const queryParams = new URLSearchParams();
+                queryParams.append('page', '1');
+                queryParams.append('page_size', '100');
+                queryParams.append('from_date', fromDate.toISOString());
+                queryParams.append('until_date', now.toISOString());
+                
+                const url = `${this.wompiUrl}/transactions?${queryParams.toString()}`;
+                console.log(`🔗 Fetching Wompi transactions: ${url}`);
+                
                 const response = await fetch(url, {
                     method: 'GET',
                     headers: { 'Authorization': `Bearer ${this.wompiprivateKey}` }
@@ -306,57 +309,64 @@ class PaymentService {
 
                 if (response.ok) {
                     const json = await response.json();
-                    const transactions = json.data;
+                    const allTransactions = json.data || [];
                     
-                    // Find if any transaction with this reference is APPROVED
-                    const approvedTx = transactions.find(t => t.status === 'APPROVED');
+                    console.log(`📊 Found ${allTransactions.length} total transactions in Wompi`);
                     
-                    if (approvedTx) {
-                        console.log(`✅ Live check: Transaction ${transactionReference} is APPROVED on Wompi. Updating DB...`);
+                    // Find APPROVED transactions matching our amount that haven't been claimed
+                    const matchingApproved = allTransactions.filter(t => 
+                        t.status === 'APPROVED' && 
+                        t.amount_in_cents === expectedAmountCents
+                    );
+                    
+                    console.log(`✅ Found ${matchingApproved.length} APPROVED transactions with amount ${expectedAmountCents} cents`);
+                    
+                    if (matchingApproved.length > 0) {
+                        // Check if any of these transactions have already been claimed
+                        const wompiIds = matchingApproved.map(t => t.id);
                         
-                        // Parse Reference to get context
-                        const parts = transactionReference.split('_');
-                        if (parts.length >= 4) {
-                             const userId = parts[2];
-                             const courseId = parts[3];
-                             
-                             // Update Status & Grant Access
-                             await this._updateTransactionStatus(transactionReference, 'successful', approvedTx.id);
-                             await this._grantCourseAccess(userId, courseId);
-                             
-                             return { status: 'successful', reference: transactionReference };
-                        }
-                    } else if (transactions.length > 0) {
-                         // Check for failures
-                         const failedTx = transactions.find(t => t.status === 'DECLINED' || t.status === 'ERROR' || t.status === 'VOIDED');
-                         if (failedTx) {
-                             await this._updateTransactionStatus(transactionReference, 'failed', failedTx.id);
-                             return { status: 'failed', reference: transactionReference };
-                         }
-                    } else {
-                        // If Direct Reference Check returned empty, try Sync Fallback
-                        // Sometimes specific reference queries lag, but recent list has it.
-                         console.log("⚠️ Direct reference check empty. Attempting fallback sync...");
-                         await this.syncRecentTransactions();
-                         
-                         // Re-check DB after sync
-                         const { data: refreshedTx } = await this.supabase.client
+                        // Get already claimed transaction IDs from our DB
+                        const { data: claimedTxs } = await this.supabase.client
                             .from('transactions')
-                            .select('status')
-                            .eq('external_reference', transactionReference)
-                            .maybeSingle();
+                            .select('wompi_transaction_id')
+                            .in('wompi_transaction_id', wompiIds)
+                            .eq('status', 'successful');
+                        
+                        const claimedIds = new Set((claimedTxs || []).map(t => t.wompi_transaction_id));
+                        
+                        // Find the first unclaimed transaction
+                        const unclaimedTx = matchingApproved.find(t => !claimedIds.has(t.id));
+                        
+                        if (unclaimedTx) {
+                            console.log(`🎉 Found unclaimed APPROVED transaction: ${unclaimedTx.id}`);
                             
-                         if (refreshedTx && refreshedTx.status === 'successful') {
-                             return { status: 'successful', reference: transactionReference };
-                         }
+                            // Claim this transaction for our user/course
+                            await this._updateTransactionStatusWithWompiId(
+                                transactionReference, 
+                                'successful', 
+                                unclaimedTx.id
+                            );
+                            
+                            if (userId && courseId) {
+                                await this._grantCourseAccess(userId, courseId);
+                                console.log(`✅ Access granted to user ${userId} for course ${courseId}`);
+                            }
+                            
+                            return { status: 'successful', reference: transactionReference };
+                        } else {
+                            console.log(`⚠️ All matching transactions already claimed`);
+                        }
                     }
+                } else {
+                    const errText = await response.text();
+                    console.error(`❌ Wompi API error: ${response.status} - ${errText}`);
                 }
             } catch (e) {
-                console.error("⚠️ Error performing live Wompi check:", e);
+                console.error("⚠️ Error performing Wompi amount-based check:", e);
             }
         }
         
-        // Return local status (might be updated now)
+        // Return local status
         const { data: finalTx } = await this.supabase.client
             .from('transactions')
             .select('status')
@@ -541,12 +551,28 @@ class PaymentService {
             .from('transactions')
             .update({ 
                 status: status, 
-                external_reference: transactionId, 
                 updated_at: new Date() 
             })
             .eq('external_reference', reference);
             
         if (error) console.error("DB Error updating transaction", error);
+    }
+
+    /**
+     * Update transaction with Wompi transaction ID for tracking claimed payments
+     */
+    async _updateTransactionStatusWithWompiId(reference, status, wompiTransactionId) {
+        const { error } = await this.supabase.client
+            .from('transactions')
+            .update({ 
+                status: status, 
+                wompi_transaction_id: wompiTransactionId,
+                updated_at: new Date() 
+            })
+            .eq('external_reference', reference);
+            
+        if (error) console.error("DB Error updating transaction with Wompi ID", error);
+        else console.log(`✅ Transaction ${reference} updated: status=${status}, wompi_id=${wompiTransactionId}`);
     }
 
     async _grantCourseAccess(userId, courseId) {
