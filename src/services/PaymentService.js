@@ -101,14 +101,34 @@ class PaymentService {
      */
     async initiatePayment(paymentData) {
         // 1. Validation
-        if (!paymentData.userId || !paymentData.courseId || !paymentData.amount) {
-            throw new Error('Invalid payment data: Missing userId, courseId, or amount');
+        console.log('📥 Received payment data:', JSON.stringify(paymentData, null, 2));
+        
+        if (!paymentData.userId || !paymentData.courseId) {
+            throw new Error(`Invalid payment data: Missing required fields. userId: ${paymentData.userId}, courseId: ${paymentData.courseId}`);
+        }
+        
+        // If amount is not provided or is 0, try to fetch it from the course
+        let amount = paymentData.amount;
+        if (!amount || amount <= 0) {
+            console.log('⚠️ Amount not provided, fetching from course database...');
+            const { data: course, error } = await this.supabase.client
+                .from('courses')
+                .select('price')
+                .eq('id', paymentData.courseId)
+                .single();
+                
+            if (error || !course) {
+                throw new Error('Course not found or database error');
+            }
+            
+            amount = parseFloat(course.price || 0);
+            paymentData.amount = amount; // Update the amount in paymentData
         }
         
         // Wompi minimum amount validation: $1,500 COP
         const WOMPI_MIN_AMOUNT_COP = 1500;
-        if (paymentData.amount < WOMPI_MIN_AMOUNT_COP) {
-            throw new Error(`Amount must be at least ${WOMPI_MIN_AMOUNT_COP} COP`);
+        if (amount < WOMPI_MIN_AMOUNT_COP) {
+            throw new Error(`Amount must be at least ${WOMPI_MIN_AMOUNT_COP} COP. Course price: ${amount} COP`);
         }
         
         console.log('📥 Initiating Wompi Checkout for:', JSON.stringify({ userId: paymentData.userId, courseId: paymentData.courseId, amount: paymentData.amount }));
