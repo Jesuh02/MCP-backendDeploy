@@ -280,48 +280,6 @@ class PaymentService {
             reference: tx.external_reference
         };
     }
-            if (currentStatus !== 'PENDING') {
-                await this._updateTransactionStatus(referenceCode, currentStatus, transactionId);
-            }
-        }
-
-        const responseObj = { 
-            status: currentStatus, 
-            source: wompiResult ? 'WOMPI' : 'DB' 
-        };
-
-        // 3. Check for Completeness and Grant Access if Approved
-        if (currentStatus === 'APPROVED' && userId && courseId) {
-             const completeness = await this._checkPaymentCompleteness(userId, courseId);
-             
-             if (completeness.isComplete) {
-                 await this._grantCourseAccess(userId, courseId);
-                 responseObj.accessGranted = true;
-             } else {
-                 responseObj.accessGranted = false;
-                 responseObj.partial = true;
-             }
-             
-             // Attach financial details for frontend
-             responseObj.paymentDetails = {
-                 paid: completeness.paid,
-                 required: completeness.required,
-                 remaining: completeness.remaining,
-                 isComplete: completeness.isComplete
-             };
-        } else if (userId && courseId) {
-             // Even if not approved, return what we know about price
-              const completeness = await this._checkPaymentCompleteness(userId, courseId);
-              responseObj.paymentDetails = {
-                 paid: completeness.paid,
-                 required: completeness.required,
-                 remaining: completeness.remaining,
-                 isComplete: completeness.isComplete
-             };
-        }
-
-        return responseObj;
-    }
 
     /**
      * Sync recent transactions from Wompi API.
