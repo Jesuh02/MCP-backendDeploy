@@ -23,16 +23,25 @@ router.get('/banks', async (req, res) => {
 /**
  * POST /initiate
  * Starts the payment flow.
- * Body: { userId, courseId, amount, fullName, email, phone, dni, bankCode, userType, ipAddress, userAgent }
+ * Body: { userId, courseId } - amount will be fetched from courses table
  */
 router.post('/initiate', async (req, res) => {
     try {
+        // Validate required fields only (amount will be fetched from DB)
+        if (!req.body.userId || !req.body.courseId) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Missing required fields: userId, courseId' 
+            });
+        }
+        
         // Collect IP/UserAgent if not provided in body (though body is safer if proxy involved)
         const ip = req.body.ipAddress || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         const ua = req.body.userAgent || req.headers['user-agent'];
         
         const paymentData = {
-             ...req.body,
+             userId: req.body.userId,
+             courseId: req.body.courseId,
              ipAddress: ip,
              userAgent: ua
         };
