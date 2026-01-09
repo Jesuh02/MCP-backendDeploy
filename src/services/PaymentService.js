@@ -137,6 +137,16 @@ class PaymentService {
         const currency = 'COP';
         const amountInCents = Math.round(amount * 100); 
         
+        // Get course details for the checkout page
+        const { data: courseDetails } = await this.supabase.client
+            .from('courses')
+            .select('title, description, thumbnail_url')
+            .eq('id', paymentData.courseId)
+            .single();
+        
+        const courseName = courseDetails?.title || 'Curso';
+        const courseDescription = courseDetails?.description || 'Acceso al curso';
+        
         // 3. Create Transaction in DB (Pending) with DB-fetched price
         await this._recordTransactionStart({
             user_id: paymentData.userId,
@@ -151,18 +161,42 @@ class PaymentService {
         const signatureString = `${referenceCode}${amountInCents}${currency}${this.wompiIntegritySecret}`;
         const signature = crypto.createHash('sha256').update(signatureString).digest('hex');
 
-        // 5. Construct Wompi Checkout URL
-        // We use the specific VPOS link requested by the user, but we MUST append the reference
-        // to ensure we can track which user paid for which course.
-        // Standard Wompi links often accept 'reference' as query param.
-        const baseVposUrl = "https://checkout.wompi.co/l/VPOS_kN1kEQ";
-        const checkoutUrl = `${baseVposUrl}?reference=${referenceCode}`;
+        // 5. Construct Wompi Checkout Standard URL with all parameters
+        // This creates a custom checkout link with embedded price, reference, and course data
+        // Documentation: https://docs.wompi.co/docs/colombia/widget-checkout-web
+        
+        // Determine redirect URL based on environment
+        const redirectUrl = this.isTest 
+            ? 'https://mcp-backenddeploy-production.up.railway.app/api/payment/redirect'
+            : 'https://mcp-backenddeploy-production.up.railway.app/api/payment/redirect';
+        
+        // Build the Wompi Checkout URL with query parameters
+        const checkoutParams = new URLSearchParams({
+            'public-key': this.wompiPublicKey,
+            'currency': currency,
+            'amount-in-cents': amountInCents.toString(),
+            'reference': referenceCode,
+            'signature:integrity': signature,
+            'redirect-url': redirectUrl,
+            // Custom data for display
+            'customer-data:email': paymentData.email || 'user@example.com',
+            'customer-data:full-name': paymentData.fullName || 'Usuario'
+        });
+        
+        // Use Wompi Checkout Standard URL
+        const checkoutUrl = `https://checkout.wompi.co/p/?${checkoutParams.toString()}`;
+        
+        console.log('💳 Generated Wompi Checkout URL:', checkoutUrl);
+        console.log('📝 Reference:', referenceCode);
+        console.log('💰 Amount:', amount, 'COP (', amountInCents, 'cents)');
 
         // Return the URL for the frontend to open
         return { 
             payment_url: checkoutUrl,
             reference: referenceCode,
-            signature: signature
+            signature: signature,
+            course_name: courseName,
+            amount: amount
         };
     }
 
