@@ -131,17 +131,17 @@ class PaymentService {
             throw new Error(`Amount must be at least ${WOMPI_MIN_AMOUNT_COP} COP. Course price: ${amount} COP`);
         }
         
-        console.log('📥 Initiating Wompi Checkout for:', JSON.stringify({ userId: paymentData.userId, courseId: paymentData.courseId, amount: paymentData.amount }));
+        console.log('📥 Initiating Wompi Checkout for:', JSON.stringify({ userId: paymentData.userId, courseId: paymentData.courseId, amount: amount }));
 
         const referenceCode = `ORDER_${Date.now()}_${paymentData.userId}_${paymentData.courseId}`;
         const currency = 'COP';
-        const amountInCents = Math.round(paymentData.amount * 100); 
+        const amountInCents = Math.round(amount * 100); 
         
         // 3. Create Transaction in DB (Pending) with DB-fetched price
         await this._recordTransactionStart({
             user_id: paymentData.userId,
             course_id: paymentData.courseId,
-            amount: coursePrice,
+            amount: amount,
             external_reference: referenceCode,
             status: 'pending'
         });
