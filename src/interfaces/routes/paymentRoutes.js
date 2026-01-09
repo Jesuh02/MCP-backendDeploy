@@ -71,13 +71,15 @@ router.post('/initiate', async (req, res) => {
 
         const result = await PaymentService.initiatePayment(paymentData);
         // Map backend response fields to match Android PaymentInitiationResponse DTO
-        // Backend returns: { payment_url, reference, signature }
-        // Android expects: { urlBankPayment, transactionId, message }
+        // Backend returns: { payment_url, reference, signature, course_name, amount }
+        // Android expects: { urlBankPayment, transactionId, message, courseName, amount }
         res.json({ 
             success: true, 
             urlBankPayment: result.payment_url, 
             transactionId: result.reference,
-            message: "Redirigiendo a Wompi..."
+            courseName: result.course_name,
+            amount: result.amount,
+            message: `Pagar $${result.amount.toLocaleString()} COP por ${result.course_name}`
         });
     } catch (error) {
         console.error("Payment Init Error:", error);
@@ -135,6 +137,132 @@ router.get('/sync', async (req, res) => {
     } catch (error) {
         console.error("Sync Error:", error);
         res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * GET /redirect
+ * Redirect endpoint after Wompi payment completion.
+ * Wompi redirects here with transaction ID in query params.
+ * This page shows a success/failure message and provides a deep link back to the app.
+ */
+router.get('/redirect', async (req, res) => {
+    try {
+        const { id: transactionId } = req.query;
+        
+        console.log('📥 Payment redirect received:', req.query);
+        
+        let status = 'unknown';
+        let message = 'Procesando...';
+        let reference = '';
+        
+        if (transactionId) {
+            // Check transaction status with Wompi
+            try {
+                const statusResult = await PaymentService.getTransactionStatus(transactionId);
+                status = statusResult.status || 'pending';
+                reference = statusResult.reference || '';
+            } catch (e) {
+                console.error('Error checking transaction status:', e);
+                status = 'pending';
+            }
+        }
+        
+        // Determine message based on status
+        if (status === 'successful' || status === 'APPROVED') {
+            message = '¡Pago exitoso! Tu curso ha sido desbloqueado.';
+        } else if (status === 'failed' || status === 'DECLINED' || status === 'ERROR') {
+            message = 'El pago no pudo ser procesado. Por favor intenta nuevamente.';
+        } else {
+            message = 'Tu pago está siendo procesado. Recibirás una confirmación pronto.';
+        }
+        
+        // Return a simple HTML page that redirects to the app
+        const html = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YisusCompany - Pago</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 40px;
+            max-width: 400px;
+        }
+        .icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+        }
+        .success { color: #4CAF50; }
+        .pending { color: #FF9800; }
+        .failed { color: #f44336; }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 16px;
+        }
+        p {
+            font-size: 16px;
+            opacity: 0.8;
+            margin-bottom: 30px;
+        }
+        .btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 32px;
+            border-radius: 30px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 16px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: scale(1.05); }
+        .ref {
+            margin-top: 20px;
+            font-size: 12px;
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon ${status === 'successful' || status === 'APPROVED' ? 'success' : status === 'pending' ? 'pending' : 'failed'}">
+            ${status === 'successful' || status === 'APPROVED' ? '✅' : status === 'pending' ? '⏳' : '❌'}
+        </div>
+        <h1>${status === 'successful' || status === 'APPROVED' ? '¡Pago Exitoso!' : status === 'pending' ? 'Procesando Pago' : 'Pago No Completado'}</h1>
+        <p>${message}</p>
+        <a href="yisuscompany://payment-complete?status=${status}&reference=${reference}" class="btn">
+            Volver a la App
+        </a>
+        <p class="ref">Ref: ${reference || transactionId || 'N/A'}</p>
+    </div>
+    <script>
+        // Try to open the app automatically after 2 seconds
+        setTimeout(() => {
+            window.location.href = 'yisuscompany://payment-complete?status=${status}&reference=${reference}';
+        }, 2000);
+    </script>
+</body>
+</html>
+        `;
+        
+        res.send(html);
+    } catch (error) {
+        console.error("Redirect Error:", error);
+        res.status(500).send('Error procesando la redirección');
     }
 });
 
