@@ -39,9 +39,32 @@ router.post('/initiate', async (req, res) => {
         const ip = req.body.ipAddress || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         const ua = req.body.userAgent || req.headers['user-agent'];
         
+        // Fetch course price from database for security
+        const { data: course, error: courseError } = await PaymentService.supabase.client
+            .from('courses')
+            .select('price')
+            .eq('id', req.body.courseId)
+            .single();
+        
+        if (courseError || !course) {
+            return res.status(400).json({ success: false, message: 'Course not found' });
+        }
+        
+        const coursePrice = parseFloat(course.price || 0);
+        if (coursePrice <= 0) {
+            return res.status(400).json({ success: false, message: 'This course is free, no payment required' });
+        }
+
         const paymentData = {
              userId: req.body.userId,
              courseId: req.body.courseId,
+             amount: coursePrice,
+             fullName: req.body.payerName || req.body.fullName || 'Usuario',
+             email: req.body.payerEmail || req.body.email || 'user@example.com',
+             phone: req.body.phone || '3000000000',
+             dni: req.body.payerDocNumber || req.body.dni || '12345678',
+             bankCode: req.body.bankCode || '0',
+             userType: req.body.userType || '0',
              ipAddress: ip,
              userAgent: ua
         };
