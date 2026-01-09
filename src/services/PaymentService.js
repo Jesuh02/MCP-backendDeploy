@@ -360,38 +360,24 @@ class PaymentService {
     async syncRecentTransactions() {
         console.log('🔄 Starting Wompi Transaction Sync...');
         try {
-            // Calculate date range (Last 15 days) in Unix Timestamp (Seconds) or ISO
-            // Wompi often prefers Unix Timestamps in seconds for these filters
+            // Calculate date range (Last 15 days)
+            // Wompi API V1 transactions endpoint expects ISO-8601 strings for dates
             const now = new Date();
-            const untilDate = Math.floor(now.getTime() / 1000); 
+            const untilDate = now.toISOString();
             
             const fromDateObj = new Date();
             fromDateObj.setDate(fromDateObj.getDate() - 15);
-            const fromDate = Math.floor(fromDateObj.getTime() / 1000);
+            const fromDate = fromDateObj.toISOString();
 
             // Prepare Query Params
-            // We use standard 'from' and 'to' which are widely accepted aliases or 'min_created_at' depending on API version
-            // To cover all bases for Wompi V1, we send multiple common formats if documentation is ambiguous in context,
-            // but relying on the defaults usually works better if we don't send invalid ones.
-            // Let's rely on standard pagination first.
             const queryParams = new URLSearchParams();
             
-            // Wompi API V1 standard params for transactions
-            // references often don't need dates if we just query recent, but 'from'/'to' help.
-            // Using generic names to avoid validation errors on specific 'from_date' keys if they aren't supported.
-            // We will TRY standard "created_at[gte]" logic if simple params fail, but for now let's fix the invalid format.
-            
-            // FIX: Sending timestamp in seconds not ISO strings for this specific endpoint error
-            // Error was: "from_date" ["No está presente"]. This suggests we should use those exact keys if Wompi demands them,
-            // but ensure the VALUE is correct. If strict validation fails, we can try omitting them to get defaults.
-            
-            // Let's try sending just the pagination which is required.
+            // REQUIRED: Wompi requires 'from_date' and 'until_date' params 
+            // along with pagination info 'page' and 'page_size'
             queryParams.append('page', '1');
-            queryParams.append('page_size', '20'); 
-            
-            // Optionally add dates if strictly required by your specific Wompi integration level
-            // queryParams.append('from', fromDate.toString());
-            // queryParams.append('to', untilDate.toString());
+            queryParams.append('page_size', '50');
+            queryParams.append('from_date', fromDate);
+            queryParams.append('until_date', untilDate);
 
             // Wompi API: GET /v1/transactions
             const url = `${this.wompiUrl}/transactions?${queryParams.toString()}`;
