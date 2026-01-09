@@ -127,16 +127,33 @@ class PaymentService {
         });
 
         // 3. Generate Integrity Signature (SHA256)
-        // Concatenation: reference + amountInCents + currency + integritySecret
+        // Wompi signature format: reference + amount_in_cents + currency + integrity_secret
         const signatureString = `${referenceCode}${amountInCents}${currency}${this.wompiIntegritySecret}`;
         const signature = crypto.createHash('sha256').update(signatureString).digest('hex');
 
-        // 4. Construct Wompi Checkout URL
-        // We use the specific VPOS link requested by the user, but we MUST append the reference
-        // to ensure we can track which user paid for which course.
-        // Standard Wompi links often accept 'reference' as query param.
-        const baseVposUrl = "https://checkout.wompi.co/l/VPOS_kN1kEQ";
-        const checkoutUrl = `${baseVposUrl}?reference=${referenceCode}`;
+        // 4. Construct Wompi STANDARD Checkout URL (NOT VPOS)
+        // IMPORTANT: Static VPOS links (checkout.wompi.co/l/VPOS_xxx) IGNORE query params!
+        // We MUST use the standard checkout URL format that accepts dynamic parameters.
+        // Format: https://checkout.wompi.co/p/?public-key=X&currency=COP&amount-in-cents=X&reference=X&signature:integrity=X
+        
+        const redirectUrl = this._getRedirectUrl();
+        
+        const checkoutParams = new URLSearchParams();
+        checkoutParams.append('public-key', this.wompiPublicKey);
+        checkoutParams.append('currency', currency);
+        checkoutParams.append('amount-in-cents', amountInCents.toString());
+        checkoutParams.append('reference', referenceCode);
+        checkoutParams.append('signature:integrity', signature);
+        checkoutParams.append('redirect-url', redirectUrl);
+        
+        // Use production or sandbox checkout based on environment
+        const checkoutBaseUrl = this.isTest 
+            ? 'https://checkout.wompi.co/p/' 
+            : 'https://checkout.wompi.co/p/';
+        
+        const checkoutUrl = `${checkoutBaseUrl}?${checkoutParams.toString()}`;
+        
+        console.log('🔗 Generated Wompi Checkout URL with reference:', referenceCode);
 
         // Return the URL for the frontend to open
         return { 
