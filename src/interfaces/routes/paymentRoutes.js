@@ -148,34 +148,16 @@ router.get('/sync', async (req, res) => {
  */
 router.get('/redirect', async (req, res) => {
     try {
-        const { id: transactionId } = req.query;
+        const { id: transactionId, reference: queryReference } = req.query;
         
         console.log('📥 Payment redirect received:', req.query);
         
-        let status = 'unknown';
-        let message = 'Procesando...';
-        let reference = '';
-        
-        if (transactionId) {
-            // Check transaction status with Wompi
-            try {
-                const statusResult = await PaymentService.getTransactionStatus(transactionId);
-                status = statusResult.status || 'pending';
-                reference = statusResult.reference || '';
-            } catch (e) {
-                console.error('Error checking transaction status:', e);
-                status = 'pending';
-            }
-        }
-        
-        // Determine message based on status
-        if (status === 'successful' || status === 'APPROVED') {
-            message = '¡Pago exitoso! Tu curso ha sido desbloqueado.';
-        } else if (status === 'failed' || status === 'DECLINED' || status === 'ERROR') {
-            message = 'El pago no pudo ser procesado. Por favor intenta nuevamente.';
-        } else {
-            message = 'Tu pago está siendo procesado. Recibirás una confirmación pronto.';
-        }
+        // SECURITY FIX: Don't check or update status here
+        // User just opened the link, payment is still processing
+        // The webhook will update the status when Wompi confirms
+        const status = 'pending';
+        const message = 'Tu pago está siendo procesado. Recibirás una confirmación pronto.';
+        const reference = queryReference || transactionId || '';
         
         // Return a simple HTML page that redirects to the app
         const html = `

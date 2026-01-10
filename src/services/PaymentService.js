@@ -252,7 +252,8 @@ class PaymentService {
 
     /**
      * Handle Wompi webhook update.
-     * Updates transaction status and grants access if approved.
+     * CRITICAL SECURITY: This is the ONLY function that should mark transactions as 'successful'.
+     * It verifies with Wompi API before updating and granting access.
      * Wompi can send data in different formats depending on version/event type.
      */
     async handleWebhook(data) {
@@ -300,7 +301,28 @@ class PaymentService {
             if (!reference || !reference.startsWith('ORDER_')) {
                 console.log('⚠️ VPOS transaction detected. Attempting amount-based matching...');
                 
+                // SECURITY: Only process APPROVED payments from Wompi webhook
+                // This prevents premature approval before user completes payment
                 if (status === 'APPROVED' && amountInCents) {
+                    // Verify transaction with Wompi API first
+                    console.log('🔒 Verifying VPOS transaction with Wompi API before processing...');
+                    try {
+                        const verifyResponse = await fetch(`${this.wompiUrl}/transactions/${transactionId}`, {
+                            headers: { 'Authorization': `Bearer ${this.wompiprivateKey}` }
+                        });
+                        const verifyResult = await verifyResponse.json();
+                        
+                        if (!verifyResult.data || verifyResult.data.status !== 'APPROVED') {
+                            console.log(`❌ Wompi API verification failed. Status: ${verifyResult.data?.status}`);
+                            return { success: false, message: 'Transaction not approved by Wompi' };
+                        }
+                        
+                        console.log('✅ Wompi API confirmed APPROVED status');
+                    } catch (e) {
+                        console.error('❌ Error verifying with Wompi API:', e);
+                        return { success: false, message: 'Failed to verify with Wompi' };
+                    }
+                    
                     // Try to match with pending transactions by amount
                     const amountInPesos = amountInCents / 100;
                     
@@ -402,9 +424,10 @@ class PaymentService {
 
 
     /**
-     * Check transaction status directly from Wompi and update DB.
-     * IMPORTANT: Since the VPOS link doesn't respect our reference parameter,
-     * we search by AMOUNT + RECENT DATE to find matching transactions.
+     * Check transaction status from local database ONLY.
+     * SECURITY FIX: This function NO LONGER updates transaction status.
+     * Only the webhook should update transaction status after Wompi confirmation.
+     * This prevents premature approval when user only opens the payment link.
      */
     async getTransactionStatus(transactionReference) {
         // 1. Query Supabase local status
@@ -418,103 +441,12 @@ class PaymentService {
              throw new Error("Transaction not found in database");
         }
 
-        // 2. If locally pending, search for APPROVED transactions in Wompi by AMOUNT
-        if (tx.status === 'pending') {
-            try {
-                console.log(`🔍 Searching Wompi for APPROVED transactions matching amount: ${tx.amount} COP`);
-                
-                // Parse our reference to get userId and courseId
-                const parts = transactionReference.split('_');
-                const userId = parts.length >= 3 ? parts[2] : null;
-                const courseId = parts.length >= 4 ? parts[3] : null;
-                const expectedAmountCents = Math.round(tx.amount * 100);
-                
-                // Get recent transactions from Wompi (last 24 hours)
-                const now = new Date();
-                const fromDate = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
-                
-                const queryParams = new URLSearchParams();
-                queryParams.append('page', '1');
-                queryParams.append('page_size', '100');
-                queryParams.append('from_date', fromDate.toISOString());
-                queryParams.append('until_date', now.toISOString());
-                
-                const url = `${this.wompiUrl}/transactions?${queryParams.toString()}`;
-                console.log(`🔗 Fetching Wompi transactions: ${url}`);
-                
-                const response = await fetch(url, {
-                    method: 'GET',
-                    headers: { 'Authorization': `Bearer ${this.wompiprivateKey}` }
-                });
-
-                if (response.ok) {
-                    const json = await response.json();
-                    const allTransactions = json.data || [];
-                    
-                    console.log(`📊 Found ${allTransactions.length} total transactions in Wompi`);
-                    
-                    // Find APPROVED transactions matching our amount that haven't been claimed
-                    const matchingApproved = allTransactions.filter(t => 
-                        t.status === 'APPROVED' && 
-                        t.amount_in_cents === expectedAmountCents
-                    );
-                    
-                    console.log(`✅ Found ${matchingApproved.length} APPROVED transactions with amount ${expectedAmountCents} cents`);
-                    
-                    if (matchingApproved.length > 0) {
-                        // Check if any of these transactions have already been claimed
-                        const wompiIds = matchingApproved.map(t => t.id);
-                        
-                        // Get already claimed transaction IDs from our DB
-                        const { data: claimedTxs } = await this.supabase.client
-                            .from('transactions')
-                            .select('wompi_transaction_id')
-                            .in('wompi_transaction_id', wompiIds)
-                            .eq('status', 'successful');
-                        
-                        const claimedIds = new Set((claimedTxs || []).map(t => t.wompi_transaction_id));
-                        
-                        // Find the first unclaimed transaction
-                        const unclaimedTx = matchingApproved.find(t => !claimedIds.has(t.id));
-                        
-                        if (unclaimedTx) {
-                            console.log(`🎉 Found unclaimed APPROVED transaction: ${unclaimedTx.id}`);
-                            
-                            // Claim this transaction for our user/course
-                            await this._updateTransactionStatusWithWompiId(
-                                transactionReference, 
-                                'successful', 
-                                unclaimedTx.id
-                            );
-                            
-                            if (userId && courseId) {
-                                await this._grantCourseAccess(userId, courseId);
-                                console.log(`✅ Access granted to user ${userId} for course ${courseId}`);
-                            }
-                            
-                            return { status: 'successful', reference: transactionReference };
-                        } else {
-                            console.log(`⚠️ All matching transactions already claimed`);
-                        }
-                    }
-                } else {
-                    const errText = await response.text();
-                    console.error(`❌ Wompi API error: ${response.status} - ${errText}`);
-                }
-            } catch (e) {
-                console.error("⚠️ Error performing Wompi amount-based check:", e);
-            }
-        }
+        console.log(`📊 Transaction ${transactionReference} current status: ${tx.status}`);
         
-        // Return local status
-        const { data: finalTx } = await this.supabase.client
-            .from('transactions')
-            .select('status')
-            .eq('external_reference', transactionReference)
-            .maybeSingle();
-
+        // Return local status WITHOUT modifying anything
+        // The webhook will update the status when Wompi confirms the payment
         return {
-            status: finalTx ? finalTx.status : tx.status,
+            status: tx.status,
             reference: transactionReference
         };
     }
