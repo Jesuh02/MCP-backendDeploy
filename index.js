@@ -6272,38 +6272,23 @@ app.get('/mcp/session/:sessionId', (req, res) => {
  * 🔌 MCP Message Endpoint - Receives JSON-RPC messages from VS Code
  * POST /mcp/message?sessionId=xxx
  * 
- * FIXED: MCP SSE protocol requires:
- * - HTTP response: 202 Accepted (or 200 for notifications)
- * - JSON-RPC response: sent via SSE stream ONLY
+ * IMPROVED: Always responds via HTTP body for maximum compatibility
+ * Sessions are optional - stateless mode is fully supported
  */
 app.post('/mcp/message', async(req, res) => {
     const { sessionId } = req.query;
     const { method, params, id } = req.body;
 
-    console.log(`🔌 MCP Message: ${method} (session: ${sessionId}, id: ${id})`);
-    console.log(`   Active sessions: ${mcpSseConnections.size} -> [${Array.from(mcpSseConnections.keys()).slice(0, 5).join(', ')}${mcpSseConnections.size > 5 ? '...' : ''}]`);
+    console.log(`🔌 MCP Message: ${method} (session: ${sessionId || 'stateless'}, id: ${id})`);
 
-    // Get SSE connection object (contains response and metadata)
+    // Get SSE connection if exists (optional - stateless works too)
     let sseConn = mcpSseConnections.get(sessionId);
-    let sseResponse = sseConn?.response;
-    
-    // Check if session exists (standard flow) or if we need to fallback (stateless)
-    // This allows tool execution even if the server restarted (in-memory session lost)
-    const isSessionMissing = !sseConn || !sseResponse;
-    const isConnClosed = sseResponse && (sseResponse.writableEnded || !sseResponse.writable);
-    const useStatelessFallback = isSessionMissing || isConnClosed;
-
-    if (useStatelessFallback) {
-        console.warn(`⚠️ Session warning for ${sessionId}: Missing=${isSessionMissing}, Closed=${isConnClosed}`);
-        console.warn(`   Using direct HTTP response (VS Code MCP should handle this)`);
-    } else {
-        // Update last activity timestamp for valid sessions
+    if (sseConn) {
         sseConn.lastActivity = Date.now();
     }
     
     // For notifications (no id), just acknowledge
     if (id === undefined || id === null) {
-
         if (method === 'notifications/initialized' || method === 'initialized') {
             console.log(`📨 MCP Initialized notification received`);
         }
@@ -6321,7 +6306,6 @@ app.post('/mcp/message', async(req, res) => {
                     console.log('✅ Supabase connection verified for MCP session');
                 } catch (dbErr) {
                     console.error('❌ Supabase connection failed:', dbErr.message);
-                    // Continue anyway - some tools may still work
                 }
                 result = {
                     protocolVersion: '2024-11-05',
@@ -6430,46 +6414,17 @@ app.post('/mcp/message', async(req, res) => {
                 if (method.startsWith('notifications/')) {
                     return res.status(200).send('');
                 }
-                // For unknown methods, return error in response body (stateless compatible)
-                const notFoundError = { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
-                if (!useStatelessFallback && sseResponse) {
-                    sseResponse.write(`event: message\ndata: ${JSON.stringify(notFoundError)}\n\n`);
-                    return res.status(202).send('Accepted');
-                } else {
-                    return res.status(200).json(notFoundError);
-                }
+                return res.status(200).json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } });
         }
 
-        // Build JSON-RPC response
+        // Build JSON-RPC response - ALWAYS return in HTTP body for reliability
         const response = { jsonrpc: '2.0', id, result };
-        
-        // STANDARD MCP over SSE: Write to the event stream
-        if (!useStatelessFallback && sseResponse) {
-            sseResponse.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
-            console.log(`✅ MCP Response sent via SSE for: ${method}`);
-            res.status(202).send('Accepted');
-        } else {
-            // FALLBACK: Return JSON-RPC response directly in HTTP body with status 200
-            // VS Code MCP SSE transport should accept this as a fallback
-            console.log(`✅ MCP Response sent via HTTP Body (Stateless) for: ${method}`);
-            res.status(200).json(response);
-        }
+        console.log(`✅ MCP Response sent for: ${method}`);
+        res.status(200).json(response);
 
     } catch (error) {
         console.error(`❌ MCP Error (${method}):`, error);
-        const errorResponse = { jsonrpc: '2.0', id, error: { code: -32603, message: error.message } };
-        
-        // Send error via available channel
-        if (!useStatelessFallback && sseResponse) {
-            try {
-                sseResponse.write(`event: message\ndata: ${JSON.stringify(errorResponse)}\n\n`);
-            } catch (sseErr) {
-                console.error(`❌ Could not write error to SSE: ${sseErr.message}`);
-            }
-            res.status(202).send('Accepted');
-        } else {
-            res.status(200).json(errorResponse);
-        }
+        res.status(200).json({ jsonrpc: '2.0', id, error: { code: -32603, message: error.message } });
     }
 });
 
