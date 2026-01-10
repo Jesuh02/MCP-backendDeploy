@@ -6672,97 +6672,126 @@ async function handleMCPResourceRead(uri) {
 
 /**
  * Execute database query (SQL or natural language)
- * RESILIENT MODE: Will retry multiple times and try alternatives before failing
+ * USES MCPService for intelligent query processing with LLM support
  */
 async function executeDatabaseQuery(query, retryCount = 0) {
-    const maxRetries = 5;
+    console.log(`📊 executeDatabaseQuery called with: "${query}"`);
     
     try {
-        // Detect if it's natural language or SQL
-        const isSQL = /^(SELECT|INSERT|UPDATE|DELETE|WITH)\s/i.test(query.trim());
-        
-        let sqlQuery = query;
-        if (!isSQL) {
-            // Convert natural language to SQL using simple patterns
-            sqlQuery = convertNaturalLanguageToSQL(query);
+        // First, try using MCPService.processQueryToData for intelligent processing
+        if (mcpService) {
+            console.log('🤖 Using MCPService for query processing...');
+            const result = await mcpService.processQueryToData(query);
+            
+            if (result && !result.error) {
+                console.log('✅ MCPService returned data successfully');
+                return {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify(result, null, 2)
+                    }]
+                };
+            }
+            console.log('⚠️ MCPService returned error, trying fallback...');
         }
 
-        // Execute via Supabase RPC or direct query
-        const { data, error } = await supabaseService.client.rpc('execute_sql', { query: sqlQuery });
+        // Fallback: Direct query execution for simple SQL
+        const isSQL = /^(SELECT|INSERT|UPDATE|DELETE|WITH)\s/i.test(query.trim());
         
-        if (error) {
-            // Fallback: try direct table query for simple cases
-            const tableMatch = sqlQuery.match(/FROM\s+(\w+)/i);
+        if (isSQL) {
+            // Try to extract table name and execute direct query
+            const tableMatch = query.match(/FROM\s+(\w+)/i);
             if (tableMatch) {
                 const tableName = tableMatch[1];
-                const { data: tableData, error: tableError } = await supabaseService.client
-                    .from(tableName)
-                    .select('*')
-                    .limit(100);
+                console.log(`📋 Attempting direct query on table: ${tableName}`);
                 
-                if (!tableError) {
+                // For simple SELECT * queries, use Supabase client
+                if (query.trim().toLowerCase().startsWith('select * from')) {
+                    const { data, error } = await supabaseService.client
+                        .from(tableName)
+                        .select('*')
+                        .limit(100);
+                    
+                    if (!error && data) {
+                        return {
+                            content: [{
+                                type: 'text',
+                                text: JSON.stringify({ 
+                                    query, 
+                                    results: data, 
+                                    count: data.length,
+                                    note: 'Direct Supabase query (limited to 100 rows)'
+                                }, null, 2)
+                            }]
+                        };
+                    }
+                }
+                
+                // For complex queries, try fetching all rows and let JS do the work
+                const { data: allData, error: fetchError } = await supabaseService.client
+                    .from(tableName)
+                    .select('*');
+                
+                if (!fetchError && allData) {
                     return {
                         content: [{
                             type: 'text',
-                            text: JSON.stringify({ query: sqlQuery, results: tableData, count: tableData.length }, null, 2)
+                            text: JSON.stringify({ 
+                                query,
+                                table: tableName,
+                                results: allData, 
+                                count: allData.length,
+                                note: 'Full table data returned. Complex aggregations should be done in the LLM.'
+                            }, null, 2)
                         }]
                     };
                 }
             }
-            
-            // RETRY LOGIC: Don't give up immediately
-            if (retryCount < maxRetries) {
-                console.log(`⚠️ Query failed (attempt ${retryCount + 1}/${maxRetries}), retrying...`);
-                await new Promise(r => setTimeout(r, 500 * (retryCount + 1))); // Exponential backoff
-                return executeDatabaseQuery(query, retryCount + 1);
-            }
-            throw error;
         }
 
-        return {
-            content: [{
-                type: 'text',
-                text: JSON.stringify({ query: sqlQuery, results: data }, null, 2)
-            }]
-        };
-    } catch (error) {
-        // RESILIENT RESPONSE: Try to return something useful
-        console.error(`❌ Query error after ${retryCount} retries: ${error.message}`);
+        // Last fallback: return schema and sample data
+        console.log('📊 Returning fallback data snapshot...');
+        const tables = ['usuarios', 'courses', 'videos', 'tasks', 'transactions', 'subscriptions'];
+        const fallbackData = {};
         
-        // Try to get basic data as fallback
-        try {
-            const tables = ['usuarios', 'courses', 'videos', 'tasks'];
-            const fallbackData = {};
-            
-            for (const table of tables) {
-                const { data, error: tableError } = await supabaseService.client
+        for (const table of tables) {
+            try {
+                const { data, count, error } = await supabaseService.client
                     .from(table)
-                    .select('*')
-                    .limit(10);
-                if (!tableError && data) {
-                    fallbackData[table] = { count: data.length, sample: data.slice(0, 3) };
+                    .select('*', { count: 'exact' })
+                    .limit(5);
+                if (!error && data) {
+                    fallbackData[table] = { 
+                        totalCount: count,
+                        sample: data
+                    };
                 }
+            } catch (e) {
+                console.log(`⚠️ Could not fetch ${table}: ${e.message}`);
             }
-            
-            if (Object.keys(fallbackData).length > 0) {
-                return {
-                    content: [{
-                        type: 'text',
-                        text: JSON.stringify({ 
-                            warning: `Query failed: ${error.message}. Showing available data snapshot.`,
-                            fallbackData 
-                        }, null, 2)
-                    }]
-                };
-            }
-        } catch (fallbackError) {
-            console.error(`Fallback also failed: ${fallbackError.message}`);
         }
         
         return {
             content: [{
                 type: 'text',
-                text: `Error executing query after ${maxRetries} attempts: ${error.message}\n\nSugerencias:\n- Reformula tu consulta\n- Intenta con términos más específicos\n- Usa nombres de tablas válidos: usuarios, courses, videos, tasks, subscriptions`
+                text: JSON.stringify({ 
+                    originalQuery: query,
+                    note: 'Could not execute exact query. Here is a data snapshot from available tables.',
+                    tables: fallbackData 
+                }, null, 2)
+            }]
+        };
+
+    } catch (error) {
+        console.error(`❌ Query execution error: ${error.message}`);
+        return {
+            content: [{
+                type: 'text',
+                text: JSON.stringify({
+                    error: error.message,
+                    query,
+                    suggestion: 'Try rephrasing your query or use table names: usuarios, courses, videos, tasks, transactions, subscriptions'
+                }, null, 2)
             }],
             isError: true
         };
@@ -6818,20 +6847,28 @@ async function getDatabaseSchema() {
     const tables = [
         'usuarios', 'personas', 'courses', 'videos', 'topics', 'content_items',
         'tasks', 'task_submissions', 'subscriptions', 'chat_messages',
-        'file_contexts', 'roles', 'recursos', 'rol_recursos', 'notifications'
+        'file_contexts', 'roles', 'recursos', 'rol_recursos', 'notifications',
+        'transactions', 'likes', 'reinforcement_history'
     ];
 
     const schema = {};
     for (const table of tables) {
         try {
-            const { data } = await supabaseService.client.from(table).select('*').limit(1);
-            if (data && data.length > 0) {
-                schema[table] = Object.keys(data[0]);
+            const { data, count, error } = await supabaseService.client
+                .from(table)
+                .select('*', { count: 'exact' })
+                .limit(1);
+            
+            if (!error && data) {
+                schema[table] = {
+                    columns: data.length > 0 ? Object.keys(data[0]) : [],
+                    rowCount: count || 0
+                };
             } else {
-                schema[table] = ['(empty table)'];
+                schema[table] = { columns: [], rowCount: 0, error: error?.message };
             }
         } catch (e) {
-            schema[table] = ['(error reading table)'];
+            schema[table] = { columns: [], rowCount: 0, error: e.message };
         }
     }
 
