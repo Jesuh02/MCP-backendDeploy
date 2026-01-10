@@ -24,8 +24,12 @@ class R2StorageService {
         }
 
         this.r2Client = null;
-        this.bucketName = process.env.R2_BUCKET_NAME || 'coursev-files';
-        this.publicUrl = process.env.R2_PUBLIC_URL || 'https://pub-9f393625246c4018b5613be60b01bda1.r2.dev';
+        this.bucketName = process.env.R2_BUCKET_NAME;
+        this.publicUrl = process.env.R2_PUBLIC_URL;
+        
+        if (!this.bucketName || !this.publicUrl) {
+            throw new Error('❌ CRITICAL: R2_BUCKET_NAME and R2_PUBLIC_URL environment variables must be set');
+        }
         this.supabaseService = null;
 
         this._initializeR2Client();

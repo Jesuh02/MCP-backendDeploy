@@ -581,8 +581,12 @@ if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
     } catch (e) { console.error('Failed to read .env manually in index.js', e); }
 }
 
-const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'yisuscompany-files';
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || 'https://pub-9f393625246c4018b5613be60b01bda1.r2.dev';
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME;
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
+
+if (!R2_BUCKET_NAME || !R2_PUBLIC_URL) {
+    console.warn('⚠️ R2_BUCKET_NAME or R2_PUBLIC_URL not configured. R2 storage will be unavailable.');
+}
 
 if (R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY) {
     try {
@@ -2333,7 +2337,7 @@ async function sendEmailNotification(userId, subject, text) {
                     subject: `📚 ${subject}`
                 }],
                 from: {
-                    email: process.env.SENDGRID_FROM_EMAIL || 'yisuscompany@yisuscompany.com',
+                    email: process.env.SENDGRID_FROM_EMAIL,
                     name: 'YisusCompany'
                 },
                 content: [{
@@ -3697,7 +3701,7 @@ app.post('/notify-chat-response', async(req, res) => {
         const emailSubject = 'Nueva respuesta disponible - CourseV';
 
         // Smart link que detecta si la app está instalada o descarga el APK
-        const smartLink = `${process.env.BASE_URL || 'v0-eo-jesuh02s-projects.vercel.app'}$ `;
+        const smartLink = `${process.env.BASE_URL || process.env.PUBLIC_URL}$ `;
 
         const emailBody = `Hola ${user.username || 'Usuario'},
 
@@ -6156,7 +6160,7 @@ app.get('/mcp/sse', (req, res) => {
     // Dynamic base URL detection to support Localhost and Railway
     let baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
         ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-        : (process.env.PUBLIC_URL || 'https://mcp-backenddeploy-production.up.railway.app');
+        : process.env.PUBLIC_URL;
     
     // Fallback: If running locally or without explicit env vars, use request headers
     if (!process.env.RAILWAY_PUBLIC_DOMAIN && !process.env.PUBLIC_URL && req.headers.host) {
