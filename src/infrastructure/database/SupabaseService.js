@@ -708,10 +708,13 @@ CREATE TABLE public.videos (
                     rest = rest.slice(0, -1).trim();
                 }
 
-                // Check for unsupported complex clauses in fallback mode
+                // Complex queries (JOIN, GROUP BY, SUBQUERIES) should be handled by RPC execute_sql
+                // If we reach here, it means RPC failed - provide a helpful error
                 if (rest.includes('join') || rest.includes('group by') || rest.includes('select') || rest.includes('(')) {
-                    // Instead of blocking, we try to execute it anyway via RPC (which already failed) or throw a helpful error
-                    throw new Error("Complex query failed via RPC and is not supported by client-side parser. Please simplify your query or check table/column names.");
+                    // Log the complex query for debugging
+                    logger.warn(`Complex query detected in fallback parser: ${sqlQuery.substring(0, 200)}...`);
+                    // Instead of blocking, throw error with SQL so user can fix or run directly
+                    throw new Error(`La consulta requiere RPC execute_sql que no está disponible. Consulta: ${sqlQuery.substring(0, 100)}... Verifica que la función execute_sql existe en Supabase.`);
                 }
 
                 // Build query using Supabase client
