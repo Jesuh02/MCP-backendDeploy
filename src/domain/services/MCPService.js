@@ -645,36 +645,36 @@ export class MCPService {
                     const msg = sqlError.message || "";
 
                     if (msg.includes("column") && msg.includes("does not exist")) {
-                        hint = "SCHEMA ERROR: A column you requested does not exist. Use `get_database_schema` to check column names.";
+                        hint = "ERROR DE ESQUEMA: La columna solicitada no existe. Usa `get_database_schema` para verificar los nombres de columnas.";
                     } else if (msg.includes("relation") && msg.includes("does not exist")) {
-                        hint = "SCHEMA ERROR: A table you requested does not exist. Use `get_database_schema` to check table names.";
+                        hint = "ERROR DE ESQUEMA: La tabla solicitada no existe. Usa `get_database_schema` para verificar los nombres de tablas.";
                     } else if (msg.includes("missing FROM-clause")) {
-                        hint = "SQL SYNTAX ERROR: You used an alias without defining it in the FROM clause (e.g. `SELECT t.id FROM table` instead of `FROM table t`).";
+                        hint = "ERROR DE SINTAXIS SQL: Usaste un alias sin definirlo en la cláusula FROM (ej: `SELECT t.id FROM table` en vez de `FROM table t`).";
                     } else if (msg.includes('syntax error at or near "<"')) {
-                        hint = "SQL SYNTAX ERROR: You are using placeholders like `<ID>` or `<CREADOR_ID>`. You MUST use actual values (e.g. `WHERE id = 1`) or standard SQL parameters if supported. Do NOT use angle brackets.";
+                        hint = "ERROR DE SINTAXIS SQL: Estás usando placeholders como `<ID>` o `<CREADOR_ID>`. DEBES usar valores reales (ej: `WHERE id = 1`). NO uses corchetes angulares.";
                     } else {
-                        hint = "Complex queries (JOIN, GROUP BY, SUBQUERIES) are NOT supported. You MUST retrieve raw data (e.g., 'SELECT student_id FROM task_submissions') and perform aggregations/joins in your reasoning.";
+                        hint = "Error en la consulta SQL. Verifica la sintaxis y los nombres de tablas/columnas usando `get_database_schema`.";
                     }
 
                     // Specific hint for the common hallucination about creator_user_id in usuarios
                     if (msg.includes('usuarios.creator_user_id')) {
-                        hint = "CRITICAL SCHEMA ERROR: The 'usuarios' table does NOT have a 'creator_user_id' column. That column belongs to 'courses'. To find creators, check 'courses.creator_user_id'.";
+                        hint = "ERROR DE ESQUEMA: La tabla 'usuarios' NO tiene columna 'creator_user_id'. Esa columna pertenece a 'courses'. Para encontrar creadores, usa 'courses.creator_user_id'.";
                     }
 
                     // Specific hint for task_submissions.student_username error
                     if (sqlError.message && sqlError.message.includes('task_submissions.student_username')) {
-                        hint = "CRITICAL SCHEMA ERROR: The 'task_submissions' table does NOT have a 'student_username' column. It uses 'student_id' (Foreign Key to usuarios.id). Please use 'student_id' instead.";
+                        hint = "ERROR DE ESQUEMA: La tabla 'task_submissions' NO tiene columna 'student_username'. Usa 'student_id' (Foreign Key a usuarios.id).";
                     }
 
-                    // Specific hint for grouping error 42803 or general complex query attempts
+                    // Hint for grouping error 42803 - now supportive instead of restrictive
                     if (sqlError.code === '42803' || (sqlError.message && (sqlError.message.includes('GROUP BY') || sqlError.message.includes('STRICT MODE')))) {
-                        hint = "SQL ERROR: You are trying to use aggregations (COUNT, GROUP BY) or SUBQUERIES which are forbidden. STRATEGY: 1) Select all raw IDs (SELECT student_id FROM ...). 2) Count them in your head. 3) Select the user details for the top ID.";
+                        hint = "ERROR SQL (42803): Columnas no agregadas deben estar en GROUP BY. Ejemplo correcto: SELECT course_id, COUNT(*) FROM tasks GROUP BY course_id";
                     }
 
                     // Return explicit error instead of generic snapshot to avoid confusing the LLM
                     data = {
                         error: true,
-                        message: `Error executing SQL: ${sqlError.message}`,
+                        message: `Error ejecutando SQL: ${sqlError.message}`,
                         hint: hint,
                         query: query,
                         reason: 'execution-error'
