@@ -738,39 +738,16 @@ SELECT ...
                 const schemaText = JSON.stringify(freshSchema.schema, null, 2);
                 logger.info("✅ Database schema loaded - all responses will be in database context");
 
-                // Check if query is related to the database
-                const isDatabaseRelated = this.isDatabaseRelatedQuery(query, freshSchema.schema);
-                
-                if (!isDatabaseRelated) {
-                    // Query is NOT related to database - reject it politely
-                    logger.warn(`⚠️ Query rejected - not database related: "${query}"`);
-                    return `🚫 **Consulta fuera de alcance**
-
-Lo siento, solo puedo responder preguntas relacionadas con la **base de datos de YisusCompany**.
-
-**Puedo ayudarte con:**
-• Consultas sobre usuarios, cursos, videos, tareas, suscripciones
-• Estadísticas y métricas de la plataforma
-• Análisis de datos y reportes
-• Información sobre esquemas y relaciones de tablas
-
-**Tablas disponibles:** ${Object.keys(freshSchema.schema).join(', ')}
-
-**Ejemplos de preguntas válidas:**
-- "¿Cuántos usuarios hay registrados?"
-- "Dame la lista de cursos"
-- "¿Qué videos tiene el curso 5?"
-- "Muéstrame las últimas entregas de tareas"
-
-Por favor, reformula tu pregunta para que esté relacionada con la base de datos.`;
-                }
-
-                // MANDATORY: ALWAYS execute SQL queries for database-related questions
-                // The mental model is:
-                // 1. Schema already loaded above (understand structure)
-                // 2. Now we MUST generate and execute SQL based on user's request
-                // 3. Never just respond with schema info without querying actual data
-                logger.info("📊 MANDATORY: Proceeding with SQL generation - always query data, never just schema...");
+                // ============================================================
+                // 🔄 PROCESO OBLIGATORIO: SIEMPRE EJECUTAR SQL
+                // El LLM SIEMPRE debe:
+                // 1. Revisar el esquema (ya hecho arriba)
+                // 2. Generar una consulta SQL apropiada
+                // 3. Ejecutar la consulta
+                // 4. Analizar los resultados
+                // NUNCA debe responder solo con información del esquema
+                // ============================================================
+                logger.info("📊 ALWAYS executing SQL - proceeding with SQL generation...");
 
                 // STEP 2: Generate SQL (with retry logic for errors)
                 // PERSISTENCE MODE: Will try many times before giving up
@@ -789,89 +766,52 @@ Por favor, reformula tu pregunta para que esté relacionada con la base de datos
                     // Build prompt based on whether this is a retry
                     let sqlGenMessages;
                     if (attempt === 1) {
-                        // Detect if this is a Business Intelligence query
-                        const isBIQuery = this.isBusinessIntent(query);
-                        
-                        // First attempt - clean prompt with strict rules
-                        // MANDATORY MENTAL PROCESS:
-                        // 1. Schema provided = understand database structure
-                        // 2. User query = what they want to know
-                        // 3. ALWAYS generate SQL to get ACTUAL DATA from the database
-                        // 4. If a table doesn't exist in schema, search for similar tables using information_schema
+                        // First attempt - simple and direct prompt
                         sqlGenMessages = [
-                            new SystemMessage(`🧠 **PROCESO MENTAL OBLIGATORIO:**
-1. PRIMERO: Analiza el esquema proporcionado para entender la estructura de la BD
-2. SEGUNDO: Identifica qué tablas y columnas necesitas para responder la consulta
-3. TERCERO: Si no encuentras una tabla en el esquema, busca en information_schema.tables
-4. CUARTO: SIEMPRE genera SQL para obtener DATOS REALES - nunca respondas solo con información del esquema
+                            new SystemMessage(`Eres un generador de SQL PostgreSQL. Tu ÚNICO trabajo es generar consultas SQL válidas.
 
-**ESQUEMA CONOCIDO:**
+**ESQUEMA DE LA BASE DE DATOS:**
 ${schemaText}
 
-⚠️ **IMPORTANTE - TABLAS NO LISTADAS:**
-Si el usuario pregunta por una tabla que NO aparece en el esquema (ej: transactions, payments, etc.):
-1. Primero busca si existe: SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE '%keyword%'
-2. Si existe, obtén su estructura: SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'tabla_encontrada'
-3. Luego genera la consulta con los datos reales
+**INSTRUCCIONES:**
+1. Analiza la pregunta del usuario
+2. Identifica qué tablas y columnas necesitas del esquema
+3. Genera UNA consulta SQL que responda la pregunta
+4. USA SOLO columnas que existan en el esquema
+5. Para tablas que no aparecen en el esquema, busca alternativas (ej: si no hay "transactions", busca en information_schema)
 
-🚫 **REGLAS CRÍTICAS - CUMPLIMIENTO OBLIGATORIO:**
-1. USA SOLAMENTE columnas que existan (verifica en el esquema o en information_schema)
-2. NUNCA inventes nombres de columnas
-3. SIEMPRE usa alias de tabla (ej: FROM usuarios u)
-4. Si una tabla no está en el esquema, BÚSCALA primero
-5. Para JOINs, verifica que las foreign keys existan
-6. VERIFICA dos veces que cada columna mencionada existe
-
-${isBIQuery ? `\n🎯 **CONSULTA DE BUSINESS INTELLIGENCE DETECTADA:**
-Esta es una consulta analítica/estratégica. Genera SQL que retorne datos completos y útiles.
-- Incluye métricas agregadas (COUNT, AVG, SUM) cuando sea relevante
-- Ordena por las columnas más relevantes (DESC para ver los top)
-- Limita a TOP 10 o 20 si son rankings
-- Incluye todos los campos necesarios para análisis
-` : ''}
-⚠️ EJEMPLOS DE ERRORES COMUNES A EVITAR:
-- ❌ usuarios.creator_user_id (NO EXISTE - esa columna está en courses)
-- ✅ courses.creator_user_id (CORRECTO)
-
-Output SOLO SQL en bloque de código:
+**FORMATO DE RESPUESTA:**
 \`\`\`sql
 SELECT ...
-\`\`\``),
-                            new HumanMessage(`SQL for: ${query}`)
-                        ];
-                    } else {
-                        // Retry - include comprehensive error feedback
-                        const errorFeedback = this.buildErrorFeedback(lastError, lastSQL, errorHistory);
-                        sqlGenMessages = [
-                            new SystemMessage(`🚨 **SQL CORRECTION REQUIRED** 🚨
-
-**FAILED SQL:**
-\`\`\`sql
-${lastSQL || 'N/A'}
 \`\`\`
 
-**ERROR MESSAGE:**
+NO expliques nada. SOLO genera el SQL.`),
+                            new HumanMessage(`Genera SQL para: ${query}`)
+                        ];
+                    } else {
+                        // Retry - simpler error feedback
+                        sqlGenMessages = [
+                            new SystemMessage(`El SQL anterior falló. Genera uno NUEVO y CORRECTO.
+
+**ERROR:**
 ${lastError}
 
-**ERROR ANALYSIS:**
-${errorFeedback.analysis}
+**SQL QUE FALLÓ:**
+${lastSQL}
 
-**SUGGESTED FIX:**
-${errorFeedback.suggestion}
-
-**Database Schema (verified):**
+**ESQUEMA:**
 ${schemaText}
 
-**CRITICAL RULES FOR CORRECTION:**
-1. ${errorFeedback.rules.join('\n2. ')}
+**INSTRUCCIONES:**
+1. Genera un SQL DIFERENTE al anterior
+2. USA SOLO columnas del esquema
+3. Si la tabla no existe, usa information_schema para buscarla
+4. Simplifica: evita JOINs complejos si no son necesarios
 
-**IMPORTANT:** Generate a SIMPLER, more direct SQL query. Avoid complex JOINs, UNIONs, or subqueries unless absolutely necessary.
-
-Generate CORRECTED SQL (must be different from previous attempt):
 \`\`\`sql
 SELECT ...
 \`\`\``),
-                            new HumanMessage(`CORRIGE el SQL para esta consulta: ${query}\n\nIntento ${attempt} de ${maxRetries}. El SQL anterior falló, genera una versión DIFERENTE y más SIMPLE.`)
+                            new HumanMessage(`Corrige el SQL para: ${query}`)
                         ];
                     }
 
@@ -968,182 +908,44 @@ ${errorHistory.map(e => `- Intento ${e.attempt}: ${e.error}`).join('\n')}`;
                 if (result !== null) {
                     logger.info("📈 Step 3: Requesting analysis from LLM...");
 
-                    // Detect if this is a LIST query (usuarios, cursos, tareas, etc.)
-                    const isListQuery = /dame|lista|listar|muestra|mostrar|todos|todas/i.test(query) &&
-                        /usuarios?|cursos?|tareas?|videos?|subscri|estudiantes?/i.test(query);
-
                     const analysisMessages = [
-                            new SystemMessage(`Eres un asistente de análisis de datos EXCLUSIVAMENTE para la base de datos de YisusCompany.
+                            new SystemMessage(`Analiza los resultados de la consulta SQL y responde al usuario.
 
-🚫 **REGLAS CRÍTICAS - NUNCA VIOLAR:**
-1. SOLO analiza los datos que se te proporcionan en los resultados
-2. NUNCA inventes, imagines o supongas datos que no están en los resultados
-3. Si los resultados están vacíos, di "No se encontraron datos" - NO inventes ejemplos
-4. NO respondas preguntas fuera del contexto de la base de datos consultada
-5. SIEMPRE basa tus análisis en los números EXACTOS de los resultados
-6. Si un dato no existe en los resultados, di "Este dato no está disponible" - NUNCA lo inventes
-7. 🚨 NUNCA incluyas secciones como "## Acción inmediata", "## Ejemplos de SQL" o "Ejecutar las consultas..." 
-8. 🚨 LOS DATOS YA FUERON OBTENIDOS - presenta RESULTADOS y ANÁLISIS, no código SQL
-9. 🚨 NO muestres consultas SQL al usuario - enfócate en DATOS y CONCLUSIONES
-10. 🚨 Presenta los datos en TABLAS MARKDOWN limpias y profesionales
+**REGLAS:**
+1. Presenta los datos en formato claro (tablas markdown si son listas)
+2. NO muestres código SQL al usuario
+3. Incluye un resumen con las cifras importantes
+4. Si hay muchos datos, muestra los más relevantes
 
-📊 **ESQUEMA DE BASE DE DATOS:**
-${schemaText}
+**FORMATO PARA TABLAS:**
+| **Columna** | **Valor** |
+| :--- | :--- |
+| dato | valor |`),
+                    new HumanMessage(`Pregunta: "${query}"
 
-GUIDELINES PARA ANÁLISIS:
-1. Comienza con resumen basado EN LOS DATOS REALES (ej: "Encontré X resultados...")
-2. ${isListQuery ? '**PRESENTA DATOS EN TABLA MARKDOWN**' : 'Explica hallazgos BASADOS EN LOS DATOS'}
-3. Proporciona contexto SOLO sobre los resultados devueltos
-4. Agrega recomendaciones si son relevantes A LOS DATOS REALES
-5. NUNCA retornes JSON sin formato
-6. Si el usuario intenta desviar la conversación, recuérdale que solo puedes analizar la base de datos
+Resultados (${result?.length || 0} filas):
+${JSON.stringify(result, null, 2)}
 
-${isListQuery ? `**FORMATO DE TABLA ESTÉTICA (OBLIGATORIO):**
-Presenta los datos en una tabla con el siguiente estilo EXACTO:
-
-| **Columna 1** | **Columna 2** | **Columna 3** | **Columna 4** |
-| :--- | :--- | :--- | :--- |
-| valor1 | valor2 | valor3 | valor4 |
-
-REGLAS DE FORMATO:
-1. Headers en **negrita** entre asteriscos dobles
-2. Usar nombres de columna DESCRIPTIVOS en español (ej: "Nombre Usuario" en lugar de "usuario")
-3. Alineación a la izquierda con :---
-4. Sin espacios extra dentro de las celdas
-5. Incluir TODAS las columnas relevantes de los datos
-6. Máximo 20 filas, si hay más indicar "... y X más"
-
-EJEMPLO PARA USUARIOS:
-| **ID** | **Nombre Usuario** | **Email** | **Rol** |
-| :--- | :--- | :--- | :--- |
-| 1 | admin | admin@example.com | Administrador |
-| 2 | prueba | test@test.com | Usuario |
-
-Después de la tabla, añade un breve análisis.
-` : `**ANALYSIS EXAMPLE:**
-"Encontré 11 usuarios registrados. De estos, 9 (82%) usan emails temporales, indicando cuentas de prueba. Solo 2 tienen emails reales. **Recomendación**: Implementar verificación de email obligatoria."`}
-`),
-                    new HumanMessage(`Pregunta: "${query}"\n\nSQL:\n\`\`\`sql\n${finalSQL}\n\`\`\`\n\nResultados (${result?.length || 0} filas):\n${JSON.stringify(result, null, 2)}\n\n${isListQuery ? 'OBLIGATORIO: Presenta los datos en TABLA MARKDOWN con headers en **negrita**, alineación izquierda (:---), y nombres de columna descriptivos en español. Luego añade análisis breve.' : 'Analiza estos resultados de forma argumentada.'}`)
+Presenta estos datos de forma clara y analiza los resultados.`)
                 ];
 
                 const analysisResponse = await this.llmService.generateResponse(analysisMessages, []);
                 let analysis = analysisResponse.content || "Análisis no disponible";
                 
-                // 🧹 CLEAN UP: Remove any SQL blocks from the analysis (user doesn't want to see SQL)
+                // Clean any SQL from the response
                 analysis = analysis.replace(/```sql[\s\S]*?```/gi, '');
-                analysis = analysis.replace(/## Ejemplos de SQL[\s\S]*?(?=##|$)/gi, '');
                 
-                logger.info("✅ Analysis complete (SQL blocks removed)");
-                
-                // 🚨 POST-ANALYSIS VALIDATION: Detect and auto-execute any suggested SQL
-                if (analysis.includes('```sql') || 
-                    analysis.toLowerCase().includes('ejecutar') ||
-                    analysis.toLowerCase().includes('acción inmediata')) {
-                    logger.warn("⚠️ Analysis contains SQL suggestions - AUTO-EXECUTING them");
-                    
-                    // Extract all SQL blocks from the analysis
-                    const sqlMatches = [...analysis.matchAll(/```sql\s*\n([\s\S]+?)\n```/gi)];
-                    
-                    if (sqlMatches.length > 0) {
-                        let enhancedAnalysis = analysis;
-                        const autoResults = [];
-                        
-                        for (const match of sqlMatches) {
-                            const suggestedSQL = match[1].trim();
-                            logger.info(`🔍 Auto-executing suggested SQL: ${suggestedSQL.substring(0, 100)}...`);
-                            
-                            try {
-                                const autoResult = await this.supabase.executeRawSQL(suggestedSQL);
-                                autoResults.push({
-                                    sql: suggestedSQL,
-                                    data: autoResult,
-                                    success: true
-                                });
-                                logger.info(`✅ Auto-execution successful: ${autoResult?.length || 0} rows`);
-                            } catch (autoError) {
-                                logger.error(`❌ Auto-execution failed:`, autoError);
-                                autoResults.push({
-                                    sql: suggestedSQL,
-                                    error: autoError.message,
-                                    success: false
-                                });
-                            }
-                        }
-                        
-                        // Build results section (WITHOUT showing SQL code)
-                        if (autoResults.length > 0) {
-                            const resultsSection = autoResults.map((r, idx) => {
-                                if (r.success) {
-                                    if (r.data && r.data.length > 0) {
-                                        // Format data in a readable table format
-                                        const columns = Object.keys(r.data[0]);
-                                        const tableHeader = `| ${columns.map(c => `**${c}**`).join(' | ')} |\n| ${columns.map(() => ':---').join(' | ')} |`;
-                                        const tableRows = r.data.slice(0, 10).map(row => 
-                                            `| ${columns.map(col => row[col] ?? 'NULL').join(' | ')} |`
-                                        ).join('\n');
-                                        const moreRows = r.data.length > 10 ? `\n\n_... y ${r.data.length - 10} filas más_` : '';
-                                        return `### 📊 Datos obtenidos (${r.data.length} registros)\n\n${tableHeader}\n${tableRows}${moreRows}`;
-                                    } else {
-                                        return `### ℹ️ No se encontraron datos para esta consulta`;
-                                    }
-                                } else {
-                                    return `### ⚠️ No se pudieron obtener los datos: ${r.error}`;
-                                }
-                            }).join('\n\n');
-                            
-                            // Replace "Acción inmediata" section with actual data (NO SQL)
-                            enhancedAnalysis = enhancedAnalysis.replace(
-                                /## (Acción inmediata|Ejemplos de SQL)[\s\S]*/i,
-                                `## 📊 Datos de la base de datos\n\n${resultsSection}`
-                            );
-                            
-                            logger.info(`✅ Enhanced analysis with ${autoResults.length} auto-executed queries`);
-                            return enhancedAnalysis;
-                        }
-                    }
-                }
-                
+                logger.info("✅ Analysis complete");
                 return analysis;
             }
 
-            // Fallback: Generate data snapshot if we reach here without results
-            logger.warn(`⚠️ Reached end without results. Generating fallback snapshot...`);
-            try {
-                const snapshot = await this.generateDataSnapshot(query, {
-                    isBusinessQuestion: this.isBusinessIntent(query),
-                    reason: 'End-of-function fallback'
-                });
-                if (snapshot && snapshot.data) {
-                    return this.buildMarketingSummary(snapshot.data);
-                }
-            } catch (e) {
-                logger.error(`Final fallback failed: ${e.message}`);
-            }
-            return `No se pudieron obtener resultados después de ${maxRetries} intentos. Por favor reformula tu consulta o intenta con una pregunta más específica.`;
+            // Fallback if no results
+            logger.warn(`⚠️ No results obtained. Returning error message.`);
+            return `No se pudieron obtener resultados para tu consulta. Por favor reformula la pregunta.`;
 
         } catch (error) {
             logger.error(`❌ Agent error: ${error.message}`);
-            
-            // DON'T GIVE UP - Try to return something useful
-            try {
-                logger.info(`🔄 Attempting recovery after agent error...`);
-                const snapshot = await this.generateDataSnapshot(query, {
-                    isBusinessQuestion: this.isBusinessIntent(query),
-                    reason: `Recovery from error: ${error.message}`
-                });
-                if (snapshot && snapshot.data) {
-                    return `## ⚠️ Ocurrió un error, pero aquí están los datos disponibles:
-
-${this.buildMarketingSummary(snapshot.data)}
-
----
-_Error original: ${error.message}_`;
-                }
-            } catch (recoveryError) {
-                logger.error(`Recovery also failed: ${recoveryError.message}`);
-            }
-            
-            return `Error procesando la consulta: ${error.message}\n\nSugerencias:\n- Intenta reformular tu pregunta\n- Usa términos más específicos\n- Prueba con una consulta más simple`;
+            return `Error procesando la consulta: ${error.message}\n\nIntenta reformular tu pregunta.`;
         }
     }
 
@@ -1188,96 +990,21 @@ _Error original: ${error.message}_`;
     }
 
     /**
+     * @deprecated No longer used - ALL queries now execute SQL
      * Detect if the query likely requires fetching data from the database.
-     * UPDATED: ALWAYS returns true for database-related queries.
-     * The agent MUST always:
-     * 1. First examine the schema to understand the database structure
-     * 2. Then generate and execute SQL queries based on the user's request
-     * This ensures the LLM never just reads the schema without querying data.
      */
     detectIfQueryRequiresData(query) {
-        // ALWAYS return true - we ALWAYS want to execute queries
-        // The mental model should be:
-        // 1. Get schema (understand structure)
-        // 2. Generate SQL based on query and schema
-        // 3. Execute SQL and return results
-        // NEVER just look at schema without making a query
+        // DEPRECATED: Now we ALWAYS execute SQL queries
         return true;
     }
 
     /**
+     * @deprecated No longer used - ALL queries are processed as database queries
      * Check if a query is related to the database context.
-     * Returns true if the query mentions database concepts, tables, or data operations.
-     * @param {string} query - The user's query
-     * @param {Object} schema - The database schema object
-     * @returns {boolean} - True if query is database-related
      */
     isDatabaseRelatedQuery(query, schema) {
-        if (!query) return false;
-        const lower = query.toLowerCase();
-        
-        // Get table names from schema (lowercase for comparison)
-        const tableNames = Object.keys(schema || {}).map(t => t.toLowerCase());
-        
-        // Database-related keywords in Spanish and English
-        const databaseKeywords = [
-            // Data operations
-            'dame', 'muestrame', 'listar', 'buscar', 'encontrar', 'ver', 'obtener',
-            'consulta', 'consultar', 'query', 'select', 'datos', 'data',
-            'show', 'list', 'find', 'get', 'fetch', 'retrieve',
-            
-            // Counting/Statistics
-            'cuantos', 'cuántos', 'contar', 'count', 'total', 'cantidad',
-            'estadisticas', 'estadísticas', 'stats', 'statistics', 'metricas', 'métricas',
-            
-            // Database concepts
-            'tabla', 'tablas', 'table', 'tables', 'columna', 'columnas', 'column', 'columns',
-            'esquema', 'schema', 'base de datos', 'database', 'bd', 'db',
-            'registro', 'registros', 'record', 'records', 'fila', 'filas', 'row', 'rows',
-            'relacion', 'relación', 'relation', 'foreign key', 'clave foranea',
-            
-            // Entity names (from typical YisusCompany schema)
-            'usuario', 'usuarios', 'user', 'users',
-            'curso', 'cursos', 'course', 'courses',
-            'video', 'videos',
-            'tarea', 'tareas', 'task', 'tasks',
-            'entrega', 'entregas', 'submission', 'submissions',
-            'suscripcion', 'suscripciones', 'subscription', 'subscriptions',
-            'notificacion', 'notificaciones', 'notification', 'notifications',
-            'certificado', 'certificados', 'certificate', 'certificates',
-            'tema', 'temas', 'topic', 'topics',
-            'contenido', 'content', 'content_items',
-            'likes', 'comentario', 'comentarios', 'comment', 'comments',
-            'progreso', 'progress', 'calificacion', 'calificaciones', 'grade', 'grades',
-            'creador', 'creadores', 'creator', 'creators',
-            'estudiante', 'estudiantes', 'student', 'students',
-            'admin', 'administrador',
-            
-            // Questions about data
-            'quien', 'quién', 'quienes', 'quiénes', 'who',
-            'cual', 'cuál', 'cuales', 'cuáles', 'which', 'what',
-            'donde', 'dónde', 'where',
-            'cuando', 'cuándo', 'when',
-            
-            // Analysis keywords
-            'analisis', 'análisis', 'analysis', 'reporte', 'report',
-            'kpi', 'indicador', 'indicadores', 'business intelligence', 'bi',
-            'ventas', 'retencion', 'retención', 'conversion', 'conversión'
-        ];
-        
-        // Check if query contains any database keyword
-        const hasKeyword = databaseKeywords.some(keyword => lower.includes(keyword));
-        
-        // Check if query mentions any table name from schema
-        const mentionsTable = tableNames.some(table => lower.includes(table));
-        
-        // Check if query contains SQL-like syntax
-        const hasSQLSyntax = /\b(select|insert|update|delete|from|where|join|group by|order by)\b/i.test(query);
-        
-        // Log the detection result for debugging
-        logger.info(`🔍 isDatabaseRelatedQuery: hasKeyword=${hasKeyword}, mentionsTable=${mentionsTable}, hasSQLSyntax=${hasSQLSyntax}`);
-        
-        return hasKeyword || mentionsTable || hasSQLSyntax;
+        // DEPRECATED: Now we ALWAYS treat queries as database-related
+        return true;
     }
 
     /**
