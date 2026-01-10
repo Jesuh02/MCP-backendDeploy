@@ -93,7 +93,8 @@ export class MCPService {
             schemaText += `- tasks.topic_id → topics.id\n`;
             schemaText += `- task_submissions.task_id → tasks.id\n`;
             schemaText += `- task_submissions.user_id → usuarios.id\n`;
-            schemaText += `- subscriptions.course_id → courses.id (Nota: puede tener subscriber_id en lugar de user_id)\n`;
+            schemaText += `- subscriptions.creator_id → usuarios.id (creador al que se suscriben)\n`;
+            schemaText += `- subscriptions.subscriber_id → usuarios.id (usuario que se suscribe)\n`;
             schemaText += `- transactions.user_id → usuarios.id\n`;
             schemaText += `- notifications.user_id → usuarios.id\n`;
             
@@ -112,20 +113,24 @@ export class MCPService {
     
     /**
      * Fallback schema if dynamic loading fails
+     * IMPORTANT: These columns are verified from actual Supabase schema
      */
     _getFallbackSchema() {
-        return `**ESQUEMA DE LA BASE DE DATOS (Fallback):**
-- usuarios: id, username, email, first_name, last_name, is_active, created_at
-- courses: id, title, description, price, is_premium, creator_user_id, thumbnail_url, created_at
-- videos: id, title, description, course_id, video_url, duration, order_index, created_at
-- topics: id, title, description, course_id, order_index, created_at  
-- tasks: id, title, description, topic_id, due_date, max_grade, created_at
-- task_submissions: id, task_id, user_id, file_url, grade, feedback, submitted_at, graded_at
-- subscriptions: id, course_id, subscriber_id, status, price, created_at, expires_at
-- transactions: id, user_id, amount, status, payment_method, reference, currency, created_at
-- notifications: id, user_id, title, message, type, read, created_at
+        return `**ESQUEMA DE LA BASE DE DATOS:**
+- **usuarios**: id, username, email, first_name, last_name, is_active, created_at
+- **courses**: id, title, description, price, is_premium, creator_user_id, thumbnail_url, created_at
+- **videos**: id, title, description, course_id, video_url, duration, order_index, created_at
+- **topics**: id, title, description, course_id, order_index, created_at  
+- **tasks**: id, title, description, topic_id, due_date, max_grade, created_at
+- **task_submissions**: id, task_id, user_id, file_url, grade, feedback, submitted_at, graded_at
+- **subscriptions**: id, subscriber_id, creator_id, subscription_date, created_at (⚠️ NO tiene course_id)
+- **transactions**: id, user_id, amount, status, payment_method, reference, currency, created_at
+- **notifications**: id, user_id, title, message, type, read, created_at
 
-⚠️ Este es un esquema de respaldo. El esquema real puede variar.`;
+**RELACIONES IMPORTANTES:**
+- Para suscriptores de un creador: subscriptions.creator_id = usuarios.id (el creador)
+- Para saber quién se suscribió: subscriptions.subscriber_id = usuarios.id (el suscriptor)
+- Para cursos de un creador: courses.creator_user_id = usuarios.id`;
     }
     
     /**
@@ -135,6 +140,71 @@ export class MCPService {
         this._schemaCache = null;
         this._schemaCacheTime = 0;
         return await this.getDynamicSchema();
+    }
+
+    /**
+     * Analyze SQL error and suggest a corrected SQL query
+     * This helps the LLM understand exactly what went wrong and how to fix it
+     */
+    analyzeAndSuggestSQLFix(errorMessage, originalSQL) {
+        const result = { sqlExample: null, hint: '' };
+        const errorLower = (errorMessage || '').toLowerCase();
+        const sqlLower = (originalSQL || '').toLowerCase();
+        
+        // Detect common subscription-related errors
+        if (errorLower.includes('subscriptions') || sqlLower.includes('subscription')) {
+            // Check for wrong column usage
+            if (errorLower.includes('course_id') || sqlLower.includes('s.course_id') || sqlLower.includes('subscriptions.course_id')) {
+                result.hint = 'La tabla subscriptions NO tiene course_id. Usa creator_id y subscriber_id.';
+                
+                // If they're trying to count subscribers per creator/course
+                if (sqlLower.includes('count') || sqlLower.includes('group by')) {
+                    result.sqlExample = `-- Para contar suscriptores por creador:
+SELECT 
+    u.id,
+    u.username,
+    COUNT(s.id) as total_subscribers
+FROM usuarios u
+LEFT JOIN subscriptions s ON u.id = s.creator_id
+GROUP BY u.id, u.username
+ORDER BY total_subscribers DESC
+LIMIT 10`;
+                } else {
+                    result.sqlExample = `-- Estructura correcta para subscriptions:
+SELECT 
+    s.id,
+    s.subscriber_id,    -- Usuario que se suscribió
+    s.creator_id,       -- Creador al que se suscribió
+    s.subscription_date,
+    s.created_at
+FROM subscriptions s
+-- Para obtener datos del suscriptor:
+-- JOIN usuarios u ON s.subscriber_id = u.id
+-- Para obtener datos del creador:
+-- JOIN usuarios c ON s.creator_id = c.id`;
+                }
+            }
+            
+            // Wrong user_id reference
+            if (errorLower.includes('user_id') || sqlLower.includes('s.user_id')) {
+                result.hint = 'subscriptions usa subscriber_id (no user_id) para el usuario suscrito.';
+                result.sqlExample = `-- Correcto: usar subscriber_id en lugar de user_id
+SELECT s.*, u.username
+FROM subscriptions s
+JOIN usuarios u ON s.subscriber_id = u.id`;
+            }
+        }
+        
+        // Detect column not found in general
+        if (errorLower.includes('does not exist') || errorLower.includes('column') || errorLower.includes('columna')) {
+            const columnMatch = errorMessage.match(/column[s]?\s*[`"']?(\w+)[`"']?/i) || 
+                               errorMessage.match(/[`"'](\w+)[`"']\s*(?:does not exist|no existe)/i);
+            if (columnMatch) {
+                result.hint = `La columna '${columnMatch[1]}' no existe. Revisa las columnas válidas en el error.`;
+            }
+        }
+        
+        return result;
     }
 
     /**
@@ -963,20 +1033,25 @@ ${schemaInfo}
                     // Format tool result for the LLM - enhanced for errors
                     let toolResultText;
                     if (toolResult.success === false) {
-                        // Error case - provide clearer instructions
-                        toolResultText = `**❌ ERROR en query_database:**
-\`\`\`
-Error: ${toolResult.error}
-${toolResult.hint || ''}
-${toolResult.suggestion || ''}
-\`\`\`
+                        // Error case - provide clearer instructions with SQL fix example
+                        const errorAnalysis = this.analyzeAndSuggestSQLFix(toolResult.error, toolCall.arguments?.query || '');
+                        
+                        toolResultText = `**❌ ERROR SQL - DEBES CORREGIR:**
 
-**ACCIÓN REQUERIDA:** 
-1. Lee el error cuidadosamente
-2. Usa las columnas correctas mostradas arriba
-3. Genera una nueva consulta SQL corregida
+**Error:** ${toolResult.error}
+${toolResult.hint ? `**Pista:** ${toolResult.hint}` : ''}
+${toolResult.suggestion ? `**Sugerencia:** ${toolResult.suggestion}` : ''}
 
-**RECUERDA:** Revisa el ESQUEMA en el mensaje inicial para ver las columnas correctas.`;
+${errorAnalysis.sqlExample ? `**EJEMPLO DE SQL CORREGIDO:**
+\`\`\`sql
+${errorAnalysis.sqlExample}
+\`\`\`` : ''}
+
+**INSTRUCCIONES:**
+1. NO repitas el mismo SQL que causó el error
+2. Usa SOLO las columnas que existen según el error
+3. Para subscriptions: usa subscriber_id y creator_id (NO course_id)
+4. Genera el SQL corregido ahora:`;
                     } else {
                         // Success case
                         toolResultText = `**✅ Resultado de ${toolCall.tool}:**
