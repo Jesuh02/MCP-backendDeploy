@@ -23,24 +23,40 @@ class PaymentService {
 
         if (isTestKey) {
             this.wompiprivateKey = ENV_privateKey;
-            this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY || 'pub_test_key_placeholder'; // Use Env or Placeholder
-            this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET || 'test_integrity_secret';
-            this.wompiEventSecret = process.env.PAYU_EVENT_SECRET || 'test_event_secret';
+            this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY;
+            this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET;
+            this.wompiEventSecret = process.env.PAYU_EVENT_SECRET;
             
             this.isTest = true;
             this.wompiUrl = 'https://sandbox.wompi.co/v1';
             console.log(`💳 Payment Service Initialized: Mode=SANDBOX (Test Key Detected), URL=${this.wompiUrl}`);
         } else {
-            // Default to Production
-            this.wompiprivateKey = ENV_privateKey || 'prv_prod_1HtekzWgmIlKMDmsYLx9lChHFTdtZQ3k'; 
-            this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY || 'pub_prod_Z2EDqHyoboyqtZeFM1o2LzMo29Y9IOZY'; 
-            this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET || 'prod_integrity_lmrPPePMkcVxQh8TK3Xcmj4vIrh25ybG';
-            this.wompiEventSecret = process.env.PAYU_EVENT_SECRET || 'prod_events_mM1eK9OkFgrr9UYtgnnFVQGdlc4oFoGj';
+            // Production mode - ALL credentials MUST come from environment variables
+            this.wompiprivateKey = ENV_privateKey;
+            this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY;
+            this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET;
+            this.wompiEventSecret = process.env.PAYU_EVENT_SECRET;
             
             this.isTest = false;
             this.wompiUrl = 'https://production.wompi.co/v1'; 
             console.log(`💳 Payment Service Initialized: Mode=PRODUCTION, URL=${this.wompiUrl}`);
         }
+        
+        // Validate that all required credentials are present
+        if (!this.wompiprivateKey) {
+            throw new Error('❌ CRITICAL: PAYU_API_KEY environment variable is not set. Payment service cannot start.');
+        }
+        if (!this.wompiPublicKey) {
+            throw new Error('❌ CRITICAL: PAYU_PUBLIC_KEY environment variable is not set. Payment service cannot start.');
+        }
+        if (!this.wompiIntegritySecret) {
+            throw new Error('❌ CRITICAL: PAYU_INTEGRITY_SECRET environment variable is not set. Payment service cannot start.');
+        }
+        if (!this.wompiEventSecret) {
+            throw new Error('❌ CRITICAL: PAYU_EVENT_SECRET environment variable is not set. Payment service cannot start.');
+        }
+        
+        console.log('✅ All payment credentials validated successfully');
         
         // Cache for acceptance token
         this._cachedAcceptanceToken = null;
@@ -590,7 +606,11 @@ class PaymentService {
     }
 
     _getRedirectUrl() {
-        let baseUrl = process.env.PUBLIC_URL || process.env.RAILWAY_STATIC_URL || 'https://mcp-backenddeploy-production.up.railway.app';
+        let baseUrl = process.env.PUBLIC_URL || process.env.RAILWAY_STATIC_URL;
+        
+        if (!baseUrl) {
+            throw new Error('❌ CRITICAL: PUBLIC_URL or RAILWAY_STATIC_URL environment variable must be set');
+        }
         
         // Ensure https:// prefix if missing
         if (!baseUrl.startsWith('http')) {

@@ -390,7 +390,7 @@ class NotificationService {
                     subject: `📚 ${subject}`
                 }],
                 from: {
-                    email: process.env.SENDGRID_FROM_EMAIL || 'coursev@yisuscompany.com',
+                    email: process.env.SENDGRID_FROM_EMAIL,
                     name: 'CourseV'
                 },
                 content: [{
