@@ -754,21 +754,19 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
             // Load schema upfront so LLM doesn't need to call get_database_schema
             // This makes the agent more reliable with DeepSeek
             // ============================================================
-            let schemaInfo = "";
-            try {
-                const schemaResult = await this.getDatabaseSchema();
-                if (schemaResult && schemaResult.schema) {
-                    // Format schema as a compact list of tables and columns
-                    const tables = Object.entries(schemaResult.schema).map(([tableName, tableInfo]) => {
-                        const columns = tableInfo.columns ? tableInfo.columns.map(c => c.name || c).join(', ') : 'unknown';
-                        return `- ${tableName}: ${columns}`;
-                    }).join('\n');
-                    schemaInfo = `\n\n**ESQUEMA DE LA BASE DE DATOS (tablas y columnas):**\n${tables}`;
-                    logger.info(`📋 Schema pre-loaded: ${Object.keys(schemaResult.schema).length} tables`);
-                }
-            } catch (schemaError) {
-                logger.warn(`⚠️ Could not pre-load schema: ${schemaError.message}`);
-            }
+            const schemaInfo = `
+**ESQUEMA DE LA BASE DE DATOS:**
+- usuarios: id, username, email, first_name, last_name, is_active, created_at
+- courses: id, title, description, price, is_premium, creator_user_id, thumbnail_url, created_at
+- videos: id, title, description, course_id, video_url, duration, order_index, created_at
+- topics: id, title, description, course_id, order_index, created_at
+- tasks: id, title, description, topic_id, due_date, max_grade, created_at
+- task_submissions: id, task_id, user_id, file_url, grade, feedback, submitted_at, graded_at
+- subscriptions: id, user_id, course_id, status, price, created_at, expires_at
+- transactions: id, user_id, amount, status, payment_method, reference, currency, created_at
+- notifications: id, user_id, title, message, type, read, created_at`;
+
+            logger.info(`Using hardcoded schema for reliability`);
 
             // ============================================================
             // 🤖 AGENT LOOP - No limit, self-correcting
@@ -812,8 +810,8 @@ ${schemaInfo}
                 iteration++;
                 logger.info(`🔄 Agent iteration ${iteration}`);
 
-                // Get LLM response
-                const response = await this.llmService.generateResponse(conversationHistory, mcpTools);
+                // Get LLM response (no tools passed - schema is pre-loaded in prompt)
+                const response = await this.llmService.generateResponse(conversationHistory, []);
                 const responseContent = response.content || "";
 
                 logger.info(`📝 LLM Response (iteration ${iteration}):`, responseContent.substring(0, 500));
