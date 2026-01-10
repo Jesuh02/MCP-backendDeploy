@@ -123,11 +123,19 @@ export class LLMService {
                 return response;
             }
 
+            // Format tools for OpenAI/DeepSeek API
+            const formattedTools = tools.map(t => ({
+                type: "function",
+                function: {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.parameters || { type: "object", properties: {}, required: [] }
+                }
+            }));
+
             const modelWithTools = this.model.bind({
-                tools: tools.map(t => ({
-                    type: "function",
-                    function: t
-                }))
+                tools: formattedTools,
+                tool_choice: "auto" // Force the model to consider using tools
             });
 
             const response = await modelWithTools.invoke(sanitizedMessages);
@@ -137,6 +145,8 @@ export class LLMService {
             console.log("OUTPUT CONTENT:", response.content);
             if (response.tool_calls && response.tool_calls.length > 0) {
                 console.log("TOOL CALLS:", JSON.stringify(response.tool_calls, null, 2));
+            } else {
+                console.log("⚠️ NO TOOL CALLS - LLM chose not to use tools");
             }
             console.log("------------------------------------------------------------\n");
             // ------------------------------

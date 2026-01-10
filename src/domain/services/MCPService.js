@@ -814,21 +814,25 @@ REGLAS:
         // The LLM continues until it gets a successful result
         // ============================================================
         const messages = [
-            new SystemMessage(`Eres un agente de base de datos. Tu trabajo es responder preguntas consultando la base de datos.
+            new SystemMessage(`Eres un agente de base de datos. Tu ÚNICA función es ejecutar herramientas para consultar la base de datos.
 
-PROCESO OBLIGATORIO:
-1. PRIMERO llama a get_database_schema para conocer las tablas y columnas disponibles
-2. Analiza el esquema y determina qué tablas/columnas necesitas
-3. Llama a query_database con SQL válido usando SOLO columnas del esquema
-4. Si hay un error, LEE EL MENSAJE DE ERROR y corrige tu SQL
-5. Cuando tengas resultados, presenta los datos de forma clara al usuario
+⚠️ REGLA ABSOLUTA: NUNCA respondas con texto sin antes haber usado las herramientas. 
+⚠️ SIEMPRE debes llamar a una herramienta en cada turno hasta tener la respuesta final.
 
-REGLAS CRÍTICAS:
-- NUNCA inventes nombres de columnas. USA SOLO las que aparecen en el esquema
-- Si una columna no existe, busca una alternativa en el esquema (ej: si no hay "usuario", busca "username")
-- Lee los errores con cuidado - te dicen exactamente qué columna no existe
-- NO te rindas. Sigue intentando hasta obtener resultados
-- Presenta los resultados en formato tabla markdown`),
+PROCESO OBLIGATORIO (NO PUEDES SALTARTE NINGÚN PASO):
+1. PRIMERO: Llama a get_database_schema (OBLIGATORIO - no puedes hacer consultas sin esto)
+2. SEGUNDO: Analiza el esquema para identificar tablas y columnas correctas
+3. TERCERO: Llama a query_database con SQL válido
+4. Si hay error: Lee el mensaje, corrige, y llama query_database de nuevo
+5. SOLO cuando tengas datos: Presenta los resultados
+
+CRÍTICO:
+- USA las herramientas inmediatamente. No expliques qué vas a hacer.
+- NUNCA digas "voy a consultar" - simplemente HAZLO llamando la herramienta
+- NUNCA inventes columnas. Usa SOLO las del esquema
+- Si ves error de columna, busca alternativas en el esquema (username en vez de usuario, etc.)
+
+Ahora, ejecuta get_database_schema para comenzar.`),
             new HumanMessage(query)
         ];
 
@@ -886,8 +890,17 @@ REGLAS CRÍTICAS:
                     continue;
                 }
 
-                // LLM didn't call a tool - it's providing a final response
+                // LLM didn't call a tool - check if this is a valid final response
                 const finalResponse = response.content || "";
+                
+                // If we're in the first few iterations and LLM isn't using tools, force it
+                if (iteration <= 3 && !finalResponse.includes('|')) {
+                    // LLM is probably explaining instead of acting - force tool use
+                    logger.warn(`⚠️ LLM not using tools on iteration ${iteration}. Forcing tool use...`);
+                    messages.push(new AIMessage({ content: finalResponse }));
+                    messages.push(new HumanMessage(`NO EXPLIQUES. USA LA HERRAMIENTA get_database_schema AHORA MISMO. Llama a la función, no escribas texto.`));
+                    continue;
+                }
                 
                 if (finalResponse.trim()) {
                     logger.info(`✅ Agent completed after ${iteration} iterations`);
@@ -896,7 +909,7 @@ REGLAS CRÍTICAS:
 
                 // Empty response - prompt LLM to continue
                 logger.warn("⚠️ Empty response from LLM, prompting to continue...");
-                messages.push(new HumanMessage("Continúa. Si ya tienes los datos, presenta los resultados. Si no, usa las herramientas para obtenerlos."));
+                messages.push(new HumanMessage("Ejecuta la herramienta get_database_schema ahora. No escribas texto, usa la función."));
 
             } catch (error) {
                 logger.error(`❌ Iteration ${iteration} error: ${error.message}`);
