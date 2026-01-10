@@ -586,130 +586,129 @@ export class MCPService {
 
     /**
      * Process a natural language query to get raw data (for Excel/Reports)
-     * Uses LLM to generate SQL, executes it, and returns the rows.
+     * Uses TOOL CALLING - LLM calls get_database_schema and query_database autonomously.
+     * NO RETRY LIMIT - continues until success.
      */
     async processQueryToData(query, userId = null) {
-        logger.info(`📊 Processing query to data: "${query}" (User: ${userId})`);
+        logger.info(`📊 Processing query to data with TOOLS: "${query}" (User: ${userId})`);
 
         if (!this.llmService || !this.llmService.model) {
-            throw new Error("LLM Service not available for SQL generation");
+            throw new Error("LLM Service not available");
         }
 
-        // 1. Get Schema
-        const freshSchema = await this.getDatabaseSchema();
-        const schemaText = JSON.stringify(freshSchema.schema, null, 2);
-
-        // 2. Generate SQL Loop - NEVER GIVE UP
-        const maxRetries = 10; // Increased to 10 for persistence
-        let attempt = 0;
-        let lastError = null;
-        let lastSQL = null;
-        let errorHistory = [];
-
-        while (attempt < maxRetries) {
-            attempt++;
-            
-            // Build Prompt
-            let sqlGenMessages;
-            if (attempt === 1) {
-                 sqlGenMessages = [
-                    new SystemMessage(`Generate PostgreSQL query using this schema:
-
-${schemaText}
-
-RULES:
-- ALWAYS add LIMIT 1000 to avoid freezing the server.
-- Use ONLY columns from schema above
-- ALWAYS use table aliases (e.g., FROM usuarios u)
-- If using alias, reference it in SELECT (e.g., u.username NOT t.username)
-- For JOINs, verify foreign keys exist
-- For LIST queries (dame usuarios, lista de cursos, etc.), select ALL relevant columns
-- IF query asks for specific month/year (e.g. "septiembre 2025"), prefer standard comparisons over functions for better compatibility.
-  Example: WHERE created_at >= '2025-09-01' AND created_at < '2025-10-01'
-- IF using bigint timestamps (e.g. subscription_date), use integers or to_timestamp. 
-  Example: WHERE subscription_date >= 1756684800
-
-Output ONLY SQL in code block:
-\`\`\`sql
-SELECT ...
-\`\`\``),
-                    new HumanMessage(`SQL for: ${query}${userId ? `\nContext: Current User ID is '${userId}'` : ''}`)
-                ];
-            } else {
-                 // Retry prompt with feedback
-                 const errorFeedback = this.buildErrorFeedback(lastError, lastSQL, errorHistory);
-                 sqlGenMessages = [
-                    new SystemMessage(`🚨 **SQL CORRECTION REQUIRED** 🚨
-
-**FAILED SQL:**
-\`\`\`sql
-${lastSQL || 'N/A'}
-\`\`\`
-
-**ERROR MESSAGE:**
-${lastError}
-
-**SUGGESTED FIX:**
-${errorFeedback.suggestion}
-
-**Database Schema:**
-${schemaText}
-
-Generate CORRECTED SQL:
-\`\`\`sql
-SELECT ...
-\`\`\``),
-                    new HumanMessage(`CORRIGE el SQL para: ${query}`)
-                ];
+        // ============================================================
+        // 🔧 DEFINE MCP TOOLS
+        // ============================================================
+        const tools = [
+            {
+                name: "get_database_schema",
+                description: "Obtiene el esquema de la base de datos. LLAMA ESTO PRIMERO para conocer las tablas y columnas.",
+                parameters: { type: "object", properties: {}, required: [] }
+            },
+            {
+                name: "query_database",
+                description: "Ejecuta SQL en PostgreSQL. Usa SOLO columnas del esquema. Si hay error, lee el mensaje y corrige.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        sql: { type: "string", description: "Consulta SQL válida" }
+                    },
+                    required: ["sql"]
+                }
             }
+        ];
 
-            // Generate
-            const sqlResponse = await this.llmService.generateResponse(sqlGenMessages, []);
-            const sqlText = sqlResponse.content || "";
-            
-            // Extract SQL
-            let sqlMatch = sqlText.match(/```sql\s*\n([\s\S]+?)\n```/) || sqlText.match(/(SELECT[\s\S]+?(?:;|\n\n|$))/i);
-            
-            if (!sqlMatch) {
-                if (attempt === maxRetries) throw new Error("Could not generate valid SQL");
-                continue;
-            }
-
-            const finalSQL = sqlMatch[1].trim().replace(/;$/, '');
-            
-            // Execute
+        // Tool execution
+        const executeTool = async (toolName, toolArgs) => {
             try {
-                const result = await this.supabase.executeRawSQL(finalSQL);
-                return { data: result, sql: finalSQL };
-            } catch (e) {
-                logger.warn(`SQL execution failed (attempt ${attempt}): ${e.message}`);
-                lastError = e.message;
-                lastSQL = finalSQL;
-                errorHistory.push({ attempt, sql: finalSQL, error: e.message, errorType: this.classifyError(e.message) });
+                if (toolName === "get_database_schema") {
+                    const schema = await this.getDatabaseSchema();
+                    return { success: true, result: JSON.stringify(schema.schema, null, 2) };
+                }
+                if (toolName === "query_database") {
+                    const sql = (toolArgs.sql || "").trim().replace(/;$/, '');
+                    const result = await this.supabase.executeRawSQL(sql);
+                    return { success: true, result: JSON.stringify(result), data: result, sql };
+                }
+                return { success: false, error: `Unknown tool: ${toolName}` };
+            } catch (error) {
+                return { success: false, error: error.message, hint: this.getErrorHint(error.message) };
+            }
+        };
+
+        // Agent loop
+        const messages = [
+            new SystemMessage(`Eres un agente que extrae datos de la base de datos.
+
+PROCESO:
+1. Llama get_database_schema para ver tablas/columnas
+2. Llama query_database con SQL válido (SOLO columnas del esquema)
+3. Si hay error, LEE el mensaje y corrige
+4. Cuando tengas datos, responde con "DATOS_LISTOS" seguido del JSON
+
+REGLAS:
+- NUNCA inventes columnas. Usa SOLO las del esquema
+- Añade LIMIT 1000 para evitar sobrecarga
+- Si piden datos de un mes específico, usa: WHERE created_at >= 'YYYY-MM-01' AND created_at < 'YYYY-MM+1-01'
+- NO te rindas. Sigue hasta obtener datos`),
+            new HumanMessage(`${query}${userId ? ` (Usuario actual: ${userId})` : ''}`)
+        ];
+
+        let lastSuccessfulData = null;
+        let lastSuccessfulSQL = null;
+        let iteration = 0;
+        const MAX_ITERATIONS = 50;
+
+        while (iteration < MAX_ITERATIONS) {
+            iteration++;
+
+            try {
+                const response = await this.llmService.generateResponse(messages, tools);
+
+                if (response.tool_calls && response.tool_calls.length > 0) {
+                    messages.push(new AIMessage({ content: response.content || "", tool_calls: response.tool_calls }));
+
+                    for (const toolCall of response.tool_calls) {
+                        const result = await executeTool(toolCall.name, toolCall.args || {});
+                        
+                        if (result.success && toolCall.name === "query_database" && result.data) {
+                            lastSuccessfulData = result.data;
+                            lastSuccessfulSQL = result.sql;
+                        }
+
+                        const content = result.success 
+                            ? result.result 
+                            : `ERROR: ${result.error}\nHINT: ${result.hint || 'Revisa el esquema'}`;
+                        
+                        messages.push(new ToolMessage({ content, tool_call_id: toolCall.id }));
+                    }
+                    continue;
+                }
+
+                // Check if LLM indicates data is ready
+                const content = response.content || "";
+                if (content.includes("DATOS_LISTOS") || lastSuccessfulData) {
+                    return { data: lastSuccessfulData, sql: lastSuccessfulSQL };
+                }
+
+                if (content.trim() && lastSuccessfulData) {
+                    return { data: lastSuccessfulData, sql: lastSuccessfulSQL };
+                }
+
+                messages.push(new HumanMessage("Continúa. Usa las herramientas para obtener los datos."));
+
+            } catch (error) {
+                logger.error(`Iteration ${iteration} error: ${error.message}`);
+                messages.push(new HumanMessage(`Error: ${error.message}. Intenta de nuevo.`));
             }
         }
-        
-        // NEVER FAIL - Return fallback data instead of throwing
-        logger.warn(`⚠️ SQL generation failed after ${maxRetries} attempts. Returning fallback snapshot.`);
-        try {
-            const snapshot = await this.generateDataSnapshot(query, { 
-                isBusinessQuestion: this.isBusinessIntent(query), 
-                reason: `SQL fallback after ${maxRetries} failed attempts` 
-            });
-            return { 
-                data: snapshot.data, 
-                sql: 'FALLBACK_SNAPSHOT', 
-                errorHistory,
-                message: `No se pudo generar SQL válido después de ${maxRetries} intentos. Mostrando datos de respaldo.`
-            };
-        } catch (fallbackError) {
-            return { 
-                data: { error: 'No data available', attempts: errorHistory }, 
-                sql: 'FALLBACK_FAILED',
-                errorHistory,
-                message: `Error persistente: ${lastError}. Intenta reformular tu consulta.`
-            };
+
+        // Return whatever we got
+        if (lastSuccessfulData) {
+            return { data: lastSuccessfulData, sql: lastSuccessfulSQL };
         }
+
+        throw new Error(`No se pudieron obtener datos después de ${MAX_ITERATIONS} intentos`);
     }
 
     /**
@@ -720,233 +719,226 @@ SELECT ...
      */
 
     /**
-     * Process a query using an LLM Agent that can call tools.
-     * ENFORCED: Always uses database schema context and only responds about database-related topics.
+     * Process a query using an LLM Agent with REAL TOOL CALLING.
+     * The LLM decides which tools to use and auto-corrects based on errors.
+     * NO RETRY LIMIT - continues until success or user cancellation.
+     * 
+     * Available Tools:
+     * - get_database_schema: Get the database schema
+     * - query_database: Execute SQL query
      */
     async processQueryWithAgent(query) {
-            logger.info(`🤖 Processing query with Agent: "${query}"`);
+        logger.info(`🤖 Processing query with TOOL-CALLING Agent: "${query}"`);
 
-            if (!this.llmService || !this.llmService.model) {
-                logger.warn("⚠️ LLM Service not available. Returning fallback message.");
-                return "Lo siento, el servicio de IA no está disponible en este momento (Falta configuración de API Key). Por favor, intenta consultas SQL directas o verifica la configuración del servidor.";
+        if (!this.llmService || !this.llmService.model) {
+            logger.warn("⚠️ LLM Service not available.");
+            return "Lo siento, el servicio de IA no está disponible en este momento.";
+        }
+
+        // ============================================================
+        // 🔧 DEFINE MCP TOOLS FOR THE LLM
+        // ============================================================
+        const tools = [
+            {
+                name: "get_database_schema",
+                description: "Obtiene el esquema completo de la base de datos con todas las tablas y columnas. SIEMPRE usa esta herramienta PRIMERO para conocer las tablas y columnas disponibles antes de hacer cualquier consulta SQL.",
+                parameters: {
+                    type: "object",
+                    properties: {},
+                    required: []
+                }
+            },
+            {
+                name: "query_database",
+                description: "Ejecuta una consulta SQL en la base de datos PostgreSQL. USA SOLO las columnas que existen en el esquema obtenido con get_database_schema. Si recibes un error, analiza el mensaje de error y corrige la consulta.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        sql: {
+                            type: "string",
+                            description: "La consulta SQL a ejecutar. Debe usar SOLO columnas que existan en el esquema."
+                        }
+                    },
+                    required: ["sql"]
+                }
             }
+        ];
+
+        // ============================================================
+        // 🔧 TOOL EXECUTION FUNCTION
+        // ============================================================
+        const executeTool = async (toolName, toolArgs) => {
+            logger.info(`🔧 Executing tool: ${toolName}`);
+            logger.info(`📥 Tool args: ${JSON.stringify(toolArgs)}`);
 
             try {
-                // CRITICAL: ALWAYS get database schema first - this is mandatory for ALL queries
-                logger.info("📋 MANDATORY Step: Fetching database schema (get_database_schema)...");
-                const freshSchema = await this.getDatabaseSchema();
-                const schemaText = JSON.stringify(freshSchema.schema, null, 2);
-                logger.info("✅ Database schema loaded - all responses will be in database context");
-
-                // ============================================================
-                // 🔄 PROCESO OBLIGATORIO: SIEMPRE EJECUTAR SQL
-                // El LLM SIEMPRE debe:
-                // 1. Revisar el esquema (ya hecho arriba)
-                // 2. Generar una consulta SQL apropiada
-                // 3. Ejecutar la consulta
-                // 4. Analizar los resultados
-                // NUNCA debe responder solo con información del esquema
-                // ============================================================
-                logger.info("📊 ALWAYS executing SQL - proceeding with SQL generation...");
-
-                // STEP 2: Generate SQL (with retry logic for errors)
-                // PERSISTENCE MODE: Will try many times before giving up
-                const maxRetries = 10; // Increased significantly - NEVER GIVE UP
-                let attempt = 0;
-                let lastError = null;
-                let lastSQL = null; // Track the SQL that failed
-                let errorHistory = []; // Track all errors for comprehensive feedback
-                let result = null;
-                let finalSQL = null;
-
-                while (attempt < maxRetries) {
-                    attempt++;
-                    logger.info(`🔄 Attempt ${attempt}/${maxRetries} to generate and execute SQL`);
-
-                    // Build prompt based on whether this is a retry
-                    let sqlGenMessages;
-                    if (attempt === 1) {
-                        // First attempt - simple and direct prompt
-                        sqlGenMessages = [
-                            new SystemMessage(`Eres un generador de SQL PostgreSQL. Tu ÚNICO trabajo es generar consultas SQL válidas.
-
-**ESQUEMA DE LA BASE DE DATOS:**
-${schemaText}
-
-**INSTRUCCIONES:**
-1. Analiza la pregunta del usuario
-2. Identifica qué tablas y columnas necesitas del esquema
-3. Genera UNA consulta SQL que responda la pregunta
-4. USA SOLO columnas que existan en el esquema
-5. Para tablas que no aparecen en el esquema, busca alternativas (ej: si no hay "transactions", busca en information_schema)
-
-**FORMATO DE RESPUESTA:**
-\`\`\`sql
-SELECT ...
-\`\`\`
-
-NO expliques nada. SOLO genera el SQL.`),
-                            new HumanMessage(`Genera SQL para: ${query}`)
-                        ];
-                    } else {
-                        // Retry - simpler error feedback
-                        sqlGenMessages = [
-                            new SystemMessage(`El SQL anterior falló. Genera uno NUEVO y CORRECTO.
-
-**ERROR:**
-${lastError}
-
-**SQL QUE FALLÓ:**
-${lastSQL}
-
-**ESQUEMA:**
-${schemaText}
-
-**INSTRUCCIONES:**
-1. Genera un SQL DIFERENTE al anterior
-2. USA SOLO columnas del esquema
-3. Si la tabla no existe, usa information_schema para buscarla
-4. Simplifica: evita JOINs complejos si no son necesarios
-
-\`\`\`sql
-SELECT ...
-\`\`\``),
-                            new HumanMessage(`Corrige el SQL para: ${query}`)
-                        ];
-                    }
-
-                    // Generate SQL
-                    logger.info(`📊 Requesting SQL from LLM...`);
-                    const sqlResponse = await this.llmService.generateResponse(sqlGenMessages, []);
-                    const sqlText = sqlResponse.content || "";
-
-                    // Parse SQL from response
-                    let sqlMatch = sqlText.match(/```sql\s*\n([\s\S]+?)\n```/) ||
-                        sqlText.match(/(SELECT[\s\S]+?(?:;|\n\n|$))/i);
-
-                    if (!sqlMatch) {
-                        logger.error("❌ Could not extract SQL from LLM response");
-                        if (attempt === maxRetries) {
-                            return `No pude generar SQL válido para tu consulta. Intenta reformular la pregunta.\n\nRespuesta del LLM:\n${sqlText}`;
-                        }
-                        lastError = "No SQL code block found in response";
-                        continue;
-                    }
-
-                    finalSQL = sqlMatch[1].trim().replace(/;$/, '');
-                    logger.info(`✅ SQL extracted (attempt ${attempt})`);
-                    
-                    // Log INPUT: the query being sent
-                    logger.info('📥 SQL INPUT:', JSON.stringify({ query: finalSQL }, null, 2));
-
-                    // Execute SQL
-                    try {
-                        result = await this.supabase.executeRawSQL(finalSQL);
-                        
-                        // Log OUTPUT: query + results
-                        const outputLog = {
-                            query: finalSQL,
-                            results: result,
-                            rowCount: result?.length || 0
-                        };
-                        logger.info('📤 SQL OUTPUT:', JSON.stringify(outputLog, null, 2));
-                        logger.info(`✅ SQL executed successfully! Returned ${result?.length || 0} rows`);
-                        break; // Success - exit retry loop
-                    } catch (sqlError) {
-                        logger.error(`❌ SQL execution failed (attempt ${attempt}):`, sqlError.message);
-                        
-                        // Store error details for comprehensive feedback
-                        lastError = sqlError.message;
-                        lastSQL = finalSQL;
-                        errorHistory.push({
-                            attempt,
-                            sql: finalSQL,
-                            error: sqlError.message,
-                            errorType: this.classifyError(sqlError.message)
-                        });
-
-                        if (attempt === maxRetries) {
-                            // Final attempt failed - DON'T STOP, try alternative approach
-                            logger.warn(`⚠️ Max retries reached. Attempting fallback with data snapshot...`);
-                            
-                            // Try to generate a data snapshot as fallback
-                            try {
-                                const snapshot = await this.generateDataSnapshot(query, {
-                                    isBusinessQuestion: this.isBusinessIntent(query),
-                                    reason: `SQL fallback after ${maxRetries} failed attempts`
-                                });
-                                
-                                if (snapshot && snapshot.data) {
-                                    const summaryText = this.buildMarketingSummary(snapshot.data);
-                                    return `## ⚠️ Nota: Se usaron datos de respaldo
-
-No se pudo ejecutar SQL personalizado después de ${maxRetries} intentos.
-Mostrando datos generales disponibles:
-
-${summaryText}
-
----
-**Errores encontrados:**
-${errorHistory.map(e => `- Intento ${e.attempt}: ${e.error}`).join('\n')}`;
-                                }
-                            } catch (fallbackErr) {
-                                logger.error(`Fallback also failed: ${fallbackErr.message}`);
-                            }
-                            
-                            // If even fallback fails, return helpful error report
-                            const errorReport = this.generateErrorReport(errorHistory, query);
-                            return errorReport;
-                        }
-
-                        // Continue to retry with feedback
-                        logger.warn(`🔄 Will retry with error feedback (attempt ${attempt + 1}/${maxRetries})...`);
-                        logger.info(`📝 Error history: ${errorHistory.length} errors tracked for feedback`);
-                    }
+                if (toolName === "get_database_schema") {
+                    const schema = await this.getDatabaseSchema();
+                    const result = JSON.stringify(schema.schema, null, 2);
+                    logger.info(`✅ Schema retrieved (${result.length} chars)`);
+                    return { success: true, result };
                 }
 
-                // If we have results, ask LLM to analyze them
-                if (result !== null) {
-                    logger.info("📈 Step 3: Requesting analysis from LLM...");
+                if (toolName === "query_database") {
+                    let sql = toolArgs.sql || toolArgs.query || "";
+                    
+                    // Clean SQL
+                    sql = sql.trim().replace(/;$/, '');
+                    
+                    logger.info(`📊 Executing SQL: ${sql}`);
+                    
+                    const result = await this.supabase.executeRawSQL(sql);
+                    const resultStr = JSON.stringify(result, null, 2);
+                    
+                    logger.info(`✅ Query successful! Returned ${result?.length || 0} rows`);
+                    return { 
+                        success: true, 
+                        result: resultStr,
+                        rowCount: result?.length || 0
+                    };
+                }
 
-                    const analysisMessages = [
-                            new SystemMessage(`Analiza los resultados de la consulta SQL y responde al usuario.
-
-**REGLAS:**
-1. Presenta los datos en formato claro (tablas markdown si son listas)
-2. NO muestres código SQL al usuario
-3. Incluye un resumen con las cifras importantes
-4. Si hay muchos datos, muestra los más relevantes
-
-**FORMATO PARA TABLAS:**
-| **Columna** | **Valor** |
-| :--- | :--- |
-| dato | valor |`),
-                    new HumanMessage(`Pregunta: "${query}"
-
-Resultados (${result?.length || 0} filas):
-${JSON.stringify(result, null, 2)}
-
-Presenta estos datos de forma clara y analiza los resultados.`)
-                ];
-
-                const analysisResponse = await this.llmService.generateResponse(analysisMessages, []);
-                let analysis = analysisResponse.content || "Análisis no disponible";
-                
-                // Clean any SQL from the response
-                analysis = analysis.replace(/```sql[\s\S]*?```/gi, '');
-                
-                logger.info("✅ Analysis complete");
-                return analysis;
+                return { success: false, error: `Unknown tool: ${toolName}` };
+            } catch (error) {
+                logger.error(`❌ Tool ${toolName} failed: ${error.message}`);
+                return { 
+                    success: false, 
+                    error: error.message,
+                    hint: this.getErrorHint(error.message)
+                };
             }
+        };
 
-            // Fallback if no results
-            logger.warn(`⚠️ No results obtained. Returning error message.`);
-            return `No se pudieron obtener resultados para tu consulta. Por favor reformula la pregunta.`;
+        // ============================================================
+        // 🔄 AGENT LOOP - NO LIMIT ON RETRIES
+        // The LLM continues until it gets a successful result
+        // ============================================================
+        const messages = [
+            new SystemMessage(`Eres un agente de base de datos. Tu trabajo es responder preguntas consultando la base de datos.
 
-        } catch (error) {
-            logger.error(`❌ Agent error: ${error.message}`);
-            return `Error procesando la consulta: ${error.message}\n\nIntenta reformular tu pregunta.`;
+PROCESO OBLIGATORIO:
+1. PRIMERO llama a get_database_schema para conocer las tablas y columnas disponibles
+2. Analiza el esquema y determina qué tablas/columnas necesitas
+3. Llama a query_database con SQL válido usando SOLO columnas del esquema
+4. Si hay un error, LEE EL MENSAJE DE ERROR y corrige tu SQL
+5. Cuando tengas resultados, presenta los datos de forma clara al usuario
+
+REGLAS CRÍTICAS:
+- NUNCA inventes nombres de columnas. USA SOLO las que aparecen en el esquema
+- Si una columna no existe, busca una alternativa en el esquema (ej: si no hay "usuario", busca "username")
+- Lee los errores con cuidado - te dicen exactamente qué columna no existe
+- NO te rindas. Sigue intentando hasta obtener resultados
+- Presenta los resultados en formato tabla markdown`),
+            new HumanMessage(query)
+        ];
+
+        let iteration = 0;
+        const MAX_ITERATIONS = 50; // Safety limit to prevent infinite loops
+
+        while (iteration < MAX_ITERATIONS) {
+            iteration++;
+            logger.info(`\n🔄 === AGENT ITERATION ${iteration} ===`);
+
+            try {
+                // Call LLM with tools
+                const response = await this.llmService.generateResponse(messages, tools);
+
+                // Check if LLM wants to call a tool
+                if (response.tool_calls && response.tool_calls.length > 0) {
+                    logger.info(`🔧 LLM requested ${response.tool_calls.length} tool call(s)`);
+                    
+                    // Add LLM's response to history
+                    messages.push(new AIMessage({
+                        content: response.content || "",
+                        tool_calls: response.tool_calls
+                    }));
+
+                    // Execute each tool call
+                    for (const toolCall of response.tool_calls) {
+                        const toolName = toolCall.name;
+                        const toolArgs = toolCall.args || {};
+                        const toolCallId = toolCall.id;
+
+                        logger.info(`🔧 Tool call: ${toolName} (id: ${toolCallId})`);
+
+                        // Execute the tool
+                        const toolResult = await executeTool(toolName, toolArgs);
+
+                        // Build tool result message
+                        let toolResultContent;
+                        if (toolResult.success) {
+                            toolResultContent = toolResult.result;
+                        } else {
+                            // Include detailed error for self-correction
+                            toolResultContent = `ERROR: ${toolResult.error}\n\nHINT: ${toolResult.hint || 'Revisa el esquema y usa solo columnas que existan.'}`;
+                        }
+
+                        // Add tool result to messages
+                        messages.push(new ToolMessage({
+                            content: toolResultContent,
+                            tool_call_id: toolCallId
+                        }));
+
+                        logger.info(`📤 Tool result added to conversation`);
+                    }
+
+                    // Continue loop - LLM will process tool results
+                    continue;
+                }
+
+                // LLM didn't call a tool - it's providing a final response
+                const finalResponse = response.content || "";
+                
+                if (finalResponse.trim()) {
+                    logger.info(`✅ Agent completed after ${iteration} iterations`);
+                    return finalResponse;
+                }
+
+                // Empty response - prompt LLM to continue
+                logger.warn("⚠️ Empty response from LLM, prompting to continue...");
+                messages.push(new HumanMessage("Continúa. Si ya tienes los datos, presenta los resultados. Si no, usa las herramientas para obtenerlos."));
+
+            } catch (error) {
+                logger.error(`❌ Iteration ${iteration} error: ${error.message}`);
+                
+                // Add error context to help LLM recover
+                messages.push(new HumanMessage(`Ocurrió un error: ${error.message}. Por favor intenta de nuevo con una estrategia diferente.`));
+                
+                // Continue trying
+                if (iteration >= MAX_ITERATIONS) {
+                    return `No se pudo completar la consulta después de ${iteration} intentos. Último error: ${error.message}`;
+                }
+            }
         }
+
+        return `Se alcanzó el límite máximo de iteraciones (${MAX_ITERATIONS}). Por favor reformula tu pregunta.`;
+    }
+
+    /**
+     * Get helpful hint based on error message
+     */
+    getErrorHint(errorMessage) {
+        const msg = errorMessage.toLowerCase();
+        
+        if (msg.includes('column') && msg.includes('does not exist')) {
+            const match = errorMessage.match(/column\s+(?:\w+\.)?(\w+)\s+does not exist/i);
+            const badColumn = match ? match[1] : 'desconocida';
+            return `La columna "${badColumn}" no existe. Usa get_database_schema para ver las columnas correctas y usa una que SÍ exista.`;
+        }
+        
+        if (msg.includes('relation') && msg.includes('does not exist')) {
+            return 'La tabla no existe. Usa get_database_schema para ver las tablas disponibles.';
+        }
+        
+        if (msg.includes('syntax error')) {
+            return 'Error de sintaxis SQL. Revisa la estructura de tu consulta.';
+        }
+        
+        if (msg.includes('permission denied')) {
+            return 'Sin permisos para esta operación. Intenta solo con SELECT.';
+        }
+        
+        return 'Revisa el esquema con get_database_schema y asegúrate de usar solo columnas que existan.';
     }
 
     /**
