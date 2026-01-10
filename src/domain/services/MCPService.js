@@ -1425,6 +1425,8 @@ ${schemaInfo}
     buildGitHubGradingPrompt(analysis, taskDescription, criteria) {
         const systemPrompt = `Eres un profesor experto en programación evaluando un proyecto de GitHub.
 
+**IDIOMA: TODAS TUS RESPUESTAS DEBEN SER EN ESPAÑOL.**
+
 Tu tarea es analizar el código del repositorio y proporcionar:
 1. **NOTA** (0-100): Calificación numérica justificada
 2. **FORTALEZAS**: Lo que está bien hecho (mínimo 3 puntos)
