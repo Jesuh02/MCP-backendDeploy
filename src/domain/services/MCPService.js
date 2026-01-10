@@ -750,34 +750,25 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
 
         try {
             // ============================================================
-            // 🛠️ MCP TOOLS DEFINITION
-            // The LLM will use these tools to interact with the database
+            // � PRE-LOAD DATABASE SCHEMA
+            // Load schema upfront so LLM doesn't need to call get_database_schema
+            // This makes the agent more reliable with DeepSeek
             // ============================================================
-            const mcpTools = [
-                {
-                    name: "get_database_schema",
-                    description: "Obtiene el esquema completo de la base de datos con todas las tablas y columnas. Usa esto PRIMERO para conocer la estructura de la base de datos antes de hacer consultas.",
-                    parameters: {
-                        type: "object",
-                        properties: {},
-                        required: []
-                    }
-                },
-                {
-                    name: "query_database",
-                    description: "Ejecuta una consulta SQL en la base de datos PostgreSQL y retorna los resultados. Si hay un error, recibirás el mensaje de error detallado para corregir tu consulta.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            query: {
-                                type: "string",
-                                description: "La consulta SQL a ejecutar (SELECT, etc.)"
-                            }
-                        },
-                        required: ["query"]
-                    }
+            let schemaInfo = "";
+            try {
+                const schemaResult = await this.getDatabaseSchema();
+                if (schemaResult && schemaResult.schema) {
+                    // Format schema as a compact list of tables and columns
+                    const tables = Object.entries(schemaResult.schema).map(([tableName, tableInfo]) => {
+                        const columns = tableInfo.columns ? tableInfo.columns.map(c => c.name || c).join(', ') : 'unknown';
+                        return `- ${tableName}: ${columns}`;
+                    }).join('\n');
+                    schemaInfo = `\n\n**ESQUEMA DE LA BASE DE DATOS (tablas y columnas):**\n${tables}`;
+                    logger.info(`📋 Schema pre-loaded: ${Object.keys(schemaResult.schema).length} tables`);
                 }
-            ];
+            } catch (schemaError) {
+                logger.warn(`⚠️ Could not pre-load schema: ${schemaError.message}`);
+            }
 
             // ============================================================
             // 🤖 AGENT LOOP - No limit, self-correcting
@@ -786,43 +777,35 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
             let iteration = 0;
             const MAX_SAFETY_ITERATIONS = 50; // Safety limit to prevent infinite loops
 
-            // System message for the agent
-            const systemMessage = new SystemMessage(`Eres un agente de base de datos inteligente con acceso a herramientas MCP.
+            // System message for the agent WITH pre-loaded schema
+            const systemMessage = new SystemMessage(`Eres un agente de base de datos inteligente. Tu trabajo es responder preguntas consultando la base de datos.
+${schemaInfo}
 
-**TU OBJETIVO:**
-Responder preguntas del usuario consultando la base de datos usando las herramientas disponibles.
+**INSTRUCCIONES:**
+1. Analiza la pregunta del usuario
+2. Genera una consulta SQL usando SOLO las tablas y columnas del esquema arriba
+3. Responde con el SQL en este formato EXACTO:
 
-**HERRAMIENTAS DISPONIBLES:**
-1. \`get_database_schema\` - Obtiene el esquema de la base de datos (tablas y columnas)
-2. \`query_database\` - Ejecuta consultas SQL
-
-**FLUJO DE TRABAJO:**
-1. SIEMPRE usa \`get_database_schema\` primero si no conoces la estructura
-2. Analiza el esquema para identificar tablas y columnas correctas
-3. Usa \`query_database\` para ejecutar consultas SQL
-4. Si hay un error, LEE EL ERROR DETALLADAMENTE y corrige tu consulta
-5. Puedes hacer múltiples consultas para obtener toda la información necesaria
-6. Cuando tengas suficiente información, presenta un resumen claro al usuario
-
-**REGLAS IMPORTANTES:**
-- NO inventes columnas o tablas - usa SOLO las del esquema
-- Si una consulta falla, analiza el error y corrige
-- Puedes hacer consultas exploratorias (ej: SELECT * FROM tabla LIMIT 5)
-- Presenta los resultados en formato claro (tablas markdown para listas)
-
-**FORMATO DE TOOL CALLS:**
-Para llamar una herramienta, responde EXACTAMENTE con este formato JSON:
 \`\`\`json
-{"tool": "nombre_herramienta", "arguments": {"param": "valor"}}
+{"tool": "query_database", "arguments": {"query": "SELECT ... FROM ... WHERE ..."}}
 \`\`\`
 
-Cuando tengas la respuesta final, NO uses tool calls, simplemente responde al usuario con el análisis.`);
+4. Si recibes resultados, analízalos y presenta un resumen claro al usuario
+5. Si hay error, corrige el SQL y vuelve a intentar
+
+**REGLAS:**
+- USA SOLO columnas que existan en el esquema
+- Para cursos premium/de pago: WHERE price > 0 o WHERE price IS NOT NULL
+- Para obtener creadores de cursos: JOIN usuarios ON courses.creator_user_id = usuarios.id
+- Siempre incluye LIMIT para evitar resultados muy largos
+
+**IMPORTANTE:** Responde SOLO con el JSON de tool call o con el análisis final. No expliques qué vas a hacer.`);
 
             conversationHistory.push(systemMessage);
             conversationHistory.push(new HumanMessage(query));
 
             let consecutiveEmptyResponses = 0;
-            const MAX_EMPTY_RESPONSES = 2;
+            const MAX_EMPTY_RESPONSES = 3; // Increased slightly since we have schema pre-loaded
             let lastSuccessfulData = null;
 
             while (iteration < MAX_SAFETY_ITERATIONS) {
@@ -904,24 +887,36 @@ Cuando tengas la respuesta final, NO uses tool calls, simplemente responde al us
                             return `Datos obtenidos:\n\`\`\`json\n${JSON.stringify(lastSuccessfulData.results || lastSuccessfulData, null, 2)}\n\`\`\``;
                         }
                         
-                        // Try fallback SQL
-                        const fallbackSql = this.generateSimpleSqlForQuery(query);
+                        // Try fallback SQL based on query analysis
+                        logger.info(`🔄 Attempting intelligent fallback SQL for: "${query}"`);
+                        const fallbackSql = this.generateSmartFallbackSQL(query);
                         if (fallbackSql) {
                             try {
+                                logger.info(`📊 Executing fallback SQL: ${fallbackSql}`);
                                 const fallbackResult = await this.supabase.executeRawSQL(fallbackSql);
-                                return `Resultado de la consulta:\n\`\`\`json\n${JSON.stringify(fallbackResult, null, 2)}\n\`\`\``;
+                                const resultCount = Array.isArray(fallbackResult) ? fallbackResult.length : 0;
+                                logger.info(`✅ Fallback SQL success: ${resultCount} results`);
+                                
+                                // Format response nicely
+                                if (resultCount === 0) {
+                                    return "No se encontraron resultados para tu consulta.";
+                                } else if (resultCount === 1 && fallbackResult[0].total !== undefined) {
+                                    return `**Resultado:** ${fallbackResult[0].total}`;
+                                } else {
+                                    return `**Resultados encontrados (${resultCount}):**\n\`\`\`json\n${JSON.stringify(fallbackResult, null, 2)}\n\`\`\``;
+                                }
                             } catch (e) {
                                 logger.error(`❌ Fallback SQL failed: ${e.message}`);
                             }
                         }
                         
-                        return "No se pudo generar una respuesta. El LLM no utilizó las herramientas correctamente. Por favor intenta reformular tu pregunta.";
+                        return "No se pudo generar una respuesta. Por favor intenta reformular tu pregunta con más detalle o usa una consulta SQL directa.";
                     }
                     
-                    // Add retry message (only once, won't loop infinitely)
+                    // Add retry message with example specific to the query
                     conversationHistory.push(new AIMessage(responseContent || "(sin respuesta)"));
                     conversationHistory.push(new HumanMessage(
-                        `Usa las herramientas disponibles. Primero: get_database_schema\n\`\`\`json\n{"tool": "get_database_schema", "arguments": {}}\n\`\`\``
+                        `Genera una consulta SQL para responder la pregunta. Formato requerido:\n\`\`\`json\n{"tool": "query_database", "arguments": {"query": "SELECT ... FROM ... LIMIT 50"}}\n\`\`\`\n\nRecuerda usar SOLO las columnas del esquema proporcionado.`
                     ));
                 }
             }
@@ -1083,6 +1078,110 @@ Cuando tengas la respuesta final, NO uses tool calls, simplemente responde al us
         }
 
         return null;
+    }
+
+    /**
+     * Generate smart fallback SQL based on query analysis
+     * More intelligent than generateSimpleSqlForQuery - handles complex queries
+     */
+    generateSmartFallbackSQL(query) {
+        const lower = query.toLowerCase().trim();
+        
+        // Premium courses query (price > 0)
+        if ((lower.includes('premium') || lower.includes('pago') || lower.includes('precio')) && 
+            (lower.includes('curso') || lower.includes('course'))) {
+            
+            // If asking for creators/users
+            if (lower.includes('usuario') || lower.includes('username') || lower.includes('creador') || 
+                lower.includes('nombre') || lower.includes('persona')) {
+                return `SELECT c.id, c.title, c.price, u.username, u.first_name, u.last_name 
+                        FROM courses c 
+                        LEFT JOIN usuarios u ON c.creator_user_id = u.id 
+                        WHERE c.price > 0 
+                        ORDER BY c.price DESC 
+                        LIMIT 50`;
+            }
+            
+            // Just count
+            if (lower.includes('cuanto') || lower.includes('cuánto')) {
+                return `SELECT COUNT(*) as total FROM courses WHERE price > 0`;
+            }
+            
+            // Default: list premium courses
+            return `SELECT id, title, price, creator_user_id FROM courses WHERE price > 0 ORDER BY price DESC LIMIT 50`;
+        }
+        
+        // Transactions/payments
+        if (lower.includes('transac') || lower.includes('pago') || lower.includes('dinero') || 
+            lower.includes('ingreso') || lower.includes('revenue')) {
+            if (lower.includes('cuanto') || lower.includes('cuánto') || lower.includes('total')) {
+                return `SELECT SUM(amount) as total_ingresos, COUNT(*) as num_transacciones 
+                        FROM transactions 
+                        WHERE status = 'APPROVED'`;
+            }
+            return `SELECT * FROM transactions ORDER BY created_at DESC LIMIT 50`;
+        }
+        
+        // Subscriptions
+        if (lower.includes('subscri') || lower.includes('suscri')) {
+            if (lower.includes('activ')) {
+                return `SELECT s.*, u.username, c.title as course_title 
+                        FROM subscriptions s 
+                        LEFT JOIN usuarios u ON s.user_id = u.id 
+                        LEFT JOIN courses c ON s.course_id = c.id 
+                        WHERE s.status = 'active' 
+                        LIMIT 50`;
+            }
+            return `SELECT * FROM subscriptions ORDER BY created_at DESC LIMIT 50`;
+        }
+        
+        // Users with specific filters
+        if (lower.includes('usuario') || lower.includes('user')) {
+            if (lower.includes('activ')) {
+                return `SELECT id, username, email, first_name, last_name, created_at 
+                        FROM usuarios 
+                        WHERE is_active = true 
+                        ORDER BY created_at DESC 
+                        LIMIT 50`;
+            }
+            if (lower.includes('creador') || lower.includes('creator')) {
+                return `SELECT DISTINCT u.id, u.username, u.email, u.first_name, u.last_name 
+                        FROM usuarios u 
+                        INNER JOIN courses c ON c.creator_user_id = u.id 
+                        LIMIT 50`;
+            }
+            return `SELECT id, username, email, first_name, last_name FROM usuarios LIMIT 50`;
+        }
+        
+        // Courses with details
+        if (lower.includes('curso') || lower.includes('course')) {
+            return `SELECT c.id, c.title, c.price, c.is_premium, u.username as creator 
+                    FROM courses c 
+                    LEFT JOIN usuarios u ON c.creator_user_id = u.id 
+                    ORDER BY c.created_at DESC 
+                    LIMIT 50`;
+        }
+        
+        // Videos
+        if (lower.includes('video')) {
+            return `SELECT v.id, v.title, c.title as course_title 
+                    FROM videos v 
+                    LEFT JOIN courses c ON v.course_id = c.id 
+                    LIMIT 50`;
+        }
+        
+        // Task submissions
+        if (lower.includes('entrega') || lower.includes('submission') || lower.includes('tarea')) {
+            return `SELECT ts.id, ts.grade, ts.feedback, u.username, t.title as task_title 
+                    FROM task_submissions ts 
+                    LEFT JOIN usuarios u ON ts.user_id = u.id 
+                    LEFT JOIN tasks t ON ts.task_id = t.id 
+                    ORDER BY ts.submitted_at DESC 
+                    LIMIT 50`;
+        }
+        
+        // Fall back to simple query generator
+        return this.generateSimpleSqlForQuery(query);
     }
 
     /**
