@@ -16,6 +16,125 @@ export class MCPService {
         this.supabase = SupabaseService.getInstance();
         this.llmService = LLMService.getInstance();
         this.githubService = getGitHubService();
+        
+        // Schema cache - auto-refreshes every 5 minutes
+        this._schemaCache = null;
+        this._schemaCacheTime = 0;
+        this._schemaCacheTTL = 5 * 60 * 1000; // 5 minutes
+    }
+
+    /**
+     * Get database schema dynamically from Supabase
+     * Caches the result for efficiency, auto-refreshes every 5 minutes
+     * @returns {Promise<string>} Formatted schema string for LLM
+     */
+    async getDynamicSchema() {
+        const now = Date.now();
+        
+        // Return cached schema if still valid
+        if (this._schemaCache && (now - this._schemaCacheTime) < this._schemaCacheTTL) {
+            logger.info('📋 Using cached database schema');
+            return this._schemaCache;
+        }
+        
+        logger.info('🔄 Fetching fresh database schema from Supabase...');
+        
+        try {
+            // Query to get all tables and their columns from information_schema
+            const schemaSQL = `
+                SELECT 
+                    t.table_name,
+                    array_agg(
+                        c.column_name || ' (' || c.data_type || 
+                        CASE WHEN c.is_nullable = 'NO' THEN ', NOT NULL' ELSE '' END ||
+                        CASE WHEN c.column_default IS NOT NULL THEN ', default' ELSE '' END || ')'
+                        ORDER BY c.ordinal_position
+                    ) as columns
+                FROM information_schema.tables t
+                JOIN information_schema.columns c ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+                WHERE t.table_schema = 'public'
+                AND t.table_type = 'BASE TABLE'
+                AND t.table_name NOT LIKE 'pg_%'
+                AND t.table_name NOT LIKE '_realtime%'
+                AND t.table_name NOT LIKE 'schema_%'
+                GROUP BY t.table_name
+                ORDER BY t.table_name
+            `;
+            
+            const result = await this.supabase.executeRawSQL(schemaSQL);
+            
+            if (!result || !Array.isArray(result) || result.length === 0) {
+                logger.warn('⚠️ Could not fetch schema, using fallback');
+                return this._getFallbackSchema();
+            }
+            
+            // Format schema for LLM consumption
+            let schemaText = '**ESQUEMA DE LA BASE DE DATOS (Actualizado automáticamente):**\n\n';
+            
+            for (const table of result) {
+                const tableName = table.table_name;
+                const columns = table.columns || [];
+                
+                // Format columns - extract just the column names for brevity
+                const columnNames = columns.map(col => {
+                    // Extract column name from format "name (type, constraints)"
+                    const match = col.match(/^([^\s(]+)/);
+                    return match ? match[1] : col;
+                });
+                
+                schemaText += `- **${tableName}**: ${columnNames.join(', ')}\n`;
+            }
+            
+            // Add relationships hint
+            schemaText += `\n**RELACIONES COMUNES:**\n`;
+            schemaText += `- courses.creator_user_id → usuarios.id\n`;
+            schemaText += `- videos.course_id → courses.id\n`;
+            schemaText += `- topics.course_id → courses.id\n`;
+            schemaText += `- tasks.topic_id → topics.id\n`;
+            schemaText += `- task_submissions.task_id → tasks.id\n`;
+            schemaText += `- task_submissions.user_id → usuarios.id\n`;
+            schemaText += `- subscriptions.course_id → courses.id (Nota: puede tener subscriber_id en lugar de user_id)\n`;
+            schemaText += `- transactions.user_id → usuarios.id\n`;
+            schemaText += `- notifications.user_id → usuarios.id\n`;
+            
+            // Cache the result
+            this._schemaCache = schemaText;
+            this._schemaCacheTime = now;
+            
+            logger.info(`✅ Schema loaded: ${result.length} tables found`);
+            return schemaText;
+            
+        } catch (error) {
+            logger.error(`❌ Error fetching schema: ${error.message}`);
+            return this._getFallbackSchema();
+        }
+    }
+    
+    /**
+     * Fallback schema if dynamic loading fails
+     */
+    _getFallbackSchema() {
+        return `**ESQUEMA DE LA BASE DE DATOS (Fallback):**
+- usuarios: id, username, email, first_name, last_name, is_active, created_at
+- courses: id, title, description, price, is_premium, creator_user_id, thumbnail_url, created_at
+- videos: id, title, description, course_id, video_url, duration, order_index, created_at
+- topics: id, title, description, course_id, order_index, created_at  
+- tasks: id, title, description, topic_id, due_date, max_grade, created_at
+- task_submissions: id, task_id, user_id, file_url, grade, feedback, submitted_at, graded_at
+- subscriptions: id, course_id, subscriber_id, status, price, created_at, expires_at
+- transactions: id, user_id, amount, status, payment_method, reference, currency, created_at
+- notifications: id, user_id, title, message, type, read, created_at
+
+⚠️ Este es un esquema de respaldo. El esquema real puede variar.`;
+    }
+    
+    /**
+     * Force refresh the schema cache
+     */
+    async refreshSchemaCache() {
+        this._schemaCache = null;
+        this._schemaCacheTime = 0;
+        return await this.getDynamicSchema();
     }
 
     /**
@@ -750,23 +869,11 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
 
         try {
             // ============================================================
-            // � PRE-LOAD DATABASE SCHEMA
-            // Load schema upfront so LLM doesn't need to call get_database_schema
-            // This makes the agent more reliable with DeepSeek
+            // 🔄 DYNAMIC DATABASE SCHEMA
+            // Load schema automatically from Supabase (cached for 5 min)
             // ============================================================
-            const schemaInfo = `
-**ESQUEMA DE LA BASE DE DATOS:**
-- usuarios: id, username, email, first_name, last_name, is_active, created_at
-- courses: id, title, description, price, is_premium, creator_user_id, thumbnail_url, created_at
-- videos: id, title, description, course_id, video_url, duration, order_index, created_at
-- topics: id, title, description, course_id, order_index, created_at
-- tasks: id, title, description, topic_id, due_date, max_grade, created_at
-- task_submissions: id, task_id, user_id, file_url, grade, feedback, submitted_at, graded_at
-- subscriptions: id, user_id, course_id, status, price, created_at, expires_at
-- transactions: id, user_id, amount, status, payment_method, reference, currency, created_at
-- notifications: id, user_id, title, message, type, read, created_at`;
-
-            logger.info(`Using hardcoded schema for reliability`);
+            const schemaInfo = await this.getDynamicSchema();
+            logger.info(`✅ Using dynamic schema (auto-refreshed)`);
 
             // ============================================================
             // 🤖 AGENT LOOP - No limit, self-correcting
@@ -853,10 +960,34 @@ ${schemaInfo}
                     // Add the assistant's tool call and the tool result to history
                     conversationHistory.push(new AIMessage(responseContent));
                     
-                    // Format tool result for the LLM
-                    const toolResultMessage = new HumanMessage(
-                        `**Resultado de ${toolCall.tool}:**\n\`\`\`json\n${JSON.stringify(toolResult, null, 2)}\n\`\`\`\n\nAnaliza este resultado y continúa con tu tarea. Si hay un error, corrige tu consulta. Si tienes suficiente información, presenta la respuesta final al usuario.`
-                    );
+                    // Format tool result for the LLM - enhanced for errors
+                    let toolResultText;
+                    if (toolResult.success === false) {
+                        // Error case - provide clearer instructions
+                        toolResultText = `**❌ ERROR en query_database:**
+\`\`\`
+Error: ${toolResult.error}
+${toolResult.hint || ''}
+${toolResult.suggestion || ''}
+\`\`\`
+
+**ACCIÓN REQUERIDA:** 
+1. Lee el error cuidadosamente
+2. Usa las columnas correctas mostradas arriba
+3. Genera una nueva consulta SQL corregida
+
+**RECUERDA:** Revisa el ESQUEMA en el mensaje inicial para ver las columnas correctas.`;
+                    } else {
+                        // Success case
+                        toolResultText = `**✅ Resultado de ${toolCall.tool}:**
+\`\`\`json
+${JSON.stringify(toolResult, null, 2)}
+\`\`\`
+
+Analiza estos datos y presenta un **resumen claro y útil** al usuario. NO generes más consultas SQL, presenta la respuesta final.`;
+                    }
+                    
+                    const toolResultMessage = new HumanMessage(toolResultText);
                     conversationHistory.push(toolResultMessage);
 
                 } else {
@@ -998,19 +1129,76 @@ ${schemaInfo}
                         rowCount: result?.length || 0
                     };
                 } catch (sqlError) {
+                    // Extract table name from error and get its columns
+                    const errorDetails = await this.getEnhancedErrorInfo(sqlError.message, args.query);
+                    
                     // Return detailed error for self-correction
                     return {
                         success: false,
                         query: args.query,
                         error: sqlError.message,
                         errorType: this.classifyError(sqlError.message),
-                        hint: this.getErrorHint(sqlError.message)
+                        hint: errorDetails.hint,
+                        correctColumns: errorDetails.correctColumns,
+                        suggestion: errorDetails.suggestion
                     };
                 }
 
             default:
                 throw new Error(`Herramienta desconocida: ${toolName}`);
         }
+    }
+
+    /**
+     * Get enhanced error information with correct column names
+     */
+    async getEnhancedErrorInfo(errorMessage, query) {
+        const lower = errorMessage.toLowerCase();
+        let hint = this.getErrorHint(errorMessage);
+        let correctColumns = null;
+        let suggestion = null;
+        
+        // Extract table name from "column X.column_name does not exist" errors
+        if (lower.includes('column') && lower.includes('does not exist')) {
+            // Try to extract table alias from error (e.g., "s.user_id" -> "s")
+            const columnMatch = errorMessage.match(/column\s+([a-z_]+)\.([a-z_]+)/i);
+            
+            if (columnMatch) {
+                const tableAlias = columnMatch[1];
+                const wrongColumn = columnMatch[2];
+                
+                // Find the real table name from the query using the alias
+                const aliasMatch = query.match(new RegExp(`FROM\\s+([a-z_]+)\\s+${tableAlias}\\b|JOIN\\s+([a-z_]+)\\s+${tableAlias}\\b`, 'i'));
+                const tableName = aliasMatch ? (aliasMatch[1] || aliasMatch[2]) : null;
+                
+                if (tableName) {
+                    try {
+                        // Get actual columns for this table
+                        const columnsSQL = `SELECT column_name FROM information_schema.columns WHERE table_name = '${tableName}' AND table_schema = 'public' ORDER BY ordinal_position`;
+                        const columns = await this.supabase.executeRawSQL(columnsSQL);
+                        
+                        if (columns && columns.length > 0) {
+                            correctColumns = columns.map(c => c.column_name);
+                            hint = `❌ La columna '${wrongColumn}' NO existe en la tabla '${tableName}'.`;
+                            suggestion = `✅ Columnas válidas en '${tableName}': ${correctColumns.join(', ')}`;
+                            
+                            // Try to suggest the correct column name
+                            const similarColumn = correctColumns.find(c => 
+                                c.includes(wrongColumn.replace('_id', '').replace('user', '')) ||
+                                wrongColumn.includes(c.replace('_id', ''))
+                            );
+                            if (similarColumn) {
+                                suggestion += `\n💡 ¿Quizás quisiste usar '${tableAlias}.${similarColumn}'?`;
+                            }
+                        }
+                    } catch (e) {
+                        logger.warn(`Could not fetch columns for table ${tableName}: ${e.message}`);
+                    }
+                }
+            }
+        }
+        
+        return { hint, correctColumns, suggestion };
     }
 
     /**
