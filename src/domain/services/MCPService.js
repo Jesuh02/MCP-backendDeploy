@@ -765,11 +765,12 @@ Lo siento, solo puedo responder preguntas relacionadas con la **base de datos de
 Por favor, reformula tu pregunta para que esté relacionada con la base de datos.`;
                 }
 
-                // 🚨 CRITICAL CHANGE: ALWAYS generate and execute SQL queries
-                // NEVER respond with just schema info - always query the database
-                logger.info("📊 ALWAYS executing SQL query - no schema-only responses allowed");
-                
-                // Schema already loaded above - proceed directly to SQL generation
+                // MANDATORY: ALWAYS execute SQL queries for database-related questions
+                // The mental model is:
+                // 1. Schema already loaded above (understand structure)
+                // 2. Now we MUST generate and execute SQL based on user's request
+                // 3. Never just respond with schema info without querying actual data
+                logger.info("📊 MANDATORY: Proceeding with SQL generation - always query data, never just schema...");
 
                 // STEP 2: Generate SQL (with retry logic for errors)
                 // PERSISTENCE MODE: Will try many times before giving up
@@ -792,46 +793,45 @@ Por favor, reformula tu pregunta para que esté relacionada con la base de datos
                         const isBIQuery = this.isBusinessIntent(query);
                         
                         // First attempt - clean prompt with strict rules
+                        // MANDATORY MENTAL PROCESS:
+                        // 1. Schema provided = understand database structure
+                        // 2. User query = what they want to know
+                        // 3. ALWAYS generate SQL to get ACTUAL DATA from the database
+                        // 4. If a table doesn't exist in schema, search for similar tables using information_schema
                         sqlGenMessages = [
-                            new SystemMessage(`🔴 **OBLIGATORIO: SIEMPRE GENERA SQL - NUNCA SOLO DESCRIBAS EL ESQUEMA**
+                            new SystemMessage(`🧠 **PROCESO MENTAL OBLIGATORIO:**
+1. PRIMERO: Analiza el esquema proporcionado para entender la estructura de la BD
+2. SEGUNDO: Identifica qué tablas y columnas necesitas para responder la consulta
+3. TERCERO: Si no encuentras una tabla en el esquema, busca en information_schema.tables
+4. CUARTO: SIEMPRE genera SQL para obtener DATOS REALES - nunca respondas solo con información del esquema
 
-Genera una consulta PostgreSQL usando EXCLUSIVAMENTE este esquema:
-
+**ESQUEMA CONOCIDO:**
 ${schemaText}
 
-🚨 **REGLA FUNDAMENTAL:**
-- PARA TODO tipo de pregunta (incluso "¿qué tablas hay?", "¿cuántos usuarios hay?", "¿qué columnas tiene X?") DEBES generar SQL
-- NUNCA respondas solo describiendo el esquema - SIEMPRE ejecuta una consulta real
-- Ejemplos de SQL obligatorias:
-  * "¿Qué tablas hay?" → SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
-  * "¿Cuántos usuarios hay?" → SELECT COUNT(*) as total FROM usuarios
-  * "¿Qué columnas tiene usuarios?" → SELECT column_name FROM information_schema.columns WHERE table_name = 'usuarios'
-  * "Dame los usuarios" → SELECT * FROM usuarios LIMIT 100
+⚠️ **IMPORTANTE - TABLAS NO LISTADAS:**
+Si el usuario pregunta por una tabla que NO aparece en el esquema (ej: transactions, payments, etc.):
+1. Primero busca si existe: SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE '%keyword%'
+2. Si existe, obtén su estructura: SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'tabla_encontrada'
+3. Luego genera la consulta con los datos reales
 
 🚫 **REGLAS CRÍTICAS - CUMPLIMIENTO OBLIGATORIO:**
-1. USA SOLAMENTE columnas que existan en el esquema anterior
-2. NUNCA inventes nombres de columnas que no aparezcan en el esquema
+1. USA SOLAMENTE columnas que existan (verifica en el esquema o en information_schema)
+2. NUNCA inventes nombres de columnas
 3. SIEMPRE usa alias de tabla (ej: FROM usuarios u)
-4. Si usas alias, refiérelo en SELECT (ej: u.username NO t.username)
-5. Para JOINs, verifica que las foreign keys existan en el esquema
-6. Para consultas de LISTA (dame usuarios, lista de cursos, etc.), selecciona TODAS las columnas relevantes
-7. VERIFICA dos veces que cada columna mencionada existe en la tabla correspondiente
-8. Si tienes dudas sobre una columna, NO la uses - elige otra que SEPAS que existe
-9. 🔴 INCLUSO para preguntas sobre metadatos del esquema, genera SQL usando information_schema
+4. Si una tabla no está en el esquema, BÚSCALA primero
+5. Para JOINs, verifica que las foreign keys existan
+6. VERIFICA dos veces que cada columna mencionada existe
 
 ${isBIQuery ? `\n🎯 **CONSULTA DE BUSINESS INTELLIGENCE DETECTADA:**
 Esta es una consulta analítica/estratégica. Genera SQL que retorne datos completos y útiles.
 - Incluye métricas agregadas (COUNT, AVG, SUM) cuando sea relevante
 - Ordena por las columnas más relevantes (DESC para ver los top)
 - Limita a TOP 10 o 20 si son rankings
-- Incluye todos los campos necesarios para análisis (id, title, price, creator, etc.)
-- NO generes múltiples consultas - crea UNA consulta comprehensiva que responda la pregunta completa
+- Incluye todos los campos necesarios para análisis
 ` : ''}
 ⚠️ EJEMPLOS DE ERRORES COMUNES A EVITAR:
 - ❌ usuarios.creator_user_id (NO EXISTE - esa columna está en courses)
 - ✅ courses.creator_user_id (CORRECTO)
-- ❌ task_submissions.student_username (NO EXISTE - usa student_id)
-- ✅ task_submissions.student_id (CORRECTO)
 
 Output SOLO SQL en bloque de código:
 \`\`\`sql
@@ -1189,19 +1189,20 @@ _Error original: ${error.message}_`;
 
     /**
      * Detect if the query likely requires fetching data from the database.
+     * UPDATED: ALWAYS returns true for database-related queries.
+     * The agent MUST always:
+     * 1. First examine the schema to understand the database structure
+     * 2. Then generate and execute SQL queries based on the user's request
+     * This ensures the LLM never just reads the schema without querying data.
      */
     detectIfQueryRequiresData(query) {
-        if (!query) return false;
-        const lower = query.toLowerCase();
-        // Keywords that imply data retrieval
-        const dataKeywords = [
-            'dame', 'muestrame', 'listar', 'buscar', 'encontrar', 'ver',
-            'quien', 'cual', 'cuales', 'cuantos', 'cuando', 'donde',
-            'curso', 'estudiante', 'certificado', 'usuario', 'video', 'tarea',
-            'suscripcion', 'progreso', 'nota', 'calificacion', 'examen',
-            'show', 'list', 'find', 'get', 'who', 'what', 'how many', 'when'
-        ];
-        return dataKeywords.some(k => lower.includes(k));
+        // ALWAYS return true - we ALWAYS want to execute queries
+        // The mental model should be:
+        // 1. Get schema (understand structure)
+        // 2. Generate SQL based on query and schema
+        // 3. Execute SQL and return results
+        // NEVER just look at schema without making a query
+        return true;
     }
 
     /**
