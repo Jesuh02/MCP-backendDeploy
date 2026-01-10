@@ -23,17 +23,20 @@ export class LLMService {
         const useDeepSeek = process.env.USE_LLM === 'true' && deepSeekApiKey;
 
         if (useDeepSeek) {
-            console.log("Initializing DeepSeek LLM...");
+            // DeepSeek V3 with Thinking Mode (deepseek-reasoner)
+            // API Docs: https://api-docs.deepseek.com/
+            const modelName = process.env.DEEPSEEK_MODEL || "deepseek-reasoner";
+            console.log(`🧠 Initializing DeepSeek ${modelName} (Thinking Mode)...`);
             this.provider = 'deepseek';
             this.model = new ChatOpenAI({
                 openAIApiKey: deepSeekApiKey,
                 configuration: {
                     baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
                 },
-                modelName: process.env.DEEPSEEK_MODEL || "deepseek-chat",
-                temperature: 0.3,
-                timeout: 30000,
-                maxRetries: 1
+                modelName: modelName,
+                temperature: 0, // Thinking mode works best with temperature 0
+                timeout: 120000, // 2 minutes - reasoning takes longer
+                maxRetries: 2
             });
         } else {
             console.log("Initializing Ollama LLM...");
@@ -54,15 +57,17 @@ export class LLMService {
     async testConnection() {
         if (!this.model) return { status: 'disabled', error: 'Model not initialized' };
         try {
-            // Simple test with timeout
+            // Simple test with timeout (longer for reasoning models)
             const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Connection test timeout')), 10000)
+                setTimeout(() => reject(new Error('Connection test timeout')), 30000)
             );
             await Promise.race([this.model.invoke("Hello"), timeoutPromise]);
+            const modelName = process.env.DEEPSEEK_MODEL || "deepseek-reasoner";
             return {
                 status: 'connected',
                 provider: this.provider,
-                model: this.provider === 'deepseek' ? (process.env.DEEPSEEK_MODEL || "deepseek-chat") : 'llama3:8b'
+                model: this.provider === 'deepseek' ? modelName : 'llama3:8b',
+                thinkingMode: modelName.includes('reasoner')
             };
         } catch (error) {
             console.error("LLM Connection failed:", error);
