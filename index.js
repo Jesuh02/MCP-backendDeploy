@@ -6272,27 +6272,57 @@ app.get('/mcp/session/:sessionId', (req, res) => {
  * 🔌 MCP Message Endpoint - Receives JSON-RPC messages from VS Code
  * POST /mcp/message?sessionId=xxx
  * 
- * IMPROVED: Always responds via HTTP body for maximum compatibility
- * Sessions are optional - stateless mode is fully supported
+ * CRITICAL FIX: MCP SSE protocol requires responses to be sent through SSE stream!
+ * - VS Code sends POST requests to this endpoint
+ * - We MUST send responses back through the SSE connection (not HTTP body)
+ * - HTTP response should be 202 Accepted (empty body)
  */
 app.post('/mcp/message', async(req, res) => {
     const { sessionId } = req.query;
     const { method, params, id } = req.body;
 
-    console.log(`🔌 MCP Message: ${method} (session: ${sessionId || 'stateless'}, id: ${id})`);
+    console.log(`🔌 MCP Message: ${method} (session: ${sessionId || 'none'}, id: ${id})`);
 
-    // Get SSE connection if exists (optional - stateless works too)
+    // Get SSE connection - REQUIRED for SSE mode
     let sseConn = mcpSseConnections.get(sessionId);
-    if (sseConn) {
-        sseConn.lastActivity = Date.now();
+    
+    if (!sseConn) {
+        console.error(`❌ No SSE connection found for session: ${sessionId}`);
+        // Return error as HTTP response since we can't use SSE
+        return res.status(400).json({ 
+            jsonrpc: '2.0', 
+            id, 
+            error: { code: -32000, message: `Session not found: ${sessionId}. Please reconnect to /mcp/sse` } 
+        });
     }
     
-    // For notifications (no id), just acknowledge
+    sseConn.lastActivity = Date.now();
+    
+    // Helper function to send response via SSE
+    const sendSSEResponse = (response) => {
+        try {
+            if (sseConn.response && sseConn.response.writable && !sseConn.response.writableEnded) {
+                // MCP SSE format: just "data: <json>\n\n" (no event type for responses)
+                const sseMessage = `data: ${JSON.stringify(response)}\n\n`;
+                sseConn.response.write(sseMessage);
+                console.log(`📤 SSE Response sent for: ${method} (id: ${id})`);
+                return true;
+            } else {
+                console.error(`❌ SSE connection not writable for session: ${sessionId}`);
+                return false;
+            }
+        } catch (err) {
+            console.error(`❌ Error sending SSE response: ${err.message}`);
+            return false;
+        }
+    };
+    
+    // For notifications (no id), just acknowledge with 202
     if (id === undefined || id === null) {
         if (method === 'notifications/initialized' || method === 'initialized') {
             console.log(`📨 MCP Initialized notification received`);
         }
-        return res.status(200).send('');
+        return res.status(202).send('');
     }
 
     try {
@@ -6300,13 +6330,11 @@ app.post('/mcp/message', async(req, res) => {
 
         switch (method) {
             case 'initialize':
-                // Test Supabase connection
-                try {
-                    await supabaseService.testConnection();
-                    console.log('✅ Supabase connection verified for MCP session');
-                } catch (dbErr) {
-                    console.error('❌ Supabase connection failed:', dbErr.message);
-                }
+                // Test Supabase connection (async, don't block)
+                supabaseService.testConnection()
+                    .then(() => console.log('✅ Supabase connection verified'))
+                    .catch(err => console.error('❌ Supabase test failed:', err.message));
+                
                 result = {
                     protocolVersion: '2024-11-05',
                     capabilities: {
@@ -6314,10 +6342,10 @@ app.post('/mcp/message', async(req, res) => {
                         resources: { subscribe: true, listChanged: true }
                     },
                     serverInfo: {
-                            name: 'YisusCompany-mcp-server',
-                            version: '1.0.0',
-                            description: 'MCP Server for YisusCompany - Course Management Platform'
-                        }
+                        name: 'YisusCompany-mcp-server',
+                        version: '1.0.0',
+                        description: 'MCP Server for YisusCompany - Course Management Platform'
+                    }
                 };
                 break;
 
@@ -6412,19 +6440,35 @@ app.post('/mcp/message', async(req, res) => {
 
             default:
                 if (method.startsWith('notifications/')) {
-                    return res.status(200).send('');
+                    return res.status(202).send('');
                 }
-                return res.status(200).json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } });
+                // Send error via SSE
+                const errorResponse = { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
+                sendSSEResponse(errorResponse);
+                return res.status(202).send('');
         }
 
-        // Build JSON-RPC response - ALWAYS return in HTTP body for reliability
+        // Build JSON-RPC response and send via SSE
         const response = { jsonrpc: '2.0', id, result };
-        console.log(`✅ MCP Response sent for: ${method}`);
-        res.status(200).json(response);
+        const sent = sendSSEResponse(response);
+        
+        if (!sent) {
+            // Fallback: return in HTTP body if SSE failed
+            console.warn(`⚠️ SSE send failed, using HTTP fallback for: ${method}`);
+            return res.status(200).json(response);
+        }
+        
+        // Return 202 Accepted (response was sent via SSE)
+        res.status(202).send('');
 
     } catch (error) {
         console.error(`❌ MCP Error (${method}):`, error);
-        res.status(200).json({ jsonrpc: '2.0', id, error: { code: -32603, message: error.message } });
+        const errorResponse = { jsonrpc: '2.0', id, error: { code: -32603, message: error.message } };
+        const sent = sendSSEResponse(errorResponse);
+        if (!sent) {
+            return res.status(200).json(errorResponse);
+        }
+        res.status(202).send('');
     }
 });
 
@@ -6672,126 +6716,97 @@ async function handleMCPResourceRead(uri) {
 
 /**
  * Execute database query (SQL or natural language)
- * USES MCPService for intelligent query processing with LLM support
+ * RESILIENT MODE: Will retry multiple times and try alternatives before failing
  */
 async function executeDatabaseQuery(query, retryCount = 0) {
-    console.log(`📊 executeDatabaseQuery called with: "${query}"`);
+    const maxRetries = 5;
     
     try {
-        // First, try using MCPService.processQueryToData for intelligent processing
-        if (mcpService) {
-            console.log('🤖 Using MCPService for query processing...');
-            const result = await mcpService.processQueryToData(query);
-            
-            if (result && !result.error) {
-                console.log('✅ MCPService returned data successfully');
-                return {
-                    content: [{
-                        type: 'text',
-                        text: JSON.stringify(result, null, 2)
-                    }]
-                };
-            }
-            console.log('⚠️ MCPService returned error, trying fallback...');
-        }
-
-        // Fallback: Direct query execution for simple SQL
+        // Detect if it's natural language or SQL
         const isSQL = /^(SELECT|INSERT|UPDATE|DELETE|WITH)\s/i.test(query.trim());
         
-        if (isSQL) {
-            // Try to extract table name and execute direct query
-            const tableMatch = query.match(/FROM\s+(\w+)/i);
+        let sqlQuery = query;
+        if (!isSQL) {
+            // Convert natural language to SQL using simple patterns
+            sqlQuery = convertNaturalLanguageToSQL(query);
+        }
+
+        // Execute via Supabase RPC or direct query
+        const { data, error } = await supabaseService.client.rpc('execute_sql', { query: sqlQuery });
+        
+        if (error) {
+            // Fallback: try direct table query for simple cases
+            const tableMatch = sqlQuery.match(/FROM\s+(\w+)/i);
             if (tableMatch) {
                 const tableName = tableMatch[1];
-                console.log(`📋 Attempting direct query on table: ${tableName}`);
-                
-                // For simple SELECT * queries, use Supabase client
-                if (query.trim().toLowerCase().startsWith('select * from')) {
-                    const { data, error } = await supabaseService.client
-                        .from(tableName)
-                        .select('*')
-                        .limit(100);
-                    
-                    if (!error && data) {
-                        return {
-                            content: [{
-                                type: 'text',
-                                text: JSON.stringify({ 
-                                    query, 
-                                    results: data, 
-                                    count: data.length,
-                                    note: 'Direct Supabase query (limited to 100 rows)'
-                                }, null, 2)
-                            }]
-                        };
-                    }
-                }
-                
-                // For complex queries, try fetching all rows and let JS do the work
-                const { data: allData, error: fetchError } = await supabaseService.client
+                const { data: tableData, error: tableError } = await supabaseService.client
                     .from(tableName)
-                    .select('*');
+                    .select('*')
+                    .limit(100);
                 
-                if (!fetchError && allData) {
+                if (!tableError) {
                     return {
                         content: [{
                             type: 'text',
-                            text: JSON.stringify({ 
-                                query,
-                                table: tableName,
-                                results: allData, 
-                                count: allData.length,
-                                note: 'Full table data returned. Complex aggregations should be done in the LLM.'
-                            }, null, 2)
+                            text: JSON.stringify({ query: sqlQuery, results: tableData, count: tableData.length }, null, 2)
                         }]
                     };
                 }
             }
+            
+            // RETRY LOGIC: Don't give up immediately
+            if (retryCount < maxRetries) {
+                console.log(`⚠️ Query failed (attempt ${retryCount + 1}/${maxRetries}), retrying...`);
+                await new Promise(r => setTimeout(r, 500 * (retryCount + 1))); // Exponential backoff
+                return executeDatabaseQuery(query, retryCount + 1);
+            }
+            throw error;
         }
 
-        // Last fallback: return schema and sample data
-        console.log('📊 Returning fallback data snapshot...');
-        const tables = ['usuarios', 'courses', 'videos', 'tasks', 'transactions', 'subscriptions'];
-        const fallbackData = {};
-        
-        for (const table of tables) {
-            try {
-                const { data, count, error } = await supabaseService.client
-                    .from(table)
-                    .select('*', { count: 'exact' })
-                    .limit(5);
-                if (!error && data) {
-                    fallbackData[table] = { 
-                        totalCount: count,
-                        sample: data
-                    };
-                }
-            } catch (e) {
-                console.log(`⚠️ Could not fetch ${table}: ${e.message}`);
-            }
-        }
-        
         return {
             content: [{
                 type: 'text',
-                text: JSON.stringify({ 
-                    originalQuery: query,
-                    note: 'Could not execute exact query. Here is a data snapshot from available tables.',
-                    tables: fallbackData 
-                }, null, 2)
+                text: JSON.stringify({ query: sqlQuery, results: data }, null, 2)
             }]
         };
-
     } catch (error) {
-        console.error(`❌ Query execution error: ${error.message}`);
+        // RESILIENT RESPONSE: Try to return something useful
+        console.error(`❌ Query error after ${retryCount} retries: ${error.message}`);
+        
+        // Try to get basic data as fallback
+        try {
+            const tables = ['usuarios', 'courses', 'videos', 'tasks'];
+            const fallbackData = {};
+            
+            for (const table of tables) {
+                const { data, error: tableError } = await supabaseService.client
+                    .from(table)
+                    .select('*')
+                    .limit(10);
+                if (!tableError && data) {
+                    fallbackData[table] = { count: data.length, sample: data.slice(0, 3) };
+                }
+            }
+            
+            if (Object.keys(fallbackData).length > 0) {
+                return {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify({ 
+                            warning: `Query failed: ${error.message}. Showing available data snapshot.`,
+                            fallbackData 
+                        }, null, 2)
+                    }]
+                };
+            }
+        } catch (fallbackError) {
+            console.error(`Fallback also failed: ${fallbackError.message}`);
+        }
+        
         return {
             content: [{
                 type: 'text',
-                text: JSON.stringify({
-                    error: error.message,
-                    query,
-                    suggestion: 'Try rephrasing your query or use table names: usuarios, courses, videos, tasks, transactions, subscriptions'
-                }, null, 2)
+                text: `Error executing query after ${maxRetries} attempts: ${error.message}\n\nSugerencias:\n- Reformula tu consulta\n- Intenta con términos más específicos\n- Usa nombres de tablas válidos: usuarios, courses, videos, tasks, subscriptions`
             }],
             isError: true
         };
@@ -6847,28 +6862,20 @@ async function getDatabaseSchema() {
     const tables = [
         'usuarios', 'personas', 'courses', 'videos', 'topics', 'content_items',
         'tasks', 'task_submissions', 'subscriptions', 'chat_messages',
-        'file_contexts', 'roles', 'recursos', 'rol_recursos', 'notifications',
-        'transactions', 'likes', 'reinforcement_history'
+        'file_contexts', 'roles', 'recursos', 'rol_recursos', 'notifications'
     ];
 
     const schema = {};
     for (const table of tables) {
         try {
-            const { data, count, error } = await supabaseService.client
-                .from(table)
-                .select('*', { count: 'exact' })
-                .limit(1);
-            
-            if (!error && data) {
-                schema[table] = {
-                    columns: data.length > 0 ? Object.keys(data[0]) : [],
-                    rowCount: count || 0
-                };
+            const { data } = await supabaseService.client.from(table).select('*').limit(1);
+            if (data && data.length > 0) {
+                schema[table] = Object.keys(data[0]);
             } else {
-                schema[table] = { columns: [], rowCount: 0, error: error?.message };
+                schema[table] = ['(empty table)'];
             }
         } catch (e) {
-            schema[table] = { columns: [], rowCount: 0, error: e.message };
+            schema[table] = ['(error reading table)'];
         }
     }
 
