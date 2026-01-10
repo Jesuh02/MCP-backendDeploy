@@ -629,6 +629,9 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
         conversationHistory.push(systemMessage);
         conversationHistory.push(new HumanMessage(`Obtén los datos para: ${query}${userId ? `\nUsuario actual: ${userId}` : ''}`));
 
+        let consecutiveEmptyResponses = 0;
+        const MAX_EMPTY_RESPONSES = 2; // Exit after 2 consecutive empty/no-tool responses
+
         while (iteration < MAX_SAFETY_ITERATIONS) {
             iteration++;
             
@@ -648,6 +651,7 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
             const toolCall = this.extractToolCall(responseContent);
 
             if (toolCall) {
+                consecutiveEmptyResponses = 0; // Reset counter on valid tool call
                 let toolResult;
                 try {
                     toolResult = await this.executeMCPTool(toolCall.tool, toolCall.arguments);
@@ -676,9 +680,38 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
                     iterations: iteration 
                 };
             } else {
-                // Push response and ask to continue
-                conversationHistory.push(new AIMessage(responseContent));
-                conversationHistory.push(new HumanMessage('Continúa usando las herramientas para obtener los datos.'));
+                // No tool call and no results - track empty responses
+                consecutiveEmptyResponses++;
+                logger.warn(`⚠️ No tool call detected (${consecutiveEmptyResponses}/${MAX_EMPTY_RESPONSES})`);
+
+                if (consecutiveEmptyResponses >= MAX_EMPTY_RESPONSES) {
+                    // Try fallback with simple SQL generation
+                    logger.info(`🔄 Attempting fallback SQL for query: "${query}"`);
+                    const fallbackSql = this.generateSimpleSqlForQuery(query);
+                    
+                    if (fallbackSql) {
+                        try {
+                            const fallbackResult = await this.supabase.executeRawSQL(fallbackSql);
+                            return {
+                                data: fallbackResult,
+                                sql: fallbackSql,
+                                iterations: iteration,
+                                fallback: true
+                            };
+                        } catch (fallbackError) {
+                            logger.error(`❌ Fallback SQL failed: ${fallbackError.message}`);
+                        }
+                    }
+                    
+                    // If fallback fails, throw error to exit loop
+                    throw new Error(`El LLM no pudo generar una consulta válida después de ${iteration} intentos. Intenta reformular tu pregunta.`);
+                }
+
+                // Only add one retry message (not in a loop)
+                conversationHistory.push(new AIMessage(responseContent || "(sin respuesta)"));
+                conversationHistory.push(new HumanMessage(
+                    `Necesito que uses las herramientas. Primero usa get_database_schema para ver las tablas, luego query_database para ejecutar SQL.\n\nFormato requerido:\n\`\`\`json\n{"tool": "get_database_schema", "arguments": {}}\n\`\`\``
+                ));
             }
         }
 
@@ -754,32 +787,43 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
             const MAX_SAFETY_ITERATIONS = 50; // Safety limit to prevent infinite loops
 
             // System message for the agent
-            const systemMessage = new SystemMessage(`Eres un agente de base de datos. Tu ÚNICA forma de obtener información es usando herramientas.
+            const systemMessage = new SystemMessage(`Eres un agente de base de datos inteligente con acceso a herramientas MCP.
 
-HERRAMIENTAS:
-- get_database_schema: Obtiene todas las tablas y columnas
-- query_database: Ejecuta SQL (requiere parámetro "query")
+**TU OBJETIVO:**
+Responder preguntas del usuario consultando la base de datos usando las herramientas disponibles.
 
-REGLAS CRÍTICAS:
-1. SIEMPRE empieza llamando get_database_schema
-2. USA SOLO columnas que existan en el esquema
-3. Si hay error, lee el mensaje y corrige
-4. Cuando tengas la respuesta final, escríbela SIN JSON
+**HERRAMIENTAS DISPONIBLES:**
+1. \`get_database_schema\` - Obtiene el esquema de la base de datos (tablas y columnas)
+2. \`query_database\` - Ejecuta consultas SQL
 
-FORMATO OBLIGATORIO PARA LLAMAR HERRAMIENTAS:
+**FLUJO DE TRABAJO:**
+1. SIEMPRE usa \`get_database_schema\` primero si no conoces la estructura
+2. Analiza el esquema para identificar tablas y columnas correctas
+3. Usa \`query_database\` para ejecutar consultas SQL
+4. Si hay un error, LEE EL ERROR DETALLADAMENTE y corrige tu consulta
+5. Puedes hacer múltiples consultas para obtener toda la información necesaria
+6. Cuando tengas suficiente información, presenta un resumen claro al usuario
+
+**REGLAS IMPORTANTES:**
+- NO inventes columnas o tablas - usa SOLO las del esquema
+- Si una consulta falla, analiza el error y corrige
+- Puedes hacer consultas exploratorias (ej: SELECT * FROM tabla LIMIT 5)
+- Presenta los resultados en formato claro (tablas markdown para listas)
+
+**FORMATO DE TOOL CALLS:**
+Para llamar una herramienta, responde EXACTAMENTE con este formato JSON:
 \`\`\`json
-{"tool": "get_database_schema", "arguments": {}}
+{"tool": "nombre_herramienta", "arguments": {"param": "valor"}}
 \`\`\`
 
-o para consultas:
-\`\`\`json
-{"tool": "query_database", "arguments": {"query": "SELECT * FROM tabla LIMIT 10"}}
-\`\`\`
-
-IMPORTANTE: DEBES llamar get_database_schema AHORA en tu primera respuesta.`);
+Cuando tengas la respuesta final, NO uses tool calls, simplemente responde al usuario con el análisis.`);
 
             conversationHistory.push(systemMessage);
             conversationHistory.push(new HumanMessage(query));
+
+            let consecutiveEmptyResponses = 0;
+            const MAX_EMPTY_RESPONSES = 2;
+            let lastSuccessfulData = null;
 
             while (iteration < MAX_SAFETY_ITERATIONS) {
                 iteration++;
@@ -795,6 +839,7 @@ IMPORTANTE: DEBES llamar get_database_schema AHORA en tu primera respuesta.`);
                 const toolCall = this.extractToolCall(responseContent);
 
                 if (toolCall) {
+                    consecutiveEmptyResponses = 0; // Reset on valid tool call
                     logger.info(`🛠️ Tool call detected: ${toolCall.tool}`);
                     logger.info(`📥 Tool arguments:`, JSON.stringify(toolCall.arguments, null, 2));
 
@@ -803,6 +848,11 @@ IMPORTANTE: DEBES llamar get_database_schema AHORA en tu primera respuesta.`);
                     try {
                         toolResult = await this.executeMCPTool(toolCall.tool, toolCall.arguments);
                         logger.info(`✅ Tool ${toolCall.tool} executed successfully`);
+                        
+                        // Store successful data
+                        if (toolCall.tool === 'query_database' && toolResult.success) {
+                            lastSuccessfulData = toolResult;
+                        }
                         
                         // Log result summary
                         const resultSummary = typeof toolResult === 'string' 
@@ -829,37 +879,49 @@ IMPORTANTE: DEBES llamar get_database_schema AHORA en tu primera respuesta.`);
                     conversationHistory.push(toolResultMessage);
 
                 } else {
-                    // No tool call detected
-                    logger.warn(`⚠️ No tool call detected in iteration ${iteration}`);
+                    // No tool call - check if it's a final response or empty
+                    const trimmedResponse = responseContent.trim();
                     
-                    // If this is the first iteration and no tool call, force schema fetch
-                    if (iteration === 1) {
-                        logger.info(`🔄 First iteration without tool call - forcing schema fetch`);
+                    // If we have meaningful content (not just empty), treat as final response
+                    if (trimmedResponse.length > 50) {
+                        logger.info(`✅ Agent completed after ${iteration} iterations`);
                         
-                        // Automatically fetch and inject schema
-                        const schemaResult = await this.executeMCPTool('get_database_schema', {});
-                        
-                        conversationHistory.push(new AIMessage(responseContent));
-                        conversationHistory.push(new HumanMessage(
-                            `Te proporciono el esquema de la base de datos:\n\`\`\`json\n${JSON.stringify(schemaResult, null, 2)}\n\`\`\`\n\nAhora usa query_database con SQL válido para responder la pregunta del usuario. Recuerda el formato:\n\`\`\`json\n{"tool": "query_database", "arguments": {"query": "SELECT ..."}}\n\`\`\``
-                        ));
-                        continue;
-                    }
-                    
-                    // If we have some content after a few iterations, it might be the final answer
-                    if (iteration > 2 && responseContent.length > 100) {
-                        logger.info(`✅ Agent completed after ${iteration} iterations (no more tools needed)`);
-                        
+                        // Clean up any residual code blocks that shouldn't be shown
                         let finalResponse = responseContent;
                         finalResponse = finalResponse.replace(/```json\s*\{[\s\S]*?"tool"[\s\S]*?\}\s*```/gi, '');
                         
-                        return finalResponse.trim() || "No se pudo generar una respuesta. Por favor intenta reformular tu pregunta.";
+                        return finalResponse.trim();
                     }
                     
-                    // Ask LLM to continue with tools
-                    conversationHistory.push(new AIMessage(responseContent));
+                    // Empty or too short response - track consecutive failures
+                    consecutiveEmptyResponses++;
+                    logger.warn(`⚠️ Empty/short response (${consecutiveEmptyResponses}/${MAX_EMPTY_RESPONSES})`);
+                    
+                    if (consecutiveEmptyResponses >= MAX_EMPTY_RESPONSES) {
+                        // Return last successful data if available
+                        if (lastSuccessfulData) {
+                            logger.info(`📊 Returning last successful data after empty responses`);
+                            return `Datos obtenidos:\n\`\`\`json\n${JSON.stringify(lastSuccessfulData.results || lastSuccessfulData, null, 2)}\n\`\`\``;
+                        }
+                        
+                        // Try fallback SQL
+                        const fallbackSql = this.generateSimpleSqlForQuery(query);
+                        if (fallbackSql) {
+                            try {
+                                const fallbackResult = await this.supabase.executeRawSQL(fallbackSql);
+                                return `Resultado de la consulta:\n\`\`\`json\n${JSON.stringify(fallbackResult, null, 2)}\n\`\`\``;
+                            } catch (e) {
+                                logger.error(`❌ Fallback SQL failed: ${e.message}`);
+                            }
+                        }
+                        
+                        return "No se pudo generar una respuesta. El LLM no utilizó las herramientas correctamente. Por favor intenta reformular tu pregunta.";
+                    }
+                    
+                    // Add retry message (only once, won't loop infinitely)
+                    conversationHistory.push(new AIMessage(responseContent || "(sin respuesta)"));
                     conversationHistory.push(new HumanMessage(
-                        `Por favor usa las herramientas disponibles. Formato:\n\`\`\`json\n{"tool": "query_database", "arguments": {"query": "SELECT ..."}}\n\`\`\``
+                        `Usa las herramientas disponibles. Primero: get_database_schema\n\`\`\`json\n{"tool": "get_database_schema", "arguments": {}}\n\`\`\``
                     ));
                 }
             }
@@ -876,83 +938,43 @@ IMPORTANTE: DEBES llamar get_database_schema AHORA en tu primera respuesta.`);
 
     /**
      * Extract tool call from LLM response
-     * Looks for JSON blocks with tool calls - MORE ROBUST VERSION
+     * Looks for JSON blocks with tool calls
      */
     extractToolCall(responseContent) {
         if (!responseContent) return null;
 
-        logger.info(`🔍 Extracting tool call from response...`);
-
-        // Method 1: Try to find JSON in code block (```json ... ```)
-        const jsonBlockMatch = responseContent.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+        // Try to find JSON tool call in code block
+        const jsonBlockMatch = responseContent.match(/```json\s*\n?([\s\S]*?)\n?```/);
         if (jsonBlockMatch) {
             try {
-                const jsonStr = jsonBlockMatch[1].trim();
-                logger.info(`📦 Found JSON block: ${jsonStr.substring(0, 100)}`);
-                const parsed = JSON.parse(jsonStr);
+                const parsed = JSON.parse(jsonBlockMatch[1].trim());
                 if (parsed.tool) {
-                    logger.info(`✅ Parsed tool call: ${parsed.tool}`);
                     return {
                         tool: parsed.tool,
                         arguments: parsed.arguments || {}
                     };
                 }
             } catch (e) {
-                logger.warn(`Failed to parse JSON block: ${e.message}`);
+                logger.warn(`Failed to parse JSON tool call: ${e.message}`);
             }
         }
 
-        // Method 2: Try to find raw JSON with "tool" key anywhere in response
-        const toolJsonPatterns = [
-            /\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[^}]*\})\s*\}/,
-            /\{\s*"tool"\s*:\s*"([^"]+)"[^}]*\}/
-        ];
-
-        for (const pattern of toolJsonPatterns) {
-            const match = responseContent.match(pattern);
-            if (match) {
-                try {
-                    // Try to find the full JSON object starting from the match
-                    const startIdx = responseContent.indexOf(match[0]);
-                    let jsonStr = match[0];
-                    
-                    // If we only got partial, try to find closing brace
-                    if (!jsonStr.includes('"arguments"')) {
-                        jsonStr = `{"tool": "${match[1]}", "arguments": {}}`;
-                    }
-                    
-                    const parsed = JSON.parse(jsonStr);
-                    if (parsed.tool) {
-                        logger.info(`✅ Parsed inline tool call: ${parsed.tool}`);
-                        return {
-                            tool: parsed.tool,
-                            arguments: parsed.arguments || {}
-                        };
-                    }
-                } catch (e) {
-                    logger.warn(`Failed to parse pattern match: ${e.message}`);
+        // Try to find inline JSON tool call
+        const inlineMatch = responseContent.match(/\{"tool"\s*:\s*"([^"]+)"[^}]*\}/);
+        if (inlineMatch) {
+            try {
+                const parsed = JSON.parse(inlineMatch[0]);
+                if (parsed.tool) {
+                    return {
+                        tool: parsed.tool,
+                        arguments: parsed.arguments || {}
+                    };
                 }
+            } catch (e) {
+                logger.warn(`Failed to parse inline tool call: ${e.message}`);
             }
         }
 
-        // Method 3: Look for tool name mentions and construct call
-        const toolMentions = {
-            'get_database_schema': /get_database_schema|obtener.*esquema|schema/i,
-            'query_database': /query_database|ejecutar.*sql|SELECT|consulta/i
-        };
-
-        // Check if this looks like a tool call intent without proper JSON
-        for (const [toolName, pattern] of Object.entries(toolMentions)) {
-            if (pattern.test(responseContent) && responseContent.length < 500) {
-                // Short response mentioning a tool - might be malformed
-                if (toolName === 'get_database_schema' && !responseContent.includes('SELECT')) {
-                    logger.info(`🔧 Inferred tool call: ${toolName} (from context)`);
-                    return { tool: toolName, arguments: {} };
-                }
-            }
-        }
-
-        logger.info(`❌ No tool call found in response`);
         return null;
     }
 
