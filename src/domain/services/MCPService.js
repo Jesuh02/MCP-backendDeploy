@@ -586,129 +586,113 @@ export class MCPService {
 
     /**
      * Process a natural language query to get raw data (for Excel/Reports)
-     * Uses TOOL CALLING - LLM calls get_database_schema and query_database autonomously.
-     * NO RETRY LIMIT - continues until success.
+     * Uses MCP Agent with tools to query the database iteratively.
+     * NO RETRY LIMIT - Self-correcting until success.
      */
     async processQueryToData(query, userId = null) {
-        logger.info(`📊 Processing query to data with TOOLS: "${query}" (User: ${userId})`);
+        logger.info(`📊 Processing query to data (MCP Agent): "${query}" (User: ${userId})`);
 
         if (!this.llmService || !this.llmService.model) {
-            throw new Error("LLM Service not available");
+            throw new Error("LLM Service not available for SQL generation");
         }
 
-        // ============================================================
-        // 🔧 DEFINE MCP TOOLS
-        // ============================================================
-        const tools = [
-            {
-                name: "get_database_schema",
-                description: "Obtiene el esquema de la base de datos. LLAMA ESTO PRIMERO para conocer las tablas y columnas.",
-                parameters: { type: "object", properties: {}, required: [] }
-            },
-            {
-                name: "query_database",
-                description: "Ejecuta SQL en PostgreSQL. Usa SOLO columnas del esquema. Si hay error, lee el mensaje y corrige.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        sql: { type: "string", description: "Consulta SQL válida" }
-                    },
-                    required: ["sql"]
-                }
-            }
-        ];
-
-        // Tool execution
-        const executeTool = async (toolName, toolArgs) => {
-            try {
-                if (toolName === "get_database_schema") {
-                    const schema = await this.getDatabaseSchema();
-                    return { success: true, result: JSON.stringify(schema.schema, null, 2) };
-                }
-                if (toolName === "query_database") {
-                    const sql = (toolArgs.sql || "").trim().replace(/;$/, '');
-                    const result = await this.supabase.executeRawSQL(sql);
-                    return { success: true, result: JSON.stringify(result), data: result, sql };
-                }
-                return { success: false, error: `Unknown tool: ${toolName}` };
-            } catch (error) {
-                return { success: false, error: error.message, hint: this.getErrorHint(error.message) };
-            }
-        };
-
-        // Agent loop
-        const messages = [
-            new SystemMessage(`Eres un agente que extrae datos de la base de datos.
-
-PROCESO:
-1. Llama get_database_schema para ver tablas/columnas
-2. Llama query_database con SQL válido (SOLO columnas del esquema)
-3. Si hay error, LEE el mensaje y corrige
-4. Cuando tengas datos, responde con "DATOS_LISTOS" seguido del JSON
-
-REGLAS:
-- NUNCA inventes columnas. Usa SOLO las del esquema
-- Añade LIMIT 1000 para evitar sobrecarga
-- Si piden datos de un mes específico, usa: WHERE created_at >= 'YYYY-MM-01' AND created_at < 'YYYY-MM+1-01'
-- NO te rindas. Sigue hasta obtener datos`),
-            new HumanMessage(`${query}${userId ? ` (Usuario actual: ${userId})` : ''}`)
-        ];
-
-        let lastSuccessfulData = null;
-        let lastSuccessfulSQL = null;
+        // Use the MCP Agent approach
+        const conversationHistory = [];
         let iteration = 0;
-        const MAX_ITERATIONS = 50;
+        const MAX_SAFETY_ITERATIONS = 30;
+        let lastSuccessfulResult = null;
 
-        while (iteration < MAX_ITERATIONS) {
+        const systemMessage = new SystemMessage(`Eres un agente de base de datos. Tu objetivo es obtener datos RAW para exportar a Excel.
+
+**HERRAMIENTAS:**
+1. \`get_database_schema\` - Obtiene el esquema de la base de datos
+2. \`query_database\` - Ejecuta consultas SQL
+
+**FLUJO:**
+1. Usa get_database_schema para conocer las tablas y columnas
+2. Ejecuta query_database con SQL válido
+3. Si hay error, analízalo y corrige
+4. Cuando obtengas datos, responde con: DATOS_LISTOS
+
+**REGLAS:**
+- USA SOLO columnas que existan en el esquema
+- Incluye LIMIT 1000 para evitar sobrecargar el servidor
+- Si la consulta falla, corrige basándote en el error
+
+**FORMATO:**
+\`\`\`json
+{"tool": "nombre", "arguments": {"query": "SELECT..."}}
+\`\`\`
+
+Cuando tengas los datos, responde: DATOS_LISTOS`);
+
+        conversationHistory.push(systemMessage);
+        conversationHistory.push(new HumanMessage(`Obtén los datos para: ${query}${userId ? `\nUsuario actual: ${userId}` : ''}`));
+
+        while (iteration < MAX_SAFETY_ITERATIONS) {
             iteration++;
+            
+            const response = await this.llmService.generateResponse(conversationHistory, []);
+            const responseContent = response.content || "";
 
-            try {
-                const response = await this.llmService.generateResponse(messages, tools);
+            // Check if agent signals completion
+            if (responseContent.includes('DATOS_LISTOS') && lastSuccessfulResult) {
+                logger.info(`✅ Data query completed after ${iteration} iterations`);
+                return { 
+                    data: lastSuccessfulResult.results || lastSuccessfulResult, 
+                    sql: lastSuccessfulResult.query || 'AGENT_QUERY',
+                    iterations: iteration 
+                };
+            }
 
-                if (response.tool_calls && response.tool_calls.length > 0) {
-                    messages.push(new AIMessage({ content: response.content || "", tool_calls: response.tool_calls }));
+            const toolCall = this.extractToolCall(responseContent);
 
-                    for (const toolCall of response.tool_calls) {
-                        const result = await executeTool(toolCall.name, toolCall.args || {});
-                        
-                        if (result.success && toolCall.name === "query_database" && result.data) {
-                            lastSuccessfulData = result.data;
-                            lastSuccessfulSQL = result.sql;
-                        }
-
-                        const content = result.success 
-                            ? result.result 
-                            : `ERROR: ${result.error}\nHINT: ${result.hint || 'Revisa el esquema'}`;
-                        
-                        messages.push(new ToolMessage({ content, tool_call_id: toolCall.id }));
+            if (toolCall) {
+                let toolResult;
+                try {
+                    toolResult = await this.executeMCPTool(toolCall.tool, toolCall.arguments);
+                    
+                    // Store successful query results
+                    if (toolCall.tool === 'query_database' && toolResult.success) {
+                        lastSuccessfulResult = toolResult;
                     }
-                    continue;
+                } catch (toolError) {
+                    toolResult = {
+                        error: true,
+                        message: toolError.message,
+                        hint: this.getErrorHint(toolError.message)
+                    };
                 }
 
-                // Check if LLM indicates data is ready
-                const content = response.content || "";
-                if (content.includes("DATOS_LISTOS") || lastSuccessfulData) {
-                    return { data: lastSuccessfulData, sql: lastSuccessfulSQL };
-                }
-
-                if (content.trim() && lastSuccessfulData) {
-                    return { data: lastSuccessfulData, sql: lastSuccessfulSQL };
-                }
-
-                messages.push(new HumanMessage("Continúa. Usa las herramientas para obtener los datos."));
-
-            } catch (error) {
-                logger.error(`Iteration ${iteration} error: ${error.message}`);
-                messages.push(new HumanMessage(`Error: ${error.message}. Intenta de nuevo.`));
+                conversationHistory.push(new AIMessage(responseContent));
+                conversationHistory.push(new HumanMessage(
+                    `**Resultado de ${toolCall.tool}:**\n\`\`\`json\n${JSON.stringify(toolResult, null, 2)}\n\`\`\`\n\n${toolResult.success ? 'Los datos están listos. Responde: DATOS_LISTOS' : 'Corrige tu consulta basándote en el error.'}`
+                ));
+            } else if (lastSuccessfulResult) {
+                // No tool call but we have results - return them
+                return { 
+                    data: lastSuccessfulResult.results || lastSuccessfulResult, 
+                    sql: lastSuccessfulResult.query || 'AGENT_QUERY',
+                    iterations: iteration 
+                };
+            } else {
+                // Push response and ask to continue
+                conversationHistory.push(new AIMessage(responseContent));
+                conversationHistory.push(new HumanMessage('Continúa usando las herramientas para obtener los datos.'));
             }
         }
 
-        // Return whatever we got
-        if (lastSuccessfulData) {
-            return { data: lastSuccessfulData, sql: lastSuccessfulSQL };
+        // Fallback if max iterations reached
+        if (lastSuccessfulResult) {
+            return { 
+                data: lastSuccessfulResult.results || lastSuccessfulResult, 
+                sql: lastSuccessfulResult.query || 'AGENT_QUERY',
+                iterations: iteration,
+                warning: 'Max iterations reached but data was obtained'
+            };
         }
 
-        throw new Error(`No se pudieron obtener datos después de ${MAX_ITERATIONS} intentos`);
+        throw new Error(`No se pudieron obtener datos después de ${MAX_SAFETY_ITERATIONS} iteraciones`);
     }
 
     /**
@@ -719,239 +703,267 @@ REGLAS:
      */
 
     /**
-     * Process a query using an LLM Agent with REAL TOOL CALLING.
-     * The LLM decides which tools to use and auto-corrects based on errors.
-     * NO RETRY LIMIT - continues until success or user cancellation.
-     * 
-     * Available Tools:
-     * - get_database_schema: Get the database schema
-     * - query_database: Execute SQL query
+     * Process a query using an LLM Agent with MCP Tools.
+     * The LLM uses tools iteratively (get_database_schema, query_database) and self-corrects on errors.
+     * NO RETRY LIMIT - The agent continues until it succeeds or decides to stop.
      */
     async processQueryWithAgent(query) {
-        logger.info(`🤖 Processing query with TOOL-CALLING Agent: "${query}"`);
+        logger.info(`🤖 Processing query with MCP Agent: "${query}"`);
 
         if (!this.llmService || !this.llmService.model) {
-            logger.warn("⚠️ LLM Service not available.");
-            return "Lo siento, el servicio de IA no está disponible en este momento.";
+            logger.warn("⚠️ LLM Service not available. Returning fallback message.");
+            return "Lo siento, el servicio de IA no está disponible en este momento (Falta configuración de API Key). Por favor, intenta consultas SQL directas o verifica la configuración del servidor.";
         }
 
-        // ============================================================
-        // 🔧 DEFINE MCP TOOLS FOR THE LLM
-        // ============================================================
-        const tools = [
-            {
-                name: "get_database_schema",
-                description: "Obtiene el esquema completo de la base de datos con todas las tablas y columnas. SIEMPRE usa esta herramienta PRIMERO para conocer las tablas y columnas disponibles antes de hacer cualquier consulta SQL.",
-                parameters: {
-                    type: "object",
-                    properties: {},
-                    required: []
+        try {
+            // ============================================================
+            // 🛠️ MCP TOOLS DEFINITION
+            // The LLM will use these tools to interact with the database
+            // ============================================================
+            const mcpTools = [
+                {
+                    name: "get_database_schema",
+                    description: "Obtiene el esquema completo de la base de datos con todas las tablas y columnas. Usa esto PRIMERO para conocer la estructura de la base de datos antes de hacer consultas.",
+                    parameters: {
+                        type: "object",
+                        properties: {},
+                        required: []
+                    }
+                },
+                {
+                    name: "query_database",
+                    description: "Ejecuta una consulta SQL en la base de datos PostgreSQL y retorna los resultados. Si hay un error, recibirás el mensaje de error detallado para corregir tu consulta.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            query: {
+                                type: "string",
+                                description: "La consulta SQL a ejecutar (SELECT, etc.)"
+                            }
+                        },
+                        required: ["query"]
+                    }
                 }
-            },
-            {
-                name: "query_database",
-                description: "Ejecuta una consulta SQL en la base de datos PostgreSQL. USA SOLO las columnas que existen en el esquema obtenido con get_database_schema. Si recibes un error, analiza el mensaje de error y corrige la consulta.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        sql: {
-                            type: "string",
-                            description: "La consulta SQL a ejecutar. Debe usar SOLO columnas que existan en el esquema."
-                        }
-                    },
-                    required: ["sql"]
-                }
-            }
-        ];
+            ];
 
-        // ============================================================
-        // 🔧 TOOL EXECUTION FUNCTION
-        // ============================================================
-        const executeTool = async (toolName, toolArgs) => {
-            logger.info(`🔧 Executing tool: ${toolName}`);
-            logger.info(`📥 Tool args: ${JSON.stringify(toolArgs)}`);
+            // ============================================================
+            // 🤖 AGENT LOOP - No limit, self-correcting
+            // ============================================================
+            const conversationHistory = [];
+            let iteration = 0;
+            const MAX_SAFETY_ITERATIONS = 50; // Safety limit to prevent infinite loops
 
-            try {
-                if (toolName === "get_database_schema") {
-                    const schema = await this.getDatabaseSchema();
-                    const result = JSON.stringify(schema.schema, null, 2);
-                    logger.info(`✅ Schema retrieved (${result.length} chars)`);
-                    return { success: true, result };
-                }
+            // System message for the agent
+            const systemMessage = new SystemMessage(`Eres un agente de base de datos inteligente con acceso a herramientas MCP.
 
-                if (toolName === "query_database") {
-                    let sql = toolArgs.sql || toolArgs.query || "";
-                    
-                    // Clean SQL
-                    sql = sql.trim().replace(/;$/, '');
-                    
-                    logger.info(`📊 Executing SQL: ${sql}`);
-                    
-                    const result = await this.supabase.executeRawSQL(sql);
-                    const resultStr = JSON.stringify(result, null, 2);
-                    
-                    logger.info(`✅ Query successful! Returned ${result?.length || 0} rows`);
-                    return { 
-                        success: true, 
-                        result: resultStr,
-                        rowCount: result?.length || 0
-                    };
-                }
+**TU OBJETIVO:**
+Responder preguntas del usuario consultando la base de datos usando las herramientas disponibles.
 
-                return { success: false, error: `Unknown tool: ${toolName}` };
-            } catch (error) {
-                logger.error(`❌ Tool ${toolName} failed: ${error.message}`);
-                return { 
-                    success: false, 
-                    error: error.message,
-                    hint: this.getErrorHint(error.message)
-                };
-            }
-        };
+**HERRAMIENTAS DISPONIBLES:**
+1. \`get_database_schema\` - Obtiene el esquema de la base de datos (tablas y columnas)
+2. \`query_database\` - Ejecuta consultas SQL
 
-        // ============================================================
-        // 🔄 AGENT LOOP - NO LIMIT ON RETRIES
-        // The LLM continues until it gets a successful result
-        // ============================================================
-        const messages = [
-            new SystemMessage(`Eres un agente de base de datos. Tu ÚNICA función es ejecutar herramientas para consultar la base de datos.
+**FLUJO DE TRABAJO:**
+1. SIEMPRE usa \`get_database_schema\` primero si no conoces la estructura
+2. Analiza el esquema para identificar tablas y columnas correctas
+3. Usa \`query_database\` para ejecutar consultas SQL
+4. Si hay un error, LEE EL ERROR DETALLADAMENTE y corrige tu consulta
+5. Puedes hacer múltiples consultas para obtener toda la información necesaria
+6. Cuando tengas suficiente información, presenta un resumen claro al usuario
 
-⚠️ REGLA ABSOLUTA: NUNCA respondas con texto sin antes haber usado las herramientas. 
-⚠️ SIEMPRE debes llamar a una herramienta en cada turno hasta tener la respuesta final.
+**REGLAS IMPORTANTES:**
+- NO inventes columnas o tablas - usa SOLO las del esquema
+- Si una consulta falla, analiza el error y corrige
+- Puedes hacer consultas exploratorias (ej: SELECT * FROM tabla LIMIT 5)
+- Presenta los resultados en formato claro (tablas markdown para listas)
 
-PROCESO OBLIGATORIO (NO PUEDES SALTARTE NINGÚN PASO):
-1. PRIMERO: Llama a get_database_schema (OBLIGATORIO - no puedes hacer consultas sin esto)
-2. SEGUNDO: Analiza el esquema para identificar tablas y columnas correctas
-3. TERCERO: Llama a query_database con SQL válido
-4. Si hay error: Lee el mensaje, corrige, y llama query_database de nuevo
-5. SOLO cuando tengas datos: Presenta los resultados
+**FORMATO DE TOOL CALLS:**
+Para llamar una herramienta, responde EXACTAMENTE con este formato JSON:
+\`\`\`json
+{"tool": "nombre_herramienta", "arguments": {"param": "valor"}}
+\`\`\`
 
-CRÍTICO:
-- USA las herramientas inmediatamente. No expliques qué vas a hacer.
-- NUNCA digas "voy a consultar" - simplemente HAZLO llamando la herramienta
-- NUNCA inventes columnas. Usa SOLO las del esquema
-- Si ves error de columna, busca alternativas en el esquema (username en vez de usuario, etc.)
+Cuando tengas la respuesta final, NO uses tool calls, simplemente responde al usuario con el análisis.`);
 
-Ahora, ejecuta get_database_schema para comenzar.`),
-            new HumanMessage(query)
-        ];
+            conversationHistory.push(systemMessage);
+            conversationHistory.push(new HumanMessage(query));
 
-        let iteration = 0;
-        const MAX_ITERATIONS = 50; // Safety limit to prevent infinite loops
+            while (iteration < MAX_SAFETY_ITERATIONS) {
+                iteration++;
+                logger.info(`🔄 Agent iteration ${iteration}`);
 
-        while (iteration < MAX_ITERATIONS) {
-            iteration++;
-            logger.info(`\n🔄 === AGENT ITERATION ${iteration} ===`);
+                // Get LLM response
+                const response = await this.llmService.generateResponse(conversationHistory, mcpTools);
+                const responseContent = response.content || "";
 
-            try {
-                // Call LLM with tools
-                const response = await this.llmService.generateResponse(messages, tools);
+                logger.info(`📝 LLM Response (iteration ${iteration}):`, responseContent.substring(0, 500));
 
-                // Check if LLM wants to call a tool
-                if (response.tool_calls && response.tool_calls.length > 0) {
-                    logger.info(`🔧 LLM requested ${response.tool_calls.length} tool call(s)`);
-                    
-                    // Add LLM's response to history
-                    messages.push(new AIMessage({
-                        content: response.content || "",
-                        tool_calls: response.tool_calls
-                    }));
+                // Check if there are tool calls in the response
+                const toolCall = this.extractToolCall(responseContent);
 
-                    // Execute each tool call
-                    for (const toolCall of response.tool_calls) {
-                        const toolName = toolCall.name;
-                        const toolArgs = toolCall.args || {};
-                        const toolCallId = toolCall.id;
+                if (toolCall) {
+                    logger.info(`🛠️ Tool call detected: ${toolCall.tool}`);
+                    logger.info(`📥 Tool arguments:`, JSON.stringify(toolCall.arguments, null, 2));
 
-                        logger.info(`🔧 Tool call: ${toolName} (id: ${toolCallId})`);
+                    // Execute the tool
+                    let toolResult;
+                    try {
+                        toolResult = await this.executeMCPTool(toolCall.tool, toolCall.arguments);
+                        logger.info(`✅ Tool ${toolCall.tool} executed successfully`);
+                        
+                        // Log result summary
+                        const resultSummary = typeof toolResult === 'string' 
+                            ? toolResult.substring(0, 1000) 
+                            : JSON.stringify(toolResult, null, 2).substring(0, 1000);
+                        logger.info(`📤 Tool result:`, resultSummary);
 
-                        // Execute the tool
-                        const toolResult = await executeTool(toolName, toolArgs);
-
-                        // Build tool result message
-                        let toolResultContent;
-                        if (toolResult.success) {
-                            toolResultContent = toolResult.result;
-                        } else {
-                            // Include detailed error for self-correction
-                            toolResultContent = `ERROR: ${toolResult.error}\n\nHINT: ${toolResult.hint || 'Revisa el esquema y usa solo columnas que existan.'}`;
-                        }
-
-                        // Add tool result to messages
-                        messages.push(new ToolMessage({
-                            content: toolResultContent,
-                            tool_call_id: toolCallId
-                        }));
-
-                        logger.info(`📤 Tool result added to conversation`);
+                    } catch (toolError) {
+                        logger.error(`❌ Tool ${toolCall.tool} failed:`, toolError.message);
+                        toolResult = {
+                            error: true,
+                            message: toolError.message,
+                            details: `Error ejecutando ${toolCall.tool}: ${toolError.message}. Por favor analiza el error y corrige tu consulta.`
+                        };
                     }
 
-                    // Continue loop - LLM will process tool results
-                    continue;
-                }
+                    // Add the assistant's tool call and the tool result to history
+                    conversationHistory.push(new AIMessage(responseContent));
+                    
+                    // Format tool result for the LLM
+                    const toolResultMessage = new HumanMessage(
+                        `**Resultado de ${toolCall.tool}:**\n\`\`\`json\n${JSON.stringify(toolResult, null, 2)}\n\`\`\`\n\nAnaliza este resultado y continúa con tu tarea. Si hay un error, corrige tu consulta. Si tienes suficiente información, presenta la respuesta final al usuario.`
+                    );
+                    conversationHistory.push(toolResultMessage);
 
-                // LLM didn't call a tool - check if this is a valid final response
-                const finalResponse = response.content || "";
-                
-                // If we're in the first few iterations and LLM isn't using tools, force it
-                if (iteration <= 3 && !finalResponse.includes('|')) {
-                    // LLM is probably explaining instead of acting - force tool use
-                    logger.warn(`⚠️ LLM not using tools on iteration ${iteration}. Forcing tool use...`);
-                    messages.push(new AIMessage({ content: finalResponse }));
-                    messages.push(new HumanMessage(`NO EXPLIQUES. USA LA HERRAMIENTA get_database_schema AHORA MISMO. Llama a la función, no escribas texto.`));
-                    continue;
-                }
-                
-                if (finalResponse.trim()) {
+                } else {
+                    // No tool call - this is the final response
                     logger.info(`✅ Agent completed after ${iteration} iterations`);
-                    return finalResponse;
-                }
-
-                // Empty response - prompt LLM to continue
-                logger.warn("⚠️ Empty response from LLM, prompting to continue...");
-                messages.push(new HumanMessage("Ejecuta la herramienta get_database_schema ahora. No escribas texto, usa la función."));
-
-            } catch (error) {
-                logger.error(`❌ Iteration ${iteration} error: ${error.message}`);
-                
-                // Add error context to help LLM recover
-                messages.push(new HumanMessage(`Ocurrió un error: ${error.message}. Por favor intenta de nuevo con una estrategia diferente.`));
-                
-                // Continue trying
-                if (iteration >= MAX_ITERATIONS) {
-                    return `No se pudo completar la consulta después de ${iteration} intentos. Último error: ${error.message}`;
+                    
+                    // Clean up any residual code blocks that shouldn't be shown
+                    let finalResponse = responseContent;
+                    finalResponse = finalResponse.replace(/```json\s*\{[\s\S]*?"tool"[\s\S]*?\}\s*```/gi, '');
+                    
+                    return finalResponse.trim() || "No se pudo generar una respuesta. Por favor intenta reformular tu pregunta.";
                 }
             }
-        }
 
-        return `Se alcanzó el límite máximo de iteraciones (${MAX_ITERATIONS}). Por favor reformula tu pregunta.`;
+            // Safety limit reached
+            logger.warn(`⚠️ Agent reached safety limit of ${MAX_SAFETY_ITERATIONS} iterations`);
+            return `El agente alcanzó el límite de iteraciones. Por favor intenta una pregunta más específica.`;
+
+        } catch (error) {
+            logger.error(`❌ Agent error: ${error.message}`, error.stack);
+            return `Error procesando la consulta: ${error.message}\n\nIntenta reformular tu pregunta.`;
+        }
     }
 
     /**
-     * Get helpful hint based on error message
+     * Extract tool call from LLM response
+     * Looks for JSON blocks with tool calls
+     */
+    extractToolCall(responseContent) {
+        if (!responseContent) return null;
+
+        // Try to find JSON tool call in code block
+        const jsonBlockMatch = responseContent.match(/```json\s*\n?([\s\S]*?)\n?```/);
+        if (jsonBlockMatch) {
+            try {
+                const parsed = JSON.parse(jsonBlockMatch[1].trim());
+                if (parsed.tool) {
+                    return {
+                        tool: parsed.tool,
+                        arguments: parsed.arguments || {}
+                    };
+                }
+            } catch (e) {
+                logger.warn(`Failed to parse JSON tool call: ${e.message}`);
+            }
+        }
+
+        // Try to find inline JSON tool call
+        const inlineMatch = responseContent.match(/\{"tool"\s*:\s*"([^"]+)"[^}]*\}/);
+        if (inlineMatch) {
+            try {
+                const parsed = JSON.parse(inlineMatch[0]);
+                if (parsed.tool) {
+                    return {
+                        tool: parsed.tool,
+                        arguments: parsed.arguments || {}
+                    };
+                }
+            } catch (e) {
+                logger.warn(`Failed to parse inline tool call: ${e.message}`);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Execute an MCP tool
+     */
+    async executeMCPTool(toolName, args) {
+        logger.info(`🔧 Executing MCP tool: ${toolName}`);
+
+        switch (toolName) {
+            case 'get_database_schema':
+                const schema = await this.getDatabaseSchema();
+                return schema;
+
+            case 'query_database':
+                if (!args.query) {
+                    throw new Error("El parámetro 'query' es requerido para query_database");
+                }
+                
+                logger.info(`📊 Executing SQL: ${args.query}`);
+                
+                try {
+                    const result = await this.supabase.executeRawSQL(args.query);
+                    return {
+                        success: true,
+                        query: args.query,
+                        results: result,
+                        rowCount: result?.length || 0
+                    };
+                } catch (sqlError) {
+                    // Return detailed error for self-correction
+                    return {
+                        success: false,
+                        query: args.query,
+                        error: sqlError.message,
+                        errorType: this.classifyError(sqlError.message),
+                        hint: this.getErrorHint(sqlError.message)
+                    };
+                }
+
+            default:
+                throw new Error(`Herramienta desconocida: ${toolName}`);
+        }
+    }
+
+    /**
+     * Get helpful hint for SQL errors
      */
     getErrorHint(errorMessage) {
-        const msg = errorMessage.toLowerCase();
+        const lower = errorMessage.toLowerCase();
         
-        if (msg.includes('column') && msg.includes('does not exist')) {
-            const match = errorMessage.match(/column\s+(?:\w+\.)?(\w+)\s+does not exist/i);
-            const badColumn = match ? match[1] : 'desconocida';
-            return `La columna "${badColumn}" no existe. Usa get_database_schema para ver las columnas correctas y usa una que SÍ exista.`;
+        if (lower.includes('column') && lower.includes('does not exist')) {
+            return "La columna no existe. Usa get_database_schema para ver las columnas correctas de la tabla.";
+        }
+        if (lower.includes('relation') && lower.includes('does not exist')) {
+            return "La tabla no existe. Usa get_database_schema para ver las tablas disponibles.";
+        }
+        if (lower.includes('syntax error')) {
+            return "Error de sintaxis SQL. Revisa la estructura de tu consulta.";
+        }
+        if (lower.includes('permission denied')) {
+            return "Sin permisos para esta operación. Intenta solo consultas SELECT.";
+        }
+        if (lower.includes('ambiguous')) {
+            return "Columna ambigua. Especifica la tabla (ej: tabla.columna) en JOINs.";
         }
         
-        if (msg.includes('relation') && msg.includes('does not exist')) {
-            return 'La tabla no existe. Usa get_database_schema para ver las tablas disponibles.';
-        }
-        
-        if (msg.includes('syntax error')) {
-            return 'Error de sintaxis SQL. Revisa la estructura de tu consulta.';
-        }
-        
-        if (msg.includes('permission denied')) {
-            return 'Sin permisos para esta operación. Intenta solo con SELECT.';
-        }
-        
-        return 'Revisa el esquema con get_database_schema y asegúrate de usar solo columnas que existan.';
+        return "Revisa tu consulta SQL y los nombres de tablas/columnas.";
     }
 
     /**
