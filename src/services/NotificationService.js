@@ -713,6 +713,229 @@ class NotificationService {
             return { success: 0, total: 0, error: error.message };
         }
     }
+
+    /**
+     * Notify video owner when someone comments on their video
+     * 
+     * @param {number} videoOwnerId - ID of the video owner (recipient)
+     * @param {number} videoId - ID of the video
+     * @param {number} commentId - ID of the comment
+     * @param {string} commentAuthor - Username of the person who commented
+     * @param {string} commentAuthorAvatar - Avatar URL of the commenter
+     * @param {string} videoThumbnail - Video thumbnail URL
+     * @param {string} commentText - The comment text (optional, for preview)
+     * @returns {Promise<{success: boolean, notificationId?: number}>}
+     */
+    async notifyVideoComment(videoOwnerId, videoId, commentId, commentAuthor, commentAuthorAvatar, videoThumbnail, commentText = '') {
+        console.log(`💬 Notifying user ${videoOwnerId} about comment from ${commentAuthor} on video ${videoId}`);
+        
+        try {
+            // Create metadata with comment_id for navigation
+            const metadata = JSON.stringify({ comment_id: commentId });
+            
+            // Insert notification into database
+            const notification = {
+                user_id: videoOwnerId,
+                sender_username: commentAuthor,
+                sender_avatar_url: commentAuthorAvatar,
+                type: 'comment', // Must match Android Notification.TYPE_COMMENT
+                title: 'Nuevo comentario',
+                message: `${commentAuthor} comentó en tu video${commentText ? ': ' + commentText.substring(0, 50) : ''}`,
+                thumbnail_url: videoThumbnail,
+                related_id: videoId,
+                metadata: metadata, // ⭐ IMPORTANTE: Incluye comment_id para navegación
+                is_read: false,
+                created_at: new Date()
+            };
+
+            const { data, error } = await this.supabaseService.client
+                .from('notifications')
+                .insert(notification)
+                .select()
+                .single();
+
+            if (error) {
+                console.error('❌ Error inserting comment notification:', error.message);
+                throw error;
+            }
+
+            console.log(`✅ Comment notification created with ID: ${data.id}`);
+
+            // Send push notification
+            try {
+                await this.sendBothNotifications(
+                    videoOwnerId,
+                    'Nuevo comentario',
+                    'Nuevo comentario',
+                    notification.message,
+                    {
+                        pushData: {
+                            type: 'comment',
+                            videoId: String(videoId),
+                            commentId: String(commentId)
+                        }
+                    }
+                );
+            } catch (pushError) {
+                console.warn('⚠️ Failed to send push notification for comment:', pushError.message);
+            }
+
+            return { success: true, notificationId: data.id };
+
+        } catch (error) {
+            console.error('❌ Error in notifyVideoComment:', error.message);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Notify comment author when someone likes their comment
+     * 
+     * @param {number} commentOwnerId - ID of the comment owner (recipient)
+     * @param {number} videoId - ID of the video
+     * @param {number} commentId - ID of the liked comment
+     * @param {string} likerUsername - Username of the person who liked
+     * @param {string} likerAvatar - Avatar URL of the person who liked
+     * @param {string} videoThumbnail - Video thumbnail URL
+     * @returns {Promise<{success: boolean, notificationId?: number}>}
+     */
+    async notifyCommentLike(commentOwnerId, videoId, commentId, likerUsername, likerAvatar, videoThumbnail) {
+        console.log(`❤️ Notifying user ${commentOwnerId} about like from ${likerUsername} on comment ${commentId}`);
+        
+        try {
+            // Create metadata with comment_id for navigation
+            const metadata = JSON.stringify({ comment_id: commentId });
+            
+            // Insert notification into database
+            const notification = {
+                user_id: commentOwnerId,
+                sender_username: likerUsername,
+                sender_avatar_url: likerAvatar,
+                type: 'like', // Must match Android Notification.TYPE_LIKE
+                title: 'Le gusta tu comentario',
+                message: `A ${likerUsername} le gustó tu comentario`,
+                thumbnail_url: videoThumbnail,
+                related_id: videoId,
+                metadata: metadata, // ⭐ IMPORTANTE: Incluye comment_id para navegación
+                is_read: false,
+                created_at: new Date()
+            };
+
+            const { data, error } = await this.supabaseService.client
+                .from('notifications')
+                .insert(notification)
+                .select()
+                .single();
+
+            if (error) {
+                console.error('❌ Error inserting like notification:', error.message);
+                throw error;
+            }
+
+            console.log(`✅ Like notification created with ID: ${data.id}`);
+
+            // Send push notification
+            try {
+                await this.sendBothNotifications(
+                    commentOwnerId,
+                    'Le gusta tu comentario',
+                    'Le gusta tu comentario',
+                    notification.message,
+                    {
+                        pushData: {
+                            type: 'like',
+                            videoId: String(videoId),
+                            commentId: String(commentId)
+                        }
+                    }
+                );
+            } catch (pushError) {
+                console.warn('⚠️ Failed to send push notification for like:', pushError.message);
+            }
+
+            return { success: true, notificationId: data.id };
+
+        } catch (error) {
+            console.error('❌ Error in notifyCommentLike:', error.message);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Notify comment author when someone replies to their comment
+     * 
+     * @param {number} parentCommentOwnerId - ID of the parent comment owner (recipient)
+     * @param {number} videoId - ID of the video
+     * @param {number} parentCommentId - ID of the parent comment
+     * @param {number} replyCommentId - ID of the reply comment
+     * @param {string} replyAuthor - Username of the person who replied
+     * @param {string} replyAuthorAvatar - Avatar URL of the replier
+     * @param {string} videoThumbnail - Video thumbnail URL
+     * @param {string} replyText - The reply text (optional, for preview)
+     * @returns {Promise<{success: boolean, notificationId?: number}>}
+     */
+    async notifyCommentReply(parentCommentOwnerId, videoId, parentCommentId, replyCommentId, replyAuthor, replyAuthorAvatar, videoThumbnail, replyText = '') {
+        console.log(`↩️ Notifying user ${parentCommentOwnerId} about reply from ${replyAuthor} to comment ${parentCommentId}`);
+        
+        try {
+            // Create metadata with comment_id pointing to the reply for navigation
+            const metadata = JSON.stringify({ comment_id: replyCommentId, parent_comment_id: parentCommentId });
+            
+            // Insert notification into database
+            const notification = {
+                user_id: parentCommentOwnerId,
+                sender_username: replyAuthor,
+                sender_avatar_url: replyAuthorAvatar,
+                type: 'comment', // Use 'comment' type for replies as well
+                title: 'Respuesta a tu comentario',
+                message: `${replyAuthor} respondió a tu comentario${replyText ? ': ' + replyText.substring(0, 50) : ''}`,
+                thumbnail_url: videoThumbnail,
+                related_id: videoId,
+                metadata: metadata, // ⭐ IMPORTANTE: Incluye comment_id de la respuesta
+                is_read: false,
+                created_at: new Date()
+            };
+
+            const { data, error } = await this.supabaseService.client
+                .from('notifications')
+                .insert(notification)
+                .select()
+                .single();
+
+            if (error) {
+                console.error('❌ Error inserting reply notification:', error.message);
+                throw error;
+            }
+
+            console.log(`✅ Reply notification created with ID: ${data.id}`);
+
+            // Send push notification
+            try {
+                await this.sendBothNotifications(
+                    parentCommentOwnerId,
+                    'Respuesta a tu comentario',
+                    'Respuesta a tu comentario',
+                    notification.message,
+                    {
+                        pushData: {
+                            type: 'comment',
+                            videoId: String(videoId),
+                            commentId: String(replyCommentId),
+                            parentCommentId: String(parentCommentId)
+                        }
+                    }
+                );
+            } catch (pushError) {
+                console.warn('⚠️ Failed to send push notification for reply:', pushError.message);
+            }
+
+            return { success: true, notificationId: data.id };
+
+        } catch (error) {
+            console.error('❌ Error in notifyCommentReply:', error.message);
+            return { success: false, error: error.message };
+        }
+    }
 }
 
 // Export singleton instance getter and class
