@@ -765,41 +765,11 @@ Lo siento, solo puedo responder preguntas relacionadas con la **base de datos de
 Por favor, reformula tu pregunta para que esté relacionada con la base de datos.`;
                 }
 
-                // Check if query requires actual data retrieval or just schema info
-                const requiresData = this.detectIfQueryRequiresData(query);
-
-                if (!requiresData) {
-                    // Query is database-related but doesn't need data (e.g., "¿Qué tablas hay?", "¿Qué columnas tiene usuarios?")
-                    logger.info("📊 Query is schema-related, responding with schema context...");
-                    const messages = [
-                        new SystemMessage(`Eres un asistente especializado EXCLUSIVAMENTE en la base de datos de YisusCompany.
-
-🚫 **REGLAS CRÍTICAS:**
-1. SOLO responde preguntas relacionadas con la base de datos
-2. USA ÚNICAMENTE la información del esquema proporcionado abajo
-3. NUNCA inventes tablas, columnas o datos que no existan en el esquema
-4. Si la pregunta no tiene relación con la BD, indícalo amablemente
-5. SIEMPRE verifica que la información esté en el esquema antes de mencionarla
-
-**ESQUEMA DE LA BASE DE DATOS (FUENTE DE VERDAD):**
-${schemaText}
-
-**INSTRUCCIONES:**
-1. Responde SIEMPRE en español
-2. Basa TODAS tus respuestas en el esquema proporcionado arriba
-3. Si te preguntan sobre tablas: lista SOLO las que aparecen en el esquema
-4. Si te preguntan sobre columnas: lista SOLO las que existen en esa tabla según el esquema
-5. NO inventes tablas o columnas que no existan en el esquema
-6. Si la pregunta no es sobre la base de datos, indica que solo puedes ayudar con temas de BD
-7. Cuando describas relaciones, VERIFICA que las foreign keys existan en el esquema`),
-                        new HumanMessage(query)
-                    ];
-                    const response = await this.llmService.generateResponse(messages, []);
-                    return response.content || "Lo siento, no pude generar una respuesta.";
-                }
-
-                // Schema already loaded above - no need to fetch again
-                logger.info("📊 Query requires data - proceeding with SQL generation...");
+                // 🚨 CRITICAL CHANGE: ALWAYS generate and execute SQL queries
+                // NEVER respond with just schema info - always query the database
+                logger.info("📊 ALWAYS executing SQL query - no schema-only responses allowed");
+                
+                // Schema already loaded above - proceed directly to SQL generation
 
                 // STEP 2: Generate SQL (with retry logic for errors)
                 // PERSISTENCE MODE: Will try many times before giving up
@@ -823,9 +793,20 @@ ${schemaText}
                         
                         // First attempt - clean prompt with strict rules
                         sqlGenMessages = [
-                            new SystemMessage(`Genera una consulta PostgreSQL usando EXCLUSIVAMENTE este esquema:
+                            new SystemMessage(`🔴 **OBLIGATORIO: SIEMPRE GENERA SQL - NUNCA SOLO DESCRIBAS EL ESQUEMA**
+
+Genera una consulta PostgreSQL usando EXCLUSIVAMENTE este esquema:
 
 ${schemaText}
+
+🚨 **REGLA FUNDAMENTAL:**
+- PARA TODO tipo de pregunta (incluso "¿qué tablas hay?", "¿cuántos usuarios hay?", "¿qué columnas tiene X?") DEBES generar SQL
+- NUNCA respondas solo describiendo el esquema - SIEMPRE ejecuta una consulta real
+- Ejemplos de SQL obligatorias:
+  * "¿Qué tablas hay?" → SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
+  * "¿Cuántos usuarios hay?" → SELECT COUNT(*) as total FROM usuarios
+  * "¿Qué columnas tiene usuarios?" → SELECT column_name FROM information_schema.columns WHERE table_name = 'usuarios'
+  * "Dame los usuarios" → SELECT * FROM usuarios LIMIT 100
 
 🚫 **REGLAS CRÍTICAS - CUMPLIMIENTO OBLIGATORIO:**
 1. USA SOLAMENTE columnas que existan en el esquema anterior
@@ -836,6 +817,7 @@ ${schemaText}
 6. Para consultas de LISTA (dame usuarios, lista de cursos, etc.), selecciona TODAS las columnas relevantes
 7. VERIFICA dos veces que cada columna mencionada existe en la tabla correspondiente
 8. Si tienes dudas sobre una columna, NO la uses - elige otra que SEPAS que existe
+9. 🔴 INCLUSO para preguntas sobre metadatos del esquema, genera SQL usando information_schema
 
 ${isBIQuery ? `\n🎯 **CONSULTA DE BUSINESS INTELLIGENCE DETECTADA:**
 Esta es una consulta analítica/estratégica. Genera SQL que retorne datos completos y útiles.
