@@ -6088,10 +6088,13 @@ function getLocalIPAddress() {
 // Store active SSE connections for MCP
 const mcpSseConnections = new Map();
 
-// Cleanup stale MCP SSE sessions every 5 minutes
+// Store pending responses for session recovery (in case SSE reconnects)
+const mcpPendingResponses = new Map();
+
+// Cleanup stale MCP SSE sessions every 2 minutes (faster cleanup)
 setInterval(() => {
     const now = Date.now();
-    const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+    const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes (reduced from 10)
     let cleanedCount = 0;
     
     for (const [sessionId, conn] of mcpSseConnections.entries()) {
@@ -6100,6 +6103,7 @@ setInterval(() => {
         
         if (isStale || isConnectionDead) {
             mcpSseConnections.delete(sessionId);
+            mcpPendingResponses.delete(sessionId); // Also cleanup pending responses
             cleanedCount++;
             console.log(`🧹 Cleaned stale MCP session: ${sessionId} (stale: ${isStale}, dead: ${isConnectionDead})`);
         }
@@ -6108,7 +6112,7 @@ setInterval(() => {
     if (cleanedCount > 0) {
         console.log(`🧹 MCP Session cleanup: removed ${cleanedCount} sessions, ${mcpSseConnections.size} active`);
     }
-}, 5 * 60 * 1000);
+}, 2 * 60 * 1000); // Check every 2 minutes
 
 /**
  * 🔌 MCP SSE Endpoint - Server-Sent Events for VS Code MCP clients
@@ -6177,13 +6181,13 @@ app.get('/mcp/sse', (req, res) => {
     console.log(`   Endpoint URL: ${endpointUrl}`);
     console.log(`   Total active sessions: ${mcpSseConnections.size}`);
 
-    // Send ping every 15 seconds to keep connection alive (Railway has ~5 min timeout)
+    // Send ping every 10 seconds to keep connection alive (Railway timeout is ~100s)
     const pingInterval = setInterval(() => {
         try {
             const conn = mcpSseConnections.get(sessionId);
             if (conn && !res.writableEnded && res.writable) {
                 // SSE comment for keep-alive (starts with colon)
-                res.write(`: keep-alive ${Date.now()}\n\n`);
+                res.write(`: ping ${Date.now()}\n\n`);
                 conn.lastActivity = Date.now();
             } else {
                 console.log(`🔌 SSE Connection no longer writable: ${sessionId}`);
@@ -6195,7 +6199,7 @@ app.get('/mcp/sse', (req, res) => {
             clearInterval(pingInterval);
             mcpSseConnections.delete(sessionId);
         }
-    }, 15000);
+    }, 10000); // Reduced from 15s to 10s
 
     // Handle connection errors
     res.on('error', (err) => {
@@ -6276,30 +6280,40 @@ app.get('/mcp/session/:sessionId', (req, res) => {
  * - VS Code sends POST requests to this endpoint
  * - We MUST send responses back through the SSE connection (not HTTP body)
  * - HTTP response should be 202 Accepted (empty body)
+ * 
+ * FALLBACK: If SSE connection is lost, return response via HTTP body
  */
 app.post('/mcp/message', async(req, res) => {
     const { sessionId } = req.query;
     const { method, params, id } = req.body;
 
     console.log(`🔌 MCP Message: ${method} (session: ${sessionId || 'none'}, id: ${id})`);
+    console.log(`   Active sessions: ${mcpSseConnections.size}, Session exists: ${mcpSseConnections.has(sessionId)}`);
 
-    // Get SSE connection - REQUIRED for SSE mode
+    // Get SSE connection
     let sseConn = mcpSseConnections.get(sessionId);
     
-    if (!sseConn) {
-        console.error(`❌ No SSE connection found for session: ${sessionId}`);
-        // Return error as HTTP response since we can't use SSE
-        return res.status(400).json({ 
-            jsonrpc: '2.0', 
-            id, 
-            error: { code: -32000, message: `Session not found: ${sessionId}. Please reconnect to /mcp/sse` } 
-        });
-    }
+    // IMPROVED: If session not found, try to process anyway and return via HTTP
+    // This allows the MCP to work even if SSE connection was lost
+    const useHttpFallback = !sseConn || sseConn.response?.writableEnded || !sseConn.response?.writable;
     
-    sseConn.lastActivity = Date.now();
+    if (useHttpFallback) {
+        console.warn(`⚠️ SSE connection unavailable for session: ${sessionId}. Using HTTP fallback.`);
+        
+        // If session doesn't exist at all, we still try to handle the request
+        // but log a more detailed message
+        if (!sseConn) {
+            console.log(`   Hint: Session might have expired or been cleaned up. Active sessions: ${[...mcpSseConnections.keys()].slice(0, 3).join(', ')}...`);
+        }
+    } else {
+        sseConn.lastActivity = Date.now();
+    }
     
     // Helper function to send response via SSE
     const sendSSEResponse = (response) => {
+        if (useHttpFallback) {
+            return false; // Force HTTP fallback
+        }
         try {
             if (sseConn.response && sseConn.response.writable && !sseConn.response.writableEnded) {
                 // MCP SSE format: just "data: <json>\n\n" (no event type for responses)
