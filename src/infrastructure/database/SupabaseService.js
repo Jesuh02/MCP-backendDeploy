@@ -617,6 +617,171 @@ CREATE TABLE public.videos (
         }
     }
 
+    // ============================================================
+    // VIDEO CRUD OPERATIONS
+    // ============================================================
+
+    /**
+     * Insert a new video record into the videos table
+     * @param {Object} videoData - Video data to insert
+     * @returns {Object} - Inserted video with generated ID
+     */
+    async insertVideo(videoData) {
+        try {
+            const {
+                title,
+                description,
+                videoUriString,
+                localFilePath,
+                timestamp,
+                isPaid,
+                thumbnailUri,
+                price,
+                remoteId,
+                courseId
+            } = videoData;
+
+            // Validate required fields
+            if (!title) {
+                throw new Error('Video title is required');
+            }
+
+            // Build insert payload (snake_case for Postgres)
+            const insertPayload = {
+                title,
+                description: description || null,
+                video_uri_string: videoUriString || null,
+                local_file_path: localFilePath || null,
+                timestamp: timestamp || Date.now(),
+                is_paid: isPaid || false,
+                thumbnail_uri: thumbnailUri || null,
+                price: price || null,
+                remote_id: remoteId || null,
+                course_id: courseId || null
+            };
+
+            logger.info(`📹 [SupabaseService] Inserting video: ${title}`);
+            logger.info(`   Payload: ${JSON.stringify(insertPayload)}`);
+
+            const { data, error } = await this.client
+                .from('videos')
+                .insert(insertPayload)
+                .select()
+                .single();
+
+            if (error) {
+                // Handle duplicate key gracefully
+                if (error.code === '23505') {
+                    logger.warn(`⚠️ Video already exists (duplicate key): ${title}`);
+                    // Try to fetch existing video
+                    const existing = await this.fetchVideoByTitleAndCourse(title, courseId);
+                    if (existing) {
+                        return existing;
+                    }
+                }
+                logger.error(`❌ [SupabaseService] Insert video error:`, error);
+                throw error;
+            }
+
+            logger.info(`✅ [SupabaseService] Video inserted successfully: ID=${data.id}`);
+            return data;
+        } catch (error) {
+            logger.error('❌ [SupabaseService] insertVideo failed:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Fetch video by title and course_id (for duplicate detection)
+     * @param {string} title - Video title
+     * @param {number|null} courseId - Course ID (optional)
+     * @returns {Object|null} - Video record or null
+     */
+    async fetchVideoByTitleAndCourse(title, courseId = null) {
+        try {
+            let query = this.client
+                .from('videos')
+                .select('*')
+                .eq('title', title);
+
+            if (courseId !== null && courseId !== undefined) {
+                query = query.eq('course_id', courseId);
+            }
+
+            const { data, error } = await query.limit(1).single();
+
+            if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
+                throw error;
+            }
+
+            return data || null;
+        } catch (error) {
+            logger.error('❌ [SupabaseService] fetchVideoByTitleAndCourse failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Update an existing video record
+     * @param {number} videoId - Video ID to update
+     * @param {Object} updateData - Fields to update
+     * @returns {Object} - Updated video record
+     */
+    async updateVideo(videoId, updateData) {
+        try {
+            // Convert camelCase to snake_case
+            const updatePayload = {};
+            if (updateData.title !== undefined) updatePayload.title = updateData.title;
+            if (updateData.description !== undefined) updatePayload.description = updateData.description;
+            if (updateData.videoUriString !== undefined) updatePayload.video_uri_string = updateData.videoUriString;
+            if (updateData.localFilePath !== undefined) updatePayload.local_file_path = updateData.localFilePath;
+            if (updateData.isPaid !== undefined) updatePayload.is_paid = updateData.isPaid;
+            if (updateData.thumbnailUri !== undefined) updatePayload.thumbnail_uri = updateData.thumbnailUri;
+            if (updateData.price !== undefined) updatePayload.price = updateData.price;
+            if (updateData.remoteId !== undefined) updatePayload.remote_id = updateData.remoteId;
+            if (updateData.courseId !== undefined) updatePayload.course_id = updateData.courseId;
+
+            const { data, error } = await this.client
+                .from('videos')
+                .update(updatePayload)
+                .eq('id', videoId)
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            logger.info(`✅ [SupabaseService] Video updated: ID=${videoId}`);
+            return data;
+        } catch (error) {
+            logger.error('❌ [SupabaseService] updateVideo failed:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Fetch video by ID
+     * @param {number} videoId - Video ID
+     * @returns {Object|null} - Video record or null
+     */
+    async fetchVideoById(videoId) {
+        try {
+            const { data, error } = await this.client
+                .from('videos')
+                .select('*')
+                .eq('id', videoId)
+                .single();
+
+            if (error && error.code !== 'PGRST116') {
+                throw error;
+            }
+
+            return data || null;
+        } catch (error) {
+            logger.error('❌ [SupabaseService] fetchVideoById failed:', error);
+            return null;
+        }
+    }
+
     /**
      * Health check for Supabase connection
      */

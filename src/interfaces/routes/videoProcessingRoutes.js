@@ -514,4 +514,156 @@ router.get('/qualities', (req, res) => {
     });
 });
 
+// ============================================================
+// VIDEO DATABASE OPERATIONS (Delegated from Mobile Client)
+// ============================================================
+
+/**
+ * POST /video/insert
+ * Insert a video record into Supabase (delegated from mobile client)
+ * This endpoint centralizes database operations on the backend
+ */
+router.post('/insert', async (req, res) => {
+    try {
+        const {
+            title,
+            description,
+            videoUriString,
+            localFilePath,
+            timestamp,
+            isPaid,
+            thumbnailUri,
+            price,
+            remoteId,
+            courseId
+        } = req.body;
+
+        // Validate required fields
+        if (!title) {
+            return res.status(400).json({
+                success: false,
+                error: 'title is required'
+            });
+        }
+
+        console.log(`📹 [Backend] Inserting video: ${title}`);
+        console.log(`   videoUriString: ${videoUriString}`);
+        console.log(`   thumbnailUri: ${thumbnailUri}`);
+        console.log(`   courseId: ${courseId}`);
+        console.log(`   remoteId: ${remoteId}`);
+
+        // Import SupabaseService dynamically to avoid circular dependencies
+        const { SupabaseService } = await import('../../infrastructure/database/SupabaseService.js');
+        const supabaseService = SupabaseService.getInstance();
+
+        const insertedVideo = await supabaseService.insertVideo({
+            title,
+            description,
+            videoUriString,
+            localFilePath,
+            timestamp: timestamp || Date.now(),
+            isPaid: isPaid || false,
+            thumbnailUri,
+            price,
+            remoteId,
+            courseId
+        });
+
+        console.log(`✅ [Backend] Video inserted: ID=${insertedVideo.id}`);
+
+        res.json({
+            success: true,
+            video: insertedVideo,
+            videoId: insertedVideo.id
+        });
+
+    } catch (error) {
+        console.error('❌ [Backend] Video insert error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * PUT /video/update/:videoId
+ * Update an existing video record
+ */
+router.put('/update/:videoId', async (req, res) => {
+    try {
+        const { videoId } = req.params;
+        const updateData = req.body;
+
+        if (!videoId) {
+            return res.status(400).json({
+                success: false,
+                error: 'videoId is required'
+            });
+        }
+
+        console.log(`📝 [Backend] Updating video: ID=${videoId}`);
+
+        const { SupabaseService } = await import('../../infrastructure/database/SupabaseService.js');
+        const supabaseService = SupabaseService.getInstance();
+
+        const updatedVideo = await supabaseService.updateVideo(parseInt(videoId), updateData);
+
+        console.log(`✅ [Backend] Video updated: ID=${videoId}`);
+
+        res.json({
+            success: true,
+            video: updatedVideo
+        });
+
+    } catch (error) {
+        console.error('❌ [Backend] Video update error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /video/fetch/:videoId
+ * Fetch a video by ID from Supabase
+ */
+router.get('/fetch/:videoId', async (req, res) => {
+    try {
+        const { videoId } = req.params;
+
+        if (!videoId) {
+            return res.status(400).json({
+                success: false,
+                error: 'videoId is required'
+            });
+        }
+
+        const { SupabaseService } = await import('../../infrastructure/database/SupabaseService.js');
+        const supabaseService = SupabaseService.getInstance();
+
+        const video = await supabaseService.fetchVideoById(parseInt(videoId));
+
+        if (!video) {
+            return res.status(404).json({
+                success: false,
+                error: 'Video not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            video
+        });
+
+    } catch (error) {
+        console.error('❌ [Backend] Video fetch error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 export default router;
