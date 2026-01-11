@@ -442,6 +442,37 @@ router.post('/process-url', async(req, res) => {
 });
 
 /**
+ * GET /video/stream-info
+ * Get streaming information (HLS or direct) for a video
+ */
+router.get('/stream-info', async (req, res) => {
+    try {
+        const { username, videoId, directUrl } = req.query;
+
+        if (!username || !videoId) {
+            return res.status(400).json({
+                success: false,
+                error: 'username and videoId are required'
+            });
+        }
+
+        const r2Service = R2StorageService.getInstance();
+        const streamingInfo = await r2Service.getVideoStreamingInfo(username, videoId, directUrl);
+
+        res.json({
+            success: true,
+            streamingInfo
+        });
+    } catch (error) {
+        console.error('❌ Stream info error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * GET /video/status/:jobId
  * Get processing job status
  */
