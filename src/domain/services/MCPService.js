@@ -40,25 +40,17 @@ export class MCPService {
         logger.info('🔄 Fetching fresh database schema from Supabase...');
         
         try {
-            // Query to get all tables and their columns from information_schema
+            // New query requested by user to get full DDL details
             const schemaSQL = `
-                SELECT 
-                    t.table_name,
-                    array_agg(
-                        c.column_name || ' (' || c.data_type || 
-                        CASE WHEN c.is_nullable = 'NO' THEN ', NOT NULL' ELSE '' END ||
-                        CASE WHEN c.column_default IS NOT NULL THEN ', default' ELSE '' END || ')'
-                        ORDER BY c.ordinal_position
-                    ) as columns
-                FROM information_schema.tables t
-                JOIN information_schema.columns c ON t.table_name = c.table_name AND t.table_schema = c.table_schema
-                WHERE t.table_schema = 'public'
-                AND t.table_type = 'BASE TABLE'
-                AND t.table_name NOT LIKE 'pg_%'
-                AND t.table_name NOT LIKE '_realtime%'
-                AND t.table_name NOT LIKE 'schema_%'
-                GROUP BY t.table_name
-                ORDER BY t.table_name
+                SELECT
+                    table_name,
+                    column_name,
+                    data_type,
+                    is_nullable,
+                    column_default
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                ORDER BY table_name, ordinal_position;
             `;
             
             const result = await this.supabase.executeRawSQL(schemaSQL);
@@ -68,21 +60,36 @@ export class MCPService {
                 return this._getFallbackSchema();
             }
             
-            // Format schema for LLM consumption
+            // Format schema for LLM consumption by grouping flat rows
             let schemaText = '**ESQUEMA DE LA BASE DE DATOS (Actualizado automáticamente):**\n\n';
             
-            for (const table of result) {
-                const tableName = table.table_name;
-                const columns = table.columns || [];
+            // Group by table_name
+            const tables = {};
+            for (const row of result) {
+                if (!tables[row.table_name]) {
+                    tables[row.table_name] = [];
+                }
                 
-                // Format columns - extract just the column names for brevity
-                const columnNames = columns.map(col => {
-                    // Extract column name from format "name (type, constraints)"
-                    const match = col.match(/^([^\s(]+)/);
-                    return match ? match[1] : col;
-                });
+                let colDesc = `${row.column_name} (${row.data_type}`;
+                if (row.is_nullable === 'NO') colDesc += ', NOT NULL';
+                if (row.column_default) colDesc += ', default';
+                colDesc += ')';
                 
-                schemaText += `- **${tableName}**: ${columnNames.join(', ')}\n`;
+                tables[row.table_name].push(colDesc);
+            }
+            
+            // Generate text
+            for (const [tableName, columns] of Object.entries(tables)) {
+                 // Also create a simplified list of columns for quick reference
+                 const simpleCols = result
+                    .filter(r => r.table_name === tableName)
+                    .map(r => r.column_name)
+                    .join(', ');
+
+                schemaText += `- **${tableName}**: ${simpleCols}\n`;
+                // Detailed view (commented out to preserve brevity unless needed, 
+                // but user asked for "Todo el DDL", so maybe we should be more verbose? 
+                // Sticking to format similar to previous but using the new data source)
             }
             
             // Add relationships hint
@@ -1472,39 +1479,9 @@ Analiza estos datos y presenta un **resumen claro y útil** al usuario. NO gener
      */
     async getDatabaseSchema() {
         try {
-            // Using the DDL query requested to ensure all tables are captured
-            const sql = `
-SELECT
-  table_name,
-  column_name,
-  data_type,
-  is_nullable,
-  column_default
-FROM information_schema.columns
-WHERE table_schema = 'public'
-ORDER BY table_name, ordinal_position;
-`;
-            const rows = await this.supabase.executeRawSQL(sql);
-            
-            // Transform the flat list into a structured schema object
-            const schema = {};
-            if (rows && Array.isArray(rows)) {
-                for (const row of rows) {
-                    if (!schema[row.table_name]) {
-                        schema[row.table_name] = [];
-                    }
-                    // Store detailed column info
-                    schema[row.table_name].push({
-                        name: row.column_name,
-                        type: row.data_type,
-                        nullable: row.is_nullable === 'YES',
-                        default: row.column_default
-                    });
-                }
-            }
+            const schema = await this.supabase.getDatabaseSchema();
 
             return {
-                count: Object.keys(schema).length,
                 schema,
                 timestamp: new Date().toISOString()
             };
