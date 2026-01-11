@@ -1472,9 +1472,39 @@ Analiza estos datos y presenta un **resumen claro y útil** al usuario. NO gener
      */
     async getDatabaseSchema() {
         try {
-            const schema = await this.supabase.getDatabaseSchema();
+            // Using the DDL query requested to ensure all tables are captured
+            const sql = `
+SELECT
+  table_name,
+  column_name,
+  data_type,
+  is_nullable,
+  column_default
+FROM information_schema.columns
+WHERE table_schema = 'public'
+ORDER BY table_name, ordinal_position;
+`;
+            const rows = await this.supabase.executeRawSQL(sql);
+            
+            // Transform the flat list into a structured schema object
+            const schema = {};
+            if (rows && Array.isArray(rows)) {
+                for (const row of rows) {
+                    if (!schema[row.table_name]) {
+                        schema[row.table_name] = [];
+                    }
+                    // Store detailed column info
+                    schema[row.table_name].push({
+                        name: row.column_name,
+                        type: row.data_type,
+                        nullable: row.is_nullable === 'YES',
+                        default: row.column_default
+                    });
+                }
+            }
 
             return {
+                count: Object.keys(schema).length,
                 schema,
                 timestamp: new Date().toISOString()
             };
