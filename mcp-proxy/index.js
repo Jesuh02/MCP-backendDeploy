@@ -2,6 +2,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  ListToolsRequestSchema,
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import EventSource from "eventsource";
 
 // Polyfill EventSource for Node.js
@@ -56,7 +64,7 @@ async function main() {
 
     // 3. Set up Proxy Handlers
     // Forward Tools
-    server.setRequestHandler("tools/list", async () => {
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
         try {
             return await client.listTools();
         } catch (e) {
@@ -65,7 +73,7 @@ async function main() {
         }
     });
 
-    server.setRequestHandler("tools/call", async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
         try {
             return await client.callTool({
                 name: request.params.name,
@@ -78,7 +86,7 @@ async function main() {
     });
 
     // Forward Resources
-    server.setRequestHandler("resources/list", async () => {
+    server.setRequestHandler(ListResourcesRequestSchema, async () => {
         try {
             return await client.listResources();
         } catch (e) {
@@ -87,7 +95,7 @@ async function main() {
         }
     });
 
-    server.setRequestHandler("resources/read", async (request) => {
+    server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
         try {
             return await client.readResource(request.params);
         } catch (e) {
@@ -97,7 +105,7 @@ async function main() {
     });
 
     // Forward Prompts
-    server.setRequestHandler("prompts/list", async () => {
+    server.setRequestHandler(ListPromptsRequestSchema, async () => {
         try {
             return await client.listPrompts();
         } catch (e) {
@@ -106,7 +114,7 @@ async function main() {
         }
     });
 
-    server.setRequestHandler("prompts/get", async (request) => {
+    server.setRequestHandler(GetPromptRequestSchema, async (request) => {
         try {
             return await client.getPrompt(request.params);
         } catch (e) {
