@@ -1013,13 +1013,30 @@ ${toolResult.suggestion || ''}
 
 **RECUERDA:** Revisa el ESQUEMA en el mensaje inicial para ver las columnas correctas.`;
                     } else {
-                        // Success case
+                        // Success case WITH AUTO-FEEDBACK FOR EMPTY RESULTS
+                        let emptyHint = "";
+                        const results = toolResult.results || [];
+                        
+                        if (toolCall.tool === 'query_database' && Array.isArray(results) && results.length === 0) {
+                            emptyHint = `\n\n**⚠️ IMPORTANTE (FEEDBACK AUTOMÁTICO):**
+La consulta se ejecutó pero devolvió 0 resultados. Antes de rendirte, VERIFICA:
+1. **Mayúsculas/Minúsculas:** PostgreSQL distingue mayúsculas. \`status = 'approved'\` NO es lo mismo que \`'APPROVED'\`.
+2. **Espacios:** \`'Approved '\` vs \`'Approved'\`.
+3. **JOINs:** ¿Estás usando INNER JOIN y perdiendo filas? Prueba LEFT JOIN.
+
+**ACCIÓN SUGERIDA:**
+- Si filtraste por texto, intenta ver los valores reales primero:
+  \`SELECT DISTINCT columna FROM tabla LIMIT 20\`
+- O usa ILIKE para ignorar mayúsculas: \`WHERE column ILIKE 'valor'\`
+- Intenta una consulta más simple para depurar.`;
+                        }
+
                         toolResultText = `**✅ Resultado de ${toolCall.tool}:**
 \`\`\`json
 ${JSON.stringify(toolResult, null, 2)}
-\`\`\`
+\`\`\`${emptyHint}
 
-Analiza estos datos y presenta un **resumen claro y útil** al usuario. NO generes más consultas SQL, presenta la respuesta final.`;
+Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un error, USA EL FEEDBACK para corregir tu consulta (ej. usar ILIKE) y reintenta. Si estás seguro que no hay datos, presenta la respuesta final.`;
                     }
                     
                     const toolResultMessage = new HumanMessage(toolResultText);
