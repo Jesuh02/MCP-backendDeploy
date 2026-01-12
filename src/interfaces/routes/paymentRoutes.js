@@ -160,9 +160,25 @@ router.get('/status/:transactionId', async (req, res) => {
  * GET /sync
  * Manually triggers a reconciliation with Wompi to catch any missing transactions.
  * Useful developer tool or cron job endpoint.
+ * Protected by ADMIN_SECRET environment variable.
  */
 router.get('/sync', async (req, res) => {
     try {
+        // SECURITY: Require authentication for administrative task
+        const adminSecret = process.env.ADMIN_SECRET;
+        const providedSecret = req.headers['x-admin-secret'] || req.query.secret;
+
+        if (!adminSecret) {
+            // Fail secure if not configured
+            console.warn('⚠️ /sync endpoint accessed but ADMIN_SECRET is not set in environment');
+            return res.status(503).json({ success: false, message: 'Administrative endpoint not configured' });
+        }
+
+        if (providedSecret !== adminSecret) {
+            console.warn(`⛔ Unauthorized access attempt to /sync from ${req.ip}`);
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+
         const result = await PaymentService.syncRecentTransactions();
         res.json(result);
     } catch (error) {
