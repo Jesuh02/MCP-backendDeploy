@@ -249,6 +249,94 @@ export class MCPService {
     }
 
     /**
+     * Get optimized context for LLM reinforcement learning
+     * Combines recent history (windowing) with RAG relevant content to prevent token overflow
+     * @param {number} userId - The user ID
+     * @param {number} courseId - The course ID
+     * @param {number} topicId - Optional topic ID to filter history
+     * @param {number} limit - Max number of recent history items to retrieve (default 50)
+     */
+    async getReinforcementContextForLLM(userId, courseId, topicId = null, limit = 50) {
+        try {
+            logger.info(`🧠 Building reinforcement context for User ${userId}, Course ${courseId} (Topic: ${topicId || 'All'}, Limit: ${limit})`);
+
+            // 1. Get recent history (Windowing Pattern) - Server Side Filtering
+            // Instead of client sending full JSON, we query DB directly
+            let query = this.supabase.client
+                .from('reinforcement_question_history')
+                .select('questions, created_at')
+                .eq('user_id', userId)
+                .eq('course_id', courseId);
+
+            // Filter by topic if provided (and valid positive ID)
+            if (topicId && !isNaN(topicId) && Number(topicId) > 0) {
+                query = query.eq('topic_id', topicId);
+            }
+
+            const { data: history, error } = await query
+                .order('created_at', { ascending: false }) // Newest first
+                .limit(limit);
+
+            if (error) throw error;
+
+
+            // 2. Extract and Flatten Questions
+            let recentQuestions = [];
+            if (history && history.length > 0) {
+                history.forEach(record => {
+                    // Handle both string array and object array formats
+                    if (record.questions && Array.isArray(record.questions)) {
+                        record.questions.forEach(q => {
+                            if (typeof q === 'string') {
+                                recentQuestions.push(q);
+                            } else if (q.question) {
+                                recentQuestions.push(q.question);
+                            }
+                        });
+                    }
+                });
+            }
+
+            // 3. Apply semantic density reduction (keep only last N questions total)
+            // Even if we fetched 50 batches, we might have 500 questions. detailed limit.
+            const QUESTION_CAP = 50; 
+            if (recentQuestions.length > QUESTION_CAP) {
+                recentQuestions = recentQuestions.slice(0, QUESTION_CAP);
+            }
+
+            // Reverse to chronological order (Oldest -> Newest) for the LLM to understand flow
+            recentQuestions = recentQuestions.reverse();
+
+            // 4. Format context string
+            let contextString = `\n--- PREVIOUS INTERACTIONS (Last ${recentQuestions.length}) ---\n`;
+            if (recentQuestions.length === 0) {
+                contextString += "(No previous reinforcement history)";
+            } else {
+                recentQuestions.forEach((q, i) => {
+                    contextString += `Q${i + 1}: ${q}\n`;
+                });
+            }
+            contextString += "\n------------------------------------------\n";
+
+            logger.info(`✅ Context built: ${recentQuestions.length} questions included.`);
+
+            return {
+                contextString,
+                questionCount: recentQuestions.length,
+                questions: recentQuestions
+            };
+
+        } catch (error) {
+            logger.error(`❌ Error getting reinforcement context: ${error.message}`);
+            return { 
+                contextString: "\n[System Error: Could not retrieve history]\n", 
+                questionCount: 0,
+                questions: [] 
+            };
+        }
+    }
+
+    /**
      * Extract key concepts from a question
      * Identifies programming terms, technical concepts, and topic keywords
      */

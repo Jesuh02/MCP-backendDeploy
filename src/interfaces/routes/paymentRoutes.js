@@ -204,7 +204,15 @@ router.get('/redirect', async (req, res) => {
         // The webhook will update the status when Wompi confirms
         const status = 'pending';
         const message = 'Tu pago está siendo procesado. Recibirás una confirmación pronto.';
-        const reference = queryReference || transactionId || '';
+        
+        // XSS PREVENTION: Sanitize inputs
+        const rawReference = queryReference || transactionId || '';
+        // 1. Sanitize for HTML output
+        const displayReference = String(rawReference).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[m]);
+        
+        // 2. Encode for URL parameters
+        const safeRef = encodeURIComponent(rawReference);
+        const safeStatus = encodeURIComponent(status);
         
         // Return a simple HTML page that redirects to the app
         const html = `
@@ -273,15 +281,15 @@ router.get('/redirect', async (req, res) => {
         </div>
         <h1>${status === 'successful' || status === 'APPROVED' ? '¡Pago Exitoso!' : status === 'pending' ? 'Procesando Pago' : 'Pago No Completado'}</h1>
         <p>${message}</p>
-        <a href="yisuscompany://payment-complete?status=${status}&reference=${reference}" class="btn">
+        <a href="yisuscompany://payment-complete?status=${safeStatus}&reference=${safeRef}" class="btn">
             Volver a la App
         </a>
-        <p class="ref">Ref: ${reference || transactionId || 'N/A'}</p>
+        <p class="ref">Ref: ${displayReference || 'N/A'}</p>
     </div>
     <script>
         // Try to open the app automatically after 2 seconds
         setTimeout(() => {
-            window.location.href = 'yisuscompany://payment-complete?status=${status}&reference=${reference}';
+            window.location.href = 'yisuscompany://payment-complete?status=${safeStatus}&reference=${safeRef}';
         }, 2000);
     </script>
 </body>

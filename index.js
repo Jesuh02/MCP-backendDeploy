@@ -4071,7 +4071,8 @@ app.post('/procesar-prompt', async(req, res) => {
         // Recibe prompt del usuario, url de ollama y contexto del archivo (descripcionTarea)
         // 🔥 NUEVO: También recibimos submissionId, taskId, fileUri para poder obtener el contenido desde R2/Supabase
         // 🔥 NUEVO: jsonContent para archivos adjuntos del curso, model para especificar modelo LLM
-        let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent, userId, submissionId, taskId, fileUri, studentId, jsonContent, model } = req.body;
+        let { prompt, ollamaUrl, descripcionTarea, taskDescription, fileContent, userId, submissionId, taskId, fileUri, studentId, jsonContent, model, courseId, topicId } = req.body;
+
 
         // ============================================================
         // 🔥 NUEVO: OBTENER CONTENIDO DESDE R2/SUPABASE SI NO VIENE EN EL REQUEST
@@ -4272,6 +4273,26 @@ app.post('/procesar-prompt', async(req, res) => {
         // Si viene jsonContent con archivos del curso, descargarlos y añadir al prompt
         // ============================================================
         let augmentedPrompt = prompt;
+
+        // 🔥 OPTIMIZATION: Inject Reinforcement History (Server-Side)
+        // Detects if this is a reinforcement quiz request (has user, course, and specific intent)
+        // Fetches history directly from DB to avoid client-side token overflow
+        if (userId && courseId && prompt && (prompt.toLowerCase().includes("preguntas") || prompt.toLowerCase().includes("questions"))) {
+             try {
+                if (mcpService) {
+                    console.log(`🧠 [Reinforcement] Fetching history context for User ${userId}, Course ${courseId}, Topic ${topicId || 'All'}`);
+                    const historyCtx = await mcpService.getReinforcementContextForLLM(userId, courseId, topicId, 50);
+                    if (historyCtx && historyCtx.contextString) {
+                         // Prepend history to prompt so it's established as context
+                         augmentedPrompt = historyCtx.contextString + "\n\n" + augmentedPrompt;
+                         console.log(`✅ [Reinforcement] Injected ${historyCtx.questionCount} history items into prompt`);
+                    }
+                }
+             } catch (histError) {
+                 console.warn(`⚠️ [Reinforcement] Failed to inject history: ${histError.message}`);
+             }
+        }
+
         if (jsonContent) {
             try {
                 const files = JSON.parse(jsonContent);
