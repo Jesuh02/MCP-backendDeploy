@@ -4477,7 +4477,7 @@ FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta f
     {
         "question": "Texto de la pregunta",
         "options": ["opción A","opción B","opción C","opción D"],
-        "correctIndex": 0, // índice de la opción correcta
+        "correctIndex": [aleatorio: 0, 1, 2, o 3], // índice de la opción correcta. IMPORTANTE: Distribuye la respuesta correcta aleatoriamente, NO uses siempre 0.
         "difficulty": "easy|medium|hard",  
     }
 ]
@@ -4492,7 +4492,7 @@ INPUT MESSAGES: [
         "content": ""\n  }\n]`;
 
                                 // Prepend header so the model sees the requirement first
-                                augmentedPrompt = llmRequestHeaderFull + "\n\n" + augmentedPrompt;
+                                augmentedPrompt = llmRequestHeaderFull + "\n\n" + llmRequestHeader + "\n\n" + augmentedPrompt;
 
                 // ============================================================
         // 🔍 VALIDACIÓN DE CONTENIDO VACÍO O SIN CONTENIDO REAL
@@ -5249,22 +5249,56 @@ Recuerda: Diferencias solo gramaticales NO son suficientes.`;
                         console.log('⚠️ WARNING: DeepSeek devolvió respuesta VACÍA para reinforcement');
                         respuestaFinal = 'Lo siento, no pude generar preguntas de refuerzo en este momento. Intenta nuevamente.';
                     } else {
-                        // Try to parse and save the generated questions
+                        // Try to parse, SHUFFLE, and save the generated questions
                         try {
                             const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
-                            const generatedQuestions = JSON.parse(cleanJson);
+                            // Extract just the array if wrapped in text
+                            const arrayMatch = cleanJson.match(/\[[\s\S]*\]/);
+                            const jsonToParse = arrayMatch ? arrayMatch[0] : cleanJson;
+                            
+                            let generatedQuestions = JSON.parse(jsonToParse);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
-                                // Save to history
+                                
+                                // 🔀 SHUFFLE LOGIC: Randomize options and update correctIndex
+                                generatedQuestions = generatedQuestions.map(q => {
+                                    if (q.options && Array.isArray(q.options) && typeof q.correctIndex === 'number') {
+                                        // Get the correct answer string before shuffling
+                                        const correctAnswer = q.options[q.correctIndex];
+                                        
+                                        // Create a shuffled copy of options
+                                        const shuffledOptions = [...q.options];
+                                        for (let i = shuffledOptions.length - 1; i > 0; i--) {
+                                            const j = Math.floor(Math.random() * (i + 1));
+                                            [shuffledOptions[i], shuffledOptions[j]] = [shuffledOptions[j], shuffledOptions[i]];
+                                        }
+                                        
+                                        // Find new index of the correct answer
+                                        const newCorrectIndex = shuffledOptions.indexOf(correctAnswer);
+                                        
+                                        return {
+                                            ...q,
+                                            options: shuffledOptions,
+                                            correctIndex: newCorrectIndex
+                                        };
+                                    }
+                                    return q;
+                                });
+                                console.log('🔀 Shuffled options for ' + generatedQuestions.length + ' questions.');
+
+                                // Save to history (shuffled version)
                                 if (mcpService) {
                                      await mcpService.saveReinforcementHistory(userId, courseId, generatedQuestions);
                                 } else {
                                      await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
                                 }
                                 console.log(`✅ Generated and saved ${generatedQuestions.length} reinforcement questions`);
+                                
+                                // Update the final response string with the shuffled JSON
+                                respuestaFinal = JSON.stringify(generatedQuestions);
                             }
                         } catch (parseError) {
-                            console.warn('⚠️ Could not parse generated questions for history:', parseError.message);
+                            console.warn('⚠️ Could not parse/shuffle generated questions:', parseError.message);
                         }
                     }
 
