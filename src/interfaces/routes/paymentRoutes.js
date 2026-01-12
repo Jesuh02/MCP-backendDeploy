@@ -3,6 +3,7 @@
  * Express routes for Payment handling.
  */
 import express from 'express';
+import crypto from 'crypto';
 import PaymentService from '../../services/PaymentService.js';
 
 const router = express.Router();
@@ -93,6 +94,36 @@ router.post('/initiate', async (req, res) => {
  */
 router.post('/webhook', async (req, res) => {
     try {
+        // SECURITY: Verify Wompi Integrity Signature
+        const body = req.body;
+        // Normalize payload: handle wrapped event (Format 1) vs direct event (Format 2/Standard)
+        const eventData = (body.event && body.event.data) ? body.event : body;
+        
+        const { data, signature, timestamp } = eventData;
+        
+        // If it looks like a transaction event, strictly enforce signature verification
+        if (data && data.transaction) {
+            if (!signature || !signature.checksum || !timestamp) {
+                console.warn('⚠️ Webhook missing integrity signature or timestamp');
+                return res.status(400).json({ success: false, message: 'Missing integrity signature' });
+            }
+
+            const secret = PaymentService.wompiEventSecret; 
+            if (!secret) {
+                console.error('❌ Critical: PaymentService.wompiEventSecret is missing');
+                return res.status(500).json({ success: false, message: 'Server configuration error' });
+            }
+
+            const tx = data.transaction;
+            const signatureString = `${tx.id}${tx.status}${tx.amount_in_cents}${timestamp}${secret}`;
+            const calculatedChecksum = crypto.createHash('sha256').update(signatureString).digest('hex');
+            
+            if (calculatedChecksum !== signature.checksum) {
+                console.error(`❌ Webhook Signature Mismatch! Calculated: ${calculatedChecksum}, Received: ${signature.checksum}`);
+                return res.status(400).json({ success: false, message: 'Invalid integrity signature' });
+            }
+        }
+
         const result = await PaymentService.handleWebhook(req.body);
         
         // Wompi expects a proper JSON response
