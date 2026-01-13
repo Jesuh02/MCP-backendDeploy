@@ -1,0 +1,365 @@
+%%{init: {'theme': 'default', 'themeVariables': { 'background': '#ffffff', 'mainBkg': '#ffffff', 'clusterBkg': '#f9f9f9', 'fontSize': '11px'}}}%%
+flowchart TB
+    %% ═══════════════════════════════════════════════════════════════════
+    %% ESTILOS DE COMPONENTES
+    %% ═══════════════════════════════════════════════════════════════════
+    classDef ui fill:#e3f2fd,stroke:#1976d2,color:#000,stroke-width:2.5px
+    classDef vm fill:#f3e5f5,stroke:#7b1fa2,color:#000,stroke-width:2.5px
+    classDef repo fill:#fff3e0,stroke:#f57c00,color:#000,stroke-width:2.5px
+    classDef network fill:#e1f5fe,stroke:#0277bd,color:#000,stroke-width:2.5px
+    classDef service fill:#fce4ec,stroke:#c2185b,color:#000,stroke-width:2.5px
+    classDef util fill:#f1f8e9,stroke:#689f38,color:#000,stroke-width:2.5px
+    classDef routes fill:#fff9c4,stroke:#f57f17,color:#000,stroke-width:2.5px
+    classDef middleware fill:#ffecb3,stroke:#ff6f00,color:#000,stroke-width:2.5px
+    classDef domain fill:#e8f5e9,stroke:#388e3c,color:#000,stroke-width:2.5px
+    classDef infra fill:#f3e5f5,stroke:#7b1fa2,color:#000,stroke-width:2.5px
+    classDef external fill:#ffccbc,stroke:#d84315,color:#000,stroke-width:2.5px
+    classDef comm fill:#b2dfdb,stroke:#00695c,color:#000,stroke-width:2.5px
+    
+    %% ═══════════════════════════════════════════════════════════════════
+    %% FRONTEND - APLICACIÓN ANDROID (Kotlin)
+    %% ═══════════════════════════════════════════════════════════════════
+    subgraph FrontendApp["📱 FRONTEND - Aplicación Android CourseV (Kotlin/MVVM)"]
+        direction TB
+        
+        subgraph UILayer["🎨 CAPA DE PRESENTACIÓN (UI Layer)"]
+            direction TB
+            MainActivity[MainActivity<br/>🏠 NavHostFragment]:::ui
+            
+            subgraph AgentFragments["🤖 Fragmentos de Agentes IA"]
+                direction LR
+                RLFragment[ReinforcementLearningFragment<br/>🎓 Agente Tutor]:::ui
+                ChatFragment[ChatBotFragment<br/>📝 Agente Evaluador]:::ui
+                DBQueryFragment[DatabaseQueryFragment<br/>📊 Agente Analista]:::ui
+            end
+            
+            subgraph CourseFragments["📚 Fragmentos de Cursos"]
+                direction LR
+                CourseDetail[CourseDetailFragment]:::ui
+                VideoHome[VideoHomeFragment]:::ui
+                CourseTopic[CourseTopicFragment]:::ui
+                TaskSubmit[TaskSubmissionsFragment]:::ui
+            end
+            
+            subgraph UserFragments["👤 Fragmentos de Usuario"]
+                direction LR
+                Login[LoginFragment]:::ui
+                Register[RegisterFragment]:::ui
+                Profile[ProfileFragment]:::ui
+                EditProfile[EditProfileFragment]:::ui
+            end
+            
+            subgraph AdminFragments["🔐 Fragmentos Admin"]
+                direction LR
+                AdminDash[AdminDashboardFragment]:::ui
+                StudentProg[StudentProgressFragment]:::ui
+            end
+        end
+        
+        subgraph ViewModelLayer["🧠 CAPA DE LÓGICA DE NEGOCIO (ViewModel Layer)"]
+            direction LR
+            AuthViewModel[AuthViewModel<br/>🔑 Autenticación]:::vm
+            CourseViewModel[CourseViewModel<br/>📚 Cursos]:::vm
+            VideoViewModel[VideoViewModel<br/>🎥 Videos]:::vm
+            SelectTopicVM[SelectTopicViewModel<br/>📑 Selección]:::vm
+            PersonaViewModel[PersonaViewModel<br/>👥 Perfiles]:::vm
+        end
+        
+        subgraph RepositoryLayer["📦 CAPA DE REPOSITORIOS (Repository Pattern)"]
+            direction LR
+            CourseRepo[CourseRepository<br/>📚 Datos Cursos]:::repo
+            UserRepo[UserRepository<br/>👤 Datos Usuario]:::repo
+            TaskRepo[TaskRepository<br/>📝 Datos Tareas]:::repo
+            VideoRepo[VideoRepository<br/>🎥 Datos Videos]:::repo
+        end
+        
+        subgraph NetworkLayer["🌐 CAPA DE RED (Network Layer)"]
+            direction LR
+            MCPApiService[MCPApiService<br/>🔌 Cliente MCP]:::network
+            SupabaseClient[SupabaseClient<br/>💾 Cliente DB]:::network
+            RetrofitInstance[Retrofit + OkHttp<br/>🌍 Cliente HTTP]:::network
+        end
+        
+        subgraph ServiceLayer["🔧 CAPA DE SERVICIOS (Service Layer)"]
+            direction LR
+            TTSService[TTSService<br/>🔊 Text-to-Speech]:::service
+            NotificationService[NotificationService<br/>🔔 Notificaciones]:::service
+            BackgroundSync[BackgroundSyncService<br/>🔄 Sincronización]:::service
+        end
+        
+        subgraph UtilLayer["🛠️ CAPA DE UTILIDADES (Util Layer)"]
+            direction LR
+            SessionManager[SessionManager<br/>🔐 Sesión]:::util
+            VideoManager[VideoManager<br/>🎬 Gestión Video]:::util
+            NetworkUtils[NetworkUtils<br/>📡 Red]:::util
+            PermissionHelper[PermissionHelper<br/>✅ Permisos]:::util
+        end
+        
+        subgraph WorkLayer["⚙️ CAPA DE TAREAS EN SEGUNDO PLANO (Work Manager)"]
+            direction LR
+            LLMWorker[LLMBackgroundWorker<br/>🤖 Procesamiento IA]:::service
+            BGTaskManager[BackgroundTaskManager<br/>⏱️ Gestor Tareas]:::service
+        end
+    end
+    
+    %% ═══════════════════════════════════════════════════════════════════
+    %% CAPA DE COMUNICACIÓN
+    %% ═══════════════════════════════════════════════════════════════════
+    subgraph Communication["🌐 PROTOCOLO DE COMUNICACIÓN"]
+        direction LR
+        HTTPSProtocol[HTTPS/REST<br/>🔒 Encriptado TLS 1.3]:::comm
+        WebSocketProtocol[WebSocket<br/>⚡ Realtime Bidireccional]:::comm
+        JSONFormat[JSON Payload<br/>📄 Formato Datos]:::comm
+        MultipartForm[Multipart/Form-Data<br/>📎 Subida Archivos]:::comm
+    end
+    
+    %% ═══════════════════════════════════════════════════════════════════
+    %% BACKEND - SERVIDOR NODE.JS MCP
+    %% ═══════════════════════════════════════════════════════════════════
+    subgraph BackendServer["☁️ BACKEND - Servidor MCP Node.js (Express/Clean Architecture)"]
+        direction TB
+        
+        subgraph RoutesLayer["🚪 CAPA DE RUTAS HTTP (Entry Points)"]
+            direction TB
+            
+            subgraph CoreRoutes["Rutas Principales"]
+                MCPRoutes[MCPRoutes.js<br/>📡 /api/mcp/*]:::routes
+                RAGRoutes[RAGRoutes.js<br/>📚 /api/rag/*]:::routes
+                LLMRoutes[llmRoutes.js<br/>🤖 /api/llm/*]:::routes
+            end
+            
+            subgraph AppRoutes["Rutas de Aplicación"]
+                HealthRoutes[HealthRoutes.js<br/>💚 /api/health]:::routes
+                NotifRoutes[notificationRoutes.js<br/>🔔 /api/notifications/*]:::routes
+                TTSRoutes[ttsRoutes.js<br/>🔊 /api/tts/*]:::routes
+                VideoRoutes[videoProcessingRoutes.js<br/>🎥 /api/videos/*]:::routes
+                PaymentRoutes[paymentRoutes.js<br/>💳 /api/payments/*]:::routes
+                ExcelRoutes[excelRoutes.js<br/>📊 /api/excel/*]:::routes
+            end
+        end
+        
+        subgraph MiddlewareLayer["🛡️ CAPA DE MIDDLEWARE (Seguridad y Control)"]
+            direction LR
+            SecurityMW[SecurityMiddleware.js<br/>🔐 JWT + CORS]:::middleware
+            RateLimiterMW[RateLimiter.js<br/>⏱️ Rate Limiting]:::middleware
+            RequestLoggerMW[RequestLogger.js<br/>📝 Logging]:::middleware
+            ErrorHandlerMW[ErrorHandler.js<br/>⚠️ Manejo Errores]:::middleware
+        end
+        
+        subgraph DomainLayer["🎯 CAPA DE DOMINIO (Business Logic)"]
+            direction TB
+            
+            subgraph CoreServices["Servicios Core"]
+                MCPService[MCPService.js<br/>🧠 Orquestador MCP]:::domain
+                RAGService[RAGService.js<br/>🔍 Búsqueda Vectorial]:::domain
+                DocumentProcessor[DocumentProcessor.js<br/>📄 Procesamiento Docs]:::domain
+            end
+            
+            subgraph Validators["Validadores"]
+                ValidationSchemas[ValidationSchemas.js<br/>✅ Validación Joi]:::domain
+            end
+        end
+        
+        subgraph AppServicesLayer["⚙️ CAPA DE SERVICIOS DE APLICACIÓN"]
+            direction TB
+            
+            subgraph UserServices["Servicios de Usuario"]
+                UserService[UserService.js<br/>👤 Gestión Usuarios]:::domain
+                NotificationSvc[NotificationService.js<br/>🔔 Notificaciones]:::domain
+            end
+            
+            subgraph MediaServices["Servicios de Media"]
+                TTSSvc[TTSService.js<br/>🔊 Text-to-Speech]:::domain
+                VideoProcessSvc[VideoProcessingService.js<br/>🎥 Procesamiento Video]:::domain
+                R2StorageSvc[R2StorageService.js<br/>☁️ Almacenamiento R2]:::domain
+            end
+            
+            subgraph FinancialServices["Servicios Financieros"]
+                PaymentSvc[PaymentService.js<br/>💳 Pagos]:::domain
+            end
+        end
+        
+        subgraph InfrastructureLayer["🏗️ CAPA DE INFRAESTRUCTURA (Integraciones Externas)"]
+            direction TB
+            
+            subgraph AIInfra["🤖 Infraestructura IA"]
+                LLMService[LLMService.js<br/>🧠 Cliente DeepSeek]:::infra
+                EmbeddingService[EmbeddingService.js<br/>🔢 Generación Embeddings]:::infra
+            end
+            
+            subgraph DatabaseInfra["💾 Infraestructura Base de Datos"]
+                SupabaseService[SupabaseService.js<br/>🗄️ Cliente PostgreSQL]:::infra
+                VectorStore[SupabaseVectorStore.js<br/>📊 pgvector Store]:::infra
+            end
+            
+            subgraph CacheInfra["⚡ Infraestructura Caché"]
+                CacheService[CacheService.js<br/>🔥 Redis Client]:::infra
+            end
+            
+            subgraph LoggingInfra["📋 Infraestructura Logging"]
+                Logger[Logger.js<br/>📝 Sistema Logs]:::infra
+            end
+        end
+    end
+    
+    %% ═══════════════════════════════════════════════════════════════════
+    %% SERVICIOS EXTERNOS
+    %% ═══════════════════════════════════════════════════════════════════
+    subgraph ExternalServices["🌍 SERVICIOS EXTERNOS EN LA NUBE"]
+        direction TB
+        
+        subgraph AIProviders["🤖 Proveedores de IA"]
+            DeepSeekAPI[DeepSeek V3.2 API<br/>🧠 Razonamiento + Embeddings]:::external
+        end
+        
+        subgraph DatabaseProviders["💾 Proveedores de Base de Datos"]
+            SupabaseDB[(Supabase PostgreSQL<br/>🗄️ DB Relacional + pgvector)]:::external
+        end
+        
+        subgraph CacheProviders["⚡ Proveedores de Caché"]
+            RedisCache[(Redis Cache<br/>🔥 Almacenamiento Temporal)]:::external
+        end
+        
+        subgraph StorageProviders["☁️ Proveedores de Almacenamiento"]
+            CloudflareR2[Cloudflare R2<br/>📦 Object Storage]:::external
+        end
+        
+        subgraph NotificationProviders["🔔 Proveedores de Notificaciones"]
+            FirebaseFCM[Firebase FCM<br/>📲 Push Notifications]:::external
+        end
+    end
+    
+    %% ═══════════════════════════════════════════════════════════════════
+    %% CONEXIONES FRONTEND INTERNO
+    %% ═══════════════════════════════════════════════════════════════════
+    
+    %% UI -> ViewModel
+    RLFragment --> AuthViewModel
+    ChatFragment --> CourseViewModel
+    DBQueryFragment --> CourseViewModel
+    Login --> AuthViewModel
+    Register --> AuthViewModel
+    Profile --> PersonaViewModel
+    EditProfile --> PersonaViewModel
+    CourseDetail --> CourseViewModel
+    VideoHome --> VideoViewModel
+    CourseTopic --> SelectTopicVM
+    TaskSubmit --> CourseViewModel
+    AdminDash --> AuthViewModel
+    StudentProg --> CourseViewModel
+    
+    %% ViewModel -> Repository
+    AuthViewModel --> UserRepo
+    CourseViewModel --> CourseRepo
+    VideoViewModel --> VideoRepo
+    SelectTopicVM --> TaskRepo
+    PersonaViewModel --> UserRepo
+    
+    %% Repository -> Network
+    CourseRepo --> MCPApiService
+    UserRepo --> SupabaseClient
+    TaskRepo --> MCPApiService
+    VideoRepo --> MCPApiService
+    
+    %% Network -> Retrofit
+    MCPApiService --> RetrofitInstance
+    SupabaseClient --> RetrofitInstance
+    
+    %% Services -> UI
+    TTSService -.->|Audio| UILayer
+    NotificationService -.->|Alerts| UILayer
+    BackgroundSync -.->|Sync Status| RepositoryLayer
+    
+    %% Utils -> Layers
+    SessionManager -.->|User Session| ViewModelLayer
+    VideoManager -.->|Video Control| VideoViewModel
+    NetworkUtils -.->|Network Status| RepositoryLayer
+    PermissionHelper -.->|Permissions| UILayer
+    
+    %% Work Manager
+    LLMWorker --> MCPApiService
+    BGTaskManager --> BackgroundSync
+    
+    %% ═══════════════════════════════════════════════════════════════════
+    %% CONEXIONES FRONTEND -> COMUNICACIÓN -> BACKEND
+    %% ═══════════════════════════════════════════════════════════════════
+    
+    RetrofitInstance ==>|POST /api/mcp/generate-questions| HTTPSProtocol
+    RetrofitInstance ==>|POST /api/rag/grade + PDF| MultipartForm
+    RetrofitInstance ==>|POST /api/llm/text-to-sql| HTTPSProtocol
+    RetrofitInstance ==>|POST /api/auth/login| HTTPSProtocol
+    SupabaseClient ==>|Realtime Subscribe| WebSocketProtocol
+    
+    HTTPSProtocol --> MiddlewareLayer
+    WebSocketProtocol --> SupabaseService
+    MultipartForm --> MiddlewareLayer
+    JSONFormat -.->|Formato| HTTPSProtocol
+    
+    %% ═══════════════════════════════════════════════════════════════════
+    %% CONEXIONES BACKEND INTERNO
+    %% ═══════════════════════════════════════════════════════════════════
+    
+    %% Middleware -> Routes
+    MiddlewareLayer --> CoreRoutes
+    MiddlewareLayer --> AppRoutes
+    
+    %% Routes -> Domain Services
+    MCPRoutes --> MCPService
+    RAGRoutes --> RAGService
+    LLMRoutes --> LLMService
+    NotifRoutes --> NotificationSvc
+    TTSRoutes --> TTSSvc
+    VideoRoutes --> VideoProcessSvc
+    PaymentRoutes --> PaymentSvc
+    
+    %% Domain Services -> Infrastructure
+    MCPService --> LLMService
+    MCPService --> CacheService
+    RAGService --> EmbeddingService
+    RAGService --> VectorStore
+    RAGService --> DocumentProcessor
+    DocumentProcessor --> VectorStore
+    
+    UserService --> SupabaseService
+    NotificationSvc --> SupabaseService
+    VideoProcessSvc --> R2StorageSvc
+    
+    %% Validators
+    ValidationSchemas -.->|Valida Schemas| RoutesLayer
+    
+    %% Logging
+    Logger -.->|Logs| MiddlewareLayer
+    Logger -.->|Logs| DomainLayer
+    
+    %% ═══════════════════════════════════════════════════════════════════
+    %% CONEXIONES BACKEND -> SERVICIOS EXTERNOS
+    %% ═══════════════════════════════════════════════════════════════════
+    
+    LLMService ==>|API Key + Streaming| DeepSeekAPI
+    EmbeddingService ==>|Vectorización| DeepSeekAPI
+    SupabaseService ==>|SQL Queries| SupabaseDB
+    VectorStore ==>|pgvector Similarity Search| SupabaseDB
+    CacheService ==>|Redis Protocol| RedisCache
+    R2StorageSvc ==>|S3 Compatible API| CloudflareR2
+    NotificationSvc ==>|FCM API| FirebaseFCM
+    
+    %% ═══════════════════════════════════════════════════════════════════
+    %% FLUJO DE RESPUESTAS (BACKEND -> FRONTEND)
+    %% ═══════════════════════════════════════════════════════════════════
+    
+    DeepSeekAPI -.->|Respuesta IA Stream| LLMService
+    SupabaseDB -.->|Resultados SQL| SupabaseService
+    RedisCache -.->|Datos Cacheados| CacheService
+    CloudflareR2 -.->|URLs Archivos| R2StorageSvc
+    
+    LLMService -.->|JSON Response| MCPRoutes
+    RAGService -.->|Calificación + Feedback| RAGRoutes
+    CoreRoutes -.->|HTTPS Response| MiddlewareLayer
+    MiddlewareLayer -.->|JSON| HTTPSProtocol
+    
+    HTTPSProtocol -.->|Response Body| RetrofitInstance
+    WebSocketProtocol -.->|Realtime Events| SupabaseClient
+    
+    RetrofitInstance -.->|LiveData Update| RepositoryLayer
+    RepositoryLayer -.->|StateFlow Emit| ViewModelLayer
+    ViewModelLayer -.->|UI State| UILayer
