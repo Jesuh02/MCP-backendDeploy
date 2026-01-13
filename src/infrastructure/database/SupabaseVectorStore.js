@@ -21,7 +21,7 @@ export class SupabaseVectorStore extends IVectorStore {
     constructor() {
         super();
         if (SupabaseVectorStore.instance) return SupabaseVectorStore.instance;
-        
+
         this.supabase = SupabaseService.getInstance();
         this.tableName = 'rag_documents';
         this._initialized = false;
@@ -130,9 +130,8 @@ export class SupabaseVectorStore extends IVectorStore {
                 content,
                 embedding: `[${embedding.join(',')}]`, // Format for pgvector
                 metadata: JSON.stringify(metadata),
-                course_id: metadata.courseId || null,
                 topic_id: metadata.topicId || null,
-                task_id: metadata.taskId || null,
+                content_item_id: metadata.contentItemId || null,
                 file_name: metadata.fileName || null,
                 file_type: metadata.fileType || null,
                 chunk_index: metadata.chunkIndex || 0,
@@ -257,14 +256,11 @@ export class SupabaseVectorStore extends IVectorStore {
                 .from(this.tableName)
                 .delete();
 
-            if (filter.courseId) {
-                query = query.eq('course_id', filter.courseId);
-            }
             if (filter.topicId) {
                 query = query.eq('topic_id', filter.topicId);
             }
-            if (filter.taskId) {
-                query = query.eq('task_id', filter.taskId);
+            if (filter.contentItemId) {
+                query = query.eq('content_item_id', filter.contentItemId);
             }
             if (filter.fileName) {
                 query = query.eq('file_name', filter.fileName);
@@ -275,7 +271,7 @@ export class SupabaseVectorStore extends IVectorStore {
             if (error) throw error;
 
             logger.info(`Deleted ${data?.length || 0} documents from vector store`);
-            return data?.length || 0;
+            return data ? .length || 0;
         } catch (error) {
             logger.error('Error deleting documents:', error);
             return 0;
@@ -293,9 +289,8 @@ export class SupabaseVectorStore extends IVectorStore {
                 .from(this.tableName)
                 .select('id', { count: 'exact', head: true });
 
-            if (filter.courseId) query = query.eq('course_id', filter.courseId);
             if (filter.topicId) query = query.eq('topic_id', filter.topicId);
-            if (filter.taskId) query = query.eq('task_id', filter.taskId);
+            if (filter.contentItemId) query = query.eq('content_item_id', filter.contentItemId);
             if (filter.fileName) query = query.eq('file_name', filter.fileName);
 
             const { count, error } = await query;
