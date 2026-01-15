@@ -485,16 +485,31 @@ async function saveReinforcementQuestionHistory(userId, courseId, questions) {
         return await mcpService.saveReinforcementHistory(userId, courseId, questions);
     }
 
-    if (!supabaseService) return;
+    if (!supabaseService || !questions || !questions.length) return;
 
     try {
+        // 🛡️ GUARDRAIL: Verify and enforce explanation presence regarding of MCP availability
+        const validatedQuestions = questions.map(q => {
+            if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 10)) {
+                console.warn(`⚠️ Legacy save: Missing explanation for question. Generating fallback.`);
+                
+                let correctAns = "la respuesta correcta";
+                if (q.options && typeof q.correctIndex === 'number' && q.options[q.correctIndex]) {
+                    correctAns = `"${q.options[q.correctIndex]}"`;
+                }
+                
+                q.explanation = `Respuesta correcta: ${correctAns}. Esta es la opción correcta basada en los conceptos fundamentales del tema.`;
+            }
+            return q;
+        });
+
         // Simple insert for fallback
         await supabaseService.client
             .from('reinforcement_question_history')
             .insert({
                 user_id: userId,
                 course_id: courseId,
-                questions: questions,
+                questions: validatedQuestions,
                 created_at: new Date().toISOString()
             });
     } catch (err) {
