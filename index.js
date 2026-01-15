@@ -311,11 +311,12 @@ try {
  * Robusto parseador JSON para respuestas de LLM malformadas
  * Intenta reparar errores comunes como comas faltantes o sobrantes
  * Y extrae objetos JSON válidos de flujos de texto rotos usando "Soup Parsing"
+ * V3: Ultra-agresivo - Busca TODOS los arrays de options en el texto completo
  */
 function repairReinforcementJson(text) {
     if (!text) return [];
 
-    // console.log("🛠️ Iniciando reparación robusta de JSON...");
+    console.log("🛠️ Iniciando reparación ULTRA-ROBUSTA de JSON V3...");
     
     // 0. Limpieza básica
     let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -323,32 +324,152 @@ function repairReinforcementJson(text) {
     // 1. Intento directo (Happy Path)
     try { 
         const parsed = JSON.parse(clean);
-        // Validar y reparar explanations en el happy path también
         if (Array.isArray(parsed)) {
+             console.log(`✅ JSON.parse exitoso: ${parsed.length} preguntas`);
              return parsed.map(q => {
-                 if (!q.explanation || q.explanation.trim().length < 5) {
+                 if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 5)) {
                       const correctOpt = q.options && q.options[q.correctIndex] ? q.options[q.correctIndex] : 'la opción correcta';
-                      q.explanation = `La respuesta correcta es: "${correctOpt}". Explicación generada automáticamente para asegurar la integridad de los datos.`;
+                      q.explanation = `La respuesta correcta es: "${correctOpt}". Esta explicación se generó automáticamente porque el modelo no proporcionó una.`;
                  }
                  return q;
              });
         }
     } catch (e) {
-        // Falló parseo directo, continuamos
+        console.log("⚠️ JSON.parse estándar falló, activando Soup Parser V3 Ultra...");
     }
-
-    // console.log("⚠️ JSON.parse estándar falló, activando Soup Parser V2...");
 
     const questions = [];
     
-    // Estrategia: "Soup Parser" basado en Regex.
-    // Buscamos patrones de objetos, ignorando la estructura global rota.
-    // Asumimos que cada pregunta tiene al menos un campo "question".
+    // ========================================
+    // ESTRATEGIA V3: Extracción GLOBAL primero
+    // ========================================
+    // 1. Encontrar TODOS los arrays de options en el texto
+    // 2. Encontrar TODAS las preguntas en el texto
+    // 3. Encontrar TODOS los correctIndex en el texto
+    // 4. Emparejarlos por proximidad/orden
     
-    // Regex para capturar el texto de la pregunta
-    // Pattern: "question" : "..."
+    // Función helper para extraer arrays de strings
+    const extractAllOptionsArrays = (str) => {
+        const arrays = [];
+        const regex = /\[\s*"[^"]+"/g; // Busca inicio de array con string
+        let m;
+        while ((m = regex.exec(str)) !== null) {
+            const startIdx = m.index;
+            // Balancear brackets
+            let depth = 0;
+            let end = -1;
+            let inStr = false;
+            for (let i = startIdx; i < str.length; i++) {
+                const c = str[i];
+                if (c === '"' && str[i-1] !== '\\') inStr = !inStr;
+                if (!inStr) {
+                    if (c === '[') depth++;
+                    if (c === ']') { depth--; if (depth === 0) { end = i; break; } }
+                }
+            }
+            if (end > startIdx) {
+                try {
+                    let arrStr = str.substring(startIdx, end + 1).replace(/,\s*]/g, ']');
+                    const arr = JSON.parse(arrStr);
+                    // Solo arrays de 3-6 strings (típico de opciones)
+                    if (Array.isArray(arr) && arr.length >= 3 && arr.length <= 6 && arr.every(x => typeof x === 'string')) {
+                        arrays.push({ index: startIdx, options: arr });
+                    }
+                } catch(e) {}
+            }
+        }
+        return arrays;
+    };
+    
+    // Extraer todas las preguntas (strings después de "question":)
+    const extractAllQuestions = (str) => {
+        const qs = [];
+        const regex = /"question"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+        let m;
+        while ((m = regex.exec(str)) !== null) {
+            qs.push({ index: m.index, text: m[1] });
+        }
+        return qs;
+    };
+    
+    // Extraer todos los correctIndex
+    const extractAllCorrectIndexes = (str) => {
+        const idxs = [];
+        const regex = /"correctIndex"\s*:\s*(\d+)/g;
+        let m;
+        while ((m = regex.exec(str)) !== null) {
+            idxs.push({ index: m.index, value: parseInt(m[1]) });
+        }
+        return idxs;
+    };
+    
+    // Extraer todas las explanations
+    const extractAllExplanations = (str) => {
+        const expls = [];
+        const regex = /"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+        let m;
+        while ((m = regex.exec(str)) !== null) {
+            expls.push({ index: m.index, text: m[1] });
+        }
+        return expls;
+    };
+    
+    const allOptions = extractAllOptionsArrays(clean);
+    const allQuestions = extractAllQuestions(clean);
+    const allCorrectIndexes = extractAllCorrectIndexes(clean);
+    const allExplanations = extractAllExplanations(clean);
+    
+    console.log(`📊 Extracción Global: ${allQuestions.length} questions, ${allOptions.length} options arrays, ${allCorrectIndexes.length} correctIndexes, ${allExplanations.length} explanations`);
+    
+    // Estrategia: Emparejar por orden de aparición
+    // Asumimos que el orden en que aparecen corresponde
+    const numQuestions = Math.min(allQuestions.length, allOptions.length);
+    
+    for (let i = 0; i < numQuestions; i++) {
+        const q = allQuestions[i];
+        const opts = allOptions[i] ? allOptions[i].options : null;
+        
+        if (!q || !opts || opts.length < 2) continue;
+        
+        // Buscar correctIndex más cercano a esta pregunta
+        let cIdx = 0;
+        if (allCorrectIndexes.length > i) {
+            cIdx = allCorrectIndexes[i].value;
+        }
+        if (cIdx >= opts.length || cIdx < 0) cIdx = 0;
+        
+        // Buscar explanation más cercana
+        let expl = "";
+        if (allExplanations.length > i) {
+            expl = allExplanations[i].text;
+        }
+        
+        // GARANTIZAR EXPLANATION (CRÍTICO)
+        if (!expl || expl.trim().length < 5) {
+             const correctOpt = opts[cIdx] || "la opción correcta";
+             expl = `La respuesta correcta es: "${correctOpt}". Explicación generada automáticamente por el sistema de recuperación.`;
+        }
+        
+        questions.push({
+            question: q.text,
+            options: opts,
+            correctIndex: cIdx,
+            difficulty: "medium",
+            explanation: expl
+        });
+    }
+    
+    if (questions.length > 0) {
+        console.log(`✅ Soup Parser V3 recuperó ${questions.length} preguntas con explanations`);
+        return questions;
+    }
+    
+    // ========================================
+    // FALLBACK: Parser V2 (por chunks) si V3 falla
+    // ========================================
+    console.log("⚠️ V3 falló, intentando V2 por chunks...");
+    
     const questionRegex = /"question"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
-    
     let match;
     const matches = [];
     while ((match = questionRegex.exec(clean)) !== null) {
@@ -359,29 +480,16 @@ function repairReinforcementJson(text) {
         const current = matches[i];
         const nextIndex = (i + 1 < matches.length) ? matches[i+1].index : clean.length;
         
-        // Ventana de búsqueda: Aumentada a 3000 chars hacia atrás para capturar options lejanos
         const searchStart = Math.max(0, current.index - 3000); 
-        const searchEnd = Math.min(clean.length, nextIndex + 500); // 500 chars after current question starts
+        const searchEnd = Math.min(clean.length, nextIndex + 500);
         const chunk = clean.substring(searchStart, searchEnd);
         
         try {
-            // 1. Encontrar Options (Array)
             let options = [];
-            
-            // Buscar "options" : [ ... ] cerca de la question
-            // Buscamos la última ocurrencia de "options" antes de la "question" en el chunk?
-            // O la primera después? 
-            // La estructura puede variar. Intentamos buscar "options" en todo el chunk.
-            
-            // Regex para encontrar el inicio del array options
             const optionsMatch = /"options"\s*:\s*\[/.exec(chunk);
             if (optionsMatch) {
-                const arrayStart = optionsMatch.index + optionsMatch[0].length - 1; // Index of '['
-                
-                // Balanceo de brackets manual
-                let depth = 0;
-                let arrayStr = "";
-                let inString = false;
+                const arrayStart = optionsMatch.index + optionsMatch[0].length - 1;
+                let depth = 0, inString = false;
                 for (let j = arrayStart; j < chunk.length; j++) {
                     const char = chunk[j];
                     if (char === '"' && chunk[j-1] !== '\\') inString = !inString;
@@ -390,64 +498,45 @@ function repairReinforcementJson(text) {
                         if (char === ']') {
                             depth--;
                             if (depth === 0) {
-                                arrayStr = chunk.substring(arrayStart, j + 1);
+                                try {
+                                    let fixedArray = chunk.substring(arrayStart, j + 1).replace(/,\s*]/g, ']');
+                                    options = JSON.parse(fixedArray);
+                                } catch(e) {}
                                 break;
                             }
                         }
                     }
                 }
-                if (arrayStr) {
-                     try {
-                          // Fix common syntax errors in array
-                          let fixedArray = arrayStr.replace(/,\s*]/g, ']').replace(/'/g, '"');
-                          options = JSON.parse(fixedArray);
-                     } catch(e) {}
-                }
             }
             
-            // 2. Encontrar CorrectIndex
-            // Buscar correctIndex cerca de la question
+            if (!Array.isArray(options) || options.length < 2) continue;
+            
             const idxMatch = chunk.match(/"correctIndex"\s*:\s*(\d+)/);
             let correctIndex = idxMatch ? parseInt(idxMatch[1]) : 0;
+            if (correctIndex >= options.length || correctIndex < 0) correctIndex = 0;
             
-            // 3. Encontrar Difficulty
-            const diffMatch = chunk.match(/"difficulty"\s*:\s*"([^"]+)"/);
-            const difficulty = diffMatch ? diffMatch[1] : "medium";
-            
-            // 4. Encontrar Explanation
             const explMatch = chunk.match(/"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"/);
             let explanation = explMatch ? explMatch[1] : "";
             
-            // 5. AUTO-GENERAR DATA FALTANTE
-            
-            // Si options falla, fake options? No, mejor descartar.
-            // Pero si tenemos question y no options, quizás podamos recuperar options de otra forma?
-            // Por ahora, strict check en options
-            if (!Array.isArray(options) || options.length < 2) {
-                 continue; 
-            }
-            
-            // Asegurar índice correcto
-            if (correctIndex >= options.length || correctIndex < 0) correctIndex = 0;
-            
-            // GARANTIZAR EXPLANATION (CRÍTICO)
             if (!explanation || explanation.trim().length < 5) {
                  const correctOpt = options[correctIndex] || "la opción correcta";
-                 explanation = `La respuesta correcta es: "${correctOpt}". Explicación generada autom. por el sistema robusto.`;
+                 explanation = `La respuesta correcta es: "${correctOpt}". Explicación generada por recuperación de datos.`;
             }
             
             questions.push({
                 question: current.text,
                 options: options,
                 correctIndex: correctIndex,
-                difficulty: difficulty,
+                difficulty: "medium",
                 explanation: explanation
             });
             
-        } catch (err) {
-            // Error procesando este chunk, saltamos
-        }
+        } catch (err) {}
     }
+    
+    console.log(`📊 Soup Parser V2 recuperó ${questions.length} preguntas`);
+    return questions;
+}
 
     return questions;
 }
