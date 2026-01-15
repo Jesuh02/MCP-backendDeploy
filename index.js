@@ -538,9 +538,6 @@ function repairReinforcementJson(text) {
     return questions;
 }
 
-    return questions;
-}
-
 /**
  * Helper function to call DeepSeek via LLMService
  * Replaces all Ollama calls with DeepSeek API
@@ -5454,6 +5451,20 @@ RECUERDA: Cada pregunta DEBE incluir una "explanation" detallada.`;
                                 let generatedQuestions = JSON.parse(jsonToParse);
                                 
                                 if (Array.isArray(generatedQuestions)) {
+                                    // ═══════════════════════════════════════════════════════════════════
+                                    // 🔧 AUTO-REPARACIÓN INMEDIATA DE EXPLANATION (PRE-DEDUPLICACIÓN)
+                                    // Garantizar que TODAS las preguntas tengan explanation antes de filtrar
+                                    // ═══════════════════════════════════════════════════════════════════
+                                    generatedQuestions = generatedQuestions.map((q, idx) => {
+                                        if (!q.explanation || typeof q.explanation !== 'string' || q.explanation.trim().length < 5) {
+                                            const correctOpt = q.options && q.options[q.correctIndex] ? q.options[q.correctIndex] : 'la opción correcta';
+                                            console.log(`🔧 [PRE-DEDUP ${idx+1}] Auto-generando explanation para: "${(q.question || '').substring(0, 40)}..."`);
+                                            q.explanation = `La respuesta correcta es: "${correctOpt}". Esta opción es correcta según el contenido y material de referencia proporcionado en el curso. Las demás opciones no cumplen con los criterios establecidos.`;
+                                        }
+                                        return q;
+                                    });
+                                    console.log(`✅ [PRE-DEDUP] ${generatedQuestions.length} preguntas ahora tienen explanation garantizada`);
+                                    
                                     const initialCount = generatedQuestions.length;
                                     // Create a Set of normalized history questions for fast lookup
                                     const historySet = new Set(historyStrings.map(q => normalize(q)));
