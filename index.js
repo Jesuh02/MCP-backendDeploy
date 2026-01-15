@@ -490,7 +490,7 @@ async function saveReinforcementQuestionHistory(userId, courseId, questions) {
     try {
         // 🛡️ GUARDRAIL: Verify and enforce explanation presence regarding of MCP availability
         const validatedQuestions = questions.map(q => {
-            if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 10)) {
+            if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 50)) {
                 console.warn(`⚠️ Legacy save: Missing explanation for question. Generating fallback.`);
                 
                 let correctAns = "la respuesta correcta";
@@ -498,7 +498,7 @@ async function saveReinforcementQuestionHistory(userId, courseId, questions) {
                     correctAns = `"${q.options[q.correctIndex]}"`;
                 }
                 
-                q.explanation = `Respuesta correcta: ${correctAns}. Esta es la opción correcta basada en los conceptos fundamentales del tema.`;
+                q.explanation = `La respuesta correcta es: ${correctAns}. Esta opción es correcta según el contenido y material de referencia proporcionado en el curso. Las demás opciones no cumplen con los criterios establecidos en el material educativo.`;
             }
             return q;
         });
