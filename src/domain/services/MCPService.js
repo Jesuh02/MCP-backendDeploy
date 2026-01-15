@@ -428,7 +428,7 @@ export class MCPService {
             const validatedQuestions = questions.map((q, idx) => {
                 const hasValidExplanation = q.explanation && 
                                           typeof q.explanation === 'string' && 
-                                          q.explanation.trim().length >= 50;
+                                          q.explanation.trim().length >= 10; // Reducido de 50 a 10 para evitar falsos negativos
                 
                 if (!hasValidExplanation) {
                     const originalLength = q.explanation ? q.explanation.trim().length : 0;
@@ -440,7 +440,7 @@ export class MCPService {
                         : 'la opción correcta';
                     
                     q.explanation = `La respuesta correcta es: "${correctOption}". ` +
-                        'Esta opción es correcta según el contenido y material de referencia proporcionado en el curso. ';
+                        'Esta opción es correcta según el contenido y material de referencia proporcionado en el curso. Explicación generada automáticamente.';
                     
                     logger.info(`   ✨ Explanation AUTO-GENERATED: ${q.explanation.length} chars`);
                     autoRepairedCount++;
