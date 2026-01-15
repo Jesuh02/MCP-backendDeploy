@@ -5318,15 +5318,24 @@ RECUERDA: Cada pregunta DEBE incluir una "explanation" detallada.`;
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
                                 
                                 // 🚨 VALIDACIÓN ESTRICTA DE EXPLICACIONES: Rechazar preguntas sin explanation válida
+                                console.log('\n' + '═'.repeat(80));
+                                console.log('🔍 INICIANDO VALIDACIÓN DE EXPLICACIONES');
+                                console.log('═'.repeat(80));
+                                
                                 const initialCount = generatedQuestions.length;
-                                generatedQuestions = generatedQuestions.filter(q => {
+                                console.log(`📊 Total de preguntas generadas por LLM: ${initialCount}`);
+                                
+                                generatedQuestions = generatedQuestions.filter((q, idx) => {
                                     // Validar que tenga explanation y sea suficientemente detallada
                                     const hasValidExplanation = q.explanation && 
                                                                typeof q.explanation === 'string' && 
                                                                q.explanation.trim().length >= 50;
                                     
                                     if (!hasValidExplanation) {
-                                        console.log(`❌ RECHAZADA: Pregunta sin explanation válida (${q.explanation ? q.explanation.length : 0} chars): "${(q.question || '').substring(0, 50)}..."`);
+                                        const explLength = q.explanation ? q.explanation.trim().length : 0;
+                                        console.log(`❌ RECHAZADA [${idx + 1}/${initialCount}]: "${(q.question || '').substring(0, 60)}..."`);
+                                        console.log(`   └─ Explanation length: ${explLength} chars (mínimo requerido: 50)`);
+                                        console.log(`   └─ Explanation content: ${q.explanation ? `"${q.explanation}"` : 'NULL'}`);
                                         return false;
                                     }
                                     
@@ -5336,17 +5345,24 @@ RECUERDA: Cada pregunta DEBE incluir una "explanation" detallada.`;
                                                      q.explanation.length < 100;
                                     
                                     if (isGeneric) {
-                                        console.log(`⚠️ ADVERTENCIA: Explanation demasiado genérica pero aceptada: "${(q.question || '').substring(0, 50)}..."`);
+                                        console.log(`⚠️ ADVERTENCIA [${idx + 1}/${initialCount}]: Explanation genérica pero ACEPTADA`);
+                                        console.log(`   └─ Pregunta: "${(q.question || '').substring(0, 60)}..."`);
+                                        console.log(`   └─ Explanation: "${q.explanation.substring(0, 80)}..."`);
+                                    } else {
+                                        console.log(`✅ VÁLIDA [${idx + 1}/${initialCount}]: "${(q.question || '').substring(0, 60)}..."`);
+                                        console.log(`   └─ Explanation length: ${q.explanation.length} chars`);
                                     }
                                     
                                     return true;
                                 });
                                 
                                 const rejectedCount = initialCount - generatedQuestions.length;
-                                if (rejectedCount > 0) {
-                                    console.log(`🚨 VALIDACIÓN: ${rejectedCount} preguntas rechazadas por falta de explanation válida`);
-                                }
-                                console.log(`✅ Validación de explicaciones completada: ${generatedQuestions.length}/${initialCount} preguntas válidas.`);
+                                console.log('─'.repeat(80));
+                                console.log(`📊 RESULTADO DE VALIDACIÓN:`);
+                                console.log(`   ✅ Preguntas VÁLIDAS: ${generatedQuestions.length}`);
+                                console.log(`   ❌ Preguntas RECHAZADAS: ${rejectedCount}`);
+                                console.log(`   📈 Tasa de aprobación: ${((generatedQuestions.length / initialCount) * 100).toFixed(1)}%`);
+                                console.log('═'.repeat(80) + '\n');
                                 
                                 // 🔀 SHUFFLE LOGIC: Randomize options and update correctIndex
                                 generatedQuestions = generatedQuestions.map(q => {
@@ -5375,12 +5391,22 @@ RECUERDA: Cada pregunta DEBE incluir una "explanation" detallada.`;
                                 console.log('🔀 Shuffled options for ' + generatedQuestions.length + ' questions.');
 
                                 // Save to history (shuffled version)
+                                // Verificar que TODAS las preguntas tengan explanation antes de guardar
+                                const questionsWithoutExplanation = generatedQuestions.filter(q => !q.explanation || q.explanation.trim().length < 50);
+                                if (questionsWithoutExplanation.length > 0) {
+                                    console.error(`🚨 CRÍTICO: ${questionsWithoutExplanation.length} preguntas sin explanation detectadas ANTES de guardar!`);
+                                    questionsWithoutExplanation.forEach((q, idx) => {
+                                        console.error(`   ${idx + 1}. "${(q.question || '').substring(0, 60)}..." - explanation: ${q.explanation || 'NULL'}`);
+                                    });
+                                }
+                                
                                 if (mcpService) {
                                      await mcpService.saveReinforcementHistory(userId, courseId, generatedQuestions);
                                 } else {
                                      await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
                                 }
                                 console.log(`✅ Generated and saved ${generatedQuestions.length} reinforcement questions`);
+                                console.log(`📝 Todas las preguntas guardadas incluyen explanation (validado)`);
                                 
                                 // Update the final response string with the shuffled JSON
                                 respuestaFinal = JSON.stringify(generatedQuestions);

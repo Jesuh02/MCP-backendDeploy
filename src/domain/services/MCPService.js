@@ -414,27 +414,38 @@ export class MCPService {
     /**
      * Save new reinforcement learning questions to history
      * Uses INSERT to support log-based schema (multiple rows per user/course)
+     * 🚨 STRICT MODE: Only saves questions with valid explanations (≥50 chars)
      */
     async saveReinforcementHistory(userId, courseId, questions, topicId = null, taskId = null) {
         if (!userId || !courseId || !questions || !questions.length) return false;
 
         try {
-            // 🛡️ GUARDRAIL: Verify and enforce explanation presence for ALL questions
-            // This ensures data integrity even if the caller logic missed it
-            const validatedQuestions = questions.map(q => {
-                if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 10)) {
-                    logger.warn(`⚠️ MCPService: Missing explanation for question "${(q.question || '').substring(0, 30)}...". Generating fallback.`);
-                    
-                    // Generate fallback explanation
-                    let correctAns = "la respuesta correcta";
-                    if (q.options && typeof q.correctIndex === 'number' && q.options[q.correctIndex]) {
-                        correctAns = `"${q.options[q.correctIndex]}"`;
-                    }
-                    
-                    q.explanation = `Respuesta correcta: ${correctAns}. Esta es la opción correcta basada en los conceptos fundamentales del tema.`;
+            // 🛡️ STRICT VALIDATION: Filter out questions without valid explanations
+            // This is the FINAL guardrail before database insertion
+            const validatedQuestions = questions.filter(q => {
+                const hasValidExplanation = q.explanation && 
+                                          typeof q.explanation === 'string' && 
+                                          q.explanation.trim().length >= 50;
+                
+                if (!hasValidExplanation) {
+                    logger.error(`❌ MCPService REJECTED: Question without valid explanation (${q.explanation ? q.explanation.trim().length : 0} chars): "${(q.question || '').substring(0, 50)}..."`);
+                    logger.error(`   Explanation content: ${q.explanation || 'NULL'}`);
+                    return false; // REJECT this question
                 }
-                return q;
+                
+                return true; // Accept this question
             });
+
+            if (validatedQuestions.length === 0) {
+                logger.error('🚨 MCPService: ALL questions were rejected due to missing/invalid explanations. Nothing saved to database.');
+                return false;
+            }
+
+            if (validatedQuestions.length < questions.length) {
+                logger.warn(`⚠️ MCPService: ${questions.length - validatedQuestions.length} questions rejected. Saving ${validatedQuestions.length} valid questions.`);
+            }
+
+            logger.info(`✅ MCPService: Saving ${validatedQuestions.length} questions (ALL with valid explanations ≥50 chars)`);
 
             const payload = {
                 user_id: userId,
@@ -451,9 +462,11 @@ export class MCPService {
                 .insert(payload);
             
             if (error) throw error;
+            
+            logger.info(`💾 Database: Successfully saved ${validatedQuestions.length} questions to reinforcement_question_history`);
             return true;
         } catch (error) {
-            logger.warn(`Error saving reinforcement history: ${error.message}`);
+            logger.error(`❌ Error saving reinforcement history: ${error.message}`);
             return false;
         }
     }
