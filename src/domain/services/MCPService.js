@@ -419,10 +419,27 @@ export class MCPService {
         if (!userId || !courseId || !questions || !questions.length) return false;
 
         try {
+            // 🛡️ GUARDRAIL: Verify and enforce explanation presence for ALL questions
+            // This ensures data integrity even if the caller logic missed it
+            const validatedQuestions = questions.map(q => {
+                if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 10)) {
+                    logger.warn(`⚠️ MCPService: Missing explanation for question "${(q.question || '').substring(0, 30)}...". Generating fallback.`);
+                    
+                    // Generate fallback explanation
+                    let correctAns = "la respuesta correcta";
+                    if (q.options && typeof q.correctIndex === 'number' && q.options[q.correctIndex]) {
+                        correctAns = `"${q.options[q.correctIndex]}"`;
+                    }
+                    
+                    q.explanation = `Respuesta correcta: ${correctAns}. Esta es la opción correcta basada en los conceptos fundamentales del tema.`;
+                }
+                return q;
+            });
+
             const payload = {
                 user_id: userId,
                 course_id: courseId,
-                questions: questions,
+                questions: validatedQuestions,
                 created_at: new Date().toISOString()
             };
 
