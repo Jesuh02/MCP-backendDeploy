@@ -5059,20 +5059,27 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                     }
 
                     // Build prompt with history to avoid repetitions
-                    let promptCompleto = `INSTRUCCIONES CRÍTICAS PARA GENERAR PREGUNTAS DE REFORZAMIENTO:
-- GENERA ${questionCount} PREGUNTAS DE SELECCIÓN MÚLTIPLE (A, B, C, D) PARA REFORZAR CONOCIMIENTOS
+                    let promptCompleto = `🔥 INSTRUCCIONES CRÍTICAS PARA GENERAR PREGUNTAS DE REFORZAMIENTO:
+
+📊 FORMATO OBLIGATORIO:
+- GENERA ${questionCount} PREGUNTAS DE SELECCIÓN MÚLTIPLE (A, B, C, D)
 - TODAS LAS PREGUNTAS DEBEN SER ÚNICAS Y NO REPETIRSE ENTRE SESIONES
-- USA EXCLUSIVAMENTE EL CONTENIDO PROPORCIONADO POR EL DOCENTE (TEMAS, TAREAS Y ARCHIVOS)
-- NO INVENTES CONTENIDO NI USES CONOCIMIENTOS GENERALES
-- LAS PREGUNTAS DEBEN SER TÉCNICAS Y RELACIONADAS CON PROGRAMACIÓN
+- USA EXCLUSIVAMENTE EL CONTENIDO PROPORCIONADO POR EL DOCENTE
+- LAS PREGUNTAS DEBEN SER TÉCNICAS Y RELACIONADAS CON EL MATERIAL DEL CURSO
 - FORMATO JSON ESTRICTO SIN MARKDOWN, SIN TEXTO EXTRA
 
-⚠️ REQUISITO OBLIGATORIO DE EXPLICACIÓN:
-- CADA PREGUNTA DEBE INCLUIR UNA EXPLICACIÓN DETALLADA (campo "explanation")
-- LA EXPLICACIÓN NUNCA PUEDE SER NULL, VACÍA NI OMITIRSE
-- LA EXPLICACIÓN DEBE TENER MÍNIMO 50 CARACTERES
-- LA EXPLICACIÓN DEBE REFERENCIAR EL CONTENIDO ESPECÍFICO DEL CURSO
-- SIN EXPLICACIÓN = PREGUNTA INVÁLIDA
+⚠️⚠️⚠️ REQUISITO OBLIGATORIO CRÍTICO - EXPLICACIÓN ("explanation") ⚠️⚠️⚠️
+
+🚨 CADA PREGUNTA DEBE INCLUIR EL CAMPO "explanation" CON:
+   1. MÍNIMO 50 CARACTERES (preguntas sin explanation válida serán RECHAZADAS)
+   2. EXPLICACIÓN TÉCNICA DETALLADA que justifique la respuesta correcta
+   3. REFERENCIA ESPECÍFICA al contenido/material del curso proporcionado
+   4. EXPLICACIÓN de por qué las opciones incorrectas son incorrectas
+   5. NUNCA usar textos genéricos o vagos
+
+❌ PREGUNTAS SIN "explanation" O CON explanation VACÍO/NULL SERÁN RECHAZADAS AUTOMÁTICAMENTE
+❌ PREGUNTAS CON explanation MUY CORTA (<50 chars) SERÁN RECHAZADAS
+❌ PREGUNTAS CON explanation GENÉRICA ("es la correcta", "las demás son incorrectas") SERÁN RECHAZADAS
 
 CRITERIOS ESTRICTOS DE NO REPETICIÓN (ANTI-DUPLICADOS):
 Las nuevas preguntas NUNCA pueden ser lo mismo ni literalmente ni gramaticalmente que las anteriores.
@@ -5099,17 +5106,19 @@ ${recentHistory.length > 0 ? recentHistory.map((q, i) => `${i + 1}. ${q}`).join(
 CONTEXTO DEL CURSO:
 ${contextForPrompt}
 
-FORMATO DE RESPUESTA JSON ESTRICTO (OBLIGATORIO):
+FORMATO DE RESPUESTA JSON ESTRICTO (OBLIGATORIO - INCLUYE "explanation" SIEMPRE):
 [
   {
     "question": "¿Pregunta técnica específica del contenido docente?",
     "options": ["Opción A (respuesta correcta)", "Opción B (error común)", "Opción C (alternativa plausible)", "Opción D (incorrecta)"],
     "correctIndex": 0,
-    "explanation": "OBLIGATORIO: Explicación técnica detallada de mínimo 50 caracteres explicando por qué la respuesta correcta es correcta y por qué las demás son incorrectas, con referencia específica al material del curso."
+    "explanation": "OBLIGATORIO: Explicación técnica detallada de MÍNIMO 50 CARACTERES. Debe explicar: 1) Por qué la opción correcta es correcta citando el material del curso, 2) Por qué las opciones incorrectas son incorrectas, 3) Referencia específica al concepto/código/documento del material docente. NUNCA uses explicaciones genéricas como 'es la correcta' o 'las demás son incorrectas'."
   }
 ]
 
-IMPORTANTE: Si generas una pregunta sin "explanation" o con explanation vacío/null, la pregunta será RECHAZADA.`;
+🚨🚨🚨 VALIDACIÓN AUTOMÁTICA 🚨🚨🚨
+Todas las preguntas sin "explanation" válida (mínimo 50 chars y técnicamente detallada) serán RECHAZADAS y NO GUARDADAS.
+Si no puedes generar una explicación válida basada en el material, NO GENERES ESA PREGUNTA.`;
                     
                     console.log('📝 PROMPT ENVIADO A LLM (Inicio):', promptCompleto.substring(0, 500) + '...');
                     const tokensPrompt = encode(promptCompleto).length;
@@ -5308,17 +5317,36 @@ RECUERDA: Cada pregunta DEBE incluir una "explanation" detallada.`;
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
                                 
-                                // ✅ VALIDACIÓN DE EXPLICACIONES: Asegurar que cada pregunta tenga explicación
-                                generatedQuestions = generatedQuestions.map(q => {
-                                    // Si no tiene explicación o es muy corta, generar una por defecto
-                                    if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 20)) {
-                                        const correctOption = q.options && q.options[q.correctIndex] ? q.options[q.correctIndex] : 'la opción correcta';
-                                        q.explanation = `La respuesta correcta es "${correctOption}" porque representa el concepto clave evaluado en esta pregunta. Las demás opciones son incorrectas ya que no cumplen con los criterios específicos del tema estudiado.`;
-                                        console.log(`⚠️ Explicación generada automáticamente para: "${(q.question || '').substring(0, 50)}..."`);
+                                // 🚨 VALIDACIÓN ESTRICTA DE EXPLICACIONES: Rechazar preguntas sin explanation válida
+                                const initialCount = generatedQuestions.length;
+                                generatedQuestions = generatedQuestions.filter(q => {
+                                    // Validar que tenga explanation y sea suficientemente detallada
+                                    const hasValidExplanation = q.explanation && 
+                                                               typeof q.explanation === 'string' && 
+                                                               q.explanation.trim().length >= 50;
+                                    
+                                    if (!hasValidExplanation) {
+                                        console.log(`❌ RECHAZADA: Pregunta sin explanation válida (${q.explanation ? q.explanation.length : 0} chars): "${(q.question || '').substring(0, 50)}..."`);
+                                        return false;
                                     }
-                                    return q;
+                                    
+                                    // Validar que no sea genérica
+                                    const genericPhrases = ['es la correcta', 'es correcta porque', 'las demás son incorrectas', 'es la respuesta'];
+                                    const isGeneric = genericPhrases.some(phrase => q.explanation.toLowerCase().includes(phrase)) && 
+                                                     q.explanation.length < 100;
+                                    
+                                    if (isGeneric) {
+                                        console.log(`⚠️ ADVERTENCIA: Explanation demasiado genérica pero aceptada: "${(q.question || '').substring(0, 50)}..."`);
+                                    }
+                                    
+                                    return true;
                                 });
-                                console.log('✅ Validación de explicaciones completada.');
+                                
+                                const rejectedCount = initialCount - generatedQuestions.length;
+                                if (rejectedCount > 0) {
+                                    console.log(`🚨 VALIDACIÓN: ${rejectedCount} preguntas rechazadas por falta de explanation válida`);
+                                }
+                                console.log(`✅ Validación de explicaciones completada: ${generatedQuestions.length}/${initialCount} preguntas válidas.`);
                                 
                                 // 🔀 SHUFFLE LOGIC: Randomize options and update correctIndex
                                 generatedQuestions = generatedQuestions.map(q => {
