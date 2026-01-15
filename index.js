@@ -308,6 +308,101 @@ try {
 }
 
 /**
+ * Robusto parseador JSON para respuestas de LLM malformadas
+ * Intenta reparar errores comunes como comas faltantes o sobrantes
+ * Y extrae objetos JSON válidos de flujos de texto rotos
+ */
+function repairReinforcementJson(text) {
+    if (!text) return [];
+    
+    // 0. Limpieza básica
+    let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    // Intentar extraer array si está envuelto
+    const arrayMatch = clean.match(/\[[\s\S]*\]/);
+    if (arrayMatch) clean = arrayMatch[0];
+
+    // 1. Intento directo
+    try { return JSON.parse(clean); } catch (e) {}
+
+    console.log("⚠️ JSON.parse estándar falló, intentando reparación robusta...");
+
+    // 2. Reparación de errores sintácticos comunes
+    let repaired = clean
+        .replace(/,\s*([\]}])/g, '$1') // Eliminar comas finales
+        .replace(/}\s*\{/g, '}, {')    // Agregar comas faltantes entre objetos
+        .replace(/,\s*,/g, ',');       // Eliminar comas múltiples
+
+    try { return JSON.parse(repaired); } catch (e) {}
+
+    // 3. Extracción manual (Fallback definitivo para streams interrumpidos o mal formados)
+    // Recorre el string buscando bloques {...} balanceados y valida cada uno individualmente
+    const objects = [];
+    let braceCount = 0;
+    let start = -1;
+    let inString = false;
+    let escaped = false;
+
+    // Escanear el texto reparado o el original si está muy roto
+    const sourceText = repaired.length > clean.length ? repaired : clean;
+
+    for (let i = 0; i < sourceText.length; i++) {
+        const char = sourceText[i];
+        
+        if (inString) {
+            if (char === '\\' && !escaped) {
+                escaped = true;
+            } else if (char === '"' && !escaped) {
+                inString = false;
+            } else {
+                escaped = false;
+            }
+            continue;
+        }
+
+        if (char === '"') {
+            inString = true;
+        } else if (char === '{') {
+            if (braceCount === 0) start = i;
+            braceCount++;
+        } else if (char === '}') {
+            braceCount--;
+            if (braceCount === 0 && start !== -1) {
+                const jsonStr = sourceText.substring(start, i + 1);
+                try {
+                    // Intento de parsear el objeto individual
+                    const obj = JSON.parse(jsonStr);
+                    // Validar estructura mínima (debe tener question u options)
+                    if (obj.question || (obj.options && Array.isArray(obj.options))) {
+                        // REPARACIÓN CRÍTICA: Asegurar que tenga explanation
+                        if (!obj.explanation || obj.explanation.trim().length < 10) {
+                            // La explanation se generará correctamente en el paso de validación principal,
+                            // pero la marcamos aquí para asegurar que el objeto sea útil.
+                            obj._needsExplanationRepair = true; 
+                        }
+                        objects.push(obj);
+                    }
+                } catch (e) {
+                    // Si falla, intentamos arreglar trailing comma en este objeto específico
+                    try {
+                         const fixedObjStr = jsonStr.replace(/,\s*}/g, '}');
+                         const obj2 = JSON.parse(fixedObjStr);
+                         if (obj2.question || obj2.options) objects.push(obj2);
+                    } catch (e2) { /* Irrecuperable */ }
+                }
+                start = -1;
+            }
+        }
+    }
+    
+    if (objects.length > 0) {
+        console.log(`✅ Extracción robusta recuperó ${objects.length} preguntas de JSON roto`);
+        return objects;
+    }
+
+    return [];
+}
+
+/**
  * Helper function to call DeepSeek via LLMService
  * Replaces all Ollama calls with DeepSeek API
  */
@@ -5308,12 +5403,20 @@ RECUERDA: Cada pregunta DEBE incluir una "explanation" detallada.`;
                     } else {
                         // Try to parse, SHUFFLE, and save the generated questions
                         try {
-                            const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
-                            // Extract just the array if wrapped in text
-                            const arrayMatch = cleanJson.match(/\[[\s\S]*\]/);
-                            const jsonToParse = arrayMatch ? arrayMatch[0] : cleanJson;
+                            // Usar el parseador robusto para manejar respuestas malformadas
+                            let generatedQuestions = repairReinforcementJson(respuestaFinal);
                             
-                            let generatedQuestions = JSON.parse(jsonToParse);
+                            // Si devolvía array vacío, intentar parseo estándar como fallback por si acaso (aunque repair cubre el caso)
+                            if (!generatedQuestions || generatedQuestions.length === 0) {
+                                try {
+                                    const cleanJson = respuestaFinal.replace(/```json/g, '').replace(/```/g, '').trim();
+                                    const arrayMatch = cleanJson.match(/\[[\s\S]*\]/);
+                                    const jsonToParse = arrayMatch ? arrayMatch[0] : cleanJson;
+                                    generatedQuestions = JSON.parse(jsonToParse);
+                                } catch (e) {
+                                    generatedQuestions = []; // Ya falló todo
+                                }
+                            }
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
                                 
