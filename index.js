@@ -5681,7 +5681,19 @@ FORMATO JSON ESTRICTO:
                             }
 
                             // 🔥 GARANTIZAR EXACTAMENTE 10 PREGUNTAS
-                            // Si el filtro eliminó pre
+                            // Si el filtro eliminó preguntas y tenemos menos de 10, recuperamos algunas de las eliminadas
+                            // para asegurar que el quiz siempre tenga 10 preguntas.
+                            if (filtered.length < 10 && parsed.length >= 10) {
+                                console.log(`⚠️ Filtrado redujo a ${filtered.length} preguntas. Recuperando preguntas eliminadas para llegar a 10...`);
+                                
+                                // Identificar las preguntas que fueron eliminadas
+                                const filteredSet = new Set(filtered);
+                                const removedQuestions = parsed.filter(item => !filteredSet.has(item));
+                                
+                                // Calcular cuántas necesitamos recuperar
+                                const needed = 10 - filtered.length;
+                                
+                                // Tomar las necesarias (preferiblemente que sean de conceptos diferentes si es posible)
                                 const toRestore = removedQuestions.slice(0, needed);
                                 filtered = [...filtered, ...toRestore];
                                 
