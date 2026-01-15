@@ -5529,7 +5529,19 @@ Responde considerando el contexto académico disponible si es relevante para la 
                                 promptCompleto += `📌 RESUMEN: Ya se evaluaron estos ${conceptsEvaluated.size} conceptos:\n${conceptsList}\n\n`;
                                 promptCompleto += `INSTRUCCIÓN CRÍTICA: Debes generar preguntas sobre CONCEPTOS DIFERENTES a los listados arriba.\n`;
                                 promptCompleto += `NO es suficiente cambiar la redacción - debes evaluar TEMAS Y CONCEPTOS DISTINTOS.\n`;
-                                promptCompleto += `Si no es posible generar preguntas sobre conceptos nuevos, responde con un array JSON vacío []\n`;
+                                promptCompleto += `Si no es posible generar preguntas sobre conceptos nuevos, responde con un array JSON vacío []\n\n`;
+                                
+                                promptCompleto += `⚠️ REQUISITO OBLIGATORIO:
+CADA pregunta DEBE tener un campo "explanation" con una explicación técnica detallada (min 50 caracteres).
+FORMATO JSON ESTRICTO:
+[
+  {
+    "question": "¿...?",
+    "options": ["...", "...", "...", "..."],
+    "correctIndex": 0,
+    "explanation": "Explicación detallada justificando la respuesta correcta..."
+  }
+]`;
                                 console.log(`✅ Añadido análisis semántico de historial: ${historyQuestionsList.length} preguntas, ${conceptsEvaluated.size} conceptos únicos evaluados`);
                             }
                         }
@@ -5669,15 +5681,54 @@ Responde considerando el contexto académico disponible si es relevante para la 
                             }
 
                             // 🔥 GARANTIZAR EXACTAMENTE 10 PREGUNTAS
-                            // Si el filtro eliminó preguntas y tenemos menos de 10, recuperamos algunas de las eliminadas
-                            // para asegurar que el quiz siempre tenga 10 preguntas.
-                            if (filtered.length < 10 && parsed.length >= 10) {
-                                console.log(`⚠️ Filtrado redujo a ${filtered.length} preguntas. Recuperando preguntas eliminadas para llegar a 10...`);
+                            // Si el filtro eliminó pre
+                                const toRestore = removedQuestions.slice(0, needed);
+                                filtered = [...filtered, ...toRestore];
                                 
-                                // Identificar las preguntas que fueron eliminadas
-                                const filteredSet = new Set(filtered);
-                                const removedQuestions = parsed.filter(item => !filteredSet.has(item));
-                                
+                                console.log(`✅ Recuperadas ${toRestore.length} preguntas. Total final: ${filtered.length}`);
+                            } else if (filtered.length > 10) {
+                                // Si hay más de 10, recortamos a 10 exactas
+                                filtered = filtered.slice(0, 10);
+                            }
+
+                            // 🔍 VALIDACIÓN Y AUTO-REPARACIÓN DE EXPLICACIONES (FALLBACK PATH)
+                            // Asegurar que TODAS las preguntas tengan explanation antes de guardar/enviar
+                            console.log('🔍 VALIDACIÓN Y AUTO-REPARACIÓN (Fallback Path)');
+                            let autoRepairedInFallback = 0;
+                            
+                            filtered = filtered.map(q => {
+                                const hasValidExpl = q.explanation && typeof q.explanation === 'string' && q.explanation.trim().length >= 50;
+                                if (!hasValidExpl) {
+                                    // Auto-generar
+                                    let correctText = "la respuesta correcta";
+                                    if (q.options && typeof q.correctIndex === 'number' && q.options[q.correctIndex]) {
+                                        correctText = `"${q.options[q.correctIndex]}"`;
+                                    }
+                                    q.explanation = `La respuesta correcta es: ${correctText}. Esta opción es correcta según el contenido del curso.`;
+                                    console.log('   🔧 Auto-reparada explanation en fallback path.');
+                                    autoRepairedInFallback++;
+                                }
+                                return q;
+                            });
+
+                            if (autoRepairedInFallback > 0) {
+                                console.log(`✅ Fallback Path: ${autoRepairedInFallback} preguntas reparadas.`);
+                            }
+                            
+                            // GUARDAR EN BASE DE DATOS (Backend Save en Fallback Path)
+                            // Esto soluciona que el cliente no guarde si esta ruta alternativa se ejecuta
+                            try {
+                                if (userId && courseIdVal) {
+                                    console.log('💾 Saving reinforcement history (Fallback Path)...');
+                                    if (mcpService) {
+                                        await mcpService.saveReinforcementHistory(userId, courseIdVal, filtered);
+                                    } else {
+                                        await saveReinforcementQuestionHistory(userId, courseIdVal, filtered); // Legacy
+                                    }
+                                    console.log('✅ History SAVED in Fallback Path.');
+                                }
+                            } catch (saveErr) {
+                                console.error('❌ Error saving history in fallback:', saveErr
                                 // Calcular cuántas necesitamos recuperar
                                 const needed = 10 - filtered.length;
                                 

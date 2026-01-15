@@ -440,8 +440,7 @@ export class MCPService {
                         : 'la opción correcta';
                     
                     q.explanation = `La respuesta correcta es: "${correctOption}". ` +
-                        'Esta opción es correcta según el contenido y material de referencia proporcionado en el curso. ' +
-                        'Las demás opciones no cumplen con los criterios establecidos en el material educativo.';
+                        'Esta opción es correcta según el contenido y material de referencia proporcionado en el curso. ';
                     
                     logger.info(`   ✨ Explanation AUTO-GENERATED: ${q.explanation.length} chars`);
                     autoRepairedCount++;
