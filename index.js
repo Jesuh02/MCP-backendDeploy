@@ -4303,6 +4303,48 @@ app.post('/send-notification', async(req, res) => {
  * Recibe un prompt, lo divide o resume si supera el límite de tokens,
  * y lo envía al modelo Granite/Ollama.
  */
+// ============================================================
+// 🧹 CLEAR CONTEXT ENDPOINT - Limpia el historial de refuerzo del usuario
+// ============================================================
+app.post('/clear-context', async(req, res) => {
+    try {
+        const { userId } = req.body;
+        
+        if (!userId) {
+            return res.status(400).json({ error: 'userId requerido' });
+        }
+        
+        console.log(`🧹 Limpiando contexto para userId=${userId}`);
+        
+        if (!supabaseService) {
+            console.warn('⚠️ SupabaseService no disponible');
+            return res.status(200).json({ success: true, message: 'Supabase no configurado' });
+        }
+        
+        // Eliminar todo el historial de refuerzo del usuario
+        const { error } = await supabaseService.client
+            .from('reinforcement_question_history')
+            .delete()
+            .eq('user_id', userId);
+        
+        if (error) {
+            console.error(`❌ Error limpiando contexto: ${error.message}`);
+            return res.status(500).json({ error: 'Error limpiando contexto', details: error.message });
+        }
+        
+        console.log(`✅ Contexto limpiado exitosamente para userId=${userId}`);
+        return res.status(200).json({ 
+            success: true, 
+            message: 'Contexto limpiado exitosamente',
+            userId: userId
+        });
+        
+    } catch (error) {
+        console.error(`❌ Error en /clear-context: ${error.message}`);
+        return res.status(500).json({ error: 'Error interno del servidor', details: error.message });
+    }
+});
+
 app.post('/procesar-prompt', async(req, res) => {
     const startTime = new Date();
     console.log('==============================================');
