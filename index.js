@@ -5082,6 +5082,13 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
 - LAS PREGUNTAS DEBEN SER TÉCNICAS Y RELACIONADAS CON PROGRAMACIÓN
 - FORMATO JSON ESTRICTO SIN MARKDOWN, SIN TEXTO EXTRA
 
+⚠️ REQUISITO OBLIGATORIO DE EXPLICACIÓN:
+- CADA PREGUNTA DEBE INCLUIR UNA EXPLICACIÓN DETALLADA (campo "explanation")
+- LA EXPLICACIÓN NUNCA PUEDE SER NULL, VACÍA NI OMITIRSE
+- LA EXPLICACIÓN DEBE TENER MÍNIMO 50 CARACTERES
+- LA EXPLICACIÓN DEBE REFERENCIAR EL CONTENIDO ESPECÍFICO DEL CURSO
+- SIN EXPLICACIÓN = PREGUNTA INVÁLIDA
+
 CRITERIOS ESTRICTOS DE NO REPETICIÓN (ANTI-DUPLICADOS):
 Las nuevas preguntas NUNCA pueden ser lo mismo ni literalmente ni gramaticalmente que las anteriores.
 Se considera repetida y PROHIBIDA si cumple cualquiera de estos puntos:
@@ -5090,24 +5097,34 @@ Se considera repetida y PROHIBIDA si cumple cualquiera de estos puntos:
 3. Diferencias solo gramaticales: Cambiar palabras sin cambiar el concepto (ej: "una oportunidad" vs "una de las oportunidades").
 4. Misma respuesta esperada: Si la misma respuesta sirve para ambas.
 5. No aporta variación cognitiva: Opera al mismo nivel (recordar/identificar) sin pedir análisis o comparación distinta.
+6. Similar estructura o patrón: Si sigue la misma estructura de pregunta que alguna anterior.
+7. Mismo tema/concepto principal: Si evalúa exactamente el mismo concepto aunque con palabras diferentes.
+
+ESTRATEGIA PARA EVITAR REPETICIONES:
+- Varía los niveles cognitivos: conceptual → aplicación → análisis → síntesis
+- Cambia el contexto: teoría → ejemplo práctico → caso de uso → comparación
+- Explora diferentes subtemas del contenido
+- Usa diferentes formatos de pregunta: "¿Qué es...?", "¿Cómo...?", "¿Por qué...?", "¿Cuál es la diferencia...?"
 
 Debes generar preguntas TOTALMENTE DISTINTAS a lo anteriormente visto.
 
-HISTORIAL DE PREGUNTAS ANTERIORES (PROHIBIDO REPETIR O PARAFRASEAR):
-${recentHistory.map((q, i) => `${i + 1}. ${q}`).join('\n')}
+HISTORIAL DE PREGUNTAS ANTERIORES (PROHIBIDO REPETIR O PARAFRASEAR - ANALIZA SEMÁNTICAMENTE):
+${recentHistory.length > 0 ? recentHistory.map((q, i) => `${i + 1}. ${q}`).join('\n') : '(Sin historial previo - puedes generar cualquier pregunta nueva)'}
 
 CONTEXTO DEL CURSO:
 ${contextForPrompt}
 
-FORMATO DE RESPUESTA JSON ESTRICTO:
+FORMATO DE RESPUESTA JSON ESTRICTO (OBLIGATORIO):
 [
   {
     "question": "¿Pregunta técnica específica del contenido docente?",
     "options": ["Opción A (respuesta correcta)", "Opción B (error común)", "Opción C (alternativa plausible)", "Opción D (incorrecta)"],
     "correctIndex": 0,
-    "explanation": "Explicación técnica detallada con referencia específica al código o concepto del material docente."
+    "explanation": "OBLIGATORIO: Explicación técnica detallada de mínimo 50 caracteres explicando por qué la respuesta correcta es correcta y por qué las demás son incorrectas, con referencia específica al material del curso."
   }
-]`;
+]
+
+IMPORTANTE: Si generas una pregunta sin "explanation" o con explanation vacío/null, la pregunta será RECHAZADA.`;
                     
                     console.log('📝 PROMPT ENVIADO A LLM (Inicio):', promptCompleto.substring(0, 500) + '...');
                     const tokensPrompt = encode(promptCompleto).length;
@@ -5152,6 +5169,39 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
                     const MAX_RETRIES = 2;
                     let validQuestionsFound = false;
 
+                    // 🔍 FUNCIONES DE SIMILITUD SEMÁNTICA
+                    const normalize = (str) => (str || '').toString().toLowerCase().replace(/[^\w\sáéíóúüñ]/g, '').replace(/\s+/g, ' ').trim();
+                    
+                    // Extraer palabras clave significativas (ignorando stopwords comunes)
+                    const stopwords = new Set(['el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'de', 'del', 'al', 'a', 'en', 'con', 'por', 'para', 'es', 'son', 'que', 'qué', 'cual', 'cuál', 'como', 'cómo', 'se', 'su', 'sus', 'y', 'o', 'u', 'e', 'ni', 'pero', 'si', 'no', 'más', 'menos', 'muy', 'tan', 'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas', 'aquel', 'aquella', 'lo', 'le', 'les', 'me', 'te', 'nos', 'os', 'mi', 'tu', 'yo', 'tú', 'él', 'ella', 'nosotros', 'ellos', 'ellas', 'usted', 'ustedes', 'cual', 'quien', 'donde', 'cuando', 'cuanto', 'porque', 'según', 'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'of', 'to', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'or', 'and', 'as', 'if', 'then', 'than', 'that', 'this', 'these', 'those', 'it', 'its']);
+                    
+                    const extractKeywords = (str) => {
+                        return normalize(str).split(' ').filter(w => w.length > 2 && !stopwords.has(w));
+                    };
+                    
+                    // Calcular similitud de Jaccard entre dos conjuntos de palabras
+                    const jaccardSimilarity = (set1, set2) => {
+                        const intersection = [...set1].filter(x => set2.has(x)).length;
+                        const union = new Set([...set1, ...set2]).size;
+                        return union > 0 ? intersection / union : 0;
+                    };
+                    
+                    // Verificar si dos preguntas son semánticamente similares
+                    const isSemanticallyDuplicate = (newQuestion, historyQuestions, threshold = 0.6) => {
+                        const newKeywords = new Set(extractKeywords(newQuestion));
+                        if (newKeywords.size < 3) return false; // Muy pocas palabras para comparar
+                        
+                        for (const histQ of historyQuestions) {
+                            const histKeywords = new Set(extractKeywords(histQ));
+                            const similarity = jaccardSimilarity(newKeywords, histKeywords);
+                            if (similarity >= threshold) {
+                                console.log(`🔍 Similitud semántica detectada (${(similarity * 100).toFixed(1)}%): "${newQuestion.substring(0, 40)}..." ≈ "${histQ.substring(0, 40)}..."`);
+                                return true;
+                            }
+                        }
+                        return false;
+                    };
+
                     while (retries <= MAX_RETRIES && !validQuestionsFound) {
                         if (retries > 0) {
                             console.log(`🔄 Retry attempt ${retries}/${MAX_RETRIES} for diverse questions...`);
@@ -5160,7 +5210,8 @@ FORMATO DE RESPUESTA JSON ESTRICTO:
 GENERA PREGUNTAS TOTALMENTE NUEVAS.
 NO uses los mismos temas, frases ni enfoques del historial.
 Céntrate en aspectos del contenido que NO hayan sido evaluados antes.
-Recuerda: Diferencias solo gramaticales NO son suficientes.`;
+Recuerda: Diferencias solo gramaticales NO son suficientes.
+RECUERDA: Cada pregunta DEBE incluir una "explanation" detallada.`;
                             respuestaFinal = await callDeepSeek(null, retryPrompt);
                         }
 
@@ -5177,18 +5228,30 @@ Recuerda: Diferencias solo gramaticales NO son suficientes.`;
                                 if (Array.isArray(generatedQuestions)) {
                                     const initialCount = generatedQuestions.length;
                                     // Create a Set of normalized history questions for fast lookup
-                                    const normalize = (str) => (str || '').toString().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
                                     const historySet = new Set(historyStrings.map(q => normalize(q)));
                                     
                                     // Identificar las preguntas que fueron eliminadas para posible recuperación
                                     const parsedQuestions = [...generatedQuestions]; // Copia de backup
                                     
-                                    // Filter out duplicates
+                                    // Filter out duplicates (exactos Y semánticos)
                                     generatedQuestions = generatedQuestions.filter(q => {
                                         const qText = q.question || q.pregunta || (typeof q === 'string' ? q : JSON.stringify(q));
-                                        const isDupe = historySet.has(normalize(qText));
-                                        if (isDupe) console.log(`♻️ Duplicate detected and removed: "${qText.substring(0, 50)}..."`);
-                                        return !isDupe;
+                                        
+                                        // Check for exact duplicate
+                                        const isExactDupe = historySet.has(normalize(qText));
+                                        if (isExactDupe) {
+                                            console.log(`♻️ Duplicate exacto detectado y removido: "${qText.substring(0, 50)}..."`);
+                                            return false;
+                                        }
+                                        
+                                        // Check for semantic duplicate
+                                        const isSemanticDupe = isSemanticallyDuplicate(qText, historyStrings, 0.55);
+                                        if (isSemanticDupe) {
+                                            console.log(`♻️ Duplicate semántico detectado y removido: "${qText.substring(0, 50)}..."`);
+                                            return false;
+                                        }
+                                        
+                                        return true;
                                     });
                                     
                                     if (generatedQuestions.length < initialCount) {
@@ -5259,6 +5322,18 @@ Recuerda: Diferencias solo gramaticales NO son suficientes.`;
                             let generatedQuestions = JSON.parse(jsonToParse);
 
                             if (Array.isArray(generatedQuestions) && generatedQuestions.length > 0) {
+                                
+                                // ✅ VALIDACIÓN DE EXPLICACIONES: Asegurar que cada pregunta tenga explicación
+                                generatedQuestions = generatedQuestions.map(q => {
+                                    // Si no tiene explicación o es muy corta, generar una por defecto
+                                    if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 20)) {
+                                        const correctOption = q.options && q.options[q.correctIndex] ? q.options[q.correctIndex] : 'la opción correcta';
+                                        q.explanation = `La respuesta correcta es "${correctOption}" porque representa el concepto clave evaluado en esta pregunta. Las demás opciones son incorrectas ya que no cumplen con los criterios específicos del tema estudiado.`;
+                                        console.log(`⚠️ Explicación generada automáticamente para: "${(q.question || '').substring(0, 50)}..."`);
+                                    }
+                                    return q;
+                                });
+                                console.log('✅ Validación de explicaciones completada.');
                                 
                                 // 🔀 SHUFFLE LOGIC: Randomize options and update correctIndex
                                 generatedQuestions = generatedQuestions.map(q => {
