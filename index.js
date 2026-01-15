@@ -5035,42 +5035,12 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                     if (augmentedTokens > MAX_CONTEXT_TOKENS) {
                         console.warn(`⚠️ Context too large (${augmentedTokens} tokens), truncating to ${MAX_CONTEXT_TOKENS}...`);
                         
-                        // Try to use RAG to get only relevant content instead of truncating
-                        if (ragService && ragService.isReady()) {
-                            console.log('📚 Attempting to use RAG for context reduction...');
-                            try {
-                                const ragContext = await ragService.buildContext(prompt, {
-                                    courseId: courseId,
-                                    taskTitle: extractedTaskName,
-                                    taskDescription: extractedProfessorDescription,
-                                    topK: 10, // Get more chunks for question generation
-                                    maxTokens: 25000 // ~100k chars
-                                });
-                                
-                                if (ragContext && ragContext.length > 500) {
-                                    contextForPrompt = ragContext;
-                                    console.log(`✅ RAG reduced context to ~${encode(ragContext).length} tokens`);
-                                } else {
-                                    // Fallback: truncate by characters (rough estimate: 4 chars per token)
-                                    const maxChars = MAX_CONTEXT_TOKENS * 4;
-                                    contextForPrompt = augmentedPrompt.substring(0, maxChars) + 
-                                        '\n\n...[CONTENIDO TRUNCADO PARA EVITAR LÍMITE DE TOKENS]';
-                                    console.log(`⚠️ RAG context insufficient, truncated to ${maxChars} chars`);
-                                }
-                            } catch (ragError) {
-                                console.error('❌ RAG context building failed:', ragError);
-                                // Fallback truncation
-                                const maxChars = MAX_CONTEXT_TOKENS * 4;
-                                contextForPrompt = augmentedPrompt.substring(0, maxChars) + 
-                                    '\n\n...[CONTENIDO TRUNCADO PARA EVITAR LÍMITE DE TOKENS]';
-                            }
-                        } else {
-                            // No RAG available, use simple truncation
-                            const maxChars = MAX_CONTEXT_TOKENS * 4;
-                            contextForPrompt = augmentedPrompt.substring(0, maxChars) + 
-                                '\n\n...[CONTENIDO TRUNCADO PARA EVITAR LÍMITE DE TOKENS]';
-                            console.log(`⚠️ RAG not available, truncated to ${maxChars} chars`);
-                        }
+                        // ⛔ NO USE OF RAG FOR REINFORCEMENT LEARNING AS REQUESTED
+                        // Simple truncation logic to respect user constraint "no uses el rag"
+                        const maxChars = MAX_CONTEXT_TOKENS * 4;
+                        contextForPrompt = augmentedPrompt.substring(0, maxChars) + 
+                            '\n\n...[CONTENIDO TRUNCADO PARA EVITAR LÍMITE DE TOKENS]';
+                        console.log(`⚠️ Reduced context via TRUNCATION (RAG Disabled for Reinforcement) to ${maxChars} chars`);
                     }
 
                     // Build prompt with history to avoid repetitions
