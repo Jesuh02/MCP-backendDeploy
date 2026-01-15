@@ -5728,19 +5728,7 @@ FORMATO JSON ESTRICTO:
                                     console.log('✅ History SAVED in Fallback Path.');
                                 }
                             } catch (saveErr) {
-                                console.error('❌ Error saving history in fallback:', saveErr
-                                // Calcular cuántas necesitamos recuperar
-                                const needed = 10 - filtered.length;
-                                
-                                // Tomar las necesarias (preferiblemente que sean de conceptos diferentes si es posible, 
-                                // pero priorizamos cantidad sobre unicidad estricta en este caso extremo)
-                                const toRestore = removedQuestions.slice(0, needed);
-                                filtered = [...filtered, ...toRestore];
-                                
-                                console.log(`✅ Recuperadas ${toRestore.length} preguntas. Total final: ${filtered.length}`);
-                            } else if (filtered.length > 10) {
-                                // Si hay más de 10, recortamos a 10 exactas
-                                filtered = filtered.slice(0, 10);
+                                console.error('❌ Error saving history in fallback:', saveErr);
                             }
 
                             // Always update respuestaFinal because we shuffled options
