@@ -5090,10 +5090,19 @@ No se pudo analizar el repositorio: ${gitHubUrl}
         // Determinar si la pregunta es sobre nota/calificación/tarea/feedback/archivo (ampliado)
         const preguntaLower = (prompt || '').toLowerCase();
 
-        // 🔥 MEJORA: También considerar como pregunta de nota si hay contexto de tarea disponible
-        const hayContextoTarea = (taskDescription && taskDescription.trim().length > 0) ||
+        // 🔥 CRITICAL FIX: Only consider task context if the question is ACTUALLY about the task
+        // Check if question mentions task-related keywords
+        const preguntaReferenciaTarea = /nota|calificaci(ó|o)n|puntaje|evaluaci(ó|o)n|tarea|archivo|entrega|entregu(é|e)|envi(é|e)|calif(í|i)ca|revis(a|ar)|correg(ir|i)|feedback|comentario/.test(preguntaLower);
+        
+        // Only use task context if:
+        // 1. There IS task context available AND
+        // 2. The question references the task
+        const tieneContextoDisponible = (taskDescription && taskDescription.trim().length > 0) ||
             (extractedTaskName && extractedTaskName.length > 0) ||
-            (extractedProfessorDescription && extractedProfessorDescription.length > 0);
+            (extractedProfessorDescription && extractedProfessorDescription.length > 0) ||
+            (fileContent && fileContent.trim().length > 0);
+        
+        const hayContextoTarea = tieneContextoDisponible && preguntaReferenciaTarea;
 
         const esPreguntaNota =
             (/nota|calificaci(ó|o)n|puntaje|puntuaci(ó|o)n|evaluaci(ó|o)n|score|grade|calif(í|i)ca(me|la|el)|eval(ú|u)a(me|la|el)/.test(preguntaLower) &&
@@ -5111,7 +5120,9 @@ No se pudo analizar el repositorio: ${gitHubUrl}
             (fileContent && fileContent.trim() || extractedSummary);
 
         console.log('🔍 ANÁLISIS DE CONTEXTO:');
-        console.log('   - hayContextoTarea:', hayContextoTarea);
+        console.log('   - tieneContextoDisponible:', tieneContextoDisponible);
+        console.log('   - preguntaReferenciaTarea:', preguntaReferenciaTarea);
+        console.log('   - hayContextoTarea (will use):', hayContextoTarea);
         console.log('   - esPreguntaNota:', esPreguntaNota);
         console.log('   - esPreguntaEvaluacionCritica:', esPreguntaEvaluacionCritica);
 
@@ -5731,7 +5742,7 @@ RECUERDA: Cada pregunta DEBE incluir una "explanation" detallada.`;
 
             console.log('📊 PROCESANDO PREGUNTA SIMPLE CON DEEPSEEK V2.3...');
             try {
-                // Si hay contexto académico disponible, incluirlo para dar mejor respuesta
+                // 🚀 CRITICAL FIX: Solo incluir contexto académico si hayContextoTarea es true
                 let promptCompleto = `INSTRUCCIONES CRÍTICAS:
 - EL USUARIO ES UN DOCENTE REVISANDO LA ENTREGA DE UN ESTUDIANTE
 - RESPONDE SIEMPRE EN ESPAÑOL
@@ -5742,7 +5753,9 @@ RECUERDA: Cada pregunta DEBE incluir una "explanation" detallada.`;
 
 PREGUNTA DEL USUARIO: ${prompt}`;
 
-                if (taskDescription && taskDescription.trim() && fileContent && fileContent.trim()) {
+                // 🚀 ONLY inject academic context if the question is ABOUT the task
+                if (hayContextoTarea && taskDescription && taskDescription.trim() && fileContent && fileContent.trim()) {
+                    console.log('✅ Inyectando contexto académico porque la pregunta referencia la tarea');
                     promptCompleto = `INSTRUCCIONES CRÍTICAS:
 - EL USUARIO ES UN DOCENTE REVISANDO LA ENTREGA DE UN ESTUDIANTE
 - RESPONDE SIEMPRE EN ESPAÑOL
@@ -5759,6 +5772,8 @@ Contenido entregado: ${fileContent}
 Pregunta del usuario: ${prompt}
 
 Responde considerando el contexto académico disponible si es relevante para la pregunta. SIEMPRE EN ESPAÑOL.`;
+                } else if (!hayContextoTarea && (taskDescription || fileContent)) {
+                    console.log('🚫 NO inyectando contexto académico - pregunta no referencia la tarea (pregunta general)');
                 }
 
                 const tokensPrompt = encode(promptCompleto).length;
