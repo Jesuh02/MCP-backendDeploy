@@ -428,7 +428,7 @@ export class MCPService {
             const validatedQuestions = questions.map((q, idx) => {
                 const hasValidExplanation = q.explanation && 
                                           typeof q.explanation === 'string' && 
-                                          q.explanation.trim().length >= 10; // Reducido de 50 a 10 para evitar falsos negativos
+                                          q.explanation.trim().length >= 5; // Relaxed verification to 5 chars to match Parser
                 
                 if (!hasValidExplanation) {
                     const originalLength = q.explanation ? q.explanation.trim().length : 0;
