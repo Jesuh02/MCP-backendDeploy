@@ -51,3 +51,8 @@ serviceAccountKey.json
 movil-77c19-firebase-adminsdk-fbsvc-5d81f25b08.json
 .env-raildway.json
 scripts/setup_rag_tables.sql
+.env-raildway.json
+.env.prod
+.env.qa
+.env-raildway.json
+.env-raildway.json
