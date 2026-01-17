@@ -199,7 +199,7 @@ router.post('/analyze-github', async (req, res, next) => {
 });
 
 /**
- * Helper function to provide helpful error hints
+ * Helper function to provide helpful error hintss
  */
 function getGitHubErrorHint(errorMessage) {
   if (!errorMessage) {
