@@ -445,9 +445,10 @@ function repairReinforcementJson(text) {
         }
         
         // GARANTIZAR EXPLANATION (CRÍTICO)
-        if (!expl || expl.trim().length < 5) {
+        if (!expl || expl.trim().length < 5 || expl.includes("generada automáticamente")) {
              const correctOpt = opts[cIdx] || "la opción correcta";
-             expl = `La respuesta correcta es: "${correctOpt}". Explicación generada automáticamente por el sistema de recuperación.`;
+             // Si no hay explicación, intentamos dar una respuesta neutra pero útil
+             expl = `La respuesta correcta es: "${correctOpt}". Revisa el material del curso para profundizar en este concepto.`;
         }
         
         questions.push({

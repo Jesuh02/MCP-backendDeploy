@@ -439,8 +439,7 @@ export class MCPService {
                         ? q.options[q.correctIndex] 
                         : 'la opción correcta';
                     
-                    q.explanation = `La respuesta correcta es: "${correctOption}". ` +
-                        'Esta opción es correcta según el contenido y material de referencia proporcionado en el curso. Explicación generada automáticamente.';
+                    q.explanation = `La respuesta correcta es: "${correctOption}". Consulta la documentación del curso para más detalles.`;
                     
                     logger.info(`   ✨ Explanation AUTO-GENERATED: ${q.explanation.length} chars`);
                     autoRepairedCount++;

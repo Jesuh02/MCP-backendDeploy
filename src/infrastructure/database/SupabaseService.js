@@ -370,6 +370,15 @@ CREATE TABLE public.videos (
   CONSTRAINT videos_pkey PRIMARY KEY (id),
   CONSTRAINT videos_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id)
 );
+CREATE TABLE public.usuarios_roles (
+  usuario_id bigint NOT NULL,
+  rol_id integer NOT NULL,
+  asignado_en timestamp with time zone DEFAULT now(),
+  CONSTRAINT usuarios_roles_pkey PRIMARY KEY (usuario_id, rol_id),
+  CONSTRAINT fk_usuarios_roles_rol FOREIGN KEY (rol_id) REFERENCES public.roles(id) ON DELETE CASCADE,
+  CONSTRAINT fk_usuarios_roles_usuario FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_usuarios_roles_rol ON public.usuarios_roles USING btree (rol_id);
 `;
     }
 
