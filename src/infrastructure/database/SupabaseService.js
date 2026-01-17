@@ -783,6 +783,49 @@ CREATE TABLE public.videos (
     }
 
     /**
+     * Delete a course and all related content
+     * @param {number} courseId - Course ID
+     * @returns {boolean} - True if successful
+     */
+    async deleteCourse(courseId) {
+        try {
+            logger.info(`🗑️ [SupabaseService] Deleting course: ${courseId}`);
+            
+            // Delete related records first to ensure referential integrity
+            
+            // 1. Delete student progress
+            await this.client.from('progreso_estudiante').delete().eq('curso_id', courseId);
+            
+            // 2. Delete videos associated with this course
+            await this.client.from('videos').delete().eq('course_id', courseId);
+
+            // 3. Topics and tasks
+            // Get topics to delete their tasks
+            const { data: topics } = await this.client.from('topics').select('id').eq('course_id', courseId);
+            if (topics && topics.length > 0) {
+                const topicIds = topics.map(t => t.id);
+                // Delete tasks for these topics
+                if (topicIds.length > 0) {
+                    await this.client.from('tasks').delete().in('topic_id', topicIds);
+                    // Delete topics
+                    await this.client.from('topics').delete().in('id', topicIds);
+                }
+            }
+
+            // 4. Finally delete the course
+            const { error } = await this.client.from('courses').delete().eq('id', courseId);
+            
+            if (error) throw error;
+            
+            logger.info(`✅ [SupabaseService] Course deleted: ${courseId}`);
+            return true;
+        } catch (error) {
+            logger.error(`❌ [SupabaseService] deleteCourse failed for ID ${courseId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
      * Health check for Supabase connection
      */
     async healthCheck() {
