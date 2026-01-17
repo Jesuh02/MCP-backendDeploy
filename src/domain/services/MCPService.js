@@ -307,27 +307,18 @@ export class MCPService {
             // Reverse to chronological order (Oldest -> Newest) for the LLM to understand flow
             recentQuestions = recentQuestions.reverse();
 
-            // 4. Format context string with STRICT INSTRUCTIONS
-            let contextString = `\n--- 📜 HISTORIAL DE PREGUNTAS DEL ESTUDIANTE (Últimas ${recentQuestions.length}) ---\n`;
-            contextString += "⚠️ INSTRUCCIONES CRÍTICAS DE GENERACIÓN - LEER ATENTAMENTE:\n";
-            contextString += "1. ANÁLISIS SEMÁNTICO: Analiza los conceptos y temas de las siguientes preguntas previas.\n";
-            contextString += "2. NO REPETIR: Genera preguntas COMPLETAMENTE NUEVAS. No repitas la misma semántica ni los mismos conceptos exactos que en el historial.\n";
-            contextString += "3. DIVERSIDAD: Busca ángulos, casos de borde o conceptos relacionados pero distintos para evaluar.\n";
-            contextString += "4. ESTRUCTURA JSON OBLIGATORIA: Cada objeto de pregunta DEBE incluir el campo 'explanation'.\n";
-            contextString += "   - 'explanation': Una cadena de texto clara y educativa explicando por qué la respuesta correcta es la correcta.\n";
-            contextString += "------------------------------------------\n";
-            
+            // 4. Format context string
+            let contextString = `\n--- PREVIOUS INTERACTIONS (Last ${recentQuestions.length}) ---\n`;
             if (recentQuestions.length === 0) {
-                contextString += "(El estudiante no tiene historial previo - Genera preguntas iniciales fundamentales)";
+                contextString += "(No previous reinforcement history)";
             } else {
-                contextString += "🛑 LISTA DE CONCEPTOS A EVITAR (YA EVALUADOS):\n";
                 recentQuestions.forEach((q, i) => {
-                    contextString += `[Pregunta ${i + 1}]: ${q}\n`;
+                    contextString += `Q${i + 1}: ${q}\n`;
                 });
             }
             contextString += "\n------------------------------------------\n";
 
-            logger.info(`✅ Context built: ${recentQuestions.length} questions included with strict Anti-Duplication prompt.`);
+            logger.info(`✅ Context built: ${recentQuestions.length} questions included.`);
 
             return {
                 contextString,

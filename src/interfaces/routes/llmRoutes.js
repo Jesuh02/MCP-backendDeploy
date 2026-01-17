@@ -198,6 +198,42 @@ LLM REQUEST END`;
                 // If ollamaUrl ends with /, remove it
         const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
         const targetUrl = `${baseUrl}/api/generate`;
+
+        // --- INJECT HISTORY & EXPLANATION INSTRUCTIONS (MCP) ---
+        const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+        const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
+
+        if (userId && courseId) {
+            try {
+                // Ensure MCPService is instantiated correctly (imported at top)
+                const mcpService = new MCPService();
+                console.log(`🧠 MCP: Recuperando historial para usuario ${userId} curso ${courseId} para evitar duplicados...`);
+                // Get strictly the text of previous questions
+                const historyTexts = await mcpService.getReinforcementQuestionsText(userId, courseId);
+                
+                if (historyTexts && historyTexts.length > 0) {
+                    // Filter down to a reasonable amount to fit context window (e.g., last 50)
+                    // We prioritize the most recent ones as they are most likely in the current "session" content
+                    const recentHistory = historyTexts.slice(-50);
+                    
+                    const historyContext = `\n\n[HISTORIAL DE PREGUNTAS PREVIAS - estricta prohibición de duplicados]\n` +
+                        `El estudiante YA ha contestado las siguientes preguntas. Para garantizar un aprendizaje efectivo, es OBLIGATORIO que generes preguntas NUEVAS.\n` +
+                        `NO generes preguntas que sean semánticamente iguales o muy similares a estas:\n` +
+                        recentHistory.map((q, i) => `- ${q}`).join('\n') + 
+                        `\n\n[INSTRUCCIÓN]: Genera preguntas conceptualmente distintas. Si el tema es limitado, cambia el enfoque (ej. de teórico a práctico).`;
+                    
+                    augmentedPrompt += historyContext;
+                }
+            } catch (histError) {
+                console.warn('⚠️ Error injecting history context:', histError.message);
+            }
+        }
+
+        // Enforce explanation field explicitly
+        augmentedPrompt += `\n\n[REQUISITO DE RESPUESTA JSON]\n` +
+            `Cada objeto de pregunta debe incluir OBLIGATORIAMENTE el campo "explanation".\n` +
+            `"explanation": "Una explicación detallada y educativa de por qué la respuesta correcta es la correcta. NO usar frases genéricas."`;
+
         
         console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${model || 'deepseek-chat'})`);
 

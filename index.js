@@ -327,9 +327,12 @@ function repairReinforcementJson(text) {
         if (Array.isArray(parsed)) {
              console.log(`✅ JSON.parse exitoso: ${parsed.length} preguntas`);
              return parsed.map(q => {
-                 if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 5)) {
-                      const correctOpt = q.options && q.options[q.correctIndex] ? q.options[q.correctIndex] : 'la opción correcta';
-                      q.explanation = `La respuesta correcta es: "${correctOpt}". Esta explicación se generó automáticamente porque el modelo no proporcionó una.`;
+                 // Enhanced Explanation Check: Only add fallback if completely missing. 
+                 // We trust the Prompt Engineering to provide good explanations now.
+                 if (!q.explanation || (typeof q.explanation === 'string' && q.explanation.trim().length < 2)) {
+                      // Minimal fallback if absolutely necessary, but prompt should prevent this.
+                      const correctOpt = q.options && q.options[q.correctIndex] ? q.options[q.correctIndex] : 'Revisar material.';
+                      q.explanation = `Respuesta correcta: ${correctOpt}.`;
                  }
                  return q;
              });
@@ -521,7 +524,7 @@ function repairReinforcementJson(text) {
             
             if (!explanation || explanation.trim().length < 5) {
                  const correctOpt = options[correctIndex] || "la opción correcta";
-                 explanation = `La respuesta correcta es: "${correctOpt}". Explicación generada por recuperación de datos.`;
+                 explanation = `Respuesta correcta: ${correctOpt}`;
             }
             
             questions.push({
