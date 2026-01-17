@@ -3564,6 +3564,40 @@ app.post('/notify-grade', async(req, res) => {
  * 2. Guarda la notificación en la base de datos (tabla 'notifications').
  * 3. Envía notificaciones Push a los dispositivos de los suscriptores.
  */
+
+/* ============================================================ */
+/* 🗑️ COURSE MANAGEMENT ROUTES                                  */
+/* ============================================================ */
+
+/**
+ * Deletes a course and all related content (videos, tasks, topics)
+ * Handles cascading deletes that Supabase might not handle automatically
+ */
+app.post('/course/delete', async (req, res) => {
+    try {
+        console.log('🗑️ REQUEST: /course/delete');
+        const { courseId } = req.body;
+        
+        if (!courseId) {
+            console.warn('⚠️ courseId missing in request');
+            return res.status(400).json({ error: 'courseId is required' });
+        }
+        
+        console.log(`Processing deletion for course ID: ${courseId}`);
+        const result = await SupabaseService.getInstance().deleteCourse(courseId);
+        
+        // deleteCourse throws on error
+        res.json({ success: true, message: `Course ${courseId} deleted successfully` });
+        
+    } catch (error) {
+        console.error(`❌ Error in /course/delete:`, error);
+        res.status(500).json({ 
+            error: 'Failed to delete course', 
+            details: error.message 
+        });
+    }
+});
+
 app.post('/notify-video-upload', async(req, res) => {
     const { creatorId, videoTitle, videoId } = req.body;
 
