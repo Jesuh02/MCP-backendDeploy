@@ -63,7 +63,7 @@ export class EmbeddingService extends IEmbeddingProvider {
             return;
         }
         
-        // Priority 2: DeepSeek (if they support embeddings)
+        // Priority 2: DeepSeek (Standard OpenAI-compatible endpoint)
         if (deepSeekApiKey && OpenAIEmbeddings) {
             console.log("🔗 Initializing DeepSeek Embeddings...");
             try {
@@ -72,13 +72,14 @@ export class EmbeddingService extends IEmbeddingProvider {
                     configuration: {
                         baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
                     },
-                    modelName: "deepseek-chat", // DeepSeek might not have dedicated embeddings
+                    modelName: process.env.DEEPSEEK_EMBEDDING_MODEL || "deepseek-embedding-v2", 
                 });
                 this.provider = 'deepseek';
-                console.log("✅ DeepSeek Embeddings initialized (experimental)");
+                this.dimensions = 1024; // DeepSeek embedding v2 typical dimension (verify if needed)
+                console.log(`✅ DeepSeek Embeddings initialized (Model: ${this.model.modelName})`);
                 return;
             } catch (e) {
-                console.warn("⚠️ DeepSeek embeddings failed, trying fallback...");
+                console.warn("⚠️ DeepSeek embeddings failed, trying fallback...", e.message);
             }
         }
         
