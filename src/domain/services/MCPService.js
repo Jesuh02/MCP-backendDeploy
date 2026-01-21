@@ -2402,3 +2402,13 @@ A continuación se muestra el contenido del repositorio para análisis:`;
         return lines.join('\n');
     }
 }
+
+// Allow external modules (index.js) to toggle a forced remote-LLM mode for MCPService
+export function setUseRemoteLLM(flag) {
+    try {
+        MCPService.prototype.useRemoteLLM = !!flag;
+        console.log(`MCPService: useRemoteLLM set to ${!!flag}`);
+    } catch (e) {
+        console.warn('MCPService: Failed to set useRemoteLLM flag', e.message || e);
+    }
+}

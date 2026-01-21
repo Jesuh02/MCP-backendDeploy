@@ -6,9 +6,17 @@ echo "================================================================"
 
 # Railway always injects PORT. Default only for local dev.
 export PORT=${PORT:-3000}
+# Allow configuring remote DeepSeek endpoint via env; default empty but explicit
+export DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-}
+export INTERFACE_HEARTBEAT_TIMEOUT_MS=${INTERFACE_HEARTBEAT_TIMEOUT_MS:-15000}
 
 echo "🚀 Starting API Server..."
 echo "🌐 Listening on port: $PORT"
+if [ -z "$DEEPSEEK_BASE_URL" ]; then
+	echo "⚠️ DEEPSEEK_BASE_URL is not set — remote fallback will be disabled unless configured via env"
+else
+	echo "🌐 Remote DeepSeek configured: $DEEPSEEK_BASE_URL"
+fi
 echo "============================================================"
 
 # IMPORTANT:
