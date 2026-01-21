@@ -13,7 +13,7 @@ import { TextLoader } from 'langchain/document_loaders/fs/text';
 import { DocxLoader } from 'langchain/document_loaders/fs/docx';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { LLMService } from './src/infrastructure/ai/LLMService.js';
-import { MCPService } from './src/domain/services/MCPService.js';
+import { MCPService, setUseRemoteLLM } from './src/domain/services/MCPService.js';
 import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
 import { RAGService } from './src/domain/services/RAGService.js';
 
@@ -165,11 +165,19 @@ console.log('      POST /api/payment/webhook - Payment confirmation webhook');
 // even before all other services are initialized
 // ============================================================
 app.get('/', (req, res) => {
+    // Update heartbeat for root checks
+    try { lastHealthcheckAt = Date.now(); forceRemoteLLM = false; } catch (e) {}
     res.status(200).send('YisusCompany MCP Server is Running');
 });
 
 app.get('/health', (req, res) => {
     console.log(`💓 Healthcheck received from ${req.ip}`);
+    // Record heartbeat so container knows host interface is alive
+    try {
+        lastHealthcheckAt = Date.now();
+        forceRemoteLLM = false;
+        try { setUseRemoteLLM(false); } catch (e) {}
+    } catch (e) {}
     res.status(200).send('OK');
 });
 
@@ -306,30 +314,107 @@ try {
 } catch (error) {
     console.error('❌ Failed to initialize LLMService:', error.message);
 }
+// Heartbeat watchdog: detect if host interface stops sending health signals
+let lastHealthcheckAt = Date.now();
+const INTERFACE_HEARTBEAT_TIMEOUT_MS = parseInt(process.env.INTERFACE_HEARTBEAT_TIMEOUT_MS || '15000', 10);
+let forceRemoteLLM = false;
+
+// Any /health or root request updates the heartbeat timestamp (see middleware below)
+app.use((req, res, next) => {
+    if (req.path && (req.path === '/health' || req.path === '/' || req.path.startsWith('/procesar') || req.path.startsWith('/llm'))) {
+        lastHealthcheckAt = Date.now();
+        if (forceRemoteLLM) {
+            forceRemoteLLM = false;
+            console.log('🔔 Host heartbeat resumed — re-enabling local LLM attempts');
+        }
+    }
+    next();
+});
+
+// Watchdog: if no heartbeat for a short window, prefer remote DeepSeek to avoid waiting for local interface
+setInterval(() => {
+    try {
+        const age = Date.now() - lastHealthcheckAt;
+        if (age > INTERFACE_HEARTBEAT_TIMEOUT_MS) {
+            if (!forceRemoteLLM) {
+                forceRemoteLLM = true;
+                try { setUseRemoteLLM(true); } catch (e) {}
+                console.warn(`⚠️ No host heartbeat for ${age}ms — switching to remote DeepSeek fallback (forceRemoteLLM=true)`);
+            }
+        }
+    } catch (err) {
+        console.error('Watchdog error:', err);
+    }
+}, Math.max(2000, Math.floor(INTERFACE_HEARTBEAT_TIMEOUT_MS / 3)));
 
 /**
- * Helper function to call DeepSeek via LLMService
- * Replaces all Ollama calls with DeepSeek API
+ * Helper that calls remote DeepSeek HTTP API directly (used as immediate fallback)
+ */
+async function remoteDeepSeekCall(systemPrompt, userPrompt) {
+    const base = process.env.DEEPSEEK_BASE_URL;
+    const key = process.env.DEEPSEEK_API_KEY;
+    if (!base) {
+        throw new Error('DEEPSEEK_BASE_URL not configured for remote fallback');
+    }
+
+    const payload = {
+        systemPrompt: systemPrompt || '',
+        prompt: userPrompt || ''
+    };
+
+    console.log('🌐 Calling remote DeepSeek API as fallback:', base);
+
+    try {
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        if (key) headers['Authorization'] = `Bearer ${key}`;
+
+        const resp = await axios.post(`${base}/procesar-prompt`, payload, { headers, timeout: 20000 });
+        if (resp && resp.data) {
+            return typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+        }
+        throw new Error('Empty response from remote DeepSeek');
+    } catch (err) {
+        console.error('❌ Remote DeepSeek call failed:', err.message || err);
+        throw err;
+    }
+}
+
+/**
+ * Helper function to call DeepSeek via LLMService (local) with remote fallback.
+ * If watchdog indicates missing host heartbeat, skip local attempts and call remote immediately.
  */
 async function callDeepSeek(systemPrompt, userPrompt) {
-    if (!llmService || !llmService.model) {
-        throw new Error('LLMService not available - DeepSeek not configured');
+    // If watchdog forced remote LLM, skip local attempt entirely
+    if (forceRemoteLLM) {
+        console.log('ℹ️ Watchdog forcing remote DeepSeek call (skipping local)');
+        return await remoteDeepSeekCall(systemPrompt, userPrompt);
     }
 
-    const messages = [];
-    if (systemPrompt) {
-        messages.push(new SystemMessage(systemPrompt));
+    // Prefer local LLMService if available
+    if (llmService && llmService.model) {
+        try {
+            const messages = [];
+            if (systemPrompt) messages.push(new SystemMessage(systemPrompt));
+            messages.push(new HumanMessage(userPrompt));
+
+            console.log('🤖 Calling local LLMService (DeepSeek)');
+            const response = await llmService.generateResponse(messages);
+            const content = response?.content || response?.text || response?.toString?.() || '';
+            console.log('✅ Local DeepSeek response received:', typeof content === 'string' ? content.length : 'unknown', 'chars');
+            if (content && content.length > 0) return content;
+            // Fallthrough to remote if content empty
+            console.warn('⚠️ Local LLM returned empty content — falling back to remote DeepSeek');
+        } catch (err) {
+            console.warn('⚠️ Local LLMService call failed, falling back to remote DeepSeek:', err.message || err);
+        }
+    } else {
+        console.warn('⚠️ Local LLMService not available — using remote DeepSeek');
     }
-    messages.push(new HumanMessage(userPrompt));
 
-    console.log('🤖 Calling DeepSeek v2.3...');
-    const response = await llmService.generateResponse(messages);
-
-    // Extract content from response
-    const content = response.content || response.text || response.toString();
-    console.log('✅ DeepSeek response received:', content.length, 'characters');
-
-    return content;
+    // Always attempt remote fallback as last resort
+    return await remoteDeepSeekCall(systemPrompt, userPrompt);
 }
 
 // Initialize MCPService for GitHub analysis
