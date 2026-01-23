@@ -8,7 +8,7 @@ echo "================================================================"
 export PORT=${PORT:-3000}
 # Allow configuring remote DeepSeek endpoint via env; default empty but explicit
 export DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-}
-export INTERFACE_HEARTBEAT_TIMEOUT_MS=${INTERFACE_HEARTBEAT_TIMEOUT_MS:-15000}
+export INTERFACE_HEARTBEAT_TIMEOUT_MS=${INTERFACE_HEARTBEAT_TIMEOUT_MS:-6000}
 
 echo "🚀 Starting API Server..."
 echo "🌐 Listening on port: $PORT"
