@@ -90,9 +90,22 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-MCP-Client, X-MCP-Request-Id');
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
+    }
+    next();
+});
+
+// Generic request logging middleware to help debug connectivity from mobile devices
+app.use((req, res, next) => {
+    try {
+        const clientHeader = req.headers['x-mcp-client'] || req.headers['user-agent'] || 'unknown';
+        const apiKey = req.headers['x-api-key'] || '';
+        const remote = req.ip || (req.connection && req.connection.remoteAddress) || '<unknown>';
+        console.log(`[INCOMING] ${new Date().toISOString()} ${req.method} ${req.originalUrl} from ${remote} client=${clientHeader} x-api-key=${apiKey}`);
+    } catch (e) {
+        console.log('Error logging incoming request', e.message);
     }
     next();
 });
@@ -184,6 +197,18 @@ app.get('/health', (req, res) => {
 // Also respond to / for basic health checks
 app.get('/_health', (req, res) => {
     res.status(200).send('OK');
+});
+
+// Lightweight debug endpoint to verify incoming connections from other devices
+app.get('/ping-debug', (req, res) => {
+    try {
+        const remote = req.ip || (req.connection && req.connection.remoteAddress) || '<unknown>';
+        console.log('🔍 /ping-debug requested from', remote);
+        console.log('    headers:', JSON.stringify(req.headers));
+    } catch (e) {
+        console.log('Error in /ping-debug logging', e.message);
+    }
+    res.json({ ok: true, ip: req.ip, headers: req.headers, ts: new Date().toISOString() });
 });
 
 // Endpoint de diagnóstico para verificar variables de entorno (sin revelar secretos)
