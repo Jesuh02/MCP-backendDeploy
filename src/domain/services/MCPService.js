@@ -2407,7 +2407,18 @@ A continuación se muestra el contenido del repositorio para análisis:`;
 export function setUseRemoteLLM(flag) {
     try {
         MCPService.prototype.useRemoteLLM = !!flag;
+        // Also expose a global flag for other modules
+        try { global.__FORCE_REMOTE_LLM = !!flag; } catch(e) {}
         console.log(`MCPService: useRemoteLLM set to ${!!flag}`);
+        // If there's a running instance, try to notify it
+        try {
+            if (typeof mcpService !== 'undefined' && mcpService && typeof mcpService.setUseRemoteLLM === 'function') {
+                mcpService.setUseRemoteLLM(!!flag);
+            }
+        } catch (inner) {
+            // best-effort
+            console.debug('MCPService: notify instance failed:', inner && inner.message ? inner.message : inner);
+        }
     } catch (e) {
         console.warn('MCPService: Failed to set useRemoteLLM flag', e.message || e);
     }

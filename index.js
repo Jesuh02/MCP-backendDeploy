@@ -326,6 +326,7 @@ app.use((req, res, next) => {
         if (forceRemoteLLM) {
             forceRemoteLLM = false;
             console.log('🔔 Host heartbeat resumed — re-enabling local LLM attempts');
+            try { if (typeof setUseRemoteLLM === 'function') setUseRemoteLLM(false); } catch (e) { console.error('setUseRemoteLLM(false) failed:', e); }
         }
     }
     next();
@@ -338,14 +339,21 @@ setInterval(() => {
         if (age > INTERFACE_HEARTBEAT_TIMEOUT_MS) {
             if (!forceRemoteLLM) {
                 forceRemoteLLM = true;
-                try { setUseRemoteLLM(true); } catch (e) {}
+                try { if (typeof setUseRemoteLLM === 'function') setUseRemoteLLM(true); } catch (e) { console.error('setUseRemoteLLM(true) failed:', e); }
                 console.warn(`⚠️ No host heartbeat for ${age}ms — switching to remote DeepSeek fallback (forceRemoteLLM=true)`);
+            }
+        } else {
+            // If watchdog sees recent heartbeat but forceRemoteLLM still true, restore local preference
+            if (forceRemoteLLM) {
+                forceRemoteLLM = false;
+                console.log('✅ Watchdog detected heartbeat — restoring local LLM preference');
+                try { if (typeof setUseRemoteLLM === 'function') setUseRemoteLLM(false); } catch (e) { console.error('setUseRemoteLLM(false) failed:', e); }
             }
         }
     } catch (err) {
         console.error('Watchdog error:', err);
     }
-}, Math.max(2000, Math.floor(INTERFACE_HEARTBEAT_TIMEOUT_MS / 3)));
+}, Math.max(1000, Math.floor(INTERFACE_HEARTBEAT_TIMEOUT_MS / 4)));
 
 /**
  * Helper that calls remote DeepSeek HTTP API directly (used as immediate fallback)
