@@ -12,16 +12,21 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=development
+      - BIND_HOST=0.0.0.0
+      - INTERFACE_HEARTBEAT_TIMEOUT_MS=3000
     volumes:
       - ./:/app
       - /app/node_modules
     # Run Node directly to avoid shell script encoding issues from Windows-mounted files
     command: node index.js
     restart: always
+    extra_hosts:
+      # Ensure containers can resolve the Docker host on systems that support host-gateway
+      - "host.docker.internal:host-gateway"
     healthcheck:
-      # Shorter healthcheck to detect container availability faster on local/dev setups
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health/detailed || wget --no-verbose --tries=1 --spider http://localhost:3000/health || wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/health || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
+      # Aggressive healthcheck for local/dev. Also try resolving host.docker.internal so host networking is visible.
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || wget --no-verbose --tries=1 --spider http://host.docker.internal:3000/health || wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
+      interval: 3s
+      timeout: 2s
+      retries: 2
+      start_period: 5s

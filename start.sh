@@ -8,10 +8,13 @@ echo "================================================================"
 export PORT=${PORT:-3000}
 # Allow configuring remote DeepSeek endpoint via env; default empty but explicit
 export DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-}
-export INTERFACE_HEARTBEAT_TIMEOUT_MS=${INTERFACE_HEARTBEAT_TIMEOUT_MS:-6000}
+export INTERFACE_HEARTBEAT_TIMEOUT_MS=${INTERFACE_HEARTBEAT_TIMEOUT_MS:-3000}
+# Bind host (allow override for advanced setups)
+export BIND_HOST=${BIND_HOST:-0.0.0.0}
 
 echo "🚀 Starting API Server..."
 echo "🌐 Listening on port: $PORT"
+echo "🌐 Binding host: $BIND_HOST"
 if [ -z "$DEEPSEEK_BASE_URL" ]; then
 	echo "⚠️ DEEPSEEK_BASE_URL is not set — remote fallback will be disabled unless configured via env"
 else

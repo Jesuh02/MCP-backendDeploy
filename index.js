@@ -226,6 +226,104 @@ app.get('/debug-env', (req, res) => {
 
 console.log('🏥 Healthcheck endpoints registered (/health, /_health, /debug-env)');
 
+// Ensure server listens on all interfaces so LAN devices (phones) can reach it
+const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
+app.listen(PORT, BIND_HOST, () => {
+    console.log(`🚀 Server listening on http://${BIND_HOST}:${PORT} (all interfaces)`);
+});
+
+// After server start: quick check for local LLM/OLLAMA availability.
+// Track external incoming IPs so we can detect whether the container is only seeing internal healthchecks
+const INTERFACE_HEARTBEAT_TIMEOUT_MS = parseInt(process.env.INTERFACE_HEARTBEAT_TIMEOUT_MS || '3000', 10);
+const seenExternalClients = new Set();
+
+app.use((req, res, next) => {
+    try {
+        const ip = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || '';
+        // Normalize common localhost addresses
+        if (ip && ip !== '127.0.0.1' && ip !== '::1' && ip.indexOf('127.0.0.1') === -1 && ip.indexOf('::1') === -1) {
+            seenExternalClients.add(ip);
+        }
+    } catch (e) {
+        // ignore
+    }
+    next();
+});
+
+// Startup: probe local Ollama (if used) and schedule a check for external clients.
+async function startupProbes() {
+    try {
+        // quick Ollama probe (if environment uses it)
+        if (process.env.OLLAMA_URL) {
+            const ollamaUrl = process.env.OLLAMA_URL;
+            try {
+                const resp = await fetch(ollamaUrl + '/models');
+                if (resp.ok) console.log('✅ Ollama reachable at', ollamaUrl);
+            } catch (e) {
+                console.log('⚠️ Ollama not reachable at', ollamaUrl, e.message);
+            }
+        }
+    } catch (e) {
+        console.log('Startup probes error', e.message);
+    }
+
+    // After INTERFACE_HEARTBEAT_TIMEOUT_MS, if we have not seen any external clients, enable remote LLM if configured
+    setTimeout(() => {
+        try {
+            const externalCount = seenExternalClients.size;
+            console.log(`🔎 Interface heartbeat: seenExternalClients=${externalCount}`);
+            if (externalCount === 0 && process.env.DEEPSEEK_BASE_URL) {
+                console.log('⚙️ No external clients detected — enabling remote LLM fallback');
+                try {
+                    const svc = require('./src/domain/services/MCPService');
+                    if (svc && typeof svc.setUseRemoteLLM === 'function') {
+                        svc.setUseRemoteLLM(true);
+                    }
+                } catch (e) {
+                    console.log('Failed to setUseRemoteLLM:', e.message);
+                }
+            } else {
+                console.log('External clients detected; keeping local LLM preference');
+            }
+        } catch (e) {
+            console.log('Interface heartbeat handler error', e.message);
+        }
+    }, INTERFACE_HEARTBEAT_TIMEOUT_MS);
+}
+
+// Kick off startup probes without blocking server boot
+startupProbes().catch(e => console.log('startupProbes failure', e.message));
+// If local LLM is not reachable and a remote DEEPSEEK_BASE_URL is provided, enable remote LLM mode.
+;(async () => {
+    try {
+        const localOllama = process.env.OLLAMA_URL || 'http://127.0.0.1:11435'
+        console.log('🔎 Checking local LLM at', localOllama)
+        const resp = await fetch(localOllama, { method: 'GET', redirect: 'follow', timeout: 1000 }).catch(e => null)
+        if (!resp || !resp.ok) {
+            if (process.env.DEEPSEEK_BASE_URL) {
+                try {
+                    const svc = require('./src/domain/services/MCPService.js')
+                    if (svc && typeof svc.setUseRemoteLLM === 'function') {
+                        svc.setUseRemoteLLM(true)
+                        console.log('🌐 Local LLM not reachable; remote DEEPSEEK_BASE_URL enabled')
+                    }
+                } catch (e) {
+                    console.warn('Could not set remote LLM mode:', e.message)
+                }
+            } else {
+                console.log('Local LLM not reachable and no DEEPSEEK_BASE_URL configured')
+            }
+        } else {
+            console.log('✅ Local LLM reachable at', localOllama)
+        }
+    } catch (e) {
+        console.warn('Local LLM probe failed:', e.message)
+    }
+})()
+
+// Also export app for tests or tools that may require it (ESM export)
+export { app };
+
 // Initialize Firebase Admin (with error handling)
 let admin;
 try {
@@ -341,7 +439,8 @@ try {
 }
 // Heartbeat watchdog: detect if host interface stops sending health signals
 let lastHealthcheckAt = Date.now();
-const INTERFACE_HEARTBEAT_TIMEOUT_MS = parseInt(process.env.INTERFACE_HEARTBEAT_TIMEOUT_MS || '15000', 10);
+// Short default timeout to detect missing local interface quickly in dev
+const INTERFACE_HEARTBEAT_TIMEOUT_MS = parseInt(process.env.INTERFACE_HEARTBEAT_TIMEOUT_MS || '3000', 10);
 let forceRemoteLLM = false;
 
 // Any /health or root request updates the heartbeat timestamp (see middleware below)
@@ -366,12 +465,14 @@ setInterval(() => {
                 forceRemoteLLM = true;
                 try { if (typeof setUseRemoteLLM === 'function') setUseRemoteLLM(true); } catch (e) { console.error('setUseRemoteLLM(true) failed:', e); }
                 console.warn(`⚠️ No host heartbeat for ${age}ms — switching to remote DeepSeek fallback (forceRemoteLLM=true)`);
+                console.log('🔁 Watchdog: remote fallback ENABLED; all incoming LLM calls will skip local attempts until heartbeat resumes');
             }
         } else {
             // If watchdog sees recent heartbeat but forceRemoteLLM still true, restore local preference
             if (forceRemoteLLM) {
                 forceRemoteLLM = false;
                 console.log('✅ Watchdog detected heartbeat — restoring local LLM preference');
+                console.log('🔁 Watchdog: remote fallback DISABLED; local LLM attempts will resume');
                 try { if (typeof setUseRemoteLLM === 'function') setUseRemoteLLM(false); } catch (e) { console.error('setUseRemoteLLM(false) failed:', e); }
             }
         }
