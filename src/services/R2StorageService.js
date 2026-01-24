@@ -7,6 +7,21 @@
  */
 
 import { S3Client, GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
+// Dynamically load the presigner to avoid startup crashes when the package
+// isn't installed in the runtime environment (deployed container, etc.).
+let getSignedUrlFn = null;
+async function loadPresigner() {
+    if (getSignedUrlFn) return getSignedUrlFn;
+    try {
+        const mod = await import('@aws-sdk/s3-request-presigner');
+        getSignedUrlFn = mod.getSignedUrl;
+        return getSignedUrlFn;
+    } catch (e) {
+        console.warn('⚠️ R2StorageService: presigner package not available:', e && e.message ? e.message : e);
+        getSignedUrlFn = null;
+        return null;
+    }
+}
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
@@ -170,6 +185,63 @@ class R2StorageService {
      */
     getPublicUrl(objectKey) {
         return `${this.publicUrl}/${objectKey}`;
+    }
+
+    // Sanitize filename to safe URL-friendly form
+    sanitizeFileName(name) {
+        if (!name) return `file_${Date.now()}`;
+        // Keep extension if present
+        const ext = path.extname(name) || '';
+        const base = path.basename(name, ext)
+            .toLowerCase()
+            .replace(/[^a-z0-9-_\. ]/g, '-')
+            .replace(/[\s]+/g, '-');
+        return `${base}${ext}`;
+    }
+
+    // Ensure object key has an extension; if missing try to infer from contentType
+    ensureKeyHasExtension(key, contentType) {
+        const ext = path.extname(key);
+        if (ext && ext.length > 1) return key;
+        if (!contentType) return `${key}.mp4`;
+        if (contentType.includes('mp4')) return `${key}.mp4`;
+        if (contentType.includes('webm')) return `${key}.webm`;
+        if (contentType.includes('ogg')) return `${key}.ogg`;
+        return `${key}.mp4`;
+    }
+
+    /**
+     * Upload a buffer and build a normalized object key automatically.
+     * Returns an object with { publicUrl, key }
+     */
+    async uploadBufferWithAutoKey(buffer, originalFilename = null, contentType = 'video/mp4', prefix = 'videos') {
+        const sanitized = this.sanitizeFileName(originalFilename || `video_${Date.now()}.mp4`);
+        const keyBase = `${prefix}/${Date.now()}_${sanitized}`;
+        const key = this.ensureKeyHasExtension(keyBase, contentType);
+        const publicUrl = await this.uploadFile(buffer, key, contentType);
+        return { publicUrl, key };
+    }
+
+    /**
+     * Generate a signed GET URL for an object (expiresSeconds default 300)
+     */
+    async generateSignedUrl(objectKey, expiresSeconds = 300) {
+        if (!this.r2Client) {
+            return this.getPublicUrl(objectKey);
+        }
+        try {
+            const presigner = await loadPresigner();
+            if (!presigner) {
+                // Presigner not available in this environment; return public URL
+                return this.getPublicUrl(objectKey);
+            }
+            const command = new GetObjectCommand({ Bucket: this.bucketName, Key: objectKey });
+            const url = await presigner(this.r2Client, command, { expiresIn: expiresSeconds });
+            return url;
+        } catch (e) {
+            console.warn('R2 generateSignedUrl failed, falling back to public URL:', e.message);
+            return this.getPublicUrl(objectKey);
+        }
     }
 
     /**

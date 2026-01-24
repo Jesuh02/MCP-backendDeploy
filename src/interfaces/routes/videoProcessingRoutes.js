@@ -556,7 +556,8 @@ router.post('/insert', async (req, res) => {
         const { SupabaseService } = await import('../../infrastructure/database/SupabaseService.js');
         const supabaseService = SupabaseService.getInstance();
 
-        const insertedVideo = await supabaseService.insertVideo({
+        // Support direct upload via base64 payload (optional fields: videoBase64, originalFilename, contentType)
+        const payload = {
             title,
             description,
             videoUriString,
@@ -567,7 +568,15 @@ router.post('/insert', async (req, res) => {
             price,
             remoteId,
             courseId
-        });
+        };
+
+        if (req.body.videoBase64) {
+            payload.videoBase64 = req.body.videoBase64;
+            payload.originalFilename = req.body.originalFilename;
+            payload.contentType = req.body.contentType;
+        }
+
+        const insertedVideo = await supabaseService.insertVideo(payload);
 
         console.log(`✅ [Backend] Video inserted: ID=${insertedVideo.id}`);
 
