@@ -684,6 +684,10 @@ CREATE TABLE public.videos (
             }
 
             logger.info(`✅ [SupabaseService] Video inserted successfully: ID=${data.id}`);
+            // Ensure returned object has non-null description for clients
+            if (data && (data.description === null || data.description === undefined)) {
+                data.description = '';
+            }
             return data;
         } catch (error) {
             logger.error('❌ [SupabaseService] insertVideo failed:', error);
