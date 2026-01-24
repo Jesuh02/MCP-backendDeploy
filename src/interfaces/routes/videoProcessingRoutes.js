@@ -523,7 +523,8 @@ router.get('/qualities', (req, res) => {
  * Insert a video record into Supabase (delegated from mobile client)
  * This endpoint centralizes database operations on the backend
  */
-router.post('/insert', async (req, res) => {
+// Accept either JSON (with optional videoBase64) or multipart/form-data with 'videoFile'
+router.post('/insert', upload.single('videoFile'), async (req, res) => {
     try {
         const {
             title,
@@ -570,7 +571,20 @@ router.post('/insert', async (req, res) => {
             courseId
         };
 
-        if (req.body.videoBase64) {
+        // If multipart upload provided a file, read it from disk and attach as base64
+        if (req.file && req.file.path) {
+            try {
+                const fileBuffer = await fs.readFile(req.file.path);
+                payload.videoBase64 = fileBuffer.toString('base64');
+                payload.originalFilename = req.file.originalname || `${title.replace(/\s+/g, '_')}.mp4`;
+                payload.contentType = req.file.mimetype || 'video/mp4';
+                // Remove temp file after reading
+                try { await fs.unlink(req.file.path); } catch (e) { /* ignore */ }
+            } catch (e) {
+                console.error('❌ Failed reading uploaded file:', e);
+                return res.status(500).json({ success: false, error: 'Failed processing uploaded file' });
+            }
+        } else if (req.body.videoBase64) {
             payload.videoBase64 = req.body.videoBase64;
             payload.originalFilename = req.body.originalFilename;
             payload.contentType = req.body.contentType;
