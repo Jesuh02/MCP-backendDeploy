@@ -571,6 +571,11 @@ router.post('/insert', async (req, res) => {
 
         console.log(`✅ [Backend] Video inserted: ID=${insertedVideo.id}`);
 
+        // Ensure description is not null to avoid client NPEs
+        if (insertedVideo && (insertedVideo.description === null || insertedVideo.description === undefined)) {
+            insertedVideo.description = '';
+        }
+
         res.json({
             success: true,
             video: insertedVideo,
@@ -611,6 +616,11 @@ router.put('/update/:videoId', async (req, res) => {
 
         console.log(`✅ [Backend] Video updated: ID=${videoId}`);
 
+        // Ensure description is not null for client safety
+        if (updatedVideo && (updatedVideo.description === null || updatedVideo.description === undefined)) {
+            updatedVideo.description = '';
+        }
+
         res.json({
             success: true,
             video: updatedVideo
@@ -650,6 +660,11 @@ router.get('/fetch/:videoId', async (req, res) => {
                 success: false,
                 error: 'Video not found'
             });
+        }
+
+        // Ensure description is not null to prevent client crashes
+        if (video && (video.description === null || video.description === undefined)) {
+            video.description = '';
         }
 
         res.json({
