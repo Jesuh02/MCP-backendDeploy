@@ -6,6 +6,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '../logging/Logger.js';
+import R2StorageService from '../../services/R2StorageService.js';
 
 export class SupabaseService {
     static instance = null;
@@ -646,11 +647,30 @@ CREATE TABLE public.videos (
                 throw new Error('Video title is required');
             }
 
+            // If caller provided a base64 buffer, upload it to R2 first
+            let uploaded = null;
+            if (videoData.videoBase64) {
+                try {
+                    const buffer = Buffer.from(videoData.videoBase64, 'base64');
+                    const originalFilename = videoData.originalFilename || `${title.replace(/\s+/g, '_')}.mp4`;
+                    const contentType = videoData.contentType || 'video/mp4';
+                    const r2 = R2StorageService.getInstance();
+                    uploaded = await r2.uploadBufferWithAutoKey(buffer, originalFilename, contentType, 'videos');
+                    logger.info(`✅ Uploaded video to R2: ${uploaded.key}`);
+                } catch (e) {
+                    logger.error('❌ Failed uploading buffer to R2:', e);
+                    throw e;
+                }
+            }
+
             // Build insert payload (snake_case for Postgres)
             const insertPayload = {
                 title,
                 description: description || null,
-                video_uri_string: videoUriString || null,
+                // Prefer uploaded public URL when available
+                video_uri_string: (uploaded && uploaded.publicUrl) ? uploaded.publicUrl : (videoUriString || null),
+                // store the object key in local_file_path for now (backend uses it as key)
+                local_file_path: (uploaded && uploaded.key) ? uploaded.key : (localFilePath || null),
                 local_file_path: localFilePath || null,
                 timestamp: timestamp || Date.now(),
                 is_paid: isPaid || false,
