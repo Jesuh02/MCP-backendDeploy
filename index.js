@@ -234,7 +234,6 @@ app.listen(PORT, BIND_HOST, () => {
 
 // After server start: quick check for local LLM/OLLAMA availability.
 // Track external incoming IPs so we can detect whether the container is only seeing internal healthchecks
-const INTERFACE_HEARTBEAT_TIMEOUT_MS = parseInt(process.env.INTERFACE_HEARTBEAT_TIMEOUT_MS || '3000', 10);
 const seenExternalClients = new Set();
 
 app.use((req, res, next) => {
