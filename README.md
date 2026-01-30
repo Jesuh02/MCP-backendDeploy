@@ -1,92 +1,131 @@
 <div align="center">
 
 # CourseV Backend
-### The Model Context Protocol (MCP) Hub
+### Hub del Protocolo Model Context (MCP)
 
 [![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
-[![DeepSeek](https://img.shields.io/badge/Intelligence-DeepSeek_V3.2-blue?style=for-the-badge)](https://deepseek.com)
-[![Protocol](https://img.shields.io/badge/Protocol-MCP-orange?style=for-the-badge)](https://modelcontextprotocol.io)
+[![DeepSeek](https://img.shields.io/badge/Inteligencia-DeepSeek_V3.2-blue?style=for-the-badge)](https://deepseek.com)
+[![Protocol](https://img.shields.io/badge/Protocolo-MCP-orange?style=for-the-badge)](https://modelcontextprotocol.io)
 
-[API Reference](#-api-endpoints) • [DeepSeek Engine](#-intelligence-engine) • [Deployment](#-cloud-deployment)
+API • Motor de inteligencia • Despliegue
 
-<img src="https://via.placeholder.com/800x300.png?text=MCP+Context+Hub+Architecture" alt="Backend Banner" width="100%" />
+<img src="https://www.mermaidchart.com/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/2706f980-5691-4b44-bf04-b3dc8d2b97c1/share/invite/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkb2N1bWVudElEIjoiMjcwNmY5ODAtNTY5MS00YjQ0LWJmMDQtYjNkYzhkMmI5N2MxIiwiYWNjZXNzIjoiVmlldyIsImlhdCI6MTc2ODIxNTAzNX0.A8F-gSi40JQsLKpyzTAnbwtx0rbXWf5i5xnCQ5xjEqQ" alt="Backend Banner" width="100%" />
 
 </div>
 
-## 🔥 Recent Updates
 
-- **[DeepSeek-V3.2]**: Fully migrated providing 3x faster inference and better SQL logic.
-- **[RAG Pipeline]**: Now supports PDF chunking and vector storage in `pgvector`.
-- **[Zero-Shot SQL]**: Text-to-SQL accuracy improved to 96% with auto-correction.
+### 🗺️ Diagrama Interactivo Navegable (Estilo Lucidchart)
 
-## 🧠 Intelligence Engine
-
-This microservice acts as the "Cerebral Cortex" of the **CourseV** ecosystem. It does not just blindly forward prompts; it manages **Context**.
-
-### 1. The Reinforcement Loop
-*File: `src/domain/services/MCPService.js`*
-
-The biggest challenge in AI education is **Repetition**.
-- **The Solution**: We implemented a hash-based history tracker in `index.js`.
-- **The Process**:
-  1. `ReinforcementLearningFragment` requests a quiz.
-  2. The backend retrieves the **entire history** of questions asked to that user for that specific topic.
-  3. It instructs **DeepSeek** to generate questions that are *semantically different* from the history.
-  4. Result: An infinitely adaptive learning curve.
-
-### 2. The Analyst Agent (Text-to-SQL)
-*File: `MCPService.js`*
-
-- **Input**: "Which courses have low engagement?"
-- **Process**:
-  - The `DatabaseQueryFragment` sends the natural text.
-  - The Agent fetches the *live* schema from the database.
-  - **DeepSeek-V3.2** formulates the SQL.
-  - **Self-Correction Layer**: If the query fails (e.g., "column not found"), the error is fed back to the LLM. The LLM corrects the SQL and retries.
+<div align="center">
   
-### 3. The Grader Agent (RAG)
-*File: `ChatBotFragment.kt` (Client) -> `index.js` (Server)*
+**Haz clic en la imagen para explorar el diagrama completo de la arquitectura de forma interactiva** 🔍
 
-- **Vector Search**: Student submissions are embedded and compared against the assignment rubric stored in the Vector DB (Supabase).
-- **Feedback**: The agent generates a point-by-point critique.
+[![Arquitectura Completa del Sistema CourseV](https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/arquitectura.png)](https://www.mermaidchart.com/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/2706f980-5691-4b44-bf04-b3dc8d2b97c1/share/invite/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkb2N1bWVudElEIjoiMjcwNmY5ODAtNTY5MS00YjQ0LWJmMDQtYjNkYzhkMmI5N2MxIiwiYWNjZXNzIjoiVmlldyIsImlhdCI6MTc2ODIxNTAzNX0.A8F-gSi40JQsLKpyzTAnbwtx0rbXWf5i5xnCQ5xjEqQ)
 
-## 📂 Project Structure
+<sub>📐 **Diagrama Interactivo en MermaidChart** — Navega, amplía y explora cada componente de la arquitectura completa: Frontend Android (Kotlin/MVVM), Backend MCP (Node.js/Clean Architecture), Protocolos de Comunicación y Servicios Externos en la Nube</sub>
 
-```bash
-distribucion_de_contexto/
-├── MCP-backendDeploy/
-│   ├── index.js         # Main Entry Point & History Tracker
-│   ├── src/
-│   │   └── domain/
-│   │       └── services/
-│   │           └── MCPService.js  # The "Brain" containing DeepSeek Logic
-│   ├── package.json     # Dependencies
-│   └── railway.json     # Cloud Deployment Config
+</div>
+
+## 🔥 Últimas novedades
+
+- **DeepSeek-V3.2**: Migración completa — inferencia más rápida y mejor lógica SQL.
+- **Pipeline RAG**: Soporta chunking de PDFs y almacenamiento vectorial en Supabase/pgvector.
+- **Text-to-SQL con autocorrección**: Mayor robustez frente a errores de esquema.
+
+## 🧠 Resumen del motor de inteligencia
+
+Este microservicio actúa como el "cerebro" del ecosistema CourseV. No sólo reenvía prompts: administra contexto, historial y agentes (Text-to-SQL, RAG, Grader).
+
+### Bucle de refuerzo (Reinforcement Loop)
+- Archivo principal: [src/domain/services/MCPService.js](src/domain/services/MCPService.js#L1)
+- `index.js` funciona como rastreador de historial y control de repetición.
+- Flujo: el fragmento de aprendizaje solicita ejercicios → el backend recupera el historial del usuario → el LLM genera preguntas semánticamente distintas.
+
+### Agente analista (Text-to-SQL)
+- Componente: `DatabaseQueryFragment` dentro de `MCPService`.
+- Flujo: texto natural → obtención del esquema en vivo → DeepSeek genera SQL → capa de autocorrección reintenta ante errores.
+
+### Agente evaluador (RAG / Grader)
+- Integración: embeddings, búsqueda vectorial y comparación con rúbricas almacenadas en la base vectorial (Supabase).
+- Resultado: feedback detallado y puntuado por ítem.
+
+## 📂 Estructura del proyecto (resumen práctico)
+
+```
+MCP-backendDeploy/
+├── index.js                     # Entrada principal y rastreador de historial
+├── package.json
+├── Dockerfile
+├── docker-compose.yml
+├── src/
+│   ├── mcp-http.js
+│   ├── mcp-stdio.js
+│   ├── config/env.js
+│   ├── domain/
+│   │   ├── interfaces/
+│   │   │   ├── IDocumentProcessor.js
+│   │   │   ├── IEmbeddingProvider.js
+│   │   │   └── IVectorStore.js
+│   │   └── services/
+│   │       ├── DocumentProcessor.js
+│   │       ├── MCPService.js      # Lógica central (DeepSeek, agentes)
+│   │       └── RAGService.js
+│   └── infrastructure/
+│       ├── ai/EmbeddingService.js
+│       ├── ai/LLMService.js
+│       ├── database/SupabaseService.js
+│       └── ... (logger, middleware, servicios)
+├── mcp-proxy/                    # Proxy y rutas auxiliares
+│   └── index.js
+├── scripts/                      # SQL y utilidades de DB
+└── README.md
 ```
 
-## 🔌 API Endpoints
+> Notas rápidas: la carpeta `src/infrastructure` contiene proveedores (Supabase, R2, GitHub, etc.). Las rutas de la API están en `src/interfaces/routes`.
 
-| Endpoint | Method | Function |
-|----------|--------|----------|
-| `/api/reinforcement` | POST | Generates 10 unique questions. |
-| `/api/sql/query` | POST | Natural Language -> SQL Result. |
-| `/mcp/message` | POST | VS Code MCP Integration. |
-| `/api/rag/ingest` | POST | Upload documents for Agent knowledge. |
+## 🔌 Endpoints principales (ejemplos)
 
-## 🚀 Cloud Deployment
+| Endpoint | Método | Función |
+|---|---:|---|
+| `/api/reinforcement` | POST | Genera preguntas únicas de refuerzo (por usuario/tema).
+| `/api/sql/query` | POST | Texto natural → SQL ejecutable (con ciclo de autocorrección).
+| `/mcp/message` | POST | Punto de entrada para integración MCP (mensajería/CLI).
+| `/api/rag/ingest` | POST | Ingesta de documentos para pipeline RAG/vector store.
 
-This backend is designed to run on **Railway** or **AWS Lambda**.
+Para ver todas las rutas, revisa: [src/interfaces/routes](src/interfaces/routes#L1).
+
+## 🛠️ Ejecución local y despliegue
+
+Instalación y ejecución local:
 
 ```bash
-# Local Run
 npm install
 npm start
-
-# Docker Build
-docker build -t coursev-backend .
 ```
 
+Ejecución con Docker:
+
+```bash
+docker build -t coursev-backend .
+docker run -p 3000:3000 coursev-backend
+```
+
+Despliegue sugerido: Railway, AWS Lambda o contenedor Docker en la nube.
+
+## 📌 Archivos importantes
+
+- [index.js](index.js#L1): punto de entrada y manejo de historial.
+- [src/domain/services/MCPService.js](src/domain/services/MCPService.js#L1): lógica central de agentes y DeepSeek.
+- [src/infrastructure/database/SupabaseService.js](src/infrastructure/database/SupabaseService.js#L1): conexión y almacenamiento vectorial.
+- [mcp-proxy/index.js](mcp-proxy/index.js#L1): proxy y utilidades para rutas externas.
+
 ---
-<div align="center">
-  <sub>Part of the CourseV AI Ecosystem</sub>
+
+Parte del ecosistema CourseV — si quieres, puedo:
+
+- Traducir al español los comentarios internos en `MCPService.js`.
+- Generar un resumen de endpoints con ejemplos `curl`.
+- Preparar un `docker-compose` mínimo para desarrollo.
+
+Indica qué prefieres y lo implemento.
 </div>
