@@ -7,11 +7,7 @@
 [![DeepSeek](https://img.shields.io/badge/Inteligencia-DeepSeek_V3.2-blue?style=for-the-badge)](https://deepseek.com)
 [![Protocol](https://img.shields.io/badge/Protocolo-MCP-orange?style=for-the-badge)](https://modelcontextprotocol.io)
 
-API • Motor de inteligencia • Despliegue
-
-
-[![Arquitectura Completa del Sistema CourseV](https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/data/arquitectura.png)](https://www.mermaidchart.com/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/2706f980-5691-4b44-bf04-b3dc8d2b97c1/share/invite/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkb2N1bWVudElEIjoiMjcwNmY5ODAtNTY5MS00YjQ0LWJmMDQtYjNkYzhkMmI5N2MxIiwiYWNjZXNzIjoiVmlldyIsImlhdCI6MTc2ODIxNTAzNX0.A8F-gSi40JQsLKpyzTAnbwtx0rbXWf5i5xnCQ5xjEqQ)
-
+API • Motor de inteligencia • Despliegue 
 </div>
 
 
