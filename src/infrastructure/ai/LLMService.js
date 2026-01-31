@@ -93,12 +93,12 @@ export class LLMService {
                 contentPreview: m.content // Removed truncation limit
             }));
             console.log("INPUT MESSAGES:", JSON.stringify(messageLog, null, 2));
-            
+
             // Check for specific files requested by user
             const fullContent = JSON.stringify(messages);
             const interestingFiles = [
                 'ReinforcementLearningScreen.kt',
-                'utils/index.js', 
+                'utils/index.js',
                 'MCPService.js'
             ];
             const foundFiles = interestingFiles.filter(f => fullContent.includes(f));
@@ -115,16 +115,36 @@ export class LLMService {
             // Sanitize messages to avoid DeepSeek API errors
             const sanitizedMessages = this.sanitizeMessages(messages);
 
+            // Helper: try to parse explanations from response content and log them
+            const tryLogExplanations = (rawContent) => {
+                try {
+                    const text = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+                    const s = text.indexOf('[');
+                    const e = text.lastIndexOf(']');
+                    if (s !== -1 && e !== -1 && s < e) {
+                        const arr = JSON.parse(text.substring(s, e + 1));
+                        if (Array.isArray(arr)) {
+                            const ex = arr.map((q, i) => ({ idx: i, question: q.question || q.pregunta || '', explanation: q.explanation || q.explicacion || null }));
+                            console.log('EXPLANATIONS FOUND:', JSON.stringify(ex, null, 2));
+                        }
+                    }
+                } catch (e) {
+                    // ignore parse errors
+                }
+            };
+
             // If no tools, just invoke directly
             if (!tools || tools.length === 0) {
                 const response = await this.model.invoke(sanitizedMessages);
-                
+
                 // --- USER REQUESTED LOGGING ---
                 console.log("\n📤 [LLM RESPONSE] -------------------------------------------");
                 console.log("OUTPUT CONTENT:", response.content);
+                // Try to log explanations embedded in the model output JSON
+                tryLogExplanations(response.content);
                 console.log("------------------------------------------------------------\n");
                 // ------------------------------
-                
+
                 return response;
             }
 
@@ -144,10 +164,12 @@ export class LLMService {
             });
 
             const response = await modelWithTools.invoke(sanitizedMessages);
-            
+
             // --- USER REQUESTED LOGGING ---
             console.log("\n📤 [LLM RESPONSE (WITH TOOLS)] ------------------------------");
             console.log("OUTPUT CONTENT:", response.content);
+            // Try to log explanations embedded in the model output JSON
+            tryLogExplanations(response.content);
             if (response.tool_calls && response.tool_calls.length > 0) {
                 console.log("TOOL CALLS:", JSON.stringify(response.tool_calls, null, 2));
             } else {
@@ -166,13 +188,13 @@ export class LLMService {
                 try {
                     const sanitizedMessages = this.sanitizeMessages(messages);
                     const response = await this.model.invoke(sanitizedMessages);
-                    
+
                     // --- USER REQUESTED LOGGING ---
                     console.log("\n📤 [LLM RESPONSE (RETRY)] -----------------------------------");
                     console.log("OUTPUT CONTENT:", response.content);
                     console.log("------------------------------------------------------------\n");
                     // ------------------------------
-                    
+
                     return response;
                 } catch (retryError) {
                     throw retryError;
