@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import crypto from 'crypto';
 import { R2StorageService } from '../../services/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { MCPService } from '../../domain/services/MCPService.js';
@@ -187,8 +186,7 @@ FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta f
         "correctIndex": 2, // (0=A, 1=B, 2=C, 3=D) - VARÍA ESTE ÍNDICE ALEATORIAMENTE
         "difficulty": "easy|medium|hard",
         "topic": "tema o tarea relacionada (ej: 'Tarea 1 - Tema: Álgebra')",
-                "source": "nombre_del_archivo_o_ruta_de_origen",
-                "explanation": "Breve explicación en español (1-2 frases) de por qué la respuesta correcta es correcta"
+        "source": "nombre_del_archivo_o_ruta_de_origen"
     }
 ]
 
@@ -347,10 +345,10 @@ LLM REQUEST END`;
                     if (userId && courseId) {
                         try {
                             const mcpService = new MCPService();
-
+                            
                             // Check against full history again
                             const history = existingHistory && existingHistory.length ? existingHistory : historyQuestionsList;
-
+                            
                             filtered = transformed.filter(q => {
                                 try {
                                     const qText = q.question || q.pregunta || JSON.stringify(q);
@@ -358,79 +356,13 @@ LLM REQUEST END`;
                                 } catch (e) { return true; }
                             });
 
-                            // If some questions are missing `explanation`, request them from the LLM
-                            const needsExplanations = Array.isArray(filtered) && filtered.some(q => !q || !q.explanation || String(q.explanation).trim() === '');
-                            if (needsExplanations) {
-                                try {
-                                    console.log('ℹ️ Some generated questions missing explanation; requesting explanations from LLM...');
-                                    const questionsForExplain = filtered.map((q, idx) => {
-                                        const qText = q.question || q.pregunta || '';
-                                        const uid = crypto.createHash('sha256').update(qText).digest('hex').slice(0,8);
-                                        // Attach temporary uid to filtered entry so we can map back
-                                        q._uid = uid;
-                                        return { uid, question: qText, options: q.options || [], correctIndex: q.correctIndex };
-                                    });
-
-                                    const explainPrompt = `Por favor, para el siguiente array JSON de preguntas, devuelve UN ÚNICO array JSON con objetos que contengan las claves \"idx\" y \"explanation\" (explicación breve en español, 1-2 frases) explicando por qué la opción correcta es correcta.\n\nInput:\n${JSON.stringify(questionsForExplain)}\n\nOutput example:\n[{\"idx\":0,\"explanation\":\"Porque ...\"}]`;
-
-                                    const explainResp = await fetch(targetUrl, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ model: model || 'deepseek-chat', prompt: explainPrompt, stream: false, options: { temperature: 0.2 } })
-                                    });
-
-                                    if (explainResp.ok) {
-                                        const explainData = await explainResp.json();
-                                        const rawExplain = typeof explainData.response === 'string' ? explainData.response : JSON.stringify(explainData.response);
-                                        const s2 = rawExplain.indexOf('[');
-                                        const e2 = rawExplain.lastIndexOf(']');
-                                        if (s2 !== -1 && e2 !== -1 && s2 < e2) {
-                                            try {
-                                                const parsedExplain = JSON.parse(rawExplain.substring(s2, e2 + 1));
-                                                if (Array.isArray(parsedExplain)) {
-                                                        // Map explanations by uid if present, otherwise by idx fallback
-                                                        const mapEx = new Map();
-                                                        parsedExplain.forEach(o => {
-                                                            if (o.uid) mapEx.set(String(o.uid), o.explanation);
-                                                            else if (o.idx !== undefined) mapEx.set(Number(o.idx), o.explanation);
-                                                        });
-                                                        filtered = filtered.map((q, i) => {
-                                                            const existing = q && q.explanation && String(q.explanation).trim() !== '' ? q.explanation : null;
-                                                            // Prefer uid mapping
-                                                            if (q && q._uid && mapEx.has(String(q._uid))) {
-                                                                return { ...q, explanation: mapEx.get(String(q._uid)) };
-                                                            }
-                                                            // Fallback to index mapping
-                                                            if (mapEx.has(i)) return { ...q, explanation: mapEx.get(i) };
-                                                            return { ...q, explanation: existing };
-                                                        });
-                                                    console.log('✅ Explanations merged into generated questions');
-                                                    // Also log the explanation array for visibility
-                                                    console.log('EXPLANATION ARRAY FROM LLM:', JSON.stringify(parsedExplain, null, 2));
-                                                }
-                                            } catch (pe) {
-                                                console.warn('⚠️ Could not parse explanation response JSON array:', pe?.message || pe);
-                                            }
+                                        // Save newly selected questions back to history (append as new record)
+                                        if (filtered.length > 0) {
+                                            const toSave = filtered.map(fq => fq);
+                                            await mcpService.saveReinforcementHistory(userId, courseId, toSave);
+                                        } else {
+                                            console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
                                         }
-                                    } else {
-                                        console.warn('⚠️ Explanation request failed:', explainResp.status, explainResp.statusText);
-                                    }
-                                } catch (explainErr) {
-                                    console.warn('⚠️ Failed to request explanations from LLM:', explainErr?.message || explainErr);
-                                }
-                            }
-
-                            // Save newly selected questions back to history (append as new record)
-                            if (filtered.length > 0) {
-                                const toSave = filtered.map(fq => {
-                                    const copy = { ...fq };
-                                    if (copy._uid) delete copy._uid;
-                                    return copy;
-                                });
-                                await mcpService.saveReinforcementHistory(userId, courseId, toSave);
-                            } else {
-                                console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
-                            }
                         } catch (e) {
                             console.warn('⚠️ Failed to consult/save reinforcement history:', e?.message || e);
                         }
@@ -491,54 +423,10 @@ LLM REQUEST END`;
 
                                                         if (newlyFiltered.length > 0) {
                                                             filtered = newlyFiltered;
-                                                            // Ensure explanations present before saving
+                                                            // Upsert these into history
                                                             try {
-                                                                const needsExplanationsRetry = Array.isArray(filtered) && filtered.some(q => !q || !q.explanation || String(q.explanation).trim() === '');
-                                                                if (needsExplanationsRetry) {
-                                                                    try {
-                                                                        console.log('ℹ️ Retry: requesting explanations for newly generated questions...');
-                                                                        const questionsForExplainRetry = filtered.map((q, idx) => {
-                                                                            const qText = q.question || q.pregunta || '';
-                                                                            const uid = crypto.createHash('sha256').update(qText).digest('hex').slice(0,8);
-                                                                            q._uid = uid;
-                                                                            return { uid, question: qText, options: q.options || [], correctIndex: q.correctIndex };
-                                                                        });
-                                                                        const explainPromptRetry = `Por favor, para el siguiente array JSON de preguntas, devuelve UN ÚNICO array JSON con objetos que contengan las claves \"uid\" y \"explanation\" (explicación breve en español, 1-2 frases) explicando por qué la opción correcta es correcta.\n\nInput:\n${JSON.stringify(questionsForExplainRetry)}\n\nOutput example:\n[{\"uid\":\"abcd1234\",\"explanation\":\"Porque ...\"}]`;
-                                                                        const explainRespRetry = await fetch(targetUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || 'deepseek-chat', prompt: explainPromptRetry, stream: false, options: { temperature: 0.2 } }) });
-                                                                        if (explainRespRetry.ok) {
-                                                                            const explainDataRetry = await explainRespRetry.json();
-                                                                            const rawExplainRetry = typeof explainDataRetry.response === 'string' ? explainDataRetry.response : JSON.stringify(explainDataRetry.response);
-                                                                            const s3 = rawExplainRetry.indexOf('[');
-                                                                            const e3 = rawExplainRetry.lastIndexOf(']');
-                                                                            if (s3 !== -1 && e3 !== -1 && s3 < e3) {
-                                                                                try {
-                                                                                    const parsedExplainRetry = JSON.parse(rawExplainRetry.substring(s3, e3 + 1));
-                                                                                    if (Array.isArray(parsedExplainRetry)) {
-                                                                                        const mapExRetry = new Map();
-                                                                                        parsedExplainRetry.forEach(o => {
-                                                                                            if (o.uid) mapExRetry.set(String(o.uid), o.explanation);
-                                                                                            else if (o.idx !== undefined) mapExRetry.set(Number(o.idx), o.explanation);
-                                                                                        });
-                                                                                        filtered = filtered.map((q, i) => {
-                                                                                            const existing = q && q.explanation && String(q.explanation).trim() !== '' ? q.explanation : null;
-                                                                                            if (q && q._uid && mapExRetry.has(String(q._uid))) return { ...q, explanation: mapExRetry.get(String(q._uid)) };
-                                                                                            if (mapExRetry.has(i)) return { ...q, explanation: mapExRetry.get(i) };
-                                                                                            return { ...q, explanation: existing };
-                                                                                        });
-                                                                                        console.log('✅ Retry explanations merged into questions');
-                                                                                    }
-                                                                                } catch (pe2) { console.warn('⚠️ Could not parse retry explanation JSON:', pe2?.message || pe2); }
-                                                                            }
-                                                                        } else { console.warn('⚠️ Retry explanation request failed:', explainRespRetry.status, explainRespRetry.statusText); }
-                                                                    } catch (explainErr2) { console.warn('⚠️ Retry explanation generation failed:', explainErr2?.message || explainErr2); }
-                                                                }
-
                                                                 const mcpService2 = new MCPService();
-                                                                const toSave = filtered.map(fq => {
-                                                                    const copy = { ...fq };
-                                                                    if (copy._uid) delete copy._uid;
-                                                                    return copy;
-                                                                });
+                                                                const toSave = filtered.map(fq => fq);
                                                                 await mcpService2.saveReinforcementHistory(userId, courseId, toSave);
                                                             } catch (upErr) { console.warn('⚠️ Failed to save retry results:', upErr?.message || upErr); }
                                                             break;
@@ -554,13 +442,7 @@ LLM REQUEST END`;
                                     }
                                 }
 
-                                // Remove internal _uid before returning to client
-                                const cleanedOut = filtered.map(q => {
-                                    const c = { ...q };
-                                    if (c._uid) delete c._uid;
-                                    return c;
-                                });
-                                respuestaTexto = JSON.stringify(cleanedOut);
+                                respuestaTexto = JSON.stringify(filtered);
                 }
             }
         } catch (e) {
