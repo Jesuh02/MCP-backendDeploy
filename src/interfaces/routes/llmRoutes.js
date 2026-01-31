@@ -3,7 +3,8 @@ import { R2StorageService } from '../../services/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { MCPService } from '../../domain/services/MCPService.js';
 import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+const require = createRequire(
+    import.meta.url);
 const pdf = require('pdf-parse');
 const xlsx = require('xlsx');
 
@@ -11,149 +12,149 @@ const xlsx = require('xlsx');
 
 const router = Router();
 
-router.post('/procesar-prompt', async (req, res) => {
-    try {
-        const { prompt, ollamaUrl, model, jsonContent } = req.body;
-        
-        console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl}`);
-
-        let augmentedPrompt = prompt;
-
-        // Process jsonContent to fetch files from R2
-        if (jsonContent) {
+router.post('/procesar-prompt', async(req, res) => {
             try {
-                const files = JSON.parse(jsonContent);
-                if (Array.isArray(files) && files.length > 0) {
-                    console.log(`📂 Procesando ${files.length} archivos adjuntos...`);
-                    const r2Service = R2StorageService.getInstance();
-                    
-                    for (const file of files) {
-                        if (file.uri && (r2Service.isR2Url(file.uri) || file.uri.startsWith('http'))) {
-                            console.log(`📥 Descargando contenido de ${file.name}...`);
-                            try {
-                                // Use getSubmissionFileContent which handles various sources (R2, HTTP)
-                                const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name);
-                                 
-                                if (fileData && fileData.content) {
-                                    let extractedText = null;
-                                    let processMsg = "";
+                const { prompt, ollamaUrl, model, jsonContent } = req.body;
 
-                                    // DEBUG LOGS FOR PDF DETECTION
-                                    const rawName = file.name || "";
-                                    const nameLower = rawName.trim().toLowerCase();
-                                    const isPdfName = nameLower.endsWith('.pdf');
-                                    const isPdfMime = (fileData.contentType || '').toLowerCase().includes('pdf');
-                                    console.log(`🔍 DEBUG: Processing file '${rawName}' (Mime: ${fileData.contentType}) -> isPdfName=${isPdfName}, isPdfMime=${isPdfMime}`);
+                console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl}`);
 
-                                    // Handle PDF
-                                    if (isPdfMime || isPdfName) {
-                                        try {
-                                            console.log(`📄 Analizando PDF: ${rawName} (Size: ${fileData.size} bytes)`);
-                                            // content is likely base64 for PDFs from R2StorageService
-                                            const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
-                                            
-                                            // Validate buffer
-                                            if (pdfBuffer.length === 0) {
-                                                console.warn('⚠️ PDF Buffer is empty!');
-                                            } else {
-                                                // Ensure pdf-parse is working
-                                                const pdfData = await pdf(pdfBuffer);
-                                                const rawText = pdfData.text;
-                                                
-                                                if (rawText && rawText.trim().length > 0) {
-                                                    extractedText = rawText;
-                                                    processMsg = `PDF analizado (${extractedText.length} chars)`;
+                let augmentedPrompt = prompt;
+
+                // Process jsonContent to fetch files from R2
+                if (jsonContent) {
+                    try {
+                        const files = JSON.parse(jsonContent);
+                        if (Array.isArray(files) && files.length > 0) {
+                            console.log(`📂 Procesando ${files.length} archivos adjuntos...`);
+                            const r2Service = R2StorageService.getInstance();
+
+                            for (const file of files) {
+                                if (file.uri && (r2Service.isR2Url(file.uri) || file.uri.startsWith('http'))) {
+                                    console.log(`📥 Descargando contenido de ${file.name}...`);
+                                    try {
+                                        // Use getSubmissionFileContent which handles various sources (R2, HTTP)
+                                        const fileData = await r2Service.getSubmissionFileContent(file.uri, file.name);
+
+                                        if (fileData && fileData.content) {
+                                            let extractedText = null;
+                                            let processMsg = "";
+
+                                            // DEBUG LOGS FOR PDF DETECTION
+                                            const rawName = file.name || "";
+                                            const nameLower = rawName.trim().toLowerCase();
+                                            const isPdfName = nameLower.endsWith('.pdf');
+                                            const isPdfMime = (fileData.contentType || '').toLowerCase().includes('pdf');
+                                            console.log(`🔍 DEBUG: Processing file '${rawName}' (Mime: ${fileData.contentType}) -> isPdfName=${isPdfName}, isPdfMime=${isPdfMime}`);
+
+                                            // Handle PDF
+                                            if (isPdfMime || isPdfName) {
+                                                try {
+                                                    console.log(`📄 Analizando PDF: ${rawName} (Size: ${fileData.size} bytes)`);
+                                                    // content is likely base64 for PDFs from R2StorageService
+                                                    const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+
+                                                    // Validate buffer
+                                                    if (pdfBuffer.length === 0) {
+                                                        console.warn('⚠️ PDF Buffer is empty!');
+                                                    } else {
+                                                        // Ensure pdf-parse is working
+                                                        const pdfData = await pdf(pdfBuffer);
+                                                        const rawText = pdfData.text;
+
+                                                        if (rawText && rawText.trim().length > 0) {
+                                                            extractedText = rawText;
+                                                            processMsg = `PDF analizado (${extractedText.length} chars)`;
+                                                            console.log(`✅ ${processMsg}`);
+                                                            // USER REQUESTED CONTENT LOGGING
+                                                            console.log(`📝 CONTENIDO PDF (${rawName} - primeros 2000 chars):\n${extractedText.substring(0, 2000)}...`);
+                                                        } else {
+                                                            console.warn(`⚠️ PDF parsed but returned empty text (scanned PDF?): ${rawName}`);
+                                                            // Try to see if there is any info
+                                                            console.log('PDF Info:', pdfData.info);
+                                                        }
+                                                    }
+                                                } catch (e) {
+                                                    console.warn(`⚠️ Error al analizar PDF ${rawName}: ${e.message}`);
+                                                    console.error(e); // Full stack trace
+                                                }
+                                            }
+                                            // Handle Excel
+                                            else if ((fileData.contentType || '').includes('spreadsheet') || (fileData.contentType || '').includes('excel') || nameLower.match(/\.xlsx?$/)) {
+                                                try {
+                                                    console.log(`📊 Analizando Excel: ${rawName}`);
+                                                    const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
+                                                    let excelText = "";
+                                                    for (const sheetName of workbook.SheetNames) {
+                                                        const sheet = workbook.Sheets[sheetName];
+                                                        // Convert to CSV for better token efficiency than JSON or TXT
+                                                        const text = xlsx.utils.sheet_to_csv(sheet);
+                                                        if (text.trim()) {
+                                                            excelText += `\n[Sheet: ${sheetName}]\n${text}\n`;
+                                                        }
+                                                    }
+                                                    extractedText = excelText;
+                                                    processMsg = `Excel analizado (${extractedText.length} chars)`;
                                                     console.log(`✅ ${processMsg}`);
-                                                    // USER REQUESTED CONTENT LOGGING
-                                                    console.log(`📝 CONTENIDO PDF (${rawName} - primeros 2000 chars):\n${extractedText.substring(0, 2000)}...`);
-                                                } else {
-                                                    console.warn(`⚠️ PDF parsed but returned empty text (scanned PDF?): ${rawName}`);
-                                                    // Try to see if there is any info
-                                                    console.log('PDF Info:', pdfData.info);
+                                                    console.log(`📝 CONTENIDO EXCEL (${rawName} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+                                                } catch (e) {
+                                                    console.warn(`⚠️ Error al analizar Excel ${rawName}: ${e.message}`);
                                                 }
                                             }
-                                        } catch (e) {
-                                            console.warn(`⚠️ Error al analizar PDF ${rawName}: ${e.message}`);
-                                            console.error(e); // Full stack trace
-                                        }
-                                    }
-                                    // Handle Excel
-                                    else if ((fileData.contentType || '').includes('spreadsheet') || (fileData.contentType || '').includes('excel') || nameLower.match(/\.xlsx?$/)) {
-                                        try {
-                                            console.log(`📊 Analizando Excel: ${rawName}`);
-                                            const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
-                                            let excelText = "";
-                                            for (const sheetName of workbook.SheetNames) {
-                                                const sheet = workbook.Sheets[sheetName];
-                                                // Convert to CSV for better token efficiency than JSON or TXT
-                                                const text = xlsx.utils.sheet_to_csv(sheet); 
-                                                if (text.trim()) {
-                                                    excelText += `\n[Sheet: ${sheetName}]\n${text}\n`;
-                                                }
+                                            // Handle Text (already handled, but let's consolidate)
+                                            else if (!fileData.isBase64) {
+                                                extractedText = fileData.content;
+                                                processMsg = "Contenido de texto plano";
+                                                console.log(`📝 CONTENIDO TEXTO (${rawName} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
                                             }
-                                            extractedText = excelText;
-                                            processMsg = `Excel analizado (${extractedText.length} chars)`;
-                                            console.log(`✅ ${processMsg}`);
-                                            console.log(`📝 CONTENIDO EXCEL (${rawName} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
-                                        } catch (e) {
-                                            console.warn(`⚠️ Error al analizar Excel ${rawName}: ${e.message}`);
-                                        }
-                                    }
-                                    // Handle Text (already handled, but let's consolidate)
-                                    else if (!fileData.isBase64) {
-                                        extractedText = fileData.content;
-                                        processMsg = "Contenido de texto plano";
-                                        console.log(`📝 CONTENIDO TEXTO (${rawName} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
-                                    }
 
-                                    if (extractedText) {
-                                        // Only include text content. Skip binary/base64 to avoid confusing text-only models.
-                                        // INCLUDE TODO el contenido del archivo (sin límite por archivo)
-                                        const contentSnippet = extractedText;
-                                        augmentedPrompt += `\n\n--- Contenido del archivo: ${rawName} (${fileData.contentType}) ---\n${contentSnippet}`;
-                                    } else {
-                                        console.log(`ℹ️ Archivo ${rawName} es binario o no textual, solo referencia añadida. (isPdf=${isPdfName}, isExcel=${nameLower.match(/\.xlsx?$/)})`);
-                                        augmentedPrompt += `\n\n--- Archivo adjunto: ${rawName} (${fileData.contentType}) [Contenido binario no incluido] ---`;
+                                            if (extractedText) {
+                                                // Only include text content. Skip binary/base64 to avoid confusing text-only models.
+                                                // INCLUDE TODO el contenido del archivo (sin límite por archivo)
+                                                const contentSnippet = extractedText;
+                                                augmentedPrompt += `\n\n--- Contenido del archivo: ${rawName} (${fileData.contentType}) ---\n${contentSnippet}`;
+                                            } else {
+                                                console.log(`ℹ️ Archivo ${rawName} es binario o no textual, solo referencia añadida. (isPdf=${isPdfName}, isExcel=${nameLower.match(/\.xlsx?$/)})`);
+                                                augmentedPrompt += `\n\n--- Archivo adjunto: ${rawName} (${fileData.contentType}) [Contenido binario no incluido] ---`;
+                                            }
+                                        }
+                                    } catch (e) {
+                                        console.warn(`⚠️ Fallo al descargar archivo ${file.name}: ${e.message}`);
                                     }
                                 }
-                            } catch (e) {
-                                console.warn(`⚠️ Fallo al descargar archivo ${file.name}: ${e.message}`);
                             }
                         }
+                    } catch (e) {
+                        console.warn("⚠️ Error parsing jsonContent for files:", e.message);
                     }
                 }
-            } catch (e) {
-                console.warn("⚠️ Error parsing jsonContent for files:", e.message);
-            }
-        }
 
-        // Ensure ollamaUrl is valid
-        if (!ollamaUrl) {
-            throw new Error('ollamaUrl is required');
-        }
+                // Ensure ollamaUrl is valid
+                if (!ollamaUrl) {
+                    throw new Error('ollamaUrl is required');
+                }
 
-        // If userId/courseId provided, fetch reinforcement history and instruct LLM to avoid repeats
-        const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
-        const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
-        let historyQuestionsList = [];
-        let existingHistory = [];
-        if (userId && courseId) {
-            try {
-                const mcpService = new MCPService();
-                existingHistory = await mcpService.getReinforcementHistory(userId, courseId);
-                
-                // Extract plain question text for guidance
-                historyQuestionsList = existingHistory.map(h => {
-                    if (!h) return null;
-                    if (typeof h === 'string') return h;
-                    if (h.question) return h.question;
-                    if (h.pregunta) return h.pregunta;
-                    try { return JSON.stringify(h); } catch(e) { return null; }
-                }).filter(Boolean);
+                // If userId/courseId provided, fetch reinforcement history and instruct LLM to avoid repeats
+                const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+                const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
+                let historyQuestionsList = [];
+                let existingHistory = [];
+                if (userId && courseId) {
+                    try {
+                        const mcpService = new MCPService();
+                        existingHistory = await mcpService.getReinforcementHistory(userId, courseId);
 
-                if (historyQuestionsList.length > 0) {
-                    // Pass up to 50 previous questions to ensure better coverage against duplicates
-                    augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
+                        // Extract plain question text for guidance
+                        historyQuestionsList = existingHistory.map(h => {
+                            if (!h) return null;
+                            if (typeof h === 'string') return h;
+                            if (h.question) return h.question;
+                            if (h.pregunta) return h.pregunta;
+                            try { return JSON.stringify(h); } catch (e) { return null; }
+                        }).filter(Boolean);
+
+                        if (historyQuestionsList.length > 0) {
+                            // Pass up to 50 previous questions to ensure better coverage against duplicates
+                            augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
                 }
             } catch (e) {
                 console.warn('⚠️ Could not read reinforcement history before generation:', e?.message || e);
@@ -185,7 +186,8 @@ FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta f
         "correctIndex": 2, // (0=A, 1=B, 2=C, 3=D) - VARÍA ESTE ÍNDICE ALEATORIAMENTE
         "difficulty": "easy|medium|hard",
         "topic": "tema o tarea relacionada (ej: 'Tarea 1 - Tema: Álgebra')",
-        "source": "nombre_del_archivo_o_ruta_de_origen"
+                "source": "nombre_del_archivo_o_ruta_de_origen",
+                "explanation": "Breve explicación en español (1-2 frases) de por qué la respuesta correcta es correcta"
     }
 ]
 
