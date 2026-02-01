@@ -11,14 +11,16 @@ let OpenAIEmbeddings = null;
 let OllamaEmbeddings = null;
 
 try {
-    const openaiModule = await import("@langchain/openai");
+    const openaiModule = await
+    import ("@langchain/openai");
     OpenAIEmbeddings = openaiModule.OpenAIEmbeddings;
 } catch (e) {
     console.warn("⚠️ @langchain/openai not available for embeddings");
 }
 
 try {
-    const ollamaModule = await import("@langchain/community/embeddings/ollama");
+    const ollamaModule = await
+    import ("@langchain/community/embeddings/ollama");
     OllamaEmbeddings = ollamaModule.OllamaEmbeddings;
 } catch (e) {
     console.warn("⚠️ @langchain/community not available for Ollama embeddings");
@@ -48,7 +50,7 @@ export class EmbeddingService extends IEmbeddingProvider {
     _initializeProvider() {
         const openAiApiKey = process.env.OPENAI_API_KEY;
         const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
-        
+
         // Priority 1: OpenAI (best for embeddings)
         if (openAiApiKey && OpenAIEmbeddings) {
             console.log("🔗 Initializing OpenAI Embeddings (text-embedding-3-small)...");
@@ -62,7 +64,7 @@ export class EmbeddingService extends IEmbeddingProvider {
             console.log("✅ OpenAI Embeddings initialized");
             return;
         }
-        
+
         // Priority 2: DeepSeek (Standard OpenAI-compatible endpoint)
         if (deepSeekApiKey && OpenAIEmbeddings) {
             console.log("🔗 Initializing DeepSeek Embeddings...");
@@ -72,7 +74,7 @@ export class EmbeddingService extends IEmbeddingProvider {
                     configuration: {
                         baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
                     },
-                    modelName: process.env.DEEPSEEK_EMBEDDING_MODEL || "deepseek-embedding-v2", 
+                    modelName: process.env.DEEPSEEK_EMBEDDING_MODEL || "deepseek-embedding-v2",
                 });
                 this.provider = 'deepseek';
                 this.dimensions = 1024; // DeepSeek embedding v2 typical dimension (verify if needed)
@@ -82,7 +84,7 @@ export class EmbeddingService extends IEmbeddingProvider {
                 console.warn("⚠️ DeepSeek embeddings failed, trying fallback...", e.message);
             }
         }
-        
+
         // Priority 3: Ollama (local, free)
         if (OllamaEmbeddings) {
             console.log("🔗 Initializing Ollama Embeddings (nomic-embed-text)...");
@@ -172,14 +174,14 @@ export class EmbeddingService extends IEmbeddingProvider {
     _fallbackEmbed(text) {
         const dimensions = this.dimensions;
         const embedding = new Array(dimensions).fill(0);
-        
+
         // Simple hash distribution
         for (let i = 0; i < text.length; i++) {
             const charCode = text.charCodeAt(i);
             const idx = (charCode * (i + 1)) % dimensions;
             embedding[idx] += charCode / 1000;
         }
-        
+
         // Normalize
         const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0)) || 1;
         return embedding.map(val => val / magnitude);
@@ -211,4 +213,3 @@ export class EmbeddingService extends IEmbeddingProvider {
 }
 
 export default EmbeddingService;
-
