@@ -179,8 +179,10 @@ console.log('      POST /api/payment/webhook - Payment confirmation webhook');
 // ============================================================
 app.get('/', (req, res) => {
     // Update heartbeat for root checks
-    try { lastHealthcheckAt = Date.now();
-        forceRemoteLLM = false; } catch (e) {}
+    try {
+        lastHealthcheckAt = Date.now();
+        forceRemoteLLM = false;
+    } catch (e) {}
     res.status(200).send('YisusCompany MCP Server is Running');
 });
 
@@ -546,7 +548,7 @@ async function callOpenRouter(systemPrompt, userPrompt, model) {
             timeout: 60000
         });
 
-        const content = resp.data ? .choices ? .[0] ? .message ? .content || "";
+        const content = resp.data?.choices?.[0]?.message?.content || "";
         console.log(`✅ OpenRouter response received: ${content.length} chars`);
         return content;
 
