@@ -195,38 +195,81 @@ LLM REQUEST END`;
                 // Prepend header so the model sees the requirement first
                 augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
 
-                // Call LLM (DeepSeek via Ollama wrapper or Direct)
-                // If ollamaUrl ends with /, remove it
-        const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
-        const targetUrl = `${baseUrl}/api/generate`;
-        
-        console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${model || 'deepseek-chat'})`);
+                // DETECT IF OPENROUTER IS REQUESTED (Via specific model name or env)
+                const isOpenRouterModel = model && (model.toLowerCase().includes("qwen") || model.toLowerCase().includes("openrouter") || model === process.env.OPENROUTER_MODEL);
+                
+                let data;
+                
+                if (isOpenRouterModel && process.env.OPENROUTER_API_KEY) {
+                    // -------------------------------------------------------------------------
+                    // OPENROUTER API CALL (OpenAI Compatible)
+                    // -------------------------------------------------------------------------
+                    const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
+                    const openRouterModel = process.env.OPENROUTER_MODEL || model || "qwen/qwen-2.5-vl-7b-instruct";
+                    
+                    console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
+                    
+                    const response = await fetch(openRouterUrl, {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                            'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com', // Required by OpenRouter
+                            'X-Title': 'CourseV MCP Backend'
+                        },
+                        body: JSON.stringify({
+                            model: openRouterModel, 
+                            messages: [
+                                { role: "user", content: augmentedPrompt }
+                            ],
+                            temperature: 0.7
+                        })
+                    });
 
-        // Prioritize file content in the prompt
-        // If files were processed, we move them to the TOP of the prompt context
-        // This helps the LLM focus on the files more than the task titles
-        
-        const response = await fetch(targetUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: model || 'deepseek-chat', // Default to deepseek
-                prompt: augmentedPrompt,
-                stream: false,
-                options: {
-                    temperature: 0.7 // Standard creativity
+                    if (!response.ok) {
+                        const errText = await response.text();
+                        throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errText}`);
+                    }
+
+                    const json = await response.json();
+                    // Normalize OpenRouter (OpenAI-style) response to expected Ollama-style internal format for processing
+                    data = {
+                        response: json.choices?.[0]?.message?.content || ""
+                    };
+                    
+                } else {
+                    // -------------------------------------------------------------------------
+                    // STANDARD OLLAMA / DEEPSEEK CALL
+                    // -------------------------------------------------------------------------
+                    // Call LLM (DeepSeek via Ollama wrapper or Direct)
+                    // If ollamaUrl ends with /, remove it
+                    const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
+                    const targetUrl = `${baseUrl}/api/generate`;
+                    
+                    console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${model || 'deepseek-chat'})`);
+            
+                    const response = await fetch(targetUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            model: model || 'deepseek-chat', // Default to deepseek
+                            prompt: augmentedPrompt,
+                            stream: false,
+                            options: {
+                                temperature: 0.7 // Standard creativity
+                            }
+                        })
+                    });
+            
+                    if (!response.ok) {
+                        throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
+                    }
+                    
+                    data = await response.json();
                 }
-            })
-        });
 
-        if (!response.ok) {
-            throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
-        let respuestaTexto = data.response;
+                // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
+                let respuestaTexto = data.response;
         try {
             // Ensure we have a string to search for JSON array
             const raw = typeof respuestaTexto === 'string' ? respuestaTexto : JSON.stringify(respuestaTexto);
