@@ -62,10 +62,10 @@ try {
     const { execSync } = require('child_process');
     const ffmpegCmd = process.env.FFMPEG_PATH ? `${process.env.FFMPEG_PATH} -version` : 'ffmpeg -version';
     const ffprobeCmd = process.env.FFPROBE_PATH ? `${process.env.FFPROBE_PATH} -version` : 'ffprobe -version';
-    
+
     const ffmpegVersion = execSync(ffmpegCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).split('\n')[0];
     const ffprobeVersion = execSync(ffprobeCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).split('\n')[0];
-    
+
     console.log(`   ✅ FFmpeg: ${ffmpegVersion}`);
     console.log(`   ✅ FFprobe: ${ffprobeVersion}`);
 } catch (e) {
@@ -179,7 +179,8 @@ console.log('      POST /api/payment/webhook - Payment confirmation webhook');
 // ============================================================
 app.get('/', (req, res) => {
     // Update heartbeat for root checks
-    try { lastHealthcheckAt = Date.now(); forceRemoteLLM = false; } catch (e) {}
+    try { lastHealthcheckAt = Date.now();
+        forceRemoteLLM = false; } catch (e) {}
     res.status(200).send('YisusCompany MCP Server is Running');
 });
 
@@ -293,7 +294,8 @@ async function startupProbes() {
 // Kick off startup probes without blocking server boot
 startupProbes().catch(e => console.log('startupProbes failure', e.message));
 // If local LLM is not reachable and a remote DEEPSEEK_BASE_URL is provided, enable remote LLM mode.
-;(async () => {
+;
+(async() => {
     try {
         const localOllama = process.env.OLLAMA_URL || 'http://127.0.0.1:11435'
         console.log('🔎 Checking local LLM at', localOllama)
@@ -515,10 +517,60 @@ async function remoteDeepSeekCall(systemPrompt, userPrompt) {
 }
 
 /**
+ * Call OpenRouter API (Qwen, etc.)
+ */
+async function callOpenRouter(systemPrompt, userPrompt, model) {
+    try {
+        const apiKey = process.env.OPENROUTER_API_KEY;
+        if (!apiKey) {
+            console.warn('⚠️ OPENROUTER_API_KEY missing, falling back to local DeepSeek');
+            return null;
+        }
+
+        console.log(`🤖 Sending request to OpenRouter (Model: ${model})`);
+        const messages = [];
+        if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+        messages.push({ role: "user", content: userPrompt });
+
+        const resp = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
+            model: model,
+            messages: messages,
+            temperature: 0.7
+        }, {
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com',
+                'X-Title': 'CourseV MCP Backend',
+                'Content-Type': 'application/json'
+            },
+            timeout: 60000
+        });
+
+        const content = resp.data ? .choices ? .[0] ? .message ? .content || "";
+        console.log(`✅ OpenRouter response received: ${content.length} chars`);
+        return content;
+
+    } catch (err) {
+        console.error('❌ OpenRouter call failed:', err.message);
+        if (err.response) {
+            console.error('   Details:', err.response.data);
+        }
+        return null;
+    }
+}
+
+/**
  * Helper function to call DeepSeek via LLMService (local) with remote fallback.
  * If watchdog indicates missing host heartbeat, skip local attempts and call remote immediately.
  */
-async function callDeepSeek(systemPrompt, userPrompt) {
+async function callDeepSeek(systemPrompt, userPrompt, modelOverride = null) {
+    // 1. Check for OpenRouter model override FIRST
+    if (modelOverride && (modelOverride.toLowerCase().includes('qwen') || modelOverride.toLowerCase().includes('openrouter'))) {
+        const orResponse = await callOpenRouter(systemPrompt, userPrompt, modelOverride);
+        if (orResponse) return orResponse;
+        console.warn("⚠️ OpenRouter failed, falling back to standard flow...");
+    }
+
     // If watchdog forced remote LLM, skip local attempt entirely
     if (forceRemoteLLM) {
         console.log('ℹ️ Watchdog forcing remote DeepSeek call (skipping local)');
@@ -534,7 +586,7 @@ async function callDeepSeek(systemPrompt, userPrompt) {
 
             console.log('🤖 Calling local LLMService (DeepSeek)');
             const response = await llmService.generateResponse(messages);
-            const content = response?.content || response?.text || response?.toString?.() || '';
+            const content = response ? .content || response ? .text || response ? .toString ? .() || '';
             console.log('✅ Local DeepSeek response received:', typeof content === 'string' ? content.length : 'unknown', 'chars');
             if (content && content.length > 0) return content;
             // Fallthrough to remote if content empty
@@ -1168,7 +1220,7 @@ function extractGitHubUrl(fileName) {
 async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('🐙 INICIANDO ANÁLISIS DE REPOSITORIO GITHUB...');
     console.log('   📦 URL:', repoUrl);
-    console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
+    console.log('   📋 Tarea:', taskDescription ? .substring(0, 100) || 'Sin descripción');
 
     if (!mcpService) {
         throw new Error('MCPService no está disponible');
@@ -1183,7 +1235,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
 
         return result;
     } catch (error) {
@@ -2522,7 +2574,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
+                console.error('❌ Error con Resend:', resendError.response ? .data || resendError.message);
                 // Fallback - reintentar con el mismo dominio verificado
                 console.log('🔄 Reintentando envío de email...');
                 try {
@@ -2540,7 +2592,7 @@ async function sendEmailNotification(userId, subject, text) {
                     console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
+                    console.error('❌ Fallback también falló:', fallbackError.response ? .data || fallbackError.message);
                 }
             }
         }
@@ -3586,15 +3638,15 @@ app.post('/notify-course-creation-LEGACY', async(req, res) => {
 
                 // Send Push Notification
                 try {
-                     const pushTitle = `${creatorUsername || 'Un creador'} subió un nuevo curso`;
-                     const pushBody = `Mira el nuevo curso "${courseTitle}"`;
-                     // Use the NotificationService instance available in scope
-                     await notificationServiceInstance.sendPushNotification(user.id, pushTitle, pushBody, {
-                         type: 'new_course',
-                         courseId: String(courseId)
-                     });
+                    const pushTitle = `${creatorUsername || 'Un creador'} subió un nuevo curso`;
+                    const pushBody = `Mira el nuevo curso "${courseTitle}"`;
+                    // Use the NotificationService instance available in scope
+                    await notificationServiceInstance.sendPushNotification(user.id, pushTitle, pushBody, {
+                        type: 'new_course',
+                        courseId: String(courseId)
+                    });
                 } catch (pushError) {
-                     console.warn(`⚠️ Failed to send push to ${user.id}:`, pushError.message);
+                    console.warn(`⚠️ Failed to send push to ${user.id}:`, pushError.message);
                 }
 
                 successCount++;
@@ -4588,9 +4640,10 @@ app.post('/procesar-prompt', async(req, res) => {
                                                         console.log(`📚 PDF content too large (${pdfText.length} chars), using RAG...`);
                                                         try {
                                                             // 1. Ingest PDF content
+                                                            // FIX: Pass as 'txt' since we already extracted text, to avoid double-parsing error in DocumentProcessor
                                                             const ingestResult = await ragService.ingestDocument(pdfText, { 
                                                                 fileName: file.name, 
-                                                                fileType: 'pdf',
+                                                                fileType: 'txt',
                                                                 courseId: extractCourseIdFromRequest(req.body),
                                                                 taskId: taskId 
                                                             });
@@ -5913,7 +5966,7 @@ IMPORTANTE:
                 }
 
                 // Call DeepSeek via LLMService
-                let respuestaFinal = await callDeepSeek(systemPrompt, augmentedPrompt);
+                let respuestaFinal = await callDeepSeek(systemPrompt, augmentedPrompt, model);
 
                 // Defensive fallback if model returns empty
                 if (!respuestaFinal || !respuestaFinal.trim()) {
@@ -6026,7 +6079,7 @@ INSTRUCCIONES: Responde en español de forma clara y educativa basándote en la 
                 console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO (SIN ARCHIVO):', promptContextualizado.substring(0, 500) + '...');
 
                 // Call DeepSeek via LLMService
-                let respuestaFinal = await callDeepSeek(null, promptContextualizado);
+                let respuestaFinal = await callDeepSeek(null, promptContextualizado, model);
 
                 const tokensRespuesta = encode(respuestaFinal).length;
                 console.log('[MODELO DeepSeek v2.3] TOKENS DE RESPUESTA (SIN ARCHIVO):', tokensRespuesta);
@@ -6161,7 +6214,7 @@ IMPORTANTE: Si el contenido entregado está vacío o no tiene trabajo real, la c
                 console.log('[MODO CRÍTICO - DEEPSEEK v2.3] TOKENS CONSUMIDOS:', tokensEvaluacion);
 
                 // Call DeepSeek via LLMService
-                let respuestaEvaluacion = await callDeepSeek(null, promptEvaluacionCritica);
+                let respuestaEvaluacion = await callDeepSeek(null, promptEvaluacionCritica, model);
 
                 const tokensRespuesta = encode(respuestaEvaluacion).length;
                 console.log('[MODO CRÍTICO - DEEPSEEK v2.3] TOKENS DE RESPUESTA:', tokensRespuesta);
@@ -6280,7 +6333,7 @@ EVALÚA DE MANERA JUSTA Y EDUCATIVA. ASEGÚRATE DE INCLUIR LA LÍNEA "📊 **CAL
         let respuestaFinal = '';
         try {
             // Call DeepSeek via LLMService
-            respuestaFinal = await callDeepSeek(null, promptUnificado);
+            respuestaFinal = await callDeepSeek(null, promptUnificado, model);
 
             const tokensRespuestaFinal = encode(respuestaFinal).length;
             console.log('[MODELO DeepSeek v2.3] TOKENS DE RESPUESTA:', tokensRespuestaFinal);
