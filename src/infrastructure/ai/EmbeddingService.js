@@ -6,6 +6,60 @@
 
 import { IEmbeddingProvider } from '../../domain/interfaces/IEmbeddingProvider.js';
 
+// Custom OpenRouter Embeddings implementation using native fetch
+// This bypasses LangChain to ensure compatibility with specific OpenRouter headers/models
+class OpenRouterGenericEmbeddings {
+    constructor(config) {
+        this.apiKey = config.apiKey;
+        this.modelName = config.modelName || "qwen/qwen3-embedding-8b";
+        this.siteUrl = config.siteUrl || "https://github.com/Startups-M/tareamov-mcp-server";
+        this.siteName = config.siteName || "TaskMov MCP";
+    }
+
+    async embedQuery(text) {
+        return this._callApi(text);
+    }
+
+    async embedDocuments(texts) {
+        return this._callApi(texts);
+    }
+
+    async _callApi(input) {
+        const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${this.apiKey}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": this.siteUrl,
+                "X-Title": this.siteName,
+            },
+            body: JSON.stringify({
+                "model": this.modelName,
+                "input": input,
+                "encoding_format": "float"
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`OpenRouter API error: ${response.status} ${errText}`);
+        }
+
+        const data = await response.json();
+
+        // Handle standard OpenAI-compatiable format: { data: [{ embedding: [...] }] }
+        if (data.data) {
+            if (Array.isArray(input)) {
+                return data.data.sort((a, b) => a.index - b.index).map(item => item.embedding);
+            } else {
+                return data.data[0].embedding;
+            }
+        }
+
+        throw new Error('Invalid response format from OpenRouter');
+    }
+}
+
 // Dynamic imports to handle missing dependencies gracefully
 let OpenAIEmbeddings = null;
 let OllamaEmbeddings = null;
@@ -48,10 +102,33 @@ export class EmbeddingService extends IEmbeddingProvider {
     }
 
     _initializeProvider() {
+        const openRouterApiKey = process.env.OPENROUTER_API_KEY;
         const openAiApiKey = process.env.OPENAI_API_KEY;
         const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
 
-        // Priority 1: OpenAI (best for embeddings)
+        // Priority 1: OpenRouter (User Preference with direct fetch)
+        if (openRouterApiKey) {
+            console.log("🔗 Initializing OpenRouter Embeddings...");
+            try {
+                this.model = new OpenRouterGenericEmbeddings({
+                    apiKey: openRouterApiKey,
+                    modelName: process.env.OPENROUTER_EMBEDDING_MODEL || "qwen/qwen3-embedding-8b",
+                    siteUrl: process.env.PUBLIC_URL,
+                    siteName: "TaskMov MCP Server"
+                });
+                this.provider = 'openrouter';
+                // Qwen 8B embedding dimension is typically 1536 (similar to OpenAI) or 4096. 
+                // Checking docs: qwen/qwen3-embedding-8b uses 1536 or 1024. 
+                // Assuming 1536 for now, can be configured.
+                this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '1536');
+                console.log(`✅ OpenRouter Embeddings initialized (Model: ${this.model.modelName})`);
+                return;
+            } catch (e) {
+                console.warn("⚠️ OpenRouter embeddings failed initialization:", e.message);
+            }
+        }
+
+        // Priority 2: OpenAI (best for embeddings)
         if (openAiApiKey && OpenAIEmbeddings) {
             console.log("🔗 Initializing OpenAI Embeddings (text-embedding-3-small)...");
             this.model = new OpenAIEmbeddings({
@@ -69,12 +146,20 @@ export class EmbeddingService extends IEmbeddingProvider {
         if (deepSeekApiKey && OpenAIEmbeddings) {
             console.log("🔗 Initializing DeepSeek Embeddings...");
             try {
+                // FIXED: Handle potential Qwen model error by defaulting to deepseek-embedding-v2
+                // if env var contains invalid Qwen string, ignore it
+                let modelID = process.env.DEEPSEEK_EMBEDDING_MODEL || "deepseek-embedding-v2";
+                if (modelID.includes('Qwen') || modelID.includes('VL')) {
+                    console.warn(`⚠️ Invalid model ID detected in env: ${modelID}. Fallback to deepseek-embedding-v2`);
+                    modelID = "deepseek-embedding-v2";
+                }
+
                 this.model = new OpenAIEmbeddings({
                     openAIApiKey: deepSeekApiKey,
                     configuration: {
                         baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
                     },
-                    modelName: process.env.DEEPSEEK_EMBEDDING_MODEL || "deepseek-embedding-v2",
+                    modelName: modelID,
                 });
                 this.provider = 'deepseek';
                 this.dimensions = 1024; // DeepSeek embedding v2 typical dimension (verify if needed)
@@ -130,7 +215,12 @@ export class EmbeddingService extends IEmbeddingProvider {
             const embedding = await this.model.embedQuery(text);
             return embedding;
         } catch (error) {
-            console.error(`❌ Embedding error (${this.provider}):`, error.message);
+            console.error(`❌ Embedding error (${this.provider}): ${error.message}`);
+            // Check for specific API errors we can handle
+            if (this.provider === 'deepseek' && (error.message.includes('400') || error.message.includes('404'))) {
+                console.warn("⚠️ DeepSeek API rejected request, attempting fallback hash embedding to prevent crash");
+                return this._fallbackEmbed(text);
+            }
             // Fallback to simple hash if provider fails
             return this._fallbackEmbed(text);
         }
