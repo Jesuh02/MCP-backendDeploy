@@ -548,7 +548,7 @@ async function callOpenRouter(systemPrompt, userPrompt, model) {
             timeout: 60000
         });
 
-        const content = resp.data?.choices?.[0]?.message?.content || "";
+        const content = resp.data ? .choices ? .[0] ? .message ? .content || "";
         console.log(`✅ OpenRouter response received: ${content.length} chars`);
         return content;
 
@@ -588,7 +588,7 @@ async function callDeepSeek(systemPrompt, userPrompt, modelOverride = null) {
 
             console.log('🤖 Calling local LLMService (DeepSeek)');
             const response = await llmService.generateResponse(messages);
-            const content = response?.content || response?.text || response?.toString?.() || '';
+            const content = response ? .content || response ? .text || response ? .toString ? .() || '';
             console.log('✅ Local DeepSeek response received:', typeof content === 'string' ? content.length : 'unknown', 'chars');
             if (content && content.length > 0) return content;
             // Fallthrough to remote if content empty
@@ -706,8 +706,78 @@ async function initializeReinforcementHistoryTable() {
     }
 }
 
-// Initialize the table - MOVED to app.listen callback
-// initializeReinforcementHistoryTable();
+// ============================================================
+// 📚 RAG TABLE INITIALIZATION
+// Automatically sets up RAG tables if they don't exist
+// ============================================================
+import fs from 'fs';
+import path from 'path';
+
+async function initializeRAGTables() {
+    if (!supabaseService) {
+        console.warn('⚠️ SupabaseService not available - skipping RAG table initialization');
+        return;
+    }
+
+    try {
+        console.log('📚 Checking RAG tables...');
+
+        // Simple check if rag_documents exists
+        const { error: checkError } = await supabaseService.client
+            .from('rag_documents')
+            .select('id')
+            .limit(1);
+
+        // If table exists, check for course_id column (schema update check)
+        if (!checkError) {
+            const { error: colCheck } = await supabaseService.client
+                .from('rag_documents')
+                .select('course_id')
+                .limit(1);
+
+            if (!colCheck) {
+                console.log('✅ RAG tables appear to be ready');
+                return;
+            }
+            console.log('ℹ️ RAG table exists but missing columns, running update...');
+        } else if (checkError.code !== 'PGRST116') {
+            // Real error (not just table missing)
+            console.warn('⚠️ Error checking RAG tables:', checkError.message);
+        }
+
+        console.log('📚 Initializing/Updating RAG tables via SQL script...');
+
+        const scriptPath = path.resolve(process.cwd(), 'scripts', 'setup_rag_tables.sql');
+        if (!fs.existsSync(scriptPath)) {
+            console.warn(`⚠️ RAG setup script not found at ${scriptPath}`);
+            return;
+        }
+
+        const sqlContent = fs.readFileSync(scriptPath, 'utf8');
+
+        // Split by semicolon to execute mostly separate commands if execute_sql supports it,
+        // but typically rpc exec_sql takes one block.
+        // We assume valid SQL.
+
+        const { error } = await supabaseService.client.rpc('exec_sql', {
+            sql: sqlContent
+        });
+
+        if (error) {
+            console.warn('⚠️ Failed to initialize RAG tables via RPC:', error.message);
+            // Fallback: Use MCPService logic if available or just log instructions
+            console.log('ℹ️ Please run local/scripts/setup_rag_tables.sql in Supabase Dashboard SQL Editor');
+        } else {
+            console.log('✅ RAG tables initialized successfully');
+        }
+    } catch (error) {
+        console.warn('⚠️ Failed in initializeRAGTables:', error.message);
+    }
+}
+
+// Initialize tables on startup
+initializeRAGTables();
+initializeReinforcementHistoryTable();
 
 /**
  * Get reinforcement question history for a user-course combination
@@ -1222,7 +1292,7 @@ function extractGitHubUrl(fileName) {
 async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('🐙 INICIANDO ANÁLISIS DE REPOSITORIO GITHUB...');
     console.log('   📦 URL:', repoUrl);
-    console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
+    console.log('   📋 Tarea:', taskDescription ? .substring(0, 100) || 'Sin descripción');
 
     if (!mcpService) {
         throw new Error('MCPService no está disponible');
@@ -1237,7 +1307,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
 
         return result;
     } catch (error) {
@@ -2576,7 +2646,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
+                console.error('❌ Error con Resend:', resendError.response ? .data || resendError.message);
                 // Fallback - reintentar con el mismo dominio verificado
                 console.log('🔄 Reintentando envío de email...');
                 try {
@@ -2594,7 +2664,7 @@ async function sendEmailNotification(userId, subject, text) {
                     console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
+                    console.error('❌ Fallback también falló:', fallbackError.response ? .data || fallbackError.message);
                 }
             }
         }
@@ -4618,6 +4688,42 @@ app.post('/procesar-prompt', async(req, res) => {
 
                                     if (isPdf) {
                                         // 🛡️ SECURITY: Skip PDF parsing if file is too large (> 10MB) to prevent OOM
+                                        if (fileData.size > 10 * 1024 * 1024) {
+                                            console.warn(`⚠️ PDF ${file.name} too large (${formatFileSize(fileData.size)}) for full parsing. Skipping content.`);
+                                        } else {
+                                            // Process via RAG ingestion directly to ensure embeddings are generated
+                                            if (ragService && ragService.enabled) {
+                                                 console.log(`🧠 Ingesting PDF into RAG: ${file.name}`);
+                                                 const ingestResult = await ragService.ingestDocument(fileData.content, {
+                                                     courseId: courseId, 
+                                                     taskId: taskId,
+                                                     topicId: topicId,
+                                                     fileName: file.name,
+                                                     fileType: 'pdf'
+                                                 });
+                                                 console.log(`✅ RAG Ingestion result: ${ingestResult.success ? 'Success' : 'Failed'} (${ingestResult.chunksStored} chunks)`);
+                                            } else {
+                                                // Fallback for context injection if RAG disabled
+                                                const pdfText = await parsePdfBuffer(Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8'));
+                                                augmentedPrompt += `\n\n--- DOCUMENTO ADJUNTO: ${file.name} ---\n${pdfText.substring(0, 15000)}\n--- FIN DOCUMENTO ---\n`;
+                                            }
+                                        }
+                                    } else {
+                                        // Text file logic
+                                        const textContent = fileData.content;
+                                        if (textContent && textContent.length < 50000) {
+                                              if (ragService && ragService.enabled) {
+                                                 await ragService.ingestDocument(textContent, {
+                                                     courseId: courseId, 
+                                                     taskId: taskId, 
+                                                     topicId: topicId, 
+                                                     fileName: file.name,
+                                                     fileType: 'text'
+                                                 });
+                                              }
+                                              augmentedPrompt += `\n\n--- ARCHIVO ADJUNTO: ${file.name} ---\n${textContent}\n--- FIN ARCHIVO ---\n`;
+                                        }
+                                    }
                                         if (fileData.size > 10 * 1024 * 1024) {
                                             console.warn(`⚠️ PDF demasiado grande (${formatFileSize(fileData.size)}), saltando análisis profundo.`);
                                             augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (PDF demasiado grande para análisis, >10MB) ---`;
