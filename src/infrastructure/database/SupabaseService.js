@@ -897,7 +897,7 @@ CREATE TABLE public.videos (
                     logger.info('📤 OUTPUT:', JSON.stringify({
                         query: sqlQuery,
                         results: data,
-                        rowCount: data?.length || 0
+                        rowCount: data ? .length || 0
                     }, null, 2));
                     logger.info('✅ Executed via RPC execute_sql');
                     return data;
@@ -1058,7 +1058,7 @@ CREATE TABLE public.videos (
                 logger.info('📤 OUTPUT (fallback parser):', JSON.stringify({
                     query: sqlQuery,
                     results: data,
-                    rowCount: data?.length || 0
+                    rowCount: data ? .length || 0
                 }, null, 2));
 
                 return data;
