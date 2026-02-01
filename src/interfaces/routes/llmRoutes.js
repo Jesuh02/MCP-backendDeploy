@@ -205,7 +205,10 @@ LLM REQUEST END`;
                     // OPENROUTER API CALL (OpenAI Compatible)
                     // -------------------------------------------------------------------------
                     const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
-                    const openRouterModel = process.env.OPENROUTER_MODEL || model || "qwen/qwen-2.5-vl-7b-instruct";
+                    // Prioritize Chat-specific env var, then generic, then fallback. Avoid using embedding models for chat.
+                    const envModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL;
+                    const safeEnvModel = (envModel && !envModel.toLowerCase().includes('embedding')) ? envModel : null;
+                    const openRouterModel = safeEnvModel || model || "qwen/qwen-2.5-vl-7b-instruct";
                     
                     console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
                     
