@@ -548,7 +548,7 @@ async function callOpenRouter(systemPrompt, userPrompt, model) {
             timeout: 60000
         });
 
-        const content = resp.data?.choices?.[0]?.message?.content || "";
+        const content = resp.data ? .choices ? .[0] ? .message ? .content || "";
         console.log(`✅ OpenRouter response received: ${content.length} chars`);
         return content;
 
@@ -588,7 +588,7 @@ async function callDeepSeek(systemPrompt, userPrompt, modelOverride = null) {
 
             console.log('🤖 Calling local LLMService (DeepSeek)');
             const response = await llmService.generateResponse(messages);
-            const content = response ? .content || response ? .text || response ? .toString ? .() || '';
+            const content = response?.content || response?.text || response?.toString?.() || '';
             console.log('✅ Local DeepSeek response received:', typeof content === 'string' ? content.length : 'unknown', 'chars');
             if (content && content.length > 0) return content;
             // Fallthrough to remote if content empty
