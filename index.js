@@ -4683,49 +4683,12 @@ app.post('/procesar-prompt', async(req, res) => {
                                     const lowerName = (file.name || '').toLowerCase();
                                     const isPdf = lowerName.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
 
-                                    if (isPdf) {
-                                        // 🛡️ SECURITY: Skip PDF parsing if file is too large (> 10MB) to prevent OOM
+                                        // Unified file processing
                                         if (fileData.size > 10 * 1024 * 1024) {
-                                            console.warn(`⚠️ PDF ${file.name} too large (${formatFileSize(fileData.size)}) for full parsing. Skipping content.`);
-                                        } else {
-                                            // Process via RAG ingestion directly to ensure embeddings are generated
-                                            if (ragService && ragService.enabled) {
-                                                 console.log(`🧠 Ingesting PDF into RAG: ${file.name}`);
-                                                 const ingestResult = await ragService.ingestDocument(fileData.content, {
-                                                     courseId: courseId, 
-                                                     taskId: taskId,
-                                                     topicId: topicId,
-                                                     fileName: file.name,
-                                                     fileType: 'pdf'
-                                                 });
-                                                 console.log(`✅ RAG Ingestion result: ${ingestResult.success ? 'Success' : 'Failed'} (${ingestResult.chunksStored} chunks)`);
-                                            } else {
-                                                // Fallback for context injection if RAG disabled
-                                                const pdfText = await parsePdfBuffer(Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8'));
-                                                augmentedPrompt += `\n\n--- DOCUMENTO ADJUNTO: ${file.name} ---\n${pdfText.substring(0, 15000)}\n--- FIN DOCUMENTO ---\n`;
-                                            }
-                                        }
-                                    } else {
-                                        // Text file logic
-                                        const textContent = fileData.content;
-                                        if (textContent && textContent.length < 50000) {
-                                              if (ragService && ragService.enabled) {
-                                                 await ragService.ingestDocument(textContent, {
-                                                     courseId: courseId, 
-                                                     taskId: taskId, 
-                                                     topicId: topicId, 
-                                                     fileName: file.name,
-                                                     fileType: 'text'
-                                                 });
-                                              }
-                                              augmentedPrompt += `\n\n--- ARCHIVO ADJUNTO: ${file.name} ---\n${textContent}\n--- FIN ARCHIVO ---\n`;
-                                        }
-                                    }
-                                        if (fileData.size > 10 * 1024 * 1024) {
-                                            console.warn(`⚠️ PDF demasiado grande (${formatFileSize(fileData.size)}), saltando análisis profundo.`);
-                                            augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (PDF demasiado grande para análisis, >10MB) ---`;
+                                            console.warn(`⚠️ Archivo demasiado grande (${formatFileSize(fileData.size)}), saltando análisis profundo.`);
+                                            augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (Demasiado grande para análisis, >10MB) ---`;
                                         } 
-                                        else if (typeof pdf === 'function') {
+                                        else if (isPdf && typeof pdf === 'function') {
                                             try {
                                                 console.log(`📄 Intentando analizar PDF: ${file.name} (${formatFileSize(fileData.size)})`);
                                                 const buffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
@@ -4844,7 +4807,6 @@ app.post('/procesar-prompt', async(req, res) => {
                                         augmentedPrompt += `\n\n--- Archivo adjunto del curso: ${file.name} (${fileData.contentType || 'tipo desconocido'}) ---`;
                                         console.log(`ℹ️ Archivo ${file.name} es binario o no textual, solo referencia añadida`);
                                     }
-                                }
                             } catch (e) {
                                 console.warn(`⚠️ Error descargando archivo ${file.name}: ${e.message}`);
                             }
