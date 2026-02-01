@@ -548,7 +548,7 @@ async function callOpenRouter(systemPrompt, userPrompt, model) {
             timeout: 60000
         });
 
-        const content = resp.data ? .choices ? .[0] ? .message ? .content || "";
+        const content = resp.data?.choices?.[0]?.message?.content || "";
         console.log(`✅ OpenRouter response received: ${content.length} chars`);
         return content;
 
@@ -1222,7 +1222,7 @@ function extractGitHubUrl(fileName) {
 async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
     console.log('🐙 INICIANDO ANÁLISIS DE REPOSITORIO GITHUB...');
     console.log('   📦 URL:', repoUrl);
-    console.log('   📋 Tarea:', taskDescription ? .substring(0, 100) || 'Sin descripción');
+    console.log('   📋 Tarea:', taskDescription?.substring(0, 100) || 'Sin descripción');
 
     if (!mcpService) {
         throw new Error('MCPService no está disponible');
@@ -1237,7 +1237,7 @@ async function analyzeGitHubRepository(repoUrl, taskDescription, prompt) {
 
         console.log('✅ Análisis de GitHub completado');
         console.log('   📊 Nota:', result.grade || 'N/A');
-        console.log('   📁 Archivos analizados:', result.filesAnalyzed ? .length || 0);
+        console.log('   📁 Archivos analizados:', result.filesAnalyzed?.length || 0);
 
         return result;
     } catch (error) {
@@ -2576,7 +2576,7 @@ async function sendEmailNotification(userId, subject, text) {
                 console.log(`✅ Email enviado a ${userEmail} via Resend desde ${fromEmail}: ${resendResponse.data.id}`);
                 return;
             } catch (resendError) {
-                console.error('❌ Error con Resend:', resendError.response ? .data || resendError.message);
+                console.error('❌ Error con Resend:', resendError.response?.data || resendError.message);
                 // Fallback - reintentar con el mismo dominio verificado
                 console.log('🔄 Reintentando envío de email...');
                 try {
@@ -2594,7 +2594,7 @@ async function sendEmailNotification(userId, subject, text) {
                     console.log(`✅ Email enviado a ${userEmail} via fallback: ${fallbackResponse.data.id}`);
                     return;
                 } catch (fallbackError) {
-                    console.error('❌ Fallback también falló:', fallbackError.response ? .data || fallbackError.message);
+                    console.error('❌ Fallback también falló:', fallbackError.response?.data || fallbackError.message);
                 }
             }
         }
