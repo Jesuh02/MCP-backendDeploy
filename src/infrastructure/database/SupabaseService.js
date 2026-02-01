@@ -559,13 +559,13 @@ CREATE TABLE public.videos (
                 metadata,
                 created_at: new Date().toISOString()
             };
-            
+
             if (embedding) {
                 payload.embedding = embedding;
             }
 
             const { data, error } = await this.client
-                .from('knowledge_base')
+                .from('rag_documents')
                 .insert([payload])
                 .select();
 
@@ -573,7 +573,7 @@ CREATE TABLE public.videos (
 
             return data[0];
         } catch (error) {
-            logger.error('Error inserting knowledge base:', error);
+            logger.error('Error inserting knowledge base (rag_documents):', error);
             throw error;
         }
     }
@@ -814,12 +814,12 @@ CREATE TABLE public.videos (
     async deleteCourse(courseId) {
         try {
             logger.info(`🗑️ [SupabaseService] Deleting course: ${courseId}`);
-            
+
             // Delete related records first to ensure referential integrity
-            
+
             // 1. Delete student progress
             await this.client.from('progreso_estudiante').delete().eq('curso_id', courseId);
-            
+
             // 2. Delete videos associated with this course
             await this.client.from('videos').delete().eq('course_id', courseId);
 
@@ -838,9 +838,9 @@ CREATE TABLE public.videos (
 
             // 4. Finally delete the course
             const { error } = await this.client.from('courses').delete().eq('id', courseId);
-            
+
             if (error) throw error;
-            
+
             logger.info(`✅ [SupabaseService] Course deleted: ${courseId}`);
             return true;
         } catch (error) {
@@ -897,7 +897,7 @@ CREATE TABLE public.videos (
                     logger.info('📤 OUTPUT:', JSON.stringify({
                         query: sqlQuery,
                         results: data,
-                        rowCount: data?.length || 0
+                        rowCount: data ? .length || 0
                     }, null, 2));
                     logger.info('✅ Executed via RPC execute_sql');
                     return data;
@@ -1058,7 +1058,7 @@ CREATE TABLE public.videos (
                 logger.info('📤 OUTPUT (fallback parser):', JSON.stringify({
                     query: sqlQuery,
                     results: data,
-                    rowCount: data?.length || 0
+                    rowCount: data ? .length || 0
                 }, null, 2));
 
                 return data;

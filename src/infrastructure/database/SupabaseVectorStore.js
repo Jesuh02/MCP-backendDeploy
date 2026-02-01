@@ -21,7 +21,7 @@ export class SupabaseVectorStore extends IVectorStore {
     constructor() {
         super();
         if (SupabaseVectorStore.instance) return SupabaseVectorStore.instance;
-        
+
         this.supabase = SupabaseService.getInstance();
         this.tableName = 'rag_documents';
         this._initialized = false;
@@ -146,7 +146,9 @@ export class SupabaseVectorStore extends IVectorStore {
 
             if (error) {
                 // If table doesn't exist, try knowledge_base as fallback
-                if (error.code === 'PGRST116' || error.message.includes('does not exist')) {
+                // Also if expected columns are missing (404/406 or schema error), try generic insert
+                if (error.code === 'PGRST116' || error.message.includes('does not exist') || error.message.includes('column')) {
+                    logger.warn(`Specific column insert failed (${error.message}), attempting generic metadata insert...`);
                     return this._storeToKnowledgeBase(content, embedding, metadata);
                 }
                 throw error;
@@ -165,8 +167,10 @@ export class SupabaseVectorStore extends IVectorStore {
      */
     async _storeToKnowledgeBase(content, embedding, metadata) {
         try {
+            // Note: We use rag_documents as the fallback table name too, just passing metadata in JSONB
+            // This handles cases where specific columns (course_id, topic_id) might be missing
             const { data, error } = await this.supabase.client
-                .from('knowledge_base')
+                .from('rag_documents')
                 .insert([{
                     content,
                     embedding: embedding ? `[${embedding.join(',')}]` : null,
@@ -178,7 +182,7 @@ export class SupabaseVectorStore extends IVectorStore {
             if (error) throw error;
             return data[0];
         } catch (e) {
-            logger.error('Fallback storage also failed:', e);
+            logger.error('Fallback storage (rag_documents plain) also failed:', e);
             throw e;
         }
     }
@@ -275,7 +279,7 @@ export class SupabaseVectorStore extends IVectorStore {
             if (error) throw error;
 
             logger.info(`Deleted ${data?.length || 0} documents from vector store`);
-            return data?.length || 0;
+            return data ? .length || 0;
         } catch (error) {
             logger.error('Error deleting documents:', error);
             return 0;

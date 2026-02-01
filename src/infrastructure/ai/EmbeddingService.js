@@ -110,9 +110,21 @@ export class EmbeddingService extends IEmbeddingProvider {
         if (openRouterApiKey) {
             console.log("🔗 Initializing OpenRouter Embeddings...");
             try {
+                // Use a standard, widely accessible model as default to avoid invalid model ID errors.
+                // Qwen/qwen3-embedding-8b is not reliably hosted on OpenRouter.
+                // We use openai/text-embedding-3-small via OpenRouter which is reliable and standard.
+                const userModel = process.env.OPENROUTER_EMBEDDING_MODEL;
+                let modelToUse = userModel || "openai/text-embedding-3-small";
+
+                // Sanity check: If user provided a weird Qwen identifier that caused errors previously
+                if (modelToUse.toLowerCase().includes('qwen3-vl')) {
+                    console.warn(`⚠️ Potentially invalid model ID detected: ${modelToUse}. Using safe default.`);
+                    modelToUse = "openai/text-embedding-3-small";
+                }
+
                 this.model = new OpenRouterGenericEmbeddings({
                     apiKey: openRouterApiKey,
-                    modelName: process.env.OPENROUTER_EMBEDDING_MODEL || "qwen/qwen3-embedding-8b",
+                    modelName: modelToUse,
                     siteUrl: process.env.PUBLIC_URL,
                     siteName: "TaskMov MCP Server"
                 });
