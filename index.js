@@ -875,9 +875,6 @@ function extractCourseIdFromRequest(reqBody) {
 // CLOUDFLARE R2 SERVICE (S3-Compatible Storage)
 // ============================================================
 
-import fs from 'fs';
-import path from 'path';
-
 // Initialize S3 Client for Cloudflare R2
 let r2Client = null;
 let R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
