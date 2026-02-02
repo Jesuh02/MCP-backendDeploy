@@ -57,7 +57,7 @@ export class SupabaseVectorStore extends IVectorStore {
 ║  CREATE TABLE IF NOT EXISTS rag_documents (                        ║
 ║      id BIGSERIAL PRIMARY KEY,                                     ║
 ║      content TEXT NOT NULL,                                        ║
-║      embedding vector(4096),                                       ║
+║      embedding vector(1536), -- Adjust to 4096 if using Qwen       ║
 ║      metadata JSONB DEFAULT '{}',                                  ║
 ║      course_id BIGINT,                                             ║
 ║      topic_id BIGINT,                                              ║
@@ -75,7 +75,7 @@ export class SupabaseVectorStore extends IVectorStore {
 ║                                                                    ║
 ║  -- Create function for similarity search                          ║
 ║  CREATE OR REPLACE FUNCTION match_rag_documents(                   ║
-║      query_embedding vector(4096),                                 ║
+║      query_embedding vector(1536), -- Adjust to 4096 if using Qwen ║
 ║      match_threshold float DEFAULT 0.7,                            ║
 ║      match_count int DEFAULT 5,                                    ║
 ║      filter_course_id bigint DEFAULT NULL,                         ║
