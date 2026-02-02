@@ -175,15 +175,19 @@ router.post('/procesar-prompt', async(req, res) => {
                                                 const contentSnippet = extractedText;
                                                 augmentedPrompt += `\n\n--- Contenido del archivo: ${rawName} (${fileData.contentType}) ---\n${contentSnippet}`;
 
+                                                // Extract file-specific ID if available in JSON content
+                                                const fileSpecificId = parseId(file.id);
+                                                const activeContentItemId = fileSpecificId || contentItemId;
+
                                                 // INGEST INTO RAG (If task/topic/contentItem present)
-                                                if ((taskId && topicId) || contentItemId) {
+                                                if ((taskId && topicId) || activeContentItemId) {
                                                     try {
-                                                        console.log(`💾 Ingesting ${rawName} into RAG for future use...`);
+                                                        console.log(`💾 Ingesting ${rawName} into RAG for future use (ContentItemID: ${activeContentItemId})...`);
                                                         await ragService.ingestDocument(extractedText, {
                                                             courseId: courseId,
                                                             taskId: taskId,
                                                             topicId: topicId,
-                                                            contentItemId: contentItemId,
+                                                            contentItemId: activeContentItemId,
                                                             fileName: rawName,
                                                             fileType: 'txt', // Force text processing since we already extracted it
                                                             originalFileType: fileData.contentType // Keep original type in metadata
