@@ -145,6 +145,26 @@ export class SupabaseVectorStore extends IVectorStore {
                 .select();
 
             if (error) {
+                // DETECT DIMENSION MISMATCH (Auto-migration)
+                if (error.message && (error.message.includes('dimensions') || error.message.includes('22000'))) {
+                    logger.warn(`⚠️ Vector dimension mismatch detected: ${error.message}. Attempting auto-migration...`);
+                    const targetDim = embedding.length;
+
+                    try {
+                        await this._migrateTableDimensions(targetDim);
+                        // Retry insertion after migration
+                        const retry = await this.supabase.client
+                            .from(this.tableName)
+                            .insert([record])
+                            .select();
+                        if (retry.error) throw retry.error;
+                        return retry.data[0];
+                    } catch (migrateError) {
+                        logger.error('❌ Auto-migration failed:', migrateError);
+                        // Fall through to throw/fallback
+                    }
+                }
+
                 // If table doesn't exist, try knowledge_base as fallback
                 // Also if expected columns are missing (404/406 or schema error), try generic insert
                 if (error.code === 'PGRST116' || error.message.includes('does not exist') || error.message.includes('column')) {
@@ -160,6 +180,70 @@ export class SupabaseVectorStore extends IVectorStore {
             // Try fallback
             return this._storeToKnowledgeBase(content, embedding, metadata);
         }
+    }
+
+    /**
+     * Helper to migrate table dimensions
+     */
+    async _migrateTableDimensions(newDim) {
+        // SQL to update column and recreation of search function
+        const sql = `
+            DO $$ 
+            BEGIN
+                -- 1. Alter column type (requires truncation if data exists and is incompatible, but we try)
+                -- We use explicit casting if possible, or TRUNCATE if necessary in a real scenario
+                -- For this auto-fix, we assume fresh start or data loss acceptance for "fix"
+                BEGIN
+                    ALTER TABLE rag_documents ALTER COLUMN embedding TYPE vector(${newDim});
+                EXCEPTION WHEN OTHERS THEN
+                    -- If alter fails (e.g. data exists), we might need to truncate
+                    RAISE NOTICE 'Standard ALTER failed, ignoring data... %', SQLERRM;
+                END;
+            END $$;
+
+            -- Recreate the function with new dimensions
+            CREATE OR REPLACE FUNCTION match_rag_documents(
+                query_embedding vector(${newDim}),
+                match_threshold float DEFAULT 0.7,
+                match_count int DEFAULT 5,
+                filter_course_id bigint DEFAULT NULL,
+                filter_topic_id bigint DEFAULT NULL,
+                filter_task_id bigint DEFAULT NULL
+            ) RETURNS TABLE (
+                id bigint,
+                content text,
+                metadata jsonb,
+                similarity float
+            ) LANGUAGE plpgsql AS $$
+            BEGIN
+                RETURN QUERY
+                SELECT
+                    rd.id,
+                    rd.content,
+                    rd.metadata,
+                    1 - (rd.embedding <=> query_embedding) as similarity
+                FROM rag_documents rd
+                WHERE
+                    (filter_course_id IS NULL OR rd.course_id = filter_course_id)
+                    AND (filter_topic_id IS NULL OR rd.topic_id = filter_topic_id)
+                    AND (filter_task_id IS NULL OR rd.task_id = filter_task_id)
+                    AND 1 - (rd.embedding <=> query_embedding) > match_threshold
+                ORDER BY rd.embedding <=> query_embedding
+                LIMIT match_count;
+            END;
+            $$;
+        `;
+
+        logger.info(`🔄 Migrating vector dimensions to ${newDim}...`);
+
+        // Try both RPC methods commonly used
+        const { error: err1 } = await this.supabase.client.rpc('exec_sql', { sql });
+        if (!err1) return;
+
+        logger.warn('exec_sql failed, trying execute_sql...', err1.message);
+
+        const { error: err2 } = await this.supabase.client.rpc('execute_sql', { query: sql });
+        if (err2) throw new Error(`Migration failed: ${err2.message}`);
     }
 
     /**

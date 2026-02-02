@@ -23,10 +23,10 @@ export class LLMService {
         const useDeepSeek = process.env.USE_LLM === 'true' && deepSeekApiKey;
 
         if (useDeepSeek) {
-            // DeepSeek V3 with Thinking Mode (deepseek-reasoner)
+            // DeepSeek V3 (Chat) is preferred over Reasoner for generic tasks to avoid loops/timeouts
             // API Docs: https://api-docs.deepseek.com/
-            const modelName = process.env.DEEPSEEK_MODEL || "deepseek-reasoner";
-            console.log(`🧠 Initializing DeepSeek ${modelName} (Thinking Mode)...`);
+            const modelName = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+            console.log(`🧠 Initializing DeepSeek ${modelName} ...`);
             this.provider = 'deepseek';
             this.model = new ChatOpenAI({
                 openAIApiKey: deepSeekApiKey,
@@ -34,8 +34,8 @@ export class LLMService {
                     baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
                 },
                 modelName: modelName,
-                temperature: 0, // Thinking mode works best with temperature 0
-                timeout: 120000, // 2 minutes - reasoning takes longer
+                temperature: 0.3,
+                timeout: 60000,
                 maxRetries: 2
             });
         } else {
