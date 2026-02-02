@@ -19,6 +19,18 @@ router.post('/procesar-prompt', async(req, res) => {
             try {
                 const { prompt, ollamaUrl, model, jsonContent } = req.body;
 
+                // 🛑 CRITICAL: If model is an embedding model, it MUST NOT go to chat
+                // The prompt will be processed for Ingestion (embeddings), then we return early.
+                const isEmbeddingModel = model && (
+                    model.toLowerCase().includes('embedding') || 
+                    model.toLowerCase().includes('text-embed') ||
+                    model === "Qwen3-VL-Embedding-8B"
+                );
+
+                if (isEmbeddingModel) {
+                    console.log(`📡 Embedding model detected (${model}). Processing ONLY for Document Ingestion (RAG).`);
+                }
+
                 // Extract Context IDs (ensure they are parsed as integers/bigints if present)
                 const parseId = (val) => {
                     if (!val) return null;
@@ -248,6 +260,19 @@ router.post('/procesar-prompt', async(req, res) => {
                     } catch (e) {
                         console.warn("⚠️ Error parsing jsonContent for files:", e.message);
                     }
+                }
+
+                // If this was just an embedding request, we are done after ingestion.
+                if (isEmbeddingModel) {
+                    console.log('✅ Ingestion request processed successfully (Embedding flow). Returning early.');
+                    return res.json({
+                        respuesta_texto: "Contenido procesado e indexado correctamente (Embedding-only flow).",
+                        nota: null,
+                        esCalificacion: false,
+                        contenidoVacio: false,
+                        error: null,
+                        ingested: true
+                    });
                 }
 
                 // Ensure ollamaUrl is valid
