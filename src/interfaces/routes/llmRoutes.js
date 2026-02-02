@@ -379,6 +379,14 @@ LLM REQUEST END`;
                             response: json.choices?.[0]?.message?.content || ""
                         };
                     } catch (orError) {
+                         // 🛑 CRITICAL: Do NOT fallback if error is Context Length (token limit) related
+                         // This prevents trying to send a massive prompt to a local model which will likely crash or also fail.
+                         if (orError.message && (orError.message.includes('context length') || orError.message.includes('tokens') || orError.message.includes('too large'))) {
+                             console.error(`❌ OpenRouter Context Length Error: ${orError.message}`);
+                             console.warn("🚫 Aborting fallback to local model due to Context Length violation. This request should probably be handled via RAG/Ingest.");
+                             throw orError; 
+                         }
+
                         console.warn(`⚠️ OpenRouter call failed: ${orError.message}. Falling back to local DeepSeek/Ollama.`);
                         // Fallback proceeds to next block if data is still undefined
                     }
@@ -390,13 +398,20 @@ LLM REQUEST END`;
                     // STANDARD OLLAMA / DEEPSEEK CALL
                     // -------------------------------------------------------------------------
                     
-                    console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${model || 'deepseek-chat'})`);
+                    // Validate model for local call too (prevent sending embedding models to chat endpoint)
+                    let localModel = model || 'deepseek-chat';
+                    if (localModel.toLowerCase().includes('embedding')) {
+                         console.warn(`⚠️ Detected embedding model '${localModel}' for Chat fallback. Swapping to 'deepseek-chat'.`);
+                         localModel = 'deepseek-chat';
+                    }
+
+                    console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${localModel})`);
             
                     const response = await fetch(targetUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            model: model || 'deepseek-chat', // Default to deepseek
+                            model: localModel,
                             prompt: augmentedPrompt,
                             stream: false,
                             options: {
