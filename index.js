@@ -36,6 +36,7 @@ import ragRoutes from './src/interfaces/routes/RAGRoutes.js';
 import paymentRoutes from './src/interfaces/routes/paymentRoutes.js';
 import PaymentService from './src/services/PaymentService.js';
 import notificationRoutes from './src/interfaces/routes/notificationRoutes.js';
+import llmRoutes from './src/interfaces/routes/llmRoutes.js';
 // Note: Additional refactored modules available:
 // - fileUtils: ./src/utils/fileUtils.js  
 // - githubUtils: ./src/utils/githubUtils.js
@@ -167,6 +168,13 @@ console.log('   💸 Available endpoints:');
 // Register Notification Routes
 app.use('/', notificationRoutes);
 console.log('🔔 Notification routes registered at /');
+
+// Register LLM/Prompt Routes (RAG + Uniqueness logic)
+app.use('/', llmRoutes);
+console.log('🤖 LLM routes registered at /');
+console.log('   🧠 Available endpoints:');
+console.log('      POST /procesar-prompt - Smart question generation with RAG & uniqueness');
+
 console.log('   📢 Available endpoints:');
 console.log('      POST /notify-course-creation - Notify subscribers about new course');
 console.log('      POST /send-push-notification - Send generic push notification');
