@@ -194,9 +194,23 @@ router.post('/procesar-prompt', async(req, res) => {
 
                                             if (extractedText) {
                                                 // Only include text content. Skip binary/base64 to avoid confusing text-only models.
-                                                // INCLUDE TODO el contenido del archivo (sin límite por archivo)
-                                                const contentSnippet = extractedText;
-                                                augmentedPrompt += `\n\n--- Contenido del archivo: ${rawName} (${fileData.contentType}) ---\n${contentSnippet}`;
+                                                // SAFETY LIMIT: OpenRouter has 160k token limit.
+                                                // We cap total prompt size to avoid 400 Bad Request errors.
+                                                const MAX_TOTAL_CONTEXT_CHARS = 400000; // ~100k tokens safe limit
+                                                const currentLength = augmentedPrompt.length;
+                                                const remainingChars = MAX_TOTAL_CONTEXT_CHARS - currentLength;
+
+                                                if (remainingChars <= 200) {
+                                                    console.warn(`⚠️ Max context length reached. Skipping content of ${rawName}`);
+                                                    augmentedPrompt += `\n\n--- Archivo omitido: ${rawName} (Límite de contexto alcanzado) ---`;
+                                                } else {
+                                                    let contentSnippet = extractedText;
+                                                    if (contentSnippet.length > remainingChars) {
+                                                        console.warn(`⚠️ Truncating ${rawName} to fit context limit (${remainingChars} chars left).`);
+                                                        contentSnippet = contentSnippet.substring(0, remainingChars) + "\n\n[...Contenido truncado por límite de longitud...]";
+                                                    }
+                                                    augmentedPrompt += `\n\n--- Contenido del archivo: ${rawName} (${fileData.contentType}) ---\n${contentSnippet}`;
+                                                }
 
                                                 // Extract file-specific ID if available in JSON content
                                                 const fileSpecificId = parseId(file.id);
