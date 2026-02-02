@@ -55,6 +55,8 @@ console.log(`📌 NODE_ENV: ${process.env.NODE_ENV}`);
 console.log(`📌 PORT (env): ${process.env.PORT}`);
 console.log(`📌 RAILWAY_STATIC_URL: ${process.env.RAILWAY_STATIC_URL}`);
 console.log(`📌 PUBLIC_URL: ${process.env.PUBLIC_URL}`);
+console.log(`📌 CHAT_MODEL: ${process.env.CHAT_MODEL || process.env.OPENROUTER_CHAT_MODEL || 'default'}`);
+console.log(`📌 EMBEDDING_MODEL: ${process.env.EMBEDDING_MODEL || process.env.OPENROUTER_EMBEDDING_MODEL || 'default'}`);
 console.log('\n🎬 FFmpeg Configuration:');
 console.log(`   FFMPEG_PATH: ${process.env.FFMPEG_PATH || 'system default'}`);
 console.log(`   FFPROBE_PATH: ${process.env.FFPROBE_PATH || 'system default'}`);
@@ -488,32 +490,23 @@ setInterval(() => {
  * Helper that calls remote DeepSeek HTTP API directly (used as immediate fallback)
  */
 async function remoteDeepSeekCall(systemPrompt, userPrompt) {
-    const base = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-    const key = process.env.DEEPSEEK_API_KEY;
-    if (!base) {
-        throw new Error('DEEPSEEK_BASE_URL not configured for remote fallback');
+    // FIX: Don't call broken /procesar-prompt endpoint. Use OpenRouter directly as the remote fallback.
+    const fallbackModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat";
+
+    console.log(`🌐 Calling Remote Fallback (OpenRouter) with model: ${fallbackModel}`);
+
+    // Check if the fallback model is accidentally an embedding model
+    if (fallbackModel.toLowerCase().includes('embedding')) {
+        console.warn('⚠️ Fallback model configured as embedding model! Switching to deepseek-chat.');
+        return await callOpenRouter(systemPrompt, userPrompt, "deepseek/deepseek-chat");
     }
 
-    const payload = {
-        systemPrompt: systemPrompt || '',
-        prompt: userPrompt || ''
-    };
-
-    console.log('🌐 Calling remote DeepSeek API as fallback:', base);
-
     try {
-        const headers = {
-            'Content-Type': 'application/json'
-        };
-        if (key) headers['Authorization'] = `Bearer ${key}`;
-
-        const resp = await axios.post(`${base}/procesar-prompt`, payload, { headers, timeout: 20000 });
-        if (resp && resp.data) {
-            return typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
-        }
-        throw new Error('Empty response from remote DeepSeek');
+        const result = await callOpenRouter(systemPrompt, userPrompt, fallbackModel);
+        if (result) return result;
+        throw new Error("OpenRouter fallback returned empty");
     } catch (err) {
-        console.error('❌ Remote DeepSeek call failed:', err.message || err);
+        console.error('❌ Remote fallback failed:', err.message);
         throw err;
     }
 }
@@ -529,13 +522,20 @@ async function callOpenRouter(systemPrompt, userPrompt, model) {
             return null;
         }
 
-        console.log(`🤖 Sending request to OpenRouter (Model: ${model})`);
+        // Safety check: Ensure we aren't using an embedding model for chat
+        let safeModel = model;
+        if (safeModel && safeModel.toLowerCase().includes('embedding')) {
+            console.warn(`⚠️ Attempted to use embedding model '${safeModel}' for chat! Swapping to chat model.`);
+            safeModel = process.env.OPENROUTER_CHAT_MODEL || "deepseek/deepseek-chat";
+        }
+
+        console.log(`🤖 Sending request to OpenRouter (Model: ${safeModel})`);
         const messages = [];
         if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
         messages.push({ role: "user", content: userPrompt });
 
         const resp = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
-            model: model,
+            model: safeModel,
             messages: messages,
             temperature: 0.7
         }, {
