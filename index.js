@@ -488,7 +488,7 @@ setInterval(() => {
  * Helper that calls remote DeepSeek HTTP API directly (used as immediate fallback)
  */
 async function remoteDeepSeekCall(systemPrompt, userPrompt) {
-    const base = process.env.DEEPSEEK_BASE_URL;
+    const base = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
     const key = process.env.DEEPSEEK_API_KEY;
     if (!base) {
         throw new Error('DEEPSEEK_BASE_URL not configured for remote fallback');
