@@ -504,7 +504,7 @@ LLM REQUEST END`;
                                         // Save newly selected questions back to history (append as new record)
                                         if (filtered.length > 0) {
                                             const toSave = filtered.map(fq => fq);
-                                            await mcpService.saveReinforcementHistory(userId, courseId, toSave);
+                                            await mcpService.saveReinforcementHistory(userId, courseId, toSave, topicId, taskId);
                                         } else {
                                             console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
                                         }
@@ -572,7 +572,7 @@ LLM REQUEST END`;
                                                             try {
                                                                 const mcpService2 = new MCPService();
                                                                 const toSave = filtered.map(fq => fq);
-                                                                await mcpService2.saveReinforcementHistory(userId, courseId, toSave);
+                                                                await mcpService2.saveReinforcementHistory(userId, courseId, toSave, topicId, taskId);
                                                             } catch (upErr) { console.warn('⚠️ Failed to save retry results:', upErr?.message || upErr); }
                                                             break;
                                                         }
