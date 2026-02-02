@@ -58,6 +58,7 @@ console.log(`📌 RAILWAY_STATIC_URL: ${process.env.RAILWAY_STATIC_URL}`);
 console.log(`📌 PUBLIC_URL: ${process.env.PUBLIC_URL}`);
 console.log(`📌 CHAT_MODEL: ${process.env.CHAT_MODEL || process.env.OPENROUTER_CHAT_MODEL || 'default'}`);
 console.log(`📌 EMBEDDING_MODEL: ${process.env.EMBEDDING_MODEL || process.env.OPENROUTER_EMBEDDING_MODEL || 'default'}`);
+console.log('✨ GPT-5.2-Codex Status: ENABLED for all clients');
 console.log('\n🎬 FFmpeg Configuration:');
 console.log(`   FFMPEG_PATH: ${process.env.FFMPEG_PATH || 'system default'}`);
 console.log(`   FFPROBE_PATH: ${process.env.FFPROBE_PATH || 'system default'}`);
