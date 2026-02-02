@@ -2,3 +2,4 @@
 // Estructura: { [submissionId]: { nota, resumen, cumplimiento } }
 const cache = {};
 export default cache;
+

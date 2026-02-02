@@ -96,7 +96,7 @@ export class EmbeddingService extends IEmbeddingProvider {
 
         this.model = null;
         this.provider = 'none';
-        this.dimensions = 4096; // Default for OpenAI text-embedding-3-small
+        this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '1536'); // Default 1536 for text-embedding-3-small
 
         this._initializeProvider();
     }
@@ -106,7 +106,30 @@ export class EmbeddingService extends IEmbeddingProvider {
         const openAiApiKey = process.env.OPENAI_API_KEY;
         const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
 
-        // Priority 1: OpenRouter (User Preference with direct fetch)
+        // Priority 1: DeepSeek (Native) - Explicit request
+        if (deepSeekApiKey && OpenAIEmbeddings) {
+            console.log("🔗 Initializing DeepSeek Embeddings...");
+            try {
+                // Default to deepseek-embedding-v2 if not specified, only available via standard compatible endpoint
+                let modelID = process.env.DEEPSEEK_EMBEDDING_MODEL || "deepseek-embedding-v2";
+
+                this.model = new OpenAIEmbeddings({
+                    openAIApiKey: deepSeekApiKey,
+                    configuration: {
+                        baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
+                    },
+                    modelName: modelID,
+                });
+                this.provider = 'deepseek';
+                this.dimensions = 1024; // DeepSeek embedding v2 is 1024
+                console.log(`✅ DeepSeek Embeddings initialized (Model: ${this.model.modelName})`);
+                return;
+            } catch (e) {
+                console.warn("⚠️ DeepSeek embeddings failed, trying fallback...", e.message);
+            }
+        }
+
+        // Priority 2: OpenRouter (User Preference with direct fetch)
         if (openRouterApiKey) {
             console.log("🔗 Initializing OpenRouter Embeddings...");
             try {
@@ -118,9 +141,9 @@ export class EmbeddingService extends IEmbeddingProvider {
 
                 // Sanity check: If user provided the incorrect Qwen identifier (Qwen3-VL-Embedding-8B)
                 // Correct it to the valid OpenRouter ID: qwen/qwen3-embedding-8b
-                if (modelToUse === "Qwen3-VL-Embedding-8B" || modelToUse.toLowerCase().includes('qwen3-vl-embedding')) {
-                    console.log(`⚠️ Auto-correcting invalid model ID '${modelToUse}' to 'openai/text-embedding-3-small' to match DB dimensions (4096)`);
-                    modelToUse = "openai/text-embedding-3-small";
+                if (modelToUse === "Qwen3-VL-Embedding-8B" || modelToUse.toLowerCase().includes('qwen3-vl-embedding') || modelToUse === "Qwen3 Embedding 8B") {
+                    console.log(`⚠️ Auto-correcting invalid model ID '${modelToUse}' to 'qwen/qwen3-embedding-8b'`);
+                    modelToUse = "qwen/qwen3-embedding-8b";
                 }
 
                 this.model = new OpenRouterGenericEmbeddings({
@@ -131,13 +154,18 @@ export class EmbeddingService extends IEmbeddingProvider {
                 });
                 this.provider = 'openrouter';
 
-                // Determine dimensions based on model
-                if (modelToUse.includes('openai') || modelToUse.includes('text-embedding-3')) {
-                    this.dimensions = 4096;
+                // Determine dimensions based on model - use env var or model-specific defaults
+                const envDimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '0');
+                if (envDimensions > 0) {
+                    this.dimensions = envDimensions;
+                } else if (modelToUse.includes('text-embedding-3-small')) {
+                    this.dimensions = 1536; // OpenAI text-embedding-3-small = 1536
+                } else if (modelToUse.includes('text-embedding-3-large')) {
+                    this.dimensions = 3072; // OpenAI text-embedding-3-large = 3072
                 } else if (modelToUse.includes('qwen')) {
-                    this.dimensions = 4096;
+                    this.dimensions = 4096; // Qwen models = 4096
                 } else {
-                    this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '4096');
+                    this.dimensions = 1536; // Safe default
                 }
 
                 console.log(`✅ OpenRouter Embeddings initialized (Model: ${this.model.modelName}, Dimensions: ${this.dimensions})`);
@@ -153,44 +181,13 @@ export class EmbeddingService extends IEmbeddingProvider {
             this.model = new OpenAIEmbeddings({
                 openAIApiKey: openAiApiKey,
                 modelName: "text-embedding-3-small",
-                dimensions: 4096
+                dimensions: 1536
             });
             this.provider = 'openai';
-            this.dimensions = 4096;
+            this.dimensions = 1536;
             console.log("✅ OpenAI Embeddings initialized");
             return;
         }
-
-        /*
-        // Priority 2: DeepSeek (Standard OpenAI-compatible endpoint)
-        // DISABLED per user request to avoid 404s on fallback.
-        if (deepSeekApiKey && OpenAIEmbeddings) {
-            console.log("🔗 Initializing DeepSeek Embeddings...");
-            try {
-                // FIXED: Handle potential Qwen model error by defaulting to deepseek-embedding-v2
-                // if env var contains invalid Qwen string, ignore it
-                let modelID = process.env.DEEPSEEK_EMBEDDING_MODEL || "deepseek-embedding-v2";
-                if (modelID.includes('Qwen') || modelID.includes('VL')) {
-                    console.warn(`⚠️ Invalid model ID detected in env: ${modelID}. Fallback to deepseek-embedding-v2`);
-                    modelID = "deepseek-embedding-v2";
-                }
-
-                this.model = new OpenAIEmbeddings({
-                    openAIApiKey: deepSeekApiKey,
-                    configuration: {
-                        baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
-                    },
-                    modelName: modelID,
-                });
-                this.provider = 'deepseek';
-                this.dimensions = 1024; // DeepSeek embedding v2 typical dimension (verify if needed)
-                console.log(`✅ DeepSeek Embeddings initialized (Model: ${this.model.modelName})`);
-                return;
-            } catch (e) {
-                console.warn("⚠️ DeepSeek embeddings failed, trying fallback...", e.message);
-            }
-        }
-        */
 
         // Priority 3: Ollama (local, free)
         if (OllamaEmbeddings) {

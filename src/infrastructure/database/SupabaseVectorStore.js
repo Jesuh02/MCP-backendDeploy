@@ -190,14 +190,15 @@ export class SupabaseVectorStore extends IVectorStore {
         const sql = `
             DO $$ 
             BEGIN
-                -- 1. Alter column type (requires truncation if data exists and is incompatible, but we try)
-                -- We use explicit casting if possible, or TRUNCATE if necessary in a real scenario
-                -- For this auto-fix, we assume fresh start or data loss acceptance for "fix"
+                -- 1. Alter column type (Force recreation if alter fails)
                 BEGIN
                     ALTER TABLE rag_documents ALTER COLUMN embedding TYPE vector(${newDim});
                 EXCEPTION WHEN OTHERS THEN
-                    -- If alter fails (e.g. data exists), we might need to truncate
-                    RAISE NOTICE 'Standard ALTER failed, ignoring data... %', SQLERRM;
+                    -- If alter fails (e.g. data exists and cannot be cast), we drop and recreate
+                    -- This results in loss of vector data but fixes the schema for new insertions
+                    RAISE NOTICE 'Standard ALTER failed, dropping and recreating column... %', SQLERRM;
+                    ALTER TABLE rag_documents DROP COLUMN IF EXISTS embedding;
+                    ALTER TABLE rag_documents ADD COLUMN embedding vector(${newDim});
                 END;
             END $$;
 
@@ -363,7 +364,7 @@ export class SupabaseVectorStore extends IVectorStore {
             if (error) throw error;
 
             logger.info(`Deleted ${data?.length || 0} documents from vector store`);
-            return data?.length || 0;
+            return data ?.length || 0;
         } catch (error) {
             logger.error('Error deleting documents:', error);
             return 0;
