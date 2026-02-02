@@ -53,3 +53,4 @@ movil-77c19-firebase-adminsdk-fbsvc-5d81f25b08.json
 .env-raildway.json
 scripts/ddl.sql
 scripts/fix_vector_dimensions.sql
+scripts/setup_rag_tables.sql

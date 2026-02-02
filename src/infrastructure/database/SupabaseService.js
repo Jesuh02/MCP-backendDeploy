@@ -557,7 +557,11 @@ CREATE TABLE public.videos (
             const payload = {
                 content,
                 metadata,
-                created_at: new Date().toISOString()
+                created_at: new Date().toISOString(),
+                course_id: metadata.courseId || metadata.course_id || null,
+                topic_id: metadata.topicId || metadata.topic_id || null,
+                task_id: metadata.taskId || metadata.task_id || null,
+                content_item_id: metadata.contentItemId || metadata.content_item_id || null
             };
 
             if (embedding) {
@@ -897,7 +901,7 @@ CREATE TABLE public.videos (
                     logger.info('📤 OUTPUT:', JSON.stringify({
                         query: sqlQuery,
                         results: data,
-                        rowCount: data ?.length || 0
+                        rowCount: data?.length || 0
                     }, null, 2));
                     logger.info('✅ Executed via RPC execute_sql');
                     return data;
@@ -1058,7 +1062,7 @@ CREATE TABLE public.videos (
                 logger.info('📤 OUTPUT (fallback parser):', JSON.stringify({
                     query: sqlQuery,
                     results: data,
-                    rowCount: data ?.length || 0
+                    rowCount: data?.length || 0
                 }, null, 2));
 
                 return data;
