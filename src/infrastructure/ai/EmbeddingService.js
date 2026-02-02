@@ -130,10 +130,9 @@ export class EmbeddingService extends IEmbeddingProvider {
                     siteName: "TaskMov MCP Server"
                 });
                 this.provider = 'openrouter';
-                // Qwen 8B embedding dimension is typically 1536 (similar to OpenAI) or 4096. 
-                // Checking docs: qwen/qwen3-embedding-8b uses 1536 or 1024. 
-                // Assuming 1536 for now, can be configured.
-                this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '1536');
+                // Qwen 8B embedding dimension is typically 4096. 
+                // Checking docs: qwen/qwen3-embedding-8b uses 4096.
+                this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '4096');
                 console.log(`✅ OpenRouter Embeddings initialized (Model: ${this.model.modelName})`);
                 return;
             } catch (e) {
