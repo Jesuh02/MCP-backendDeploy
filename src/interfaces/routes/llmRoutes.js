@@ -318,70 +318,77 @@ LLM REQUEST END`;
                 // DETECT IF OPENROUTER IS REQUESTED (Via specific model name or env)
                 const isOpenRouterModel = model && (model.toLowerCase().includes("qwen") || model.toLowerCase().includes("openrouter") || model === process.env.OPENROUTER_MODEL);
                 
+                // Define local target URI in outer scope for retries/fallbacks
+                const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
+                const targetUrl = `${baseUrl}/api/generate`;
+
                 let data;
                 
                 if (isOpenRouterModel && process.env.OPENROUTER_API_KEY) {
-                    // -------------------------------------------------------------------------
-                    // OPENROUTER API CALL (OpenAI Compatible)
-                    // -------------------------------------------------------------------------
-                    const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
-                    // Prioritize Chat-specific env var, then generic, then fallback. Avoid using embedding models for chat.
-                    const envModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL;
-                    const safeEnvModel = (envModel && !envModel.toLowerCase().includes('embedding')) ? envModel : null;
-                    
-                    // Fix for invalid model IDs sent by older clients (specifically Qwen3-Embedding incorrectly sent to Chat)
-                    let finalModel = model;
-                    if (!finalModel || finalModel === "Qwen3-VL-Embedding-8B" || finalModel === "qwen/qwen3-embedding-8b" || (typeof finalModel === 'string' && finalModel.toLowerCase().includes('embedding'))) {
-                         console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to default Chat model.`);
-                         finalModel = process.env.OPENROUTER_CHAT_MODEL || "qwen/qwen-2.5-vl-7b-instruct";
-                    }
+                    try {
+                        // -------------------------------------------------------------------------
+                        // OPENROUTER API CALL (OpenAI Compatible)
+                        // -------------------------------------------------------------------------
+                        const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
+                        // Prioritize Chat-specific env var, then generic, then fallback. Avoid using embedding models for chat.
+                        const envModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL;
+                        const safeEnvModel = (envModel && !envModel.toLowerCase().includes('embedding')) ? envModel : null;
+                        
+                        // Fix for invalid model IDs sent by older clients (specifically Qwen3-Embedding incorrectly sent to Chat)
+                        let finalModel = model;
+                        if (!finalModel || finalModel === "Qwen3-VL-Embedding-8B" || finalModel === "qwen/qwen3-embedding-8b" || (typeof finalModel === 'string' && finalModel.toLowerCase().includes('embedding'))) {
+                             console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to default Chat model.`);
+                             finalModel = process.env.OPENROUTER_CHAT_MODEL || "qwen/qwen-2.5-vl-7b-instruct";
+                        }
 
-                    let openRouterModel = safeEnvModel || finalModel || "qwen/qwen-2.5-vl-7b-instruct";
-                    
-                    // FINAL SAFETY CHECK: If the resolved model is still an embedding model (e.g. from misconfigured env var), FORCE a chat model.
-                    if (openRouterModel.toLowerCase().includes('embedding')) {
-                        console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to chat model.`);
-                        openRouterModel = "qwen/qwen-2.5-vl-7b-instruct";
-                    }
-                    
-                    console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
-                    
-                    const response = await fetch(openRouterUrl, {
-                        method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                            'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com', // Required by OpenRouter
-                            'X-Title': 'CourseV MCP Backend'
-                        },
-                        body: JSON.stringify({
-                            model: openRouterModel, 
-                            messages: [
-                                { role: "user", content: augmentedPrompt }
-                            ],
-                            temperature: 0.7
-                        })
-                    });
+                        let openRouterModel = safeEnvModel || finalModel || "qwen/qwen-2.5-vl-7b-instruct";
+                        
+                        // FINAL SAFETY CHECK: If the resolved model is still an embedding model (e.g. from misconfigured env var), FORCE a chat model.
+                        if (openRouterModel.toLowerCase().includes('embedding')) {
+                            console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to chat model.`);
+                            openRouterModel = "qwen/qwen-2.5-vl-7b-instruct";
+                        }
+                        
+                        console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
+                        
+                        const response = await fetch(openRouterUrl, {
+                            method: 'POST',
+                            headers: { 
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                                'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com', // Required by OpenRouter
+                                'X-Title': 'CourseV MCP Backend'
+                            },
+                            body: JSON.stringify({
+                                model: openRouterModel, 
+                                messages: [
+                                    { role: "user", content: augmentedPrompt }
+                                ],
+                                temperature: 0.7
+                            })
+                        });
 
-                    if (!response.ok) {
-                        const errText = await response.text();
-                        throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errText}`);
-                    }
+                        if (!response.ok) {
+                            const errText = await response.text();
+                            throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errText}`);
+                        }
 
-                    const json = await response.json();
-                    // Normalize OpenRouter (OpenAI-style) response to expected Ollama-style internal format for processing
-                    data = {
-                        response: json.choices?.[0]?.message?.content || ""
-                    };
-                    
-                } else {
+                        const json = await response.json();
+                        // Normalize OpenRouter (OpenAI-style) response to expected Ollama-style internal format for processing
+                        data = {
+                            response: json.choices?.[0]?.message?.content || ""
+                        };
+                    } catch (orError) {
+                        console.warn(`⚠️ OpenRouter call failed: ${orError.message}. Falling back to local DeepSeek/Ollama.`);
+                        // Fallback proceeds to next block if data is still undefined
+                    }
+                } 
+                
+                // Fallback or Standard Local Call
+                if (!data) {
                     // -------------------------------------------------------------------------
                     // STANDARD OLLAMA / DEEPSEEK CALL
                     // -------------------------------------------------------------------------
-                    // Call LLM (DeepSeek via Ollama wrapper or Direct)
-                    // If ollamaUrl ends with /, remove it
-                    const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
-                    const targetUrl = `${baseUrl}/api/generate`;
                     
                     console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${model || 'deepseek-chat'})`);
             
@@ -721,5 +728,33 @@ LLM REQUEST END`;
         });
     }
 });
+
+// Helper function to check if a question already exists in history
+function questionExistsInHistory(questionText, historyList) {
+    if (!questionText || !historyList || !Array.isArray(historyList)) return false;
+    const normalized = questionText.trim().toLowerCase();
+    
+    return historyList.some(item => {
+        let historyText = "";
+        if (typeof item === 'string') {
+            historyText = item;
+        } else if (item && typeof item === 'object') {
+            historyText = item.question || item.pregunta || JSON.stringify(item);
+        }
+        
+        if (!historyText) return false;
+        
+        const hNormalized = historyText.trim().toLowerCase();
+        // Check for exact match or significant overlap (e.g. one contains the other)
+        // Using a length check to avoid trivial matches like "a" inside "apple"
+        if (normalized === hNormalized) return true;
+        
+        if (normalized.length > 20 && hNormalized.length > 20) {
+             if (normalized.includes(hNormalized) || hNormalized.includes(normalized)) return true;
+        }
+        
+        return false;
+    });
+}
 
 export default router;
