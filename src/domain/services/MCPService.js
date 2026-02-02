@@ -213,12 +213,12 @@ export class MCPService {
             if (rows && Array.isArray(rows)) {
                 history = rows.map(r => ({
                     question: r.question_text,
-                    options: r.question_options ? .sort((a, b) => a.order_index - b.order_index).map(o => o.option_text) || [],
+                    options: r.question_options?.sort((a, b) => a.order_index - b.order_index).map(o => o.option_text) || [],
                     answer_index: r.correct_index,
                     explanation: r.explanation,
                     id: r.id, // Keep ID for reference
-                    topic_id: r.session ? .topic_id,
-                    task_id: r.session ? .task_id
+                    topic_id: r.session?.topic_id,
+                    task_id: r.session?.task_id
                 }));
             }
 
@@ -595,8 +595,8 @@ export class MCPService {
                         course_id: courseId,
                         question_text: qText,
                         question_embedding: qEmbedding, // Ensure this is not undefined
-                        correct_index: q.correctIndex ? ? q.answer_index ? ? q.correct_index ? ? 0,
-                        explanation: q.explanation ? ? q.explicacion ? ? ""
+                        correct_index: q.correctIndex ?? q.answer_index ?? q.correct_index ?? 0,
+                        explanation: q.explanation ?? q.explicacion ?? ""
                     })
                     .select()
                     .single();
