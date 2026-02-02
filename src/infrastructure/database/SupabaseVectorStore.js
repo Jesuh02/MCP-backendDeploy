@@ -80,7 +80,8 @@ export class SupabaseVectorStore extends IVectorStore {
 ║      match_count int DEFAULT 5,                                    ║
 ║      filter_course_id bigint DEFAULT NULL,                         ║
 ║      filter_topic_id bigint DEFAULT NULL,                          ║
-║      filter_task_id bigint DEFAULT NULL                            ║
+║      filter_task_id bigint DEFAULT NULL,                           ║
+║      filter_content_item_id bigint DEFAULT NULL                    ║
 ║  ) RETURNS TABLE (                                                 ║
 ║      id bigint,                                                    ║
 ║      content text,                                                 ║
@@ -99,6 +100,7 @@ export class SupabaseVectorStore extends IVectorStore {
 ║          (filter_course_id IS NULL OR rd.course_id = filter_course_id) ║
 ║          AND (filter_topic_id IS NULL OR rd.topic_id = filter_topic_id) ║
 ║          AND (filter_task_id IS NULL OR rd.task_id = filter_task_id)    ║
+║          AND (filter_content_item_id IS NULL OR rd.content_item_id = filter_content_item_id) ║
 ║          AND 1 - (rd.embedding <=> query_embedding) > match_threshold   ║
 ║      ORDER BY rd.embedding <=> query_embedding                     ║
 ║      LIMIT match_count;                                            ║
@@ -133,6 +135,7 @@ export class SupabaseVectorStore extends IVectorStore {
                 course_id: metadata.courseId || null,
                 topic_id: metadata.topicId || null,
                 task_id: metadata.taskId || null,
+                content_item_id: metadata.contentItemId || null,
                 file_name: metadata.fileName || null,
                 file_type: metadata.fileType || null,
                 chunk_index: metadata.chunkIndex || 0,
@@ -200,6 +203,11 @@ export class SupabaseVectorStore extends IVectorStore {
                     ALTER TABLE rag_documents DROP COLUMN IF EXISTS embedding;
                     ALTER TABLE rag_documents ADD COLUMN embedding vector(${newDim});
                 END;
+
+                -- 2. Add content_item_id if missing
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rag_documents' AND column_name = 'content_item_id') THEN
+                    ALTER TABLE rag_documents ADD COLUMN content_item_id bigint;
+                END IF;
             END $$;
 
             -- Recreate the function with new dimensions
@@ -209,7 +217,8 @@ export class SupabaseVectorStore extends IVectorStore {
                 match_count int DEFAULT 5,
                 filter_course_id bigint DEFAULT NULL,
                 filter_topic_id bigint DEFAULT NULL,
-                filter_task_id bigint DEFAULT NULL
+                filter_task_id bigint DEFAULT NULL,
+                filter_content_item_id bigint DEFAULT NULL
             ) RETURNS TABLE (
                 id bigint,
                 content text,
@@ -228,6 +237,7 @@ export class SupabaseVectorStore extends IVectorStore {
                     (filter_course_id IS NULL OR rd.course_id = filter_course_id)
                     AND (filter_topic_id IS NULL OR rd.topic_id = filter_topic_id)
                     AND (filter_task_id IS NULL OR rd.task_id = filter_task_id)
+                    AND (filter_content_item_id IS NULL OR rd.content_item_id = filter_content_item_id)
                     AND 1 - (rd.embedding <=> query_embedding) > match_threshold
                 ORDER BY rd.embedding <=> query_embedding
                 LIMIT match_count;
@@ -292,7 +302,8 @@ export class SupabaseVectorStore extends IVectorStore {
                     match_count: topK,
                     filter_course_id: filter.courseId || null,
                     filter_topic_id: filter.topicId || null,
-                    filter_task_id: filter.taskId || null
+                    filter_task_id: filter.taskId || null,
+                    filter_content_item_id: filter.contentItemId || null
                 });
 
             if (error) {
@@ -364,7 +375,7 @@ export class SupabaseVectorStore extends IVectorStore {
             if (error) throw error;
 
             logger.info(`Deleted ${data?.length || 0} documents from vector store`);
-            return data ?.length || 0;
+            return data?.length || 0;
         } catch (error) {
             logger.error('Error deleting documents:', error);
             return 0;

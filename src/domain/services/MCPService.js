@@ -16,7 +16,7 @@ export class MCPService {
         this.supabase = SupabaseService.getInstance();
         this.llmService = LLMService.getInstance();
         this.githubService = getGitHubService();
-        
+
         // Schema cache - auto-refreshes every 5 minutes
         this._schemaCache = null;
         this._schemaCacheTime = 0;
@@ -30,15 +30,15 @@ export class MCPService {
      */
     async getDynamicSchema() {
         const now = Date.now();
-        
+
         // Return cached schema if still valid
         if (this._schemaCache && (now - this._schemaCacheTime) < this._schemaCacheTTL) {
             logger.info('📋 Using cached database schema');
             return this._schemaCache;
         }
-        
+
         logger.info('🔄 Fetching fresh database schema from Supabase...');
-        
+
         try {
             // New query requested by user to get full DDL details
             const schemaSQL = `
@@ -52,36 +52,36 @@ export class MCPService {
                 WHERE table_schema = 'public'
                 ORDER BY table_name, ordinal_position;
             `;
-            
+
             const result = await this.supabase.executeRawSQL(schemaSQL);
-            
+
             if (!result || !Array.isArray(result) || result.length === 0) {
                 logger.warn('⚠️ Could not fetch schema, using fallback');
                 return this._getFallbackSchema();
             }
-            
+
             // Format schema for LLM consumption by grouping flat rows
             let schemaText = '**ESQUEMA DE LA BASE DE DATOS (Actualizado automáticamente):**\n\n';
-            
+
             // Group by table_name
             const tables = {};
             for (const row of result) {
                 if (!tables[row.table_name]) {
                     tables[row.table_name] = [];
                 }
-                
+
                 let colDesc = `${row.column_name} (${row.data_type}`;
                 if (row.is_nullable === 'NO') colDesc += ', NOT NULL';
                 if (row.column_default) colDesc += ', default';
                 colDesc += ')';
-                
+
                 tables[row.table_name].push(colDesc);
             }
-            
+
             // Generate text
             for (const [tableName, columns] of Object.entries(tables)) {
-                 // Also create a simplified list of columns for quick reference
-                 const simpleCols = result
+                // Also create a simplified list of columns for quick reference
+                const simpleCols = result
                     .filter(r => r.table_name === tableName)
                     .map(r => r.column_name)
                     .join(', ');
@@ -91,7 +91,7 @@ export class MCPService {
                 // but user asked for "Todo el DDL", so maybe we should be more verbose? 
                 // Sticking to format similar to previous but using the new data source)
             }
-            
+
             // Add relationships hint
             schemaText += `\n**RELACIONES (Foreign Keys):**\n`;
             schemaText += `- courses.creator_user_id → usuarios.id (creador del curso)\n`;
@@ -104,20 +104,20 @@ export class MCPService {
             schemaText += `- subscriptions.subscriber_id → usuarios.id\n`;
             schemaText += `- transactions.user_id → usuarios.id\n`;
             schemaText += `- notifications.user_id → usuarios.id\n`;
-            
+
             // Cache the result
             this._schemaCache = schemaText;
             this._schemaCacheTime = now;
-            
+
             logger.info(`✅ Schema loaded: ${result.length} tables found`);
             return schemaText;
-            
+
         } catch (error) {
             logger.error(`❌ Error fetching schema: ${error.message}`);
             return this._getFallbackSchema();
         }
     }
-    
+
     /**
      * Fallback schema if dynamic loading fails
      * IMPORTANT: Keep this in sync with actual database schema!
@@ -142,7 +142,7 @@ export class MCPService {
 - subscriptions NO tiene course_id - usa creator_id para relacionar con el creador
 - Para contar suscriptores de un creador: WHERE subscriptions.creator_id = usuarios.id`;
     }
-    
+
     /**
      * Force refresh the schema cache
      */
@@ -159,18 +159,18 @@ export class MCPService {
      */
     async getReinforcementHistory(userId, courseId, topicId = null, taskId = null) {
         if (!userId || !courseId) return [];
-        
+
         console.log(`📚 MCPService: Fetching reinforcement history for user ${userId}, course ${courseId} (topic: ${topicId}, task: ${taskId})`);
-        
+
         // Ensure supabase is initialized
         if (!this.supabase) {
-             console.warn('⚠️ MCPService: SupabaseService not initialized, attempting to get instance');
-             try {
-                 this.supabase = SupabaseService.getInstance();
-             } catch(e) {
-                 console.error('❌ MCPService: Failed to get SupabaseService instance:', e.message);
-                 return [];
-             }
+            console.warn('⚠️ MCPService: SupabaseService not initialized, attempting to get instance');
+            try {
+                this.supabase = SupabaseService.getInstance();
+            } catch (e) {
+                console.error('❌ MCPService: Failed to get SupabaseService instance:', e.message);
+                return [];
+            }
         }
 
         try {
@@ -182,9 +182,9 @@ export class MCPService {
 
             if (topicId) query = query.eq('topic_id', topicId);
             if (taskId) query = query.eq('task_id', taskId);
-            
+
             const { data: existingRows, error } = await query;
-            
+
             if (error) throw error;
 
             let history = [];
@@ -196,10 +196,10 @@ export class MCPService {
                 });
             }
             console.log(`✅ MCPService: Found ${history.length} questions in history for user ${userId} course ${courseId}`);
-            
+
             // Log for clarity as requested (simulation of tool execution log)
             logger.info(`🔍 Executing query: SELECT questions FROM reinforcement_question_history WHERE user_id = ${userId} AND course_id = ${courseId}`);
-            
+
             return history;
         } catch (error) {
             logger.warn(`Error fetching reinforcement history: ${error.message}`);
@@ -299,7 +299,7 @@ export class MCPService {
 
             // 3. Apply semantic density reduction (keep only last N questions total)
             // Even if we fetched 50 batches, we might have 500 questions. detailed limit.
-            const QUESTION_CAP = 50; 
+            const QUESTION_CAP = 50;
             if (recentQuestions.length > QUESTION_CAP) {
                 recentQuestions = recentQuestions.slice(0, QUESTION_CAP);
             }
@@ -328,10 +328,10 @@ export class MCPService {
 
         } catch (error) {
             logger.error(`❌ Error getting reinforcement context: ${error.message}`);
-            return { 
-                contextString: "\n[System Error: Could not retrieve history]\n", 
+            return {
+                contextString: "\n[System Error: Could not retrieve history]\n",
                 questionCount: 0,
-                questions: [] 
+                questions: []
             };
         }
     }
@@ -419,6 +419,87 @@ export class MCPService {
         if (!userId || !courseId || !questions || !questions.length) return false;
 
         try {
+            // Semantic Deduplication Check
+            if (process.env.ENABLE_SEMANTIC_DEDUPLICATION !== 'false') {
+                try {
+                    const EmbeddingService = (await
+                        import ('../../infrastructure/ai/EmbeddingService.js')).EmbeddingService;
+                    const embeddingService = EmbeddingService.getInstance();
+
+                    if (embeddingService.isReady()) {
+                        // Fetch separate questions list instead of context string
+                        const historyTexts = await this.getReinforcementQuestionsText(userId, courseId);
+                        const uniqueQuestions = [];
+
+                        // Pre-calculate embeddings for history if list is small enough, else do it per question
+                        // For efficiency, we will allow new questions if they are distinct enough from EACH history item
+                        // Since history can be large, we might limit to recent 50
+                        const recentHistory = historyTexts.slice(-50);
+                        const historyEmbeddings = [];
+                        if (recentHistory.length > 0) {
+                            // Batch embed is better but might be heavy
+                            // historyEmbeddings = await embeddingService.embedDocuments(recentHistory);
+                        }
+
+                        for (const q of questions) {
+                            const qText = typeof q === 'string' ? q : q.question;
+                            if (!qText) continue;
+
+                            // Self-deduplication first
+                            if (uniqueQuestions.some(uq => (typeof uq === 'string' ? uq : uq.question) === qText)) continue;
+
+                            // Calculate embedding for current question
+                            const qEmbedding = await embeddingService.embedQuery(qText);
+                            let isSemanticDuplicate = false;
+
+                            // Calculate Magnitude for Cosine Similarity
+                            const magQ = Math.sqrt(qEmbedding.reduce((sum, v) => sum + v * v, 0));
+
+                            // Compare with recent history (last 20 items to be safe)
+                            const comparisonWindow = recentHistory.slice(-20);
+                            if (comparisonWindow.length > 0) {
+                                const windowEmbeddings = await embeddingService.embedDocuments(comparisonWindow);
+
+                                for (const histEmb of windowEmbeddings) {
+                                    // Cosine Similarity = (A . B) / (|A| * |B|)
+                                    const dot = histEmb.reduce((sum, v, i) => sum + v * qEmbedding[i], 0);
+                                    const magHist = Math.sqrt(histEmb.reduce((sum, v) => sum + v * v, 0));
+                                    const similarity = dot / ((magQ * magHist) || 1);
+
+                                    if (similarity > 0.95) { // Threshold 95%
+                                        isSemanticDuplicate = true;
+                                        logger.info(`🚫 Duplicate Question Detected (Similarity: ${similarity.toFixed(4)}): "${qText.substring(0,30)}..."`);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (!isSemanticDuplicate) {
+                                uniqueQuestions.push(q);
+                            }
+                        }
+
+                        questions = uniqueQuestions;
+                    }
+                } catch (e) {
+                    console.warn('Semantic deduplication failed, proceeding with standard save', e);
+                }
+            }
+
+            if (questions.length === 0) return true; // All duplicates
+
+            // Ensure no duplicate options in the question object itself AND strict strings
+            questions = questions.map(q => {
+                if (typeof q === 'object') {
+                    if (q.options && Array.isArray(q.options)) {
+                        // Clean strings and remove duplicates
+                        q.options = [...new Set(q.options.map(o => String(o).trim()))];
+                    }
+                    if (q.question) q.question = String(q.question).trim();
+                }
+                return q;
+            });
+
             const payload = {
                 user_id: userId,
                 course_id: courseId,
@@ -432,7 +513,7 @@ export class MCPService {
             const { error } = await this.supabase.client
                 .from('reinforcement_question_history')
                 .insert(payload);
-            
+
             if (error) throw error;
             return true;
         } catch (error) {
@@ -477,7 +558,7 @@ export class MCPService {
     async generateDataSnapshot(query, options = {}) {
         const {
             isBusinessQuestion = false,
-            reason = 'fallback'
+                reason = 'fallback'
         } = options;
 
         const sqlStatements = [];
@@ -494,7 +575,8 @@ export class MCPService {
             { key: 'task_submissions_total', table: 'task_submissions' }
         ];
 
-        for (const { key, table } of countConfigs) {
+        for (const { key, table }
+            of countConfigs) {
             const sql = `SELECT COUNT(*) AS total FROM ${table}`;
             sqlStatements.push(sql);
 
@@ -694,8 +776,8 @@ export class MCPService {
         try {
             const {
                 includeRAG = true,
-                // CHANGED: Always include schema by default to ensure database context
-                includeSchema = true
+                    // CHANGED: Always include schema by default to ensure database context
+                    includeSchema = true
             } = options;
 
             logger.info(`Processing query: ${query.substring(0, 100)}...`);
@@ -812,19 +894,19 @@ export class MCPService {
      * NO RETRY LIMIT - Self-correcting until success.
      */
     async processQueryToData(query, userId = null) {
-        logger.info(`📊 Processing query to data (MCP Agent): "${query}" (User: ${userId})`);
+            logger.info(`📊 Processing query to data (MCP Agent): "${query}" (User: ${userId})`);
 
-        if (!this.llmService || !this.llmService.model) {
-            throw new Error("LLM Service not available for SQL generation");
-        }
+            if (!this.llmService || !this.llmService.model) {
+                throw new Error("LLM Service not available for SQL generation");
+            }
 
-        // Use the MCP Agent approach
-        const conversationHistory = [];
-        let iteration = 0;
-        const MAX_SAFETY_ITERATIONS = 30;
-        let lastSuccessfulResult = null;
+            // Use the MCP Agent approach
+            const conversationHistory = [];
+            let iteration = 0;
+            const MAX_SAFETY_ITERATIONS = 30;
+            let lastSuccessfulResult = null;
 
-        const systemMessage = new SystemMessage(`Eres un agente de base de datos. Tu objetivo es obtener datos RAW para exportar a Excel.
+            const systemMessage = new SystemMessage(`Eres un agente de base de datos. Tu objetivo es obtener datos RAW para exportar a Excel.
 
 **HERRAMIENTAS:**
 1. \`get_database_schema\` - Obtiene el esquema de la base de datos
@@ -848,8 +930,8 @@ export class MCPService {
 
 Cuando tengas los datos, responde: DATOS_LISTOS`);
 
-        conversationHistory.push(systemMessage);
-        conversationHistory.push(new HumanMessage(`Obtén los datos para: ${query}${userId ? `\nUsuario actual: ${userId}` : ''}`));
+            conversationHistory.push(systemMessage);
+            conversationHistory.push(new HumanMessage(`Obtén los datos para: ${query}${userId ? `\nUsuario actual: ${userId}` : ''}`));
 
         let consecutiveEmptyResponses = 0;
         const MAX_EMPTY_RESPONSES = 2; // Exit after 2 consecutive empty/no-tool responses
