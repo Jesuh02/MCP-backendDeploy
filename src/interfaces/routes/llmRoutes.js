@@ -213,15 +213,15 @@ LLM REQUEST END`;
                     let finalModel = model;
                     if (!finalModel || finalModel === "Qwen3-VL-Embedding-8B" || finalModel === "qwen/qwen3-embedding-8b" || (typeof finalModel === 'string' && finalModel.toLowerCase().includes('embedding'))) {
                          console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to default Chat model.`);
-                         finalModel = process.env.OPENROUTER_CHAT_MODEL || "qwen/qwen-2.5-vl-7b-instruct";
+                         finalModel = process.env.OPENROUTER_CHAT_MODEL || "deepseek/deepseek-chat";
                     }
 
-                    let openRouterModel = safeEnvModel || finalModel || "qwen/qwen-2.5-vl-7b-instruct";
+                    let openRouterModel = safeEnvModel || finalModel || "deepseek/deepseek-chat";
                     
                     // FINAL SAFETY CHECK: If the resolved model is still an embedding model (e.g. from misconfigured env var), FORCE a chat model.
                     if (openRouterModel.toLowerCase().includes('embedding')) {
                         console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to chat model.`);
-                        openRouterModel = "qwen/qwen-2.5-vl-7b-instruct";
+                        openRouterModel = "deepseek/deepseek-chat";
                     }
                     
                     console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
