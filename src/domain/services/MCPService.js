@@ -500,6 +500,31 @@ export class MCPService {
                 return q;
             });
 
+            // 2. DEDUPLICATE AGAINST DB HISTORY (Prevent storing same question text twice)
+            try {
+                // Fetch recent questions texts to compare
+                const recentHistory = await this.getReinforcementQuestionsText(userId, courseId);
+                const recentSet = new Set(recentHistory.map(t => t.toLowerCase().trim()));
+
+                // Filter out questions that already exist (Textual Deduplication)
+                questions = questions.filter(q => {
+                    const qText = (typeof q === 'string' ? q : (q.question || q.pregunta || "")).toLowerCase().trim();
+                    if (!qText) return false;
+                    const isDup = recentSet.has(qText);
+                    if (isDup) {
+                        // logger.debug(`Skipping duplicate question in history save: "${qText.substring(0, 20)}..."`);
+                    }
+                    return !isDup;
+                });
+            } catch (dedupError) {
+                console.warn("⚠️ Textual deduplication failed, skipping check:", dedupError);
+            }
+
+            if (questions.length === 0) {
+                // logger.info(`ℹ️ Deduplication: All questions already exist in history. Skipping save.`);
+                return true;
+            }
+
             const payload = {
                 user_id: userId,
                 course_id: courseId,
