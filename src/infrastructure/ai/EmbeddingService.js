@@ -106,30 +106,7 @@ export class EmbeddingService extends IEmbeddingProvider {
         const openAiApiKey = process.env.OPENAI_API_KEY;
         const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
 
-        // Priority 1: DeepSeek (Native) - Explicit request
-        if (deepSeekApiKey && OpenAIEmbeddings) {
-            console.log("🔗 Initializing DeepSeek Embeddings...");
-            try {
-                // Default to deepseek-embedding-v2 if not specified, only available via standard compatible endpoint
-                let modelID = process.env.DEEPSEEK_EMBEDDING_MODEL || "deepseek-embedding-v2";
-
-                this.model = new OpenAIEmbeddings({
-                    openAIApiKey: deepSeekApiKey,
-                    configuration: {
-                        baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
-                    },
-                    modelName: modelID,
-                });
-                this.provider = 'deepseek';
-                this.dimensions = 1024; // DeepSeek embedding v2 is 1024
-                console.log(`✅ DeepSeek Embeddings initialized (Model: ${this.model.modelName})`);
-                return;
-            } catch (e) {
-                console.warn("⚠️ DeepSeek embeddings failed, trying fallback...", e.message);
-            }
-        }
-
-        // Priority 2: OpenRouter (User Preference with direct fetch)
+        // Priority 1: OpenRouter (User Preference with direct fetch)
         if (openRouterApiKey) {
             console.log("🔗 Initializing OpenRouter Embeddings...");
             try {
@@ -172,6 +149,29 @@ export class EmbeddingService extends IEmbeddingProvider {
                 return;
             } catch (e) {
                 console.warn("⚠️ OpenRouter embeddings failed initialization:", e.message);
+            }
+        }
+
+        // Priority 2: DeepSeek (Native) - Explicit request
+        if (deepSeekApiKey && OpenAIEmbeddings) {
+            console.log("🔗 Initializing DeepSeek Embeddings...");
+            try {
+                // Default to deepseek-embedding-v2 if not specified, only available via standard compatible endpoint
+                let modelID = process.env.DEEPSEEK_EMBEDDING_MODEL || "deepseek-embedding-v2";
+
+                this.model = new OpenAIEmbeddings({
+                    openAIApiKey: deepSeekApiKey,
+                    configuration: {
+                        baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
+                    },
+                    modelName: modelID,
+                });
+                this.provider = 'deepseek';
+                this.dimensions = 1024; // DeepSeek embedding v2 is 1024
+                console.log(`✅ DeepSeek Embeddings initialized (Model: ${this.model.modelName})`);
+                return;
+            } catch (e) {
+                console.warn("⚠️ DeepSeek embeddings failed, trying fallback...", e.message);
             }
         }
 
