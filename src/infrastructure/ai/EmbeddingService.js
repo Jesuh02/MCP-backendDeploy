@@ -11,7 +11,7 @@ import { IEmbeddingProvider } from '../../domain/interfaces/IEmbeddingProvider.j
 class OpenRouterGenericEmbeddings {
     constructor(config) {
         this.apiKey = config.apiKey;
-        this.modelName = config.modelName || "qwen/qwen3-embedding-8b";
+        this.modelName = config.modelName || "openai/text-embedding-3-small";
         this.siteUrl = config.siteUrl || "https://github.com/Startups-M/tareamov-mcp-server";
         this.siteName = config.siteName || "TaskMov MCP";
     }
@@ -119,8 +119,8 @@ export class EmbeddingService extends IEmbeddingProvider {
                 // Sanity check: If user provided the incorrect Qwen identifier (Qwen3-VL-Embedding-8B)
                 // Correct it to the valid OpenRouter ID: qwen/qwen3-embedding-8b
                 if (modelToUse === "Qwen3-VL-Embedding-8B" || modelToUse.toLowerCase().includes('qwen3-vl-embedding')) {
-                    console.log(`⚠️ Auto-correcting invalid model ID '${modelToUse}' to 'qwen/qwen3-embedding-8b'`);
-                    modelToUse = "qwen/qwen3-embedding-8b";
+                    console.log(`⚠️ Auto-correcting invalid model ID '${modelToUse}' to 'openai/text-embedding-3-small' to match DB dimensions (1536)`);
+                    modelToUse = "openai/text-embedding-3-small";
                 }
 
                 this.model = new OpenRouterGenericEmbeddings({
