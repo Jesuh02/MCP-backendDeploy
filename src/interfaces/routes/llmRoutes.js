@@ -208,7 +208,15 @@ LLM REQUEST END`;
                     // Prioritize Chat-specific env var, then generic, then fallback. Avoid using embedding models for chat.
                     const envModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL;
                     const safeEnvModel = (envModel && !envModel.toLowerCase().includes('embedding')) ? envModel : null;
-                    const openRouterModel = safeEnvModel || model || "qwen/qwen-2.5-vl-7b-instruct";
+                    
+                    // Fix for invalid model IDs sent by older clients (specifically Qwen3-Embedding incorrectly sent to Chat)
+                    let finalModel = model;
+                    if (finalModel === "Qwen3-VL-Embedding-8B" || finalModel === "qwen/qwen3-embedding-8b" || (finalModel && finalModel.toLowerCase().includes('embedding'))) {
+                         console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to default Chat model.`);
+                         finalModel = process.env.OPENROUTER_CHAT_MODEL || "qwen/qwen-2.5-vl-7b-instruct";
+                    }
+
+                    const openRouterModel = safeEnvModel || finalModel || "qwen/qwen-2.5-vl-7b-instruct";
                     
                     console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
                     

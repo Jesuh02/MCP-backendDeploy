@@ -116,10 +116,11 @@ export class EmbeddingService extends IEmbeddingProvider {
                 const userModel = process.env.OPENROUTER_EMBEDDING_MODEL;
                 let modelToUse = userModel || "openai/text-embedding-3-small";
 
-                // Sanity check: If user provided a weird Qwen identifier that caused errors previously
-                if (modelToUse.toLowerCase().includes('qwen3-vl')) {
-                    console.warn(`⚠️ Potentially invalid model ID detected: ${modelToUse}. Using safe default.`);
-                    modelToUse = "openai/text-embedding-3-small";
+                // Sanity check: If user provided the incorrect Qwen identifier (Qwen3-VL-Embedding-8B)
+                // Correct it to the valid OpenRouter ID: qwen/qwen3-embedding-8b
+                if (modelToUse === "Qwen3-VL-Embedding-8B" || modelToUse.toLowerCase().includes('qwen3-vl-embedding')) {
+                    console.log(`⚠️ Auto-correcting invalid model ID '${modelToUse}' to 'qwen/qwen3-embedding-8b'`);
+                    modelToUse = "qwen/qwen3-embedding-8b";
                 }
 
                 this.model = new OpenRouterGenericEmbeddings({
