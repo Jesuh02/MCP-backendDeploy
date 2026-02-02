@@ -3,6 +3,8 @@ import { R2StorageService } from '../../services/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { MCPService } from '../../domain/services/MCPService.js';
 import { RAGService } from '../../domain/services/RAGService.js';
+import { EmbeddingService } from '../../infrastructure/ai/EmbeddingService.js';
+import crypto from 'crypto';
 import { createRequire } from 'module';
 const require = createRequire(
     import.meta.url);
@@ -26,8 +28,29 @@ router.post('/procesar-prompt', async(req, res) => {
 
                 const taskId = parseId(req.body.taskId || req.body.task_id);
                 const topicId = parseId(req.body.topicId || req.body.topic_id);
-                const courseId = parseId(req.body.courseId || req.body.course_id);
+                const courseId = parseId(req.body.courseId || req.body.course_id || req.body.idCurso);
                 const contentItemId = parseId(req.body.contentItemId || req.body.content_item_id);
+                const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+
+                // Check if session exists to see if we can skip ingestion (User Rule: omit creation of new embeddings if session exists)
+                let skipIngestion = false;
+                if (userId && taskId && topicId) {
+                    try {
+                        const { data } = await SupabaseService.getInstance().client
+                            .from('question_sessions')
+                            .select('id')
+                            .eq('user_id', userId)
+                            .eq('task_id', taskId)
+                            .eq('topic_id', topicId)
+                            .maybeSingle();
+                        if (data) {
+                            skipIngestion = true;
+                            console.log(`ℹ️ Session ${data.id} exists for this task. Will skip new embedding ingestion.`);
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ Failed to check question_sessions:', e.message);
+                    }
+                }
 
                 console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl} (Task: ${taskId}, Topic: ${topicId}, ContentItem: ${contentItemId})`);
 
@@ -180,7 +203,7 @@ router.post('/procesar-prompt', async(req, res) => {
                                                 const activeContentItemId = fileSpecificId || contentItemId;
 
                                                 // INGEST INTO RAG (If task/topic/contentItem present)
-                                                if ((taskId && topicId) || activeContentItemId) {
+                                                if (((taskId && topicId) || activeContentItemId) && !skipIngestion) {
                                                     try {
                                                         console.log(`💾 Ingesting ${rawName} into RAG for future use (ContentItemID: ${activeContentItemId})...`);
                                                         await ragService.ingestDocument(extractedText, {
@@ -219,8 +242,6 @@ router.post('/procesar-prompt', async(req, res) => {
                 }
 
                 // If userId/courseId provided, fetch reinforcement history and instruct LLM to avoid repeats
-                const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
-                const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
                 let historyQuestionsList = [];
                 let existingHistory = [];
                 if (userId && courseId) {
@@ -433,84 +454,156 @@ LLM REQUEST END`;
                         }
                     });
 
-                    // If userId/courseId are provided, filter out any questions that were already served
-                    // to that user in that course by consulting Supabase `reinforcement_question_history`.
-                    const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
-                    const courseId = req.body.courseId || req.body.course_id || req.body.idCurso || null;
+
 
                     // Helper: normalize text
-                    const normalizeText = (s) => {
-                        if (!s) return '';
-                        try {
-                            return s.toString()
-                                .toLowerCase()
-                                .normalize('NFD')
-                                .replace(/\p{Diacritic}/gu, '')
-                                .replace(/[^a-z0-9\s]/g, ' ')
-                                .replace(/\s+/g, ' ')
-                                .trim();
-                        } catch (e) {
-                            return s.toString()
-                                .toLowerCase()
-                                .normalize('NFD')
-                                .replace(/[\u0300-\u036f]/g, '')
-                                .replace(/[^a-z0-9\s]/g, ' ')
-                                .replace(/\s+/g, ' ')
-                                .trim();
-                        }
-                    };
+                    const normalizeText = (s) => s ? s.trim().toLowerCase() : '';
 
-                    const questionExistsInHistory = (questionText, historyArray) => {
-                        if (!questionText) return false;
-                        const qNorm = normalizeText(questionText);
-                        if (!historyArray || !Array.isArray(historyArray)) return false;
-                        for (const h of historyArray) {
-                            try {
-                                let candidate = '';
-                                if (!h) continue;
-                                if (typeof h === 'string') candidate = h;
-                                else if (h.question) candidate = h.question;
-                                else if (h.pregunta) candidate = h.pregunta;
-                                else candidate = JSON.stringify(h);
-
-                                const cNorm = normalizeText(candidate);
-                                if (!cNorm) continue;
-                                if (cNorm === qNorm || cNorm.includes(qNorm) || qNorm.includes(cNorm)) {
-                                    return true;
-                                }
-                            } catch (e) {
-                                continue;
-                            }
-                        }
-                        return false;
-                    };
-
-                    let filtered = transformed;
+                    let filtered = [];
 
                     if (userId && courseId) {
                         try {
-                            const mcpService = new MCPService();
-                            
-                            // Check against full history again
-                            const history = existingHistory && existingHistory.length ? existingHistory : historyQuestionsList;
-                            
-                            filtered = transformed.filter(q => {
-                                try {
-                                    const qText = q.question || q.pregunta || JSON.stringify(q);
-                                    return !questionExistsInHistory(qText, history);
-                                } catch (e) { return true; }
-                            });
+                            const supabase = SupabaseService.getInstance();
+                            const embeddingService = EmbeddingService.getInstance();
 
-                                        // Save newly selected questions back to history (append as new record)
-                                        if (filtered.length > 0) {
-                                            const toSave = filtered.map(fq => fq);
-                                            await mcpService.saveReinforcementHistory(userId, courseId, toSave, topicId, taskId);
-                                        } else {
-                                            console.log(`ℹ️ All generated questions were already seen by user ${userId} for course ${courseId}`);
+                            // 1. Ensure Session Exists (Paso 0)
+                            let sessionId = null;
+                            if (taskId && topicId) {
+                                try {
+                                    const { data: sessionData } = await supabase.client
+                                        .from('question_sessions')
+                                        .insert({ user_id: userId, course_id: courseId, topic_id: topicId, task_id: taskId })
+                                        .select('id')
+                                        .single();
+                                    if (sessionData) sessionId = sessionData.id;
+                                    console.log(`✅ Session created/logged: ${sessionId}`);
+                                } catch(e) { 
+                                     console.warn('Session creation warning (might exist):', e.message);
+                                     // Try fetching if insert failed (likely shouldn't happen with identity PK unless logic changes, but safeguard)
+                                }
+                            }
+
+                            console.log(`🔍 Validating ${transformed.length} questions for uniqueness (User: ${userId})...`);
+
+                            for (const q of transformed) {
+                                try {
+                                    // Validate q structure
+                                    if (!q.question || !Array.isArray(q.options)) continue;
+
+                                    // Normalize & Hash (Paso B)
+                                    const normalizedQ = normalizeText(q.question);
+                                    const hash = crypto.createHash('sha256').update(normalizedQ).digest('hex');
+
+                                    // Check exact hash in DB
+                                    const { data: hashExists } = await supabase.client.from('questions_history')
+                                        .select('id').eq('user_id', userId).eq('question_hash', hash).maybeSingle();
+                                    
+                                    if (hashExists) {
+                                        console.log('🚫 Skipping duplicate hash:', q.question);
+                                        continue;
+                                    }
+
+                                    // Embed Question (Paso C)
+                                    let qEmbedding = null;
+                                    try {
+                                        qEmbedding = await embeddingService.embedQuery(q.question);
+                                    } catch (embErr) {
+                                        console.warn('Embedding failed for question, using hash only check:', embErr.message);
+                                        // If embedding fails, we rely on hash only.
+                                    }
+
+                                    if (qEmbedding) {
+                                        // Semantic Search (Paso D & E)
+                                        const { data: similarQuestions } = await supabase.client.rpc('match_questions', {
+                                            query_embedding: qEmbedding,
+                                            match_threshold: 0.9,
+                                            match_count: 1,
+                                            filter_user_id: userId
+                                        });
+                                        
+                                        if (similarQuestions && similarQuestions.length > 0) {
+                                            console.log(`🚫 Skipping semantically similar question (${(similarQuestions[0].similarity*100).toFixed(1)}%):`, similarQuestions[0].question_text);
+                                            continue;
                                         }
+                                    }
+
+                                    // Validate Options (Paso G)
+                                    let optionsValid = true;
+                                    let optionEmbeddings = [];
+                                    
+                                    if (qEmbedding) { // Only check options semantic if embedding service is working
+                                        for (const opt of q.options) {
+                                            const optEmb = await embeddingService.embedQuery(opt);
+                                            optionEmbeddings.push({ text: opt, embedding: optEmb });
+                                            
+                                            const { data: similarOptions } = await supabase.client.rpc('match_options', {
+                                                query_embedding: optEmb,
+                                                match_threshold: 0.9,
+                                                match_count: 1,
+                                                filter_user_id: userId
+                                            });
+
+                                            if (similarOptions && similarOptions.length > 0) {
+                                                console.log('🚫 Skipping because option is similar to previous:', opt);
+                                                optionsValid = false;
+                                                break; 
+                                            }
+                                        }
+                                    } else {
+                                        // Fallback: Map options without embedding
+                                        optionEmbeddings = q.options.map(o => ({ text: o, embedding: null }));
+                                    }
+
+                                    if (!optionsValid) {
+                                        continue;
+                                    }
+
+                                    // Save Question (Paso F)
+                                    const { data: qInserted, error: qError } = await supabase.client
+                                        .from('questions_history')
+                                        .insert({
+                                            session_id: sessionId,
+                                            user_id: userId,
+                                            course_id: courseId,
+                                            question_text: q.question,
+                                            question_hash: hash,
+                                            question_embedding: qEmbedding,
+                                            correct_index: q.correctIndex,
+                                            explanation: q.explanation || '' 
+                                        })
+                                        .select('id')
+                                        .single();
+
+                                    if (qError || !qInserted) {
+                                        console.warn('Failed to insert question:', qError);
+                                        continue;
+                                    }
+
+                                    // Save Options (Paso H)
+                                    for (let i=0; i<optionEmbeddings.length; i++) {
+                                        await supabase.client.from('question_options').insert({
+                                            question_id: qInserted.id,
+                                            option_text: optionEmbeddings[i].text,
+                                            option_embedding: optionEmbeddings[i].embedding,
+                                            order_index: i
+                                        });
+                                    }
+                                    
+                                    // Add to filtered list (to return to user)
+                                    filtered.push(q);
+                                } catch(e) {
+                                    console.error('Error processing question uniqueness:', e);
+                                }
+                            }
+                            
+                            console.log(`✅ Accepted ${filtered.length} unique questions out of ${transformed.length}`);
+
                         } catch (e) {
-                            console.warn('⚠️ Failed to consult/save reinforcement history:', e?.message || e);
+                            console.warn('⚠️ Failed to consult/save reinforcement history (DB check):', e?.message || e);
+                            filtered = transformed;
                         }
+                    } else {
+                        filtered = transformed;
                     }
 
                                 // If everything was filtered out (duplicates/disallowed), attempt up to 2 retries
