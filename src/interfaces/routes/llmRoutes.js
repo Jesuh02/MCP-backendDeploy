@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { R2StorageService } from '../../services/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { MCPService } from '../../domain/services/MCPService.js';
+import { RAGService } from '../../domain/services/RAGService.js';
 import { createRequire } from 'module';
 const require = createRequire(
     import.meta.url);
@@ -16,17 +17,78 @@ router.post('/procesar-prompt', async(req, res) => {
             try {
                 const { prompt, ollamaUrl, model, jsonContent } = req.body;
 
-                console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl}`);
+                // Extract Context IDs (ensure they are parsed as integers/bigints if present)
+                const parseId = (val) => {
+                    if (!val) return null;
+                    const parsed = parseInt(val);
+                    return isNaN(parsed) ? null : parsed;
+                };
+
+                const taskId = parseId(req.body.taskId || req.body.task_id);
+                const topicId = parseId(req.body.topicId || req.body.topic_id);
+                const courseId = parseId(req.body.courseId || req.body.course_id);
+                const contentItemId = parseId(req.body.contentItemId || req.body.content_item_id);
+
+                console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl} (Task: ${taskId}, Topic: ${topicId}, ContentItem: ${contentItemId})`);
 
                 let augmentedPrompt = prompt;
+                let contextFromRAG = false;
 
-                // Process jsonContent to fetch files from R2
-                if (jsonContent) {
+                // RAG & FILE PROCESSING LOGIC
+                // 1. Check if we already have this context processed in RAG
+                // We assume if contentItemId is present, we check specifically for that. Otherwise fall back to task/topic.
+                const ragFilter = {};
+                if (contentItemId) ragFilter.contentItemId = contentItemId;
+                if (taskId) ragFilter.taskId = taskId;
+                if (topicId) ragFilter.topicId = topicId;
+                if (courseId) ragFilter.courseId = courseId;
+
+                const hasContextIds = Object.keys(ragFilter).length > 0;
+
+                if (hasContextIds && process.env.RAG_ENABLED !== 'false') {
+                    try {
+                        const ragService = new RAGService();
+                        const exists = await ragService.vectorStore.exists(ragFilter);
+
+                        if (exists) {
+                            console.log(`📚 Context found in RAG (Filter: ${JSON.stringify(ragFilter)}). Retrieving...`);
+                            // Retrieve context chunks (Top 20 chunks to cover enough ground)
+                            const searchResults = await ragService.vectorStore.search(
+                                await ragService.embeddingService.embedQuery(prompt.substring(0, 1000) || "resumen contenido"),
+                                15, // Get top 15 chunks
+                                0.6, // Loose threshold
+                                ragFilter
+                            );
+
+                            if (searchResults && searchResults.length > 0) {
+                                let ragContext = "";
+                                searchResults.forEach(chunk => {
+                                    ragContext += `\n--- Contexto Recuperado (${chunk.metadata?.fileName || 'chunk'}) ---\n${chunk.content}\n`;
+                                });
+                                augmentedPrompt += `\n\nCONTEXTO PREVIO PROCESADO (RAG):\n${ragContext}`;
+                                contextFromRAG = true;
+                                console.log(`✅ Retrieved ${searchResults.length} chunks from RAG.`);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('⚠️ RAG Retrieval failed:', e.message);
+                    }
+                }
+
+                // Process jsonContent to fetch files from R2 (ONLY if NOT retrieved from RAG or explicitly requested)
+                // Note: If contextFromRAG is true, we might SKIP downloading files to save time/bandwidth
+                // However, user said "el LLM no haga el proceso de crear embeddings", implying we skip the *ingestion*, 
+                // but we should still possibly put text in prompt if RAG failed?
+                // Strategy: If RAG found content, we assume it's good and skip file download.
+                // If not found, we download, extract, AND INGEST.
+
+                if (jsonContent && !contextFromRAG) {
                     try {
                         const files = JSON.parse(jsonContent);
                         if (Array.isArray(files) && files.length > 0) {
                             console.log(`📂 Procesando ${files.length} archivos adjuntos...`);
                             const r2Service = R2StorageService.getInstance();
+                            const ragService = new RAGService(); // Warning: Multiple instances lightweight
 
                             for (const file of files) {
                                 if (file.uri && (r2Service.isR2Url(file.uri) || file.uri.startsWith('http'))) {
@@ -112,6 +174,25 @@ router.post('/procesar-prompt', async(req, res) => {
                                                 // INCLUDE TODO el contenido del archivo (sin límite por archivo)
                                                 const contentSnippet = extractedText;
                                                 augmentedPrompt += `\n\n--- Contenido del archivo: ${rawName} (${fileData.contentType}) ---\n${contentSnippet}`;
+
+                                                // INGEST INTO RAG (If task/topic/contentItem present)
+                                                if ((taskId && topicId) || contentItemId) {
+                                                    try {
+                                                        console.log(`💾 Ingesting ${rawName} into RAG for future use...`);
+                                                        await ragService.ingestDocument(extractedText, {
+                                                            courseId: courseId,
+                                                            taskId: taskId,
+                                                            topicId: topicId,
+                                                            contentItemId: contentItemId,
+                                                            fileName: rawName,
+                                                            fileType: 'txt', // Force text processing since we already extracted it
+                                                            originalFileType: fileData.contentType // Keep original type in metadata
+                                                        });
+                                                        console.log('✅ Ingestion complete.');
+                                                    } catch (err) {
+                                                        console.warn('⚠️ RAG Ingestion failed:', err.message);
+                                                    }
+                                                }
                                             } else {
                                                 console.log(`ℹ️ Archivo ${rawName} es binario o no textual, solo referencia añadida. (isPdf=${isPdfName}, isExcel=${nameLower.match(/\.xlsx?$/)})`);
                                                 augmentedPrompt += `\n\n--- Archivo adjunto: ${rawName} (${fileData.contentType}) [Contenido binario no incluido] ---`;
