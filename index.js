@@ -640,70 +640,9 @@ try {
  * Initialize reinforcement learning history table
  */
 async function initializeReinforcementHistoryTable() {
-    if (!supabaseService) {
-        console.warn('⚠️ SupabaseService not available - skipping reinforcement history table initialization');
-        return;
-    }
-
-    try {
-        console.log('📚 Initializing reinforcement learning history table...');
-
-        // Create table if it doesn't exist
-        const createTableQuery = `
-            CREATE TABLE IF NOT EXISTS reinforcement_question_history (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                course_id INTEGER NOT NULL,
-                questions JSONB NOT NULL,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-
-            -- Create index for faster lookups
-            CREATE INDEX IF NOT EXISTS idx_reinforcement_history_user_course
-            ON reinforcement_question_history(user_id, course_id);
-
-            -- Create index for cleanup (older entries)
-            CREATE INDEX IF NOT EXISTS idx_reinforcement_history_created_at
-            ON reinforcement_question_history(created_at);
-        `;
-
-        // Execute the table creation
-        const { error } = await supabaseService.client.rpc('exec_sql', {
-            sql: createTableQuery
-        });
-
-        if (error) {
-            // Try direct table creation if RPC fails
-            console.log('ℹ️ RPC exec_sql not available, checking if table exists...');
-
-            // Add timeout to prevent hanging during startup
-            const checkTablePromise = supabaseService.client
-                .from('reinforcement_question_history')
-                .select('id')
-                .limit(1);
-
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Supabase check timed out')), 5000)
-            );
-
-            try {
-                const { error: directError } = await Promise.race([checkTablePromise, timeoutPromise]);
-
-                if (directError && directError.code === 'PGRST116') {
-                    console.log('📚 Table does not exist, would need manual creation via Supabase dashboard');
-                    console.log('⚠️ Please create the table manually with the following SQL:');
-                    console.log(createTableQuery);
-                }
-            } catch (timeoutErr) {
-                console.warn('⚠️ Supabase table check timed out - skipping history initialization');
-            }
-        } else {
-            console.log('✅ Reinforcement learning history table initialized successfully');
-        }
-    } catch (error) {
-        console.warn('⚠️ Failed to initialize reinforcement history table:', error.message);
-        console.log('ℹ️ The application will continue without question history tracking');
-    }
+    // Logic moved to manual migration script (scripts/new_reinforcement_schema.sql)
+    // We strictly use the new normalized tables: question_sessions, questions_history, question_options
+    console.log('ℹ️ Reinforcement History: Using new normalized schema. Old table init skipped.');
 }
 
 // ============================================================
