@@ -132,10 +132,10 @@ export class SupabaseVectorStore extends IVectorStore {
                 content,
                 embedding: `[${embedding.join(',')}]`, // Format for pgvector
                 metadata: JSON.stringify(metadata),
-                course_id: metadata.courseId || null,
-                topic_id: metadata.topicId || null,
-                task_id: metadata.taskId || null,
-                content_item_id: metadata.contentItemId || null,
+                course_id: metadata.courseId || metadata.course_id || null,
+                topic_id: metadata.topicId || metadata.topic_id || null,
+                task_id: metadata.taskId || metadata.task_id || null,
+                content_item_id: metadata.contentItemId || metadata.content_item_id || null,
                 file_name: metadata.fileName || null,
                 file_type: metadata.fileType || null,
                 chunk_index: metadata.chunkIndex || 0,
@@ -270,7 +270,11 @@ export class SupabaseVectorStore extends IVectorStore {
                     content,
                     embedding: embedding ? `[${embedding.join(',')}]` : null,
                     metadata,
-                    created_at: new Date().toISOString()
+                    created_at: new Date().toISOString(),
+                    course_id: metadata.courseId || metadata.course_id || null,
+                    topic_id: metadata.topicId || metadata.topic_id || null,
+                    task_id: metadata.taskId || metadata.task_id || null,
+                    content_item_id: metadata.contentItemId || metadata.content_item_id || null
                 }])
                 .select();
 
