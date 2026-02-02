@@ -195,52 +195,12 @@ LLM REQUEST END`;
                 // Prepend header so the model sees the requirement first
                 augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
 
-                // DETECT DEEPSEEK NATIVE
-                const isDeepSeekNative = process.env.DEEPSEEK_API_KEY && (
-                    (model && model.toLowerCase().includes('deepseek')) || 
-                    (process.env.DEEPSEEK_MODEL && process.env.DEEPSEEK_MODEL.toLowerCase().includes('deepseek'))
-                );
-
                 // DETECT IF OPENROUTER IS REQUESTED (Via specific model name or env)
                 const isOpenRouterModel = model && (model.toLowerCase().includes("qwen") || model.toLowerCase().includes("openrouter") || model === process.env.OPENROUTER_MODEL);
                 
                 let data;
                 
-                if (isDeepSeekNative) {
-                     // DEEPSEEK NATIVE API CALL
-                     const deepSeekUrl = "https://api.deepseek.com/chat/completions";
-                     // Use the model from the request, or the env var, or default to deepseek-chat
-                     const deepSeekModel = (model && model.includes('deepseek')) ? model : (process.env.DEEPSEEK_MODEL || 'deepseek-chat');
-                     console.log(`🤖 Sending request to DeepSeek Native API (Model: ${deepSeekModel})`);
-
-                     const response = await fetch(deepSeekUrl, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`
-                        },
-                        body: JSON.stringify({
-                            model: deepSeekModel,
-                            messages: [
-                                { role: "system", content: "You are a helpful assistant." },
-                                { role: "user", content: augmentedPrompt }
-                            ],
-                            temperature: 0.7,
-                            stream: false
-                        })
-                     });
-                     
-                     if (!response.ok) {
-                         const errText = await response.text();
-                         throw new Error(`DeepSeek API error: ${response.status} - ${errText}`);
-                     }
-
-                     const json = await response.json();
-                     data = {
-                         response: json.choices?.[0]?.message?.content || ""
-                     };
-
-                } else if (isOpenRouterModel && process.env.OPENROUTER_API_KEY) {
+                if (isOpenRouterModel && process.env.OPENROUTER_API_KEY) {
                     // -------------------------------------------------------------------------
                     // OPENROUTER API CALL (OpenAI Compatible)
                     // -------------------------------------------------------------------------
@@ -253,15 +213,15 @@ LLM REQUEST END`;
                     let finalModel = model;
                     if (!finalModel || finalModel === "Qwen3-VL-Embedding-8B" || finalModel === "qwen/qwen3-embedding-8b" || (typeof finalModel === 'string' && finalModel.toLowerCase().includes('embedding'))) {
                          console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to default Chat model.`);
-                         finalModel = process.env.OPENROUTER_CHAT_MODEL || "deepseek/deepseek-chat";
+                         finalModel = process.env.OPENROUTER_CHAT_MODEL || "qwen/qwen-2.5-vl-7b-instruct";
                     }
 
-                    let openRouterModel = safeEnvModel || finalModel || "deepseek/deepseek-chat";
+                    let openRouterModel = safeEnvModel || finalModel || "qwen/qwen-2.5-vl-7b-instruct";
                     
                     // FINAL SAFETY CHECK: If the resolved model is still an embedding model (e.g. from misconfigured env var), FORCE a chat model.
                     if (openRouterModel.toLowerCase().includes('embedding')) {
                         console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to chat model.`);
-                        openRouterModel = "deepseek/deepseek-chat";
+                        openRouterModel = "qwen/qwen-2.5-vl-7b-instruct";
                     }
                     
                     console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
