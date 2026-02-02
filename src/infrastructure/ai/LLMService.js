@@ -35,7 +35,7 @@ export class LLMService {
                 },
                 modelName: modelName,
                 temperature: 0.3,
-                timeout: 60000,
+                timeout: 300000,
                 maxRetries: 2
             });
         } else {

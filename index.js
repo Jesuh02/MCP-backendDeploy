@@ -79,7 +79,7 @@ try {
 }
 console.log('=================================================');
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 const MAX_TOKENS = 4096;
 
 // ============================================================
@@ -2035,9 +2035,8 @@ function generateGenericEmailHTML(title, message, type, senderUsername) {
 // FIN PLANTILLAS HTML
 // ============================================================
 
-// Configurar bodyParser.json() ANTES de las rutas
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.json({ limit: '50mb' }));
+// Middleware de parsing JSON configurado globalmente al inicio (línea ~90)
+// Eliminada configuración redundante de bodyParser aquí para evitar conflictos
 
 // ============================================================
 // 📍 REGISTER MODULAR ROUTES
@@ -6014,6 +6013,8 @@ Responde considerando el contexto académico disponible si es relevante para la 
             try {
                 const tokensPrompt = encode(augmentedPrompt).length;
                 console.log('[MODELO DeepSeek v2.3] TOKENS CONSUMIDOS (FALLBACK):', tokensPrompt);
+                console.log('[MODELO DeepSeek v2.3] TYPEOF PROMPT:', typeof augmentedPrompt);
+                console.log('[MODELO DeepSeek v2.3] PROMPT LENGTH:', augmentedPrompt ? augmentedPrompt.length : 'N/A');
                 console.log('[MODELO DeepSeek v2.3] PROMPT ENVIADO (FALLBACK):', augmentedPrompt.substring(0, 300) + '...');
 
                 // Detectar si es una solicitud de preguntas de refuerzo sobre programación
