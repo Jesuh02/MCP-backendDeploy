@@ -216,7 +216,13 @@ LLM REQUEST END`;
                          finalModel = process.env.OPENROUTER_CHAT_MODEL || "qwen/qwen-2.5-vl-7b-instruct";
                     }
 
-                    const openRouterModel = safeEnvModel || finalModel || "qwen/qwen-2.5-vl-7b-instruct";
+                    let openRouterModel = safeEnvModel || finalModel || "qwen/qwen-2.5-vl-7b-instruct";
+                    
+                    // FINAL SAFETY CHECK: If the resolved model is still an embedding model (e.g. from misconfigured env var), FORCE a chat model.
+                    if (openRouterModel.toLowerCase().includes('embedding')) {
+                        console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to chat model.`);
+                        openRouterModel = "qwen/qwen-2.5-vl-7b-instruct";
+                    }
                     
                     console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
                     
