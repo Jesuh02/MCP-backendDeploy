@@ -213,12 +213,12 @@ export class MCPService {
             if (rows && Array.isArray(rows)) {
                 history = rows.map(r => ({
                     question: r.question_text,
-                    options: r.question_options?.sort((a, b) => a.order_index - b.order_index).map(o => o.option_text) || [],
+                    options: r.question_options ? .sort((a, b) => a.order_index - b.order_index).map(o => o.option_text) || [],
                     answer_index: r.correct_index,
                     explanation: r.explanation,
                     id: r.id, // Keep ID for reference
-                    topic_id: r.session?.topic_id,
-                    task_id: r.session?.task_id
+                    topic_id: r.session ? .topic_id,
+                    task_id: r.session ? .task_id
                 }));
             }
 
@@ -575,10 +575,17 @@ export class MCPService {
                 const qText = typeof q === 'string' ? q : (q.question || q.pregunta || "");
                 let qEmbedding = null;
                 try {
+                    // Try to generate embedding even if it's somewhat slow, to fix the NULL issue
+                    // Use a slightly larger timeout or retry if needed, but embedQuery is usually 1 call.
                     if (embeddingService.isReady()) {
+                        logger.info(`🧬 Generating embedding for question: "${qText.substring(0, 30)}..."`);
                         qEmbedding = await embeddingService.embedQuery(qText);
+                    } else {
+                        logger.warn('⚠️ EmbeddingService not ready while saving reinforcement history.');
                     }
-                } catch (e) {}
+                } catch (e) {
+                    logger.error(`❌ Failed to generate question embedding: ${e.message}`);
+                }
 
                 const { data: qData, error: qError } = await this.supabase.client
                     .from('questions_history')
@@ -587,9 +594,9 @@ export class MCPService {
                         user_id: userId,
                         course_id: courseId,
                         question_text: qText,
-                        question_embedding: qEmbedding,
-                        correct_index: q.correctIndex ?? q.answer_index ?? q.correct_index ?? 0,
-                        explanation: q.explanation ?? q.explicacion ?? ""
+                        question_embedding: qEmbedding, // Ensure this is not undefined
+                        correct_index: q.correctIndex ? ? q.answer_index ? ? q.correct_index ? ? 0,
+                        explanation: q.explanation ? ? q.explicacion ? ? ""
                     })
                     .select()
                     .single();

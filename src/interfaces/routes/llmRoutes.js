@@ -22,7 +22,7 @@ router.post('/procesar-prompt', async(req, res) => {
                 // 🛑 CRITICAL: If model is an embedding model, it MUST NOT go to chat
                 // The prompt will be processed for Ingestion (embeddings), then we return early.
                 const isEmbeddingModel = model && (
-                    model.toLowerCase().includes('embedding') || 
+                    model.toLowerCase().includes('embedding') ||
                     model.toLowerCase().includes('text-embed') ||
                     model === "Qwen3-VL-Embedding-8B"
                 );
@@ -323,11 +323,18 @@ REGLA DE ALEATORIEDAD:
 La respuesta correcta NO debe estar siempre en la primera opción (índice 0).
 Distribuye aleatoriamente la posición de la respuesta correcta entre las opciones A, B, C y D.
 
+REGLA DE CALIDAD DE OPCIONES (CRÍTICA):
+- Las opciones INCORRECTAS (distractores) deben ser plausibles y estar relacionadas DIRECTAMENTE con el tema.
+- NO uses opciones genéricas como "Ninguna de las anteriores", "Todas las anteriores", "Información irrelevante", "Concepto erróneo común", "Definición opuesta".
+- NO describas la opción (ej: NO pongas "Opción incorrecta que menciona X"). PON el contenido real (ej: "X").
+- Cada opción debe ser una respuesta posible completa, no una descripción de por qué es incorrecta.
+- SIEMPRE 4 opciones.
+
 FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
 [
     {
         "question": "Texto de la pregunta",
-        "options": ["opción A","opción B","opción C","opción D"],
+        "options": ["Respuesta técnica A","Respuesta técnica B","Respuesta técnica C","Respuesta técnica D"],
         "correctIndex": 2, // (0=A, 1=B, 2=C, 3=D) - VARÍA ESTE ÍNDICE ALEATORIAMENTE
         "difficulty": "easy|medium|hard",
         "topic": "tema o tarea relacionada (ej: 'Tarea 1 - Tema: Álgebra')",
