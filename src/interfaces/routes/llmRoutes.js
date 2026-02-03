@@ -308,57 +308,138 @@ router.post('/procesar-prompt', async(req, res) => {
 
 
                 // LLM REQUEST START: instrucción fija para generación de preguntas
-                const llmRequestHeader = `LLM REQUEST START:
-INSTRUCCIÓN CRÍTICA DE CONTEXTO:
-Has recibido contenido del curso (RAG, Archivos, Temas).
-TU OBJETIVO: Crear preguntas de examen de alta calidad técnica basadas EXCLUSIVAMENTE en este contenido.
+                const llmRequestHeader = `🎯 SISTEMA DE GENERACIÓN DE PREGUNTAS - MODO ESTRICTO
 
-REGLAS DE ORO PARA EL CONTENIDO (STRICT):
-1. PREGUNTAS REALES: La pregunta debe indagar sobre un hecho, concepto o procedimiento específico mencionado en el texto.
-   - ❌ MAL: "¿Qué se dice sobre X?"
-   - ✅ BIEN: "¿Cuál es la función principal de X según el texto?"
-2. SIN REFERENCIAS EN TEXTO: NO incluyas "(Ref: id)" o nombres de archivos en el texto de la pregunta.
-3. OPCIONES CONCRETAS: TODAS las 4 opciones deben ser afirmaciones o conceptos plausibles y completos.
-   - Las opciones incorrectas (distractores) deben parecer correctas pero ser técnicamente falsas o imprecisas según el contenido.
+CONTEXTO: Se te proporciona contenido educativo real de un curso. DEBES crear preguntas basadas ÚNICAMENTE en la información específica del contenido proporcionado.
 
-⛔ PROHIBIDO ABSOLUTAMENTE (FATAL ERRORS):
-- NUNCA uses frases genéricas como "Detalle superficial irrelevante", "Información no relacionada directamente", "Definición opuesta al concepto", "Concepto erróneo común", "Opción incorrecta", "Ninguna de las anteriores".
-- NUNCA uses descripciones del tipo de respuesta (metadatos).
-- NUNCA dejes opciones vacías o con placeholders.
+═══════════════════════════════════════════════════════════════
+📋 INSTRUCCIONES OBLIGATORIAS (FAILURE = RECHAZO TOTAL)
+═══════════════════════════════════════════════════════════════
 
-SIEMPRE genera 4 opciones de texto completo, técnico y específico del tema.
+1. ANALIZA el contenido proporcionado e identifica:
+   - Conceptos clave y definiciones
+   - Datos específicos (fechas, nombres, porcentajes, fórmulas)
+   - Procesos o procedimientos descritos
+   - Comparaciones o diferencias mencionadas
 
-REGLA DE ALEATORIEDAD:
-- La respuesta correcta DEBE cambiar de posición aleatoriamente (0, 1, 2 o 3).
+2. GENERA preguntas que:
+   ✅ Pregunten sobre hechos ESPECÍFICOS del contenido
+   ✅ Tengan UNA sola respuesta correcta verificable en el texto
+   ✅ Usen vocabulario técnico del dominio
 
-FORMATO JSON PURO REQUERIDO:
-Devuelve SOLAMENTE un array JSON válido.
+3. CADA OPCIÓN debe ser:
+   ✅ Una afirmación completa y específica (mínimo 8 palabras)
+   ✅ Técnicamente plausible para alguien que no leyó el material
+   ✅ Diferente en contenido semántico a las demás opciones
+
+═══════════════════════════════════════════════════════════════
+⛔ PROHIBICIONES ABSOLUTAS - SI VIOLAS ESTO, TU RESPUESTA ES INVÁLIDA
+═══════════════════════════════════════════════════════════════
+
+NUNCA uses estas frases como opciones (lista negra):
+- "Detalle superficial irrelevante"
+- "Información no relacionada directamente"  
+- "Definición técnica precisa sobre..."
+- "Concepto erróneo común sobre..."
+- "Definición opuesta al concepto"
+- "Ninguna de las anteriores"
+- "Todas las anteriores"
+- "Opción incorrecta"
+- Cualquier metadescripción que NO sea contenido real
+
+NUNCA incluyas en la pregunta:
+- "(Ref: número)"
+- Nombres de archivos
+- IDs de sesión
+
+═══════════════════════════════════════════════════════════════
+📝 FORMATO DE SALIDA (JSON PURO - SIN TEXTO ADICIONAL)
+═══════════════════════════════════════════════════════════════
+
 [
     {
-        "question": "¿Qué estructura de datos utiliza LIFO?",
-        "options": ["Cola (Queue)", "Pila (Stack)", "Lista Enlazada", "Árbol Binario"],
-        "correctIndex": 1, 
+        "question": "Según el texto, ¿cuál es la principal diferencia entre machine learning supervisado y no supervisado?",
+        "options": [
+            "El supervisado requiere datos etiquetados mientras que el no supervisado encuentra patrones sin etiquetas",
+            "El no supervisado necesita más capacidad computacional que el supervisado para funcionar",
+            "El supervisado solo funciona con imágenes mientras el no supervisado procesa texto",
+            "Ambos métodos son idénticos pero el supervisado es una versión más antigua"
+        ],
+        "correctIndex": 0,
         "difficulty": "medium",
-        "topic": "Estructuras de Datos",
-        "explanation": "La Pila (Stack) es la estructura que sigue el principio Last-In-First-Out (LIFO)."
+        "topic": "Machine Learning",
+        "explanation": "El aprendizaje supervisado usa datos con etiquetas conocidas para entrenar, mientras que el no supervisado descubre estructuras ocultas en datos sin etiquetar."
     }
 ]
 
-LLM REQUEST END`;
+NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) entre preguntas.
+
+═══════════════════════════════════════════════════════════════
+📚 CONTENIDO DEL CURSO PARA ANALIZAR:
+═══════════════════════════════════════════════════════════════
+`; 
 
                 // Prepend header so the model sees the requirement first
                 augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
 
-                // DETECT IF OPENROUTER IS REQUESTED (Via specific model name or env)
-                const isOpenRouterModel = model && (model.toLowerCase().includes("qwen") || model.toLowerCase().includes("openrouter") || model === process.env.OPENROUTER_MODEL);
+                // ═══════════════════════════════════════════════════════════════
+                // 🔥 DEEPSEEK PRIORITY: Siempre usar DeepSeek para generación
+                // ═══════════════════════════════════════════════════════════════
                 
-                // Define local target URI in outer scope for retries/fallbacks
-                const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
-                const targetUrl = `${baseUrl}/api/generate`;
-
+                // DeepSeek API configuration (priority over OpenRouter for chat)
+                const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
+                const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
+                
                 let data;
                 
-                if (isOpenRouterModel && process.env.OPENROUTER_API_KEY) {
+                // ALWAYS prefer DeepSeek for question generation
+                if (deepseekApiKey) {
+                    try {
+                        console.log('🧠 Usando DeepSeek para generación de preguntas...');
+                        
+                        const response = await fetch(DEEPSEEK_API_URL, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${deepseekApiKey}`
+                            },
+                            body: JSON.stringify({
+                                model: 'deepseek-chat',
+                                messages: [
+                                    {
+                                        role: 'system',
+                                        content: 'Eres un experto en educación que genera preguntas de examen de alta calidad. SIEMPRE respondes en formato JSON puro sin texto adicional. Tus opciones de respuesta son específicas y técnicas, NUNCA genéricas.'
+                                    },
+                                    {
+                                        role: 'user', 
+                                        content: augmentedPrompt
+                                    }
+                                ],
+                                temperature: 0.7,
+                                max_tokens: 4096
+                            })
+                        });
+                        
+                        if (!response.ok) {
+                            const errText = await response.text();
+                            throw new Error(`DeepSeek API error: ${response.status} - ${errText}`);
+                        }
+                        
+                        const json = await response.json();
+                        data = {
+                            response: json.choices?.[0]?.message?.content || ""
+                        };
+                        console.log('✅ DeepSeek respondió correctamente');
+                        
+                    } catch (deepseekError) {
+                        console.error('❌ Error con DeepSeek:', deepseekError.message);
+                        // Fallback to OpenRouter or local
+                        data = null;
+                    }
+                }
+                
+                // Fallback: OpenRouter if DeepSeek failed
+                if (!data && process.env.OPENROUTER_API_KEY) {
                     try {
                         // -------------------------------------------------------------------------
                         // OPENROUTER API CALL (OpenAI Compatible)
@@ -426,11 +507,13 @@ LLM REQUEST END`;
                     }
                 } 
                 
-                // Fallback or Standard Local Call
-                if (!data) {
+                // Fallback or Standard Local Call (Ollama local)
+                if (!data && ollamaUrl) {
                     // -------------------------------------------------------------------------
-                    // STANDARD OLLAMA / DEEPSEEK CALL
+                    // STANDARD OLLAMA LOCAL CALL (último recurso)
                     // -------------------------------------------------------------------------
+                    const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
+                    const targetUrl = `${baseUrl}/api/generate`;
                     
                     // Validate model for local call too (prevent sending embedding models to chat endpoint)
                     let localModel = model || 'deepseek-chat';
@@ -439,7 +522,7 @@ LLM REQUEST END`;
                          localModel = 'deepseek-chat';
                     }
 
-                    console.log(`🤖 Sending request to DeepSeek at ${targetUrl} (Model: ${localModel})`);
+                    console.log(`🤖 Fallback: Sending request to local Ollama at ${targetUrl} (Model: ${localModel})`);
             
                     const response = await fetch(targetUrl, {
                         method: 'POST',
@@ -459,6 +542,11 @@ LLM REQUEST END`;
                     }
                     
                     data = await response.json();
+                }
+
+                // Si ningún LLM respondió, lanzar error
+                if (!data || !data.response) {
+                    throw new Error('No se pudo obtener respuesta de ningún modelo LLM (DeepSeek, OpenRouter, Ollama)');
                 }
 
                 // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
@@ -559,6 +647,44 @@ LLM REQUEST END`;
                                 try {
                                     // Validate q structure
                                     if (!q.question || !Array.isArray(q.options)) continue;
+
+                                    // ═══════════════════════════════════════════════════════════
+                                    // 🚫 LISTA NEGRA: Rechazar opciones genéricas ANTES de procesar
+                                    // ═══════════════════════════════════════════════════════════
+                                    const BLACKLISTED_OPTIONS = [
+                                        'detalle superficial',
+                                        'información no relacionada',
+                                        'definición técnica precisa sobre',
+                                        'concepto erróneo común',
+                                        'definición opuesta al concepto',
+                                        'ninguna de las anteriores',
+                                        'todas las anteriores',
+                                        'opción incorrecta',
+                                        'respuesta incorrecta',
+                                        'dato irrelevante',
+                                        'afirmación falsa sobre'
+                                    ];
+                                    
+                                    const hasBlacklistedOption = q.options.some(opt => {
+                                        const optLower = (opt || '').toLowerCase().trim();
+                                        return BLACKLISTED_OPTIONS.some(blacklisted => optLower.includes(blacklisted));
+                                    });
+                                    
+                                    if (hasBlacklistedOption) {
+                                        console.log('🚫 Rechazando pregunta con opción genérica/prohibida:', q.question);
+                                        continue;
+                                    }
+                                    
+                                    // Validar que las opciones tengan contenido mínimo (al menos 5 palabras)
+                                    const hasShortOptions = q.options.some(opt => {
+                                        const words = (opt || '').trim().split(/\s+/).length;
+                                        return words < 4;
+                                    });
+                                    
+                                    if (hasShortOptions) {
+                                        console.log('🚫 Rechazando pregunta con opciones muy cortas:', q.question);
+                                        continue;
+                                    }
 
                                     // Normalize & Hash (Paso B)
                                     const normalizedQ = normalizeText(q.question);
