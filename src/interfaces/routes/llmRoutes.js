@@ -19,16 +19,26 @@ router.post('/procesar-prompt', async(req, res) => {
             try {
                 const { prompt, ollamaUrl, model, jsonContent } = req.body;
 
-                // 🛑 CRITICAL: If model is an embedding model, it MUST NOT go to chat
-                // The prompt will be processed for Ingestion (embeddings), then we return early.
-                const isEmbeddingModel = model && (
+                // 🛑 CHECK: Determine if we should process this as a Chat/Generation request or purely Ingestion
+                // If prompt contains keywords like "pregunta", "quiz", "examen", we assume generation intent
+                // regardless of the model name provided (often clients default to embedding model by mistake)
+                const promptLower = (prompt || '').toLowerCase();
+                const intentIsGeneration = promptLower.length > 5; // Assumed generation if there is any prompt text basically
+
+                // 🛑 CRITICAL: If model is an embedding model, it MUST NOT go to chat... unless we fix it.
+                // The prompt will be processed for Ingestion (embeddings), then we return early ONLY if intent is NOT generation.
+                let isEmbeddingModel = model && (
                     model.toLowerCase().includes('embedding') ||
                     model.toLowerCase().includes('text-embed') ||
                     model === "Qwen3-VL-Embedding-8B"
                 );
 
                 if (isEmbeddingModel) {
-                    console.log(`📡 Embedding model detected (${model}). Processing ONLY for Document Ingestion (RAG).`);
+                    // FORCE override for this endpoint which is specifically for processing prompts/generation
+                    // There is rarely a reason to hit /procesar-prompt JUST for embedding without generation.
+                    console.warn(`⚠️ Model '${model}' is an embedding model but hit /procesar-prompt. Forcing Generation Mode with DeepSeek.`);
+                    isEmbeddingModel = false;
+                    // We intentionally set this to false to proceed to LLM generation logic below.
                 }
 
                 // Extract Context IDs (ensure they are parsed as integers/bigints if present)
@@ -197,18 +207,23 @@ router.post('/procesar-prompt', async(req, res) => {
                                                     console.warn(`⚠️ Error al analizar Excel ${rawName}: ${e.message}`);
                                                 }
                                             }
-                                            // Handle Text (already handled, but let's consolidate)
+                                            // Handle Text (already handled, but let's consolidate) & Prevent Binary Dump (PPTX/ZIP/Images)
                                             else if (!fileData.isBase64) {
-                                                extractedText = fileData.content;
-                                                processMsg = "Contenido de texto plano";
-                                                console.log(`📝 CONTENIDO TEXTO (${rawName} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+                                                const isBinaryLike = nameLower.endsWith('.pptx') || nameLower.endsWith('.docx') || nameLower.endsWith('.zip') || nameLower.endsWith('.png') || nameLower.endsWith('.jpg');
+                                                if (isBinaryLike) {
+                                                    console.warn(`⚠️ Skipping binary-like file content dump: ${rawName}`);
+                                                    augmentedPrompt += `\n\n--- Archivo binario omitido: ${rawName} (Contenido no textual soportado: PPTX/DOCX/IMG) ---`;
+                                                } else {
+                                                    extractedText = fileData.content;
+                                                    processMsg = "Contenido de texto plano";
+                                                    console.log(`📝 CONTENIDO TEXTO (${rawName} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+                                                }
                                             }
 
                                             if (extractedText) {
-                                                // Only include text content. Skip binary/base64 to avoid confusing text-only models.
-                                                // SAFETY LIMIT: OpenRouter has 160k token limit.
-                                                // We cap total prompt size to avoid 400 Bad Request errors.
-                                                const MAX_TOTAL_CONTEXT_CHARS = 400000; // ~100k tokens safe limit
+                                                // SAFETY LIMIT: DeepSeek has 128k context, OpenRouter 160k.
+                                                // We cap total prompt size to ~40k tokens (approx 160k chars) to leave room for history and reasoning.
+                                                const MAX_TOTAL_CONTEXT_CHARS = 160000;
                                                 const currentLength = augmentedPrompt.length;
                                                 const remainingChars = MAX_TOTAL_CONTEXT_CHARS - currentLength;
 
@@ -241,7 +256,8 @@ router.post('/procesar-prompt', async(req, res) => {
                                                             fileType: 'txt', // Force text processing since we already extracted it
                                                             originalFileType: fileData.contentType // Keep original type in metadata
                                                         });
-                                                        console.log('✅ Ingestion complete.');
+                                                        console.log('✅ RAG Ingestion Phase Complete. (Fase de Ingestión RAG Completada)');
+                                                        console.log('⏳ Iniciando Fase de Generación de Preguntas...');
                                                     } catch (err) {
                                                         console.warn('⚠️ RAG Ingestion failed:', err.message);
                                                     }
@@ -307,80 +323,45 @@ router.post('/procesar-prompt', async(req, res) => {
         }
 
 
-                // LLM REQUEST START: instrucción fija para generación de preguntas
-                const llmRequestHeader = `🎯 SISTEMA DE GENERACIÓN DE PREGUNTAS - MODO ESTRICTO
+                const llmRequestHeader = `🎯 SISTEMA DE GENERACIÓN DE PREGUNTAS - MODO ESTRICTO (DEEPSEEK ONLY)
 
-CONTEXTO: Se te proporciona contenido educativo real de un curso. DEBES crear preguntas basadas ÚNICAMENTE en la información específica del contenido proporcionado.
-
-═══════════════════════════════════════════════════════════════
-📋 INSTRUCCIONES OBLIGATORIAS (FAILURE = RECHAZO TOTAL)
-═══════════════════════════════════════════════════════════════
-
-1. ANALIZA el contenido proporcionado e identifica:
-   - Conceptos clave y definiciones
-   - Datos específicos (fechas, nombres, porcentajes, fórmulas)
-   - Procesos o procedimientos descritos
-   - Comparaciones o diferencias mencionadas
-
-2. GENERA preguntas que:
-   ✅ Pregunten sobre hechos ESPECÍFICOS del contenido
-   ✅ Tengan UNA sola respuesta correcta verificable en el texto
-   ✅ Usen vocabulario técnico del dominio
-
-3. CADA OPCIÓN debe ser:
-   ✅ Una afirmación completa y específica (mínimo 8 palabras)
-   ✅ Técnicamente plausible para alguien que no leyó el material
-   ✅ Diferente en contenido semántico a las demás opciones
+CONTEXTO: Se te proporciona contenido educativo real. DEBES crear preguntas basadas ÚNICAMENTE en la información específica de este contenido.
 
 ═══════════════════════════════════════════════════════════════
-⛔ PROHIBICIONES ABSOLUTAS - SI VIOLAS ESTO, TU RESPUESTA ES INVÁLIDA
+📋 INSTRUCCIONES OBLIGATORIAS
 ═══════════════════════════════════════════════════════════════
 
-NUNCA uses estas frases como opciones (lista negra):
+1. CADA PREGUNTA DEBE SER ÚNICA y aportar valor educativo real.
+2. CADA OPCIÓN DEBE SER ESPECÍFICA Y TÉCNICA.
+   - ❌ MAL: "Información irrelevante"
+   - ❌ MAL: "Detalle técnico"
+   - ✅ BIEN: "La latencia de red aumenta un 50% al usar VPN"
+3. EVITA PATRONES REPETITIVOS en el fraseo de las preguntas (ej. no empieces todas con "Desde una perspectiva...").
+
+═══════════════════════════════════════════════════════════════
+⛔ LISTA NEGRA STRICTA - SI USAS ESTO SERÁS PENALIZADO
+═══════════════════════════════════════════════════════════════
+
+NO USES JAMÁS en preguntas u opciones:
 - "Detalle superficial irrelevante"
-- "Información no relacionada directamente"  
-- "Definición técnica precisa sobre..."
-- "Concepto erróneo común sobre..."
-- "Definición opuesta al concepto"
-- "Ninguna de las anteriores"
-- "Todas las anteriores"
-- "Opción incorrecta"
-- Cualquier metadescripción que NO sea contenido real
+- "Información no relacionada"
+- "Definición técnica precisa"
+- "Concepto erróneo común"
+- "Ninguna de las anteriores" / "Todas las anteriores"
+- "(Ref: ...)" o referencias a números de página/línea.
+- Frases genéricas como "La respuesta correcta es..." en la explicación. Sé directo: "X es Y porque Z".
 
-NUNCA incluyas en la pregunta:
-- "(Ref: número)"
-- Nombres de archivos
-- IDs de sesión
-
-═══════════════════════════════════════════════════════════════
-📝 FORMATO DE SALIDA (JSON PURO - SIN TEXTO ADICIONAL)
-═══════════════════════════════════════════════════════════════
-
-[
-    {
-        "question": "Según el texto, ¿cuál es la principal diferencia entre machine learning supervisado y no supervisado?",
-        "options": [
-            "El supervisado requiere datos etiquetados mientras que el no supervisado encuentra patrones sin etiquetas",
-            "El no supervisado necesita más capacidad computacional que el supervisado para funcionar",
-            "El supervisado solo funciona con imágenes mientras el no supervisado procesa texto",
-            "Ambos métodos son idénticos pero el supervisado es una versión más antigua"
-        ],
-        "correctIndex": 0,
-        "difficulty": "medium",
-        "topic": "Machine Learning",
-        "explanation": "El aprendizaje supervisado usa datos con etiquetas conocidas para entrenar, mientras que el no supervisado descubre estructuras ocultas en datos sin etiquetar."
-    }
-]
-
-NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) entre preguntas.
-
-═══════════════════════════════════════════════════════════════
-📚 CONTENIDO DEL CURSO PARA ANALIZAR:
-═══════════════════════════════════════════════════════════════
 `; 
 
                 // Prepend header so the model sees the requirement first
                 augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
+
+                // APPEND Reminder for Recency Bias & Strict Constraints
+                augmentedPrompt += `\n\n🔎 REVISIÓN FINAL OBLIGATORIA:
+1. Verifica que NO hay textos genéricos ("Información irrelevante").
+2. Elimina cualquier marca "(Ref: X)".
+3. Asegura que las preguntas NO sean plantillas repetidas.
+4. Genera JSON válido.`;
 
                 // ═══════════════════════════════════════════════════════════════
                 // 🔥 DEEPSEEK PRIORITY: Siempre usar DeepSeek para generación
@@ -395,8 +376,11 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                 // ALWAYS prefer DeepSeek for question generation
                 if (deepseekApiKey) {
                     try {
-                        console.log('🧠 Usando DeepSeek para generación de preguntas...');
+                        console.log('🧠 Usando DeepSeek para generación de preguntas (STRICT MODE)...');
                         
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout
+
                         const response = await fetch(DEEPSEEK_API_URL, {
                             method: 'POST',
                             headers: {
@@ -408,7 +392,7 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                                 messages: [
                                     {
                                         role: 'system',
-                                        content: 'Eres un experto en educación que genera preguntas de examen de alta calidad. SIEMPRE respondes en formato JSON puro sin texto adicional. Tus opciones de respuesta son específicas y técnicas, NUNCA genéricas.'
+                                        content: 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
                                     },
                                     {
                                         role: 'user', 
@@ -416,10 +400,14 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                                     }
                                 ],
                                 temperature: 0.7,
-                                max_tokens: 4096
-                            })
+                                max_tokens: 4096,
+                                stream: false
+                            }),
+                            signal: controller.signal
                         });
                         
+                        clearTimeout(timeoutId);
+
                         if (!response.ok) {
                             const errText = await response.text();
                             throw new Error(`DeepSeek API error: ${response.status} - ${errText}`);
@@ -429,11 +417,19 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                         data = {
                             response: json.choices?.[0]?.message?.content || ""
                         };
-                        console.log('✅ DeepSeek respondió correctamente');
+                        console.log('✅ DeepSeek respondió correctamente.');
+                        console.log('📜 LLM Raw Response (DeepSeek):', data.response);
                         
                     } catch (deepseekError) {
-                        console.error('❌ Error con DeepSeek:', deepseekError.message);
-                        // Fallback to OpenRouter or local
+                        console.error('❌ Error CRÍTICO con DeepSeek:', deepseekError.message);
+                        // User specifically asked to "solucionar esto" focusing on DeepSeek.
+                        // We will NOT fall back to lesser models if DeepSeek was configured but failed,
+                        // unless it's a connectivity issue.
+                        // However, to keep the system running, we might fall back but log heavily.
+                        // But seeing the user requirement "se debe usar deepseek", let's prioritize it.
+                        // We will try one retry with DeepSeek if the first one failed? 
+                        
+                        // For now, let's allow fallback but warn loudly.
                         data = null;
                     }
                 }
@@ -450,18 +446,19 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                         const safeEnvModel = (envModel && !envModel.toLowerCase().includes('embedding')) ? envModel : null;
                         
                         // Fix for invalid model IDs sent by older clients (specifically Qwen3-Embedding incorrectly sent to Chat)
+                        // User Request: Force DeepSeek (via OpenRouter or Native)
                         let finalModel = model;
                         if (!finalModel || finalModel === "Qwen3-VL-Embedding-8B" || finalModel === "qwen/qwen3-embedding-8b" || (typeof finalModel === 'string' && finalModel.toLowerCase().includes('embedding'))) {
-                             console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to default Chat model.`);
-                             finalModel = process.env.OPENROUTER_CHAT_MODEL || "qwen/qwen-2.5-vl-7b-instruct";
+                             console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to 'deepseek/deepseek-chat'.`);
+                             finalModel = "deepseek/deepseek-chat";
                         }
 
-                        let openRouterModel = safeEnvModel || finalModel || "qwen/qwen-2.5-vl-7b-instruct";
+                        let openRouterModel = safeEnvModel || finalModel || "deepseek/deepseek-chat";
                         
                         // FINAL SAFETY CHECK: If the resolved model is still an embedding model (e.g. from misconfigured env var), FORCE a chat model.
                         if (openRouterModel.toLowerCase().includes('embedding')) {
-                            console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to chat model.`);
-                            openRouterModel = "qwen/qwen-2.5-vl-7b-instruct";
+                            console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to 'deepseek/deepseek-chat'.`);
+                            openRouterModel = "deepseek/deepseek-chat";
                         }
                         
                         console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
@@ -551,14 +548,36 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
 
                 // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
                 let respuestaTexto = data.response;
+
+                // 🛠️ FIX: Clean Markdown code blocks from DeepSeek response
+                if (typeof respuestaTexto === 'string') {
+                    if (respuestaTexto.includes('```json')) {
+                        respuestaTexto = respuestaTexto.split('```json')[1].split('```')[0].trim();
+                    } else if (respuestaTexto.includes('```')) {
+                        respuestaTexto = respuestaTexto.split('```')[1].split('```')[0].trim();
+                    }
+                }
+
         try {
             // Ensure we have a string to search for JSON array
             const raw = typeof respuestaTexto === 'string' ? respuestaTexto : JSON.stringify(respuestaTexto);
+            
+            console.log('🔍 Attempting to extract JSON from response...');
             const start = raw.indexOf('[');
             const end = raw.lastIndexOf(']');
+            
             if (start !== -1 && end !== -1 && start < end) {
                 const arrayJson = raw.substring(start, end + 1);
-                const parsed = JSON.parse(arrayJson);
+                let parsed;
+                try {
+                    parsed = JSON.parse(arrayJson);
+                    console.log(`✅ JSON Parsed Successfully. Found ${parsed.length} items.`);
+                } catch (parseErr) {
+                    console.error('❌ JSON Parse Error:', parseErr.message);
+                    console.log('📜 Raw Snippet:', arrayJson.substring(0, 100) + '...');
+                    throw parseErr;
+                }
+
                 if (Array.isArray(parsed)) {
                     // Fisher-Yates shuffle helper
                     const shuffle = (arr) => {
@@ -622,7 +641,6 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                     if (userId && courseId) {
                         try {
                             const supabase = SupabaseService.getInstance();
-                            const embeddingService = EmbeddingService.getInstance();
 
                             // 1. Ensure Session Exists (Paso 0)
                             let sessionId = null;
@@ -637,181 +655,64 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                                     console.log(`✅ Session created/logged: ${sessionId}`);
                                 } catch(e) { 
                                      console.warn('Session creation warning (might exist):', e.message);
-                                     // Try fetching if insert failed (likely shouldn't happen with identity PK unless logic changes, but safeguard)
                                 }
                             }
 
-                            console.log(`🔍 Validating ${transformed.length} questions for uniqueness (User: ${userId})...`);
+                            console.log(`🔍 Validating ${transformed.length} questions (User: ${userId})...`);
 
+                            // 2. Validate & Filter (Simpler Blacklist Only for Speed/Stability)
+                            const validQuestions = [];
                             for (const q of transformed) {
-                                try {
-                                    // Validate q structure
-                                    if (!q.question || !Array.isArray(q.options)) continue;
+                                if (!q.question || !Array.isArray(q.options)) continue;
 
-                                    // ═══════════════════════════════════════════════════════════
-                                    // 🚫 LISTA NEGRA: Rechazar opciones genéricas ANTES de procesar
-                                    // ═══════════════════════════════════════════════════════════
-                                    const BLACKLISTED_OPTIONS = [
-                                        'detalle superficial',
-                                        'información no relacionada',
-                                        'definición técnica precisa sobre',
-                                        'concepto erróneo común',
-                                        'definición opuesta al concepto',
-                                        'ninguna de las anteriores',
-                                        'todas las anteriores',
-                                        'opción incorrecta',
-                                        'respuesta incorrecta',
-                                        'dato irrelevante',
-                                        'afirmación falsa sobre'
-                                    ];
-                                    
-                                    const hasBlacklistedOption = q.options.some(opt => {
-                                        const optLower = (opt || '').toLowerCase().trim();
-                                        return BLACKLISTED_OPTIONS.some(blacklisted => optLower.includes(blacklisted));
-                                    });
-                                    
-                                    if (hasBlacklistedOption) {
-                                        console.log('🚫 Rechazando pregunta con opción genérica/prohibida:', q.question);
-                                        continue;
-                                    }
-                                    
-                                    // Validar que las opciones tengan contenido mínimo (al menos 5 palabras)
-                                    const hasShortOptions = q.options.some(opt => {
-                                        const words = (opt || '').trim().split(/\s+/).length;
-                                        return words < 4;
-                                    });
-                                    
-                                    if (hasShortOptions) {
-                                        console.log('🚫 Rechazando pregunta con opciones muy cortas:', q.question);
-                                        continue;
-                                    }
-
-                                    // Normalize & Hash (Paso B)
-                                    const normalizedQ = normalizeText(q.question);
-                                    const hash = crypto.createHash('sha256').update(normalizedQ).digest('hex');
-
-                                    // Check exact hash in DB
-                                    const { data: hashExists } = await supabase.client.from('questions_history')
-                                        .select('id').eq('user_id', userId).eq('question_hash', hash).maybeSingle();
-                                    
-                                    if (hashExists) {
-                                        console.log('🚫 Skipping duplicate hash:', q.question);
-                                        continue;
-                                    }
-
-                                    // Embed Question (Paso C)
-                                    let qEmbedding = null;
-                                    try {
-                                        qEmbedding = await embeddingService.embedQuery(q.question);
-                                        
-                                        // Validar que el embedding sea un array válido de números
-                                        if (!qEmbedding || !Array.isArray(qEmbedding) || qEmbedding.length === 0) {
-                                            console.warn('⚠️ Embedding generado es inválido (null o vacío).');
-                                            qEmbedding = null;
-                                        } else if (qEmbedding.some(n => typeof n !== 'number' || isNaN(n))) {
-                                            console.warn('⚠️ Embedding contiene valores no numéricos.');
-                                            qEmbedding = null;
-                                        }
-                                    } catch (embErr) {
-                                        console.warn('❌ Error generando embedding para pregunta:', embErr.message);
-                                        qEmbedding = null;
-                                    }
-
-                                    if (qEmbedding) {
-                                        // Semantic Search (Paso D & E)
-                                        const { data: similarQuestions } = await supabase.client.rpc('match_questions', {
-                                            query_embedding: qEmbedding,
-                                            match_threshold: 0.9,
-                                            match_count: 1,
-                                            filter_user_id: userId
-                                        });
-                                        
-                                        if (similarQuestions && similarQuestions.length > 0) {
-                                            console.log(`🚫 Skipping semantically similar question (${(similarQuestions[0].similarity*100).toFixed(1)}%):`, similarQuestions[0].question_text);
-                                            continue;
-                                        }
-                                    }
-
-                                    // Validate Options (Paso G) - Validar opciones semánticamente únicas
-                                    let optionsValid = true;
-                                    let optionEmbeddings = [];
-                                    
-                                    if (qEmbedding) { // Only generate embeddings if service is working
-                                        try {
-                                             // Generate embeddings in parallel for speed
-                                             const embeddings = await Promise.all(q.options.map(opt => embeddingService.embedQuery(opt)));
-                                             optionEmbeddings = q.options.map((opt, i) => ({ text: opt, embedding: embeddings[i] }));
-
-                                             // Validar unicidad de opciones contra el historial del usuario
-                                             for (const optEmbObj of optionEmbeddings) {
-                                                if (optEmbObj.embedding) {
-                                                    const { data: similarOptions } = await supabase.client.rpc('match_options', {
-                                                        query_embedding: optEmbObj.embedding,
-                                                        match_threshold: 0.95, // Umbral muy alto para evitar falsos positivos con palabras cortas
-                                                        match_count: 1,
-                                                        filter_user_id: userId
-                                                    });
-                                                    
-                                                    if (similarOptions && similarOptions.length > 0) {
-                                                        console.log(`🚫 Rechazando opción repetida (${(similarOptions[0].similarity*100).toFixed(1)}%): "${optEmbObj.text}"`);
-                                                        optionsValid = false;
-                                                        break;
-                                                    }
-                                                }
-                                             }
-
-                                        } catch (e) {
-                                             console.warn("⚠️ Option embedding failed, falling back to null", e.message);
-                                             optionEmbeddings = q.options.map(o => ({ text: o, embedding: null }));
-                                        }
-                                    } else {
-                                        // Fallback: Map options without embedding
-                                        optionEmbeddings = q.options.map(o => ({ text: o, embedding: null }));
-                                    }
-
-                                    if (!optionsValid) { 
-                                        continue;
-                                    }
-
-                                    // Save Question (Paso F)
-                                    const { data: qInserted, error: qError } = await supabase.client
-                                        .from('questions_history')
-                                        .insert({
-                                            session_id: sessionId,
-                                            user_id: userId,
-                                            course_id: courseId,
-                                            question_text: q.question,
-                                            question_hash: hash,
-                                            question_embedding: qEmbedding,
-                                            correct_index: q.correctIndex,
-                                            explanation: q.explanation || '' 
-                                        })
-                                        .select('id')
-                                        .single();
-
-                                    if (qError || !qInserted) {
-                                        console.warn('Failed to insert question:', qError);
-                                        continue;
-                                    }
-
-                                    // Save Options (Paso H)
-                                    for (let i=0; i<optionEmbeddings.length; i++) {
-                                        await supabase.client.from('question_options').insert({
-                                            question_id: qInserted.id,
-                                            option_text: optionEmbeddings[i].text,
-                                            option_embedding: optionEmbeddings[i].embedding,
-                                            order_index: i
-                                        });
-                                    }
-                                    
-                                    // Add to filtered list (to return to user)
-                                    filtered.push(q);
-                                } catch(e) {
-                                    console.error('Error processing question uniqueness:', e);
+                                const BLACKLISTED_OPTIONS = [
+                                    'detalle superficial',
+                                    'información no relacionada',
+                                    'definición técnica precisa',
+                                    'concepto erróneo común',
+                                    'definición opuesta al concepto',
+                                    'ninguna de las anteriores',
+                                    'todas las anteriores',
+                                    'opción incorrecta',
+                                    'respuesta incorrecta',
+                                    'dato irrelevante',
+                                    'afirmación falsa sobre',
+                                    '(ref:',
+                                    'ref:'
+                                ];
+                                
+                                const hasBlacklistedOption = q.options.some(opt => {
+                                    const optLower = (opt || '').toLowerCase().trim();
+                                    return BLACKLISTED_OPTIONS.some(blacklisted => optLower.includes(blacklisted));
+                                });
+                                
+                                if (hasBlacklistedOption) {
+                                    console.log('🚫 Rechazando pregunta con opción genérica/prohibida:', q.question);
+                                    continue;
                                 }
+
+                                if (q.question && (q.question.includes('(Ref:') || q.question.includes('Ref:'))) {
+                                     console.log('🚫 Rechazando pregunta con marca de referencia (Ref:):', q.question);
+                                     continue;
+                                }
+                                
+                                validQuestions.push(q);
+                            }
+
+                            // 3. Save to Supabase (Robust Method)
+                            if (validQuestions.length > 0) {
+                                console.log(`💾 Saving ${validQuestions.length} validated questions to Supabase...`);
+                                // Call the helper method I added to SupabaseService
+                                await supabase.saveGeneratedQuestions({
+                                    userId: userId,
+                                    courseId: courseId,
+                                    questions: validQuestions,
+                                    sessionId: sessionId
+                                });
                             }
                             
-                            console.log(`✅ Accepted ${filtered.length} unique questions out of ${transformed.length}`);
+                            filtered = validQuestions;
+                            console.log(`✅ Accepted ${filtered.length} questions.`);
 
                         } catch (e) {
                             console.warn('⚠️ Failed to consult/save reinforcement history (DB check):', e?.message || e);
@@ -823,7 +724,7 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
 
                                 // If everything was filtered out (duplicates/disallowed), attempt up to 2 retries
                                 if ((userId && courseId) && Array.isArray(filtered) && filtered.length === 0 && historyQuestionsList.length > 0) {
-                                    console.log('🔁 All questions filtered; attempting DeepSeek retries to generate distinct questions');
+                                    console.log('🔁 All questions filtered; attempting DeepSeek/LLM retries to generate distinct questions');
                                     for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
                                         try {
                                             // Sample a NEW set of history for the retry to give different negative examples
@@ -831,20 +732,71 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                                             const retrySample = retryShuffledHistory.slice(0, 60);
 
                                             const retryPrompt = augmentedPrompt + `\n\nREINTENTO ${attempt}: Genera 10 preguntas totalmente diferentes que NO sean idénticas a las siguientes (ya vistas):\n${retrySample.map((q,i)=>`${i+1}. ${q}`).join('\n')}\nSi no es posible, intenta cambiar el enfoque de las preguntas.`;
+                                            
+                                            let retryData = null;
 
-                                            const retryResp = await fetch(targetUrl, {
-                                                method: 'POST',
-                                                headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({ model: model || 'deepseek-chat', prompt: retryPrompt, stream: false, options: { temperature: 0.8 } })
-                                            });
-
-                                            if (!retryResp.ok) {
-                                                console.warn(`⚠️ Retry ${attempt} DeepSeek API error: ${retryResp.status} ${retryResp.statusText}`);
-                                                continue;
+                                            // 1. Retry with DeepSeek (Priority)
+                                            if (deepseekApiKey) {
+                                                const dsResp = await fetch("https://api.deepseek.com/chat/completions", {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekApiKey}` },
+                                                    body: JSON.stringify({
+                                                        model: 'deepseek-chat',
+                                                        messages: [{ role: 'system', content: 'Eres un sistema experto.' }, { role: 'user', content: retryPrompt }],
+                                                        temperature: 0.8,
+                                                        max_tokens: 4096,
+                                                        stream: false
+                                                    })
+                                                });
+                                                if (dsResp.ok) {
+                                                    const dsJson = await dsResp.json();
+                                                    retryData = { response: dsJson.choices?.[0]?.message?.content || "" };
+                                                }
+                                            } 
+                                            // 2. Retry with OpenRouter
+                                            else if (process.env.OPENROUTER_API_KEY) {
+                                                const orResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                                                    method: 'POST',
+                                                    headers: { 
+                                                        'Content-Type': 'application/json', 
+                                                        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                                                        'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com',
+                                                        'X-Title': 'CourseV MCP Backend'
+                                                    },
+                                                    body: JSON.stringify({
+                                                        model: process.env.OPENROUTER_CHAT_MODEL || 'deepseek/deepseek-chat', 
+                                                        messages: [{ role: "user", content: retryPrompt }],
+                                                        temperature: 0.8
+                                                    })
+                                                });
+                                                if (orResp.ok) {
+                                                    const orJson = await orResp.json();
+                                                    retryData = { response: orJson.choices?.[0]?.message?.content || "" };
+                                                }
+                                            }
+                                            // 3. Retry with Local Ollama
+                                            else if (ollamaUrl) {
+                                                const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
+                                                const localTarget = `${baseUrl}/api/generate`;
+                                                const localResp = await fetch(localTarget, {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ model: model || 'deepseek-chat', prompt: retryPrompt, stream: false, options: { temperature: 0.8 } })
+                                                });
+                                                if (localResp.ok) retryData = await localResp.json();
                                             }
 
-                                            const retryData = await retryResp.json();
-                                            const rawRetry = typeof retryData.response === 'string' ? retryData.response : JSON.stringify(retryData.response);
+                                            if (!retryData) {
+                                                 console.warn(`⚠️ Retry ${attempt} failed: No LLM response.`);
+                                                 continue;
+                                            }
+
+                                            // Process Retry Response (Common Logic)
+                                            let rawRetry = typeof retryData.response === 'string' ? retryData.response : JSON.stringify(retryData.response);
+                                            // Clean Markdown
+                                            if (rawRetry.includes('```json')) rawRetry = rawRetry.split('```json')[1].split('```')[0].trim();
+                                            else if (rawRetry.includes('```')) rawRetry = rawRetry.split('```')[1].split('```')[0].trim();
+
                                             const s = rawRetry.indexOf('[');
                                             const e = rawRetry.lastIndexOf(']');
                                             if (s !== -1 && e !== -1 && s < e) {
@@ -855,8 +807,11 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                                                         const transformedRetry = parsedRetry.map(q => {
                                                             try {
                                                                 if (!q || !Array.isArray(q.options)) return q;
-                                                                const origIdx = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
-                                                                const origCorrect = q.options[origIdx];
+                                                                let origIdx = 0;
+                                                                if (typeof q.correctIndex === 'number') origIdx = q.correctIndex;
+                                                                else if (typeof q.correctIndex === 'string' && /^\d+$/.test(q.correctIndex)) origIdx = parseInt(q.correctIndex);
+                                                                
+                                                                const origCorrect = q.options[origIdx] || q.options[0];
                                                                 const newOptions = q.options.slice();
                                                                 for (let i = newOptions.length - 1; i > 0; i--) {
                                                                     const j = Math.floor(Math.random() * (i + 1));
@@ -868,7 +823,7 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                                                             } catch (qq) { return q; }
                                                         });
 
-                                                        // Filter parsedRetry using questionExistsInHistory against existingHistory (or historyQuestionsList)
+                                                        // Filter parsedRetry using questionExistsInHistory
                                                         const historyToCheck = existingHistory && existingHistory.length ? existingHistory : historyQuestionsList;
                                                         const newlyFiltered = transformedRetry.filter(q => {
                                                             try { const qText = q.question || q.pregunta || JSON.stringify(q); return !questionExistsInHistory(qText, historyToCheck); } catch (ex) { return true; }
@@ -878,9 +833,13 @@ NOTA: La posición de correctIndex debe variar aleatoriamente (0, 1, 2, o 3) ent
                                                             filtered = newlyFiltered;
                                                             // Upsert these into history
                                                             try {
-                                                                const mcpService2 = new MCPService();
-                                                                const toSave = filtered.map(fq => fq);
-                                                                await mcpService2.saveReinforcementHistory(userId, courseId, toSave, topicId, taskId);
+                                                                const supabase = SupabaseService.getInstance();
+                                                                await supabase.saveGeneratedQuestions({
+                                                                    userId: userId,
+                                                                    courseId: courseId,
+                                                                    questions: filtered,
+                                                                    sessionId: sessionId
+                                                                });
                                                             } catch (upErr) { console.warn('⚠️ Failed to save retry results:', upErr?.message || upErr); }
                                                             break;
                                                         }

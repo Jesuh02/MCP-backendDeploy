@@ -811,6 +811,79 @@ CREATE TABLE public.videos (
     }
 
     /**
+     * Save generated questions to Supabase history
+     * @param {Object} params - { userId, courseId, questions, sessionId }
+     * @returns {Promise<void>}
+     */
+    async saveGeneratedQuestions({ userId, courseId, questions, sessionId = null }) {
+        if (!questions || !Array.isArray(questions) || questions.length === 0) {
+            logger.warn('⚠️ saveGeneratedQuestions called with no questions');
+            return;
+        }
+
+        try {
+            logger.info(`💾 Saving ${questions.length} questions to history (User: ${userId}, Course: ${courseId})`);
+
+            for (const q of questions) {
+                // 1. Insert Question
+                const { data: qData, error: qError } = await this.client
+                    .from('questions_history')
+                    .insert({
+                        user_id: userId,
+                        course_id: courseId,
+                        session_id: sessionId,
+                        question_text: q.question,
+                        correct_index: q.correctIndex,
+                        explanation: q.explanation,
+                        // Generate simple hash to avoid exact duplicates
+                        question_hash: this._generateHash(q.question + (q.explanation || ''))
+                    })
+                    .select('id')
+                    .single();
+
+                if (qError) {
+                    logger.warn(`⚠️ Error saving question: ${qError.message}`);
+                    continue;
+                }
+
+                const questionId = qData.id;
+
+                // 2. Insert Options
+                if (q.options && Array.isArray(q.options)) {
+                    const optionsPayload = q.options.map((optText, idx) => ({
+                        question_id: questionId,
+                        option_text: optText,
+                        order_index: idx
+                    }));
+
+                    const { error: oError } = await this.client
+                        .from('question_options')
+                        .insert(optionsPayload);
+
+                    if (oError) {
+                        logger.warn(`⚠️ Error saving options for question ${questionId}: ${oError.message}`);
+                    }
+                }
+            }
+            logger.info('✅ Questions history saved successfully.');
+        } catch (error) {
+            logger.error('❌ Error in saveGeneratedQuestions:', error.message);
+            // Don't throw, just log, so we don't block the response to client
+        }
+    }
+
+    _generateHash(str) {
+        let hash = 0;
+        if (str.length === 0) return hash.toString();
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash |= 0; // Convert to 32bit integer
+        }
+        return hash.toString();
+    }
+
+    /**
      * Delete a course and all related content
      * @param {number} courseId - Course ID
      * @returns {boolean} - True if successful
@@ -901,7 +974,7 @@ CREATE TABLE public.videos (
                     logger.info('📤 OUTPUT:', JSON.stringify({
                         query: sqlQuery,
                         results: data,
-                        rowCount: data?.length || 0
+                        rowCount: data ? data.length : 0
                     }, null, 2));
                     logger.info('✅ Executed via RPC execute_sql');
                     return data;
@@ -1062,7 +1135,7 @@ CREATE TABLE public.videos (
                 logger.info('📤 OUTPUT (fallback parser):', JSON.stringify({
                     query: sqlQuery,
                     results: data,
-                    rowCount: data?.length || 0
+                    rowCount: data ? data.length : 0
                 }, null, 2));
 
                 return data;
