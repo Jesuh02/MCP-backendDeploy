@@ -323,12 +323,28 @@ REGLA DE ALEATORIEDAD:
 La respuesta correcta NO debe estar siempre en la primera opción (índice 0).
 Distribuye aleatoriamente la posición de la respuesta correcta entre las opciones A, B, C y D.
 
-REGLA DE CALIDAD DE OPCIONES (CRÍTICA):
-- Las opciones INCORRECTAS (distractores) deben ser plausibles y estar relacionadas DIRECTAMENTE con el tema.
-- NO uses opciones genéricas como "Ninguna de las anteriores", "Todas las anteriores", "Información irrelevante", "Concepto erróneo común", "Definición opuesta".
-- NO describas la opción (ej: NO pongas "Opción incorrecta que menciona X"). PON el contenido real (ej: "X").
-- Cada opción debe ser una respuesta posible completa, no una descripción de por qué es incorrecta.
-- SIEMPRE 4 opciones.
+REGLA ABSOLUTA DE CALIDAD DE OPCIONES (CRÍTICA):
+ESTRICTAMENTE PROHIBIDO generar opciones que describan el tipo de respuesta (metadatos) o sean genéricas.
+Las opciones deben ser CONTENIDO REAL relacionado con el tema.
+
+❌ EJEMPLOS PROHIBIDOS (NUNCA GENERES ESTO):
+- "Detalle superficial irrelevante"
+- "Definición opuesta al concepto"
+- "Concepto erróneo común sobre..."
+- "Información no relacionada directamente"
+- "Ninguna de las anteriores"
+- "Todas las anteriores"
+- "Opción incorrecta por ser..."
+
+✅ EJEMPLOS CORRECTOS (GENERA ESTO):
+- "El aprendizaje supervisado utiliza etiquetas..." (Contenido real)
+- "La función map() transforma arrays..." (Contenido real)
+- "Un bucle infinito causa desbordamiento de pila..." (Contenido real)
+- "O(n^2)" (Valor real)
+
+Si la opción es una "Definición opuesta", escribe la definición opuesta real (ej: "Es un proceso manual..."), NO el texto "Definición opuesta".
+Cada opción debe ser una respuesta posible completa.
+SIEMPRE 4 opciones.
 
 FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
 [
@@ -575,9 +591,18 @@ LLM REQUEST END`;
                                     let qEmbedding = null;
                                     try {
                                         qEmbedding = await embeddingService.embedQuery(q.question);
+                                        
+                                        // Validar que el embedding sea un array válido de números
+                                        if (!qEmbedding || !Array.isArray(qEmbedding) || qEmbedding.length === 0) {
+                                            console.warn('⚠️ Embedding generado es inválido (null o vacío).');
+                                            qEmbedding = null;
+                                        } else if (qEmbedding.some(n => typeof n !== 'number' || isNaN(n))) {
+                                            console.warn('⚠️ Embedding contiene valores no numéricos.');
+                                            qEmbedding = null;
+                                        }
                                     } catch (embErr) {
-                                        console.warn('Embedding failed for question, using hash only check:', embErr.message);
-                                        // If embedding fails, we rely on hash only.
+                                        console.warn('❌ Error generando embedding para pregunta:', embErr.message);
+                                        qEmbedding = null;
                                     }
 
                                     if (qEmbedding) {
