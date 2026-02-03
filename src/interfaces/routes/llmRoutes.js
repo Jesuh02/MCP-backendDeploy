@@ -306,55 +306,41 @@ router.post('/procesar-prompt', async(req, res) => {
             }
         }
 
+
                 // LLM REQUEST START: instrucción fija para generación de preguntas
-                // Insertamos un encabezado que obliga al modelo a usar TODO el contenido
-                // de los archivos del curso (tareas y temas) y a devolver un JSON estructurado.
                 const llmRequestHeader = `LLM REQUEST START:
 INSTRUCCIÓN CRÍTICA DE CONTEXTO:
-El usuario ha adjuntado MÚLTIPLES archivos y contenidos del curso (tareas, temas, PDFs, documentos).
-TU TAREA ES ANALIZAR Y UTILIZAR EL CONTENIDO DE **TODOS** LOS ARCHIVOS PROPORCIONADOS, SIN EXCEPCIÓN.
-NO te limites a analizar solo el primer archivo o solo el último.
-NO apliques límites de lectura: procesa la información completa de cada archivo adjunto para generar las preguntas.
+Has recibido contenido del curso (RAG, Archivos, Temas).
+TU OBJETIVO: Crear preguntas de examen de alta calidad técnica basadas EXCLUSIVAMENTE en este contenido.
 
-Si hay archivos adjuntos (PDFs, Excel, Texto), su contenido está incluido en este prompt. ÚSALO TODO.
-Priorice el contenido de los archivos sobre los nombres de las tareas si hay conflicto.
+REGLAS DE ORO PARA EL CONTENIDO (STRICT):
+1. PREGUNTAS REALES: La pregunta debe indagar sobre un hecho, concepto o procedimiento específico mencionado en el texto.
+   - ❌ MAL: "¿Qué se dice sobre X?"
+   - ✅ BIEN: "¿Cuál es la función principal de X según el texto?"
+2. SIN REFERENCIAS EN TEXTO: NO incluyas "(Ref: id)" o nombres de archivos en el texto de la pregunta.
+3. OPCIONES CONCRETAS: TODAS las 4 opciones deben ser afirmaciones o conceptos plausibles y completos.
+   - Las opciones incorrectas (distractores) deben parecer correctas pero ser técnicamente falsas o imprecisas según el contenido.
+
+⛔ PROHIBIDO ABSOLUTAMENTE (FATAL ERRORS):
+- NUNCA uses frases genéricas como "Detalle superficial", "Información irrelevante", "Opción incorrecta", "Definición opuesta".
+- NUNCA dejes opciones vacías o con placeholders.
+- NUNCA uses "Todas las anteriores" o "Ninguna de las anteriores".
+
+SIEMPRE genera 4 opciones de texto completo y técnico.
 
 REGLA DE ALEATORIEDAD:
-La respuesta correcta NO debe estar siempre en la primera opción (índice 0).
-Distribuye aleatoriamente la posición de la respuesta correcta entre las opciones A, B, C y D.
+- La respuesta correcta DEBE cambiar de posición aleatoriamente (0, 1, 2 o 3).
 
-REGLA ABSOLUTA DE CALIDAD DE OPCIONES (CRÍTICA):
-ESTRICTAMENTE PROHIBIDO generar opciones que describan el tipo de respuesta (metadatos) o sean genéricas.
-Las opciones deben ser CONTENIDO REAL relacionado con el tema.
-
-❌ EJEMPLOS PROHIBIDOS (NUNCA GENERES ESTO):
-- "Detalle superficial irrelevante"
-- "Definición opuesta al concepto"
-- "Concepto erróneo común sobre..."
-- "Información no relacionada directamente"
-- "Ninguna de las anteriores"
-- "Todas las anteriores"
-- "Opción incorrecta por ser..."
-
-✅ EJEMPLOS CORRECTOS (GENERA ESTO):
-- "El aprendizaje supervisado utiliza etiquetas..." (Contenido real)
-- "La función map() transforma arrays..." (Contenido real)
-- "Un bucle infinito causa desbordamiento de pila..." (Contenido real)
-- "O(n^2)" (Valor real)
-
-Si la opción es una "Definición opuesta", escribe la definición opuesta real (ej: "Es un proceso manual..."), NO el texto "Definición opuesta".
-Cada opción debe ser una respuesta posible completa.
-SIEMPRE 4 opciones.
-
-FORMATO DE SALIDA REQUERIDO: Devuelva UN ÚNICO array JSON con objetos de esta forma:
+FORMATO JSON PURO REQUERIDO:
+Devuelve SOLAMENTE un array JSON válido.
 [
     {
-        "question": "Texto de la pregunta",
-        "options": ["Respuesta técnica A","Respuesta técnica B","Respuesta técnica C","Respuesta técnica D"],
-        "correctIndex": 2, // (0=A, 1=B, 2=C, 3=D) - VARÍA ESTE ÍNDICE ALEATORIAMENTE
-        "difficulty": "easy|medium|hard",
-        "topic": "tema o tarea relacionada (ej: 'Tarea 1 - Tema: Álgebra')",
-        "source": "nombre_del_archivo_o_ruta_de_origen"
+        "question": "¿Qué estructura de datos utiliza LIFO?",
+        "options": ["Cola (Queue)", "Pila (Stack)", "Lista Enlazada", "Árbol Binario"],
+        "correctIndex": 1, 
+        "difficulty": "medium",
+        "topic": "Estructuras de Datos",
+        "explanation": "La Pila (Stack) es la estructura que sigue el principio Last-In-First-Out (LIFO)."
     }
 ]
 
@@ -620,34 +606,27 @@ LLM REQUEST END`;
                                         }
                                     }
 
-                                    // Validate Options (Paso G)
+                                    // Validate Options (Paso G) - MODIFIED
+                                    // Global uniqueness of options is too restrictive for technical quizzes (e.g. re-using "True/False" or numbers).
+                                    // We rely on the Prompt quality to avoid generic placeholders.
                                     let optionsValid = true;
                                     let optionEmbeddings = [];
                                     
-                                    if (qEmbedding) { // Only check options semantic if embedding service is working
-                                        for (const opt of q.options) {
-                                            const optEmb = await embeddingService.embedQuery(opt);
-                                            optionEmbeddings.push({ text: opt, embedding: optEmb });
-                                            
-                                            const { data: similarOptions } = await supabase.client.rpc('match_options', {
-                                                query_embedding: optEmb,
-                                                match_threshold: 0.9,
-                                                match_count: 1,
-                                                filter_user_id: userId
-                                            });
-
-                                            if (similarOptions && similarOptions.length > 0) {
-                                                console.log('🚫 Skipping because option is similar to previous:', opt);
-                                                optionsValid = false;
-                                                break; 
-                                            }
+                                    if (qEmbedding) { // Only generate embeddings if service is working
+                                        try {
+                                             // Generate embeddings in parallel for speed
+                                             const embeddings = await Promise.all(q.options.map(opt => embeddingService.embedQuery(opt)));
+                                             optionEmbeddings = q.options.map((opt, i) => ({ text: opt, embedding: embeddings[i] }));
+                                        } catch (e) {
+                                             console.warn("⚠️ Option embedding failed, falling back to null", e.message);
+                                             optionEmbeddings = q.options.map(o => ({ text: o, embedding: null }));
                                         }
                                     } else {
                                         // Fallback: Map options without embedding
                                         optionEmbeddings = q.options.map(o => ({ text: o, embedding: null }));
                                     }
 
-                                    if (!optionsValid) {
+                                    if (!optionsValid) { // Kept for logic structure consistency
                                         continue;
                                     }
 
