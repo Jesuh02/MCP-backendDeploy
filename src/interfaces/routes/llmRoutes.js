@@ -322,11 +322,11 @@ REGLAS DE ORO PARA EL CONTENIDO (STRICT):
    - Las opciones incorrectas (distractores) deben parecer correctas pero ser técnicamente falsas o imprecisas según el contenido.
 
 ⛔ PROHIBIDO ABSOLUTAMENTE (FATAL ERRORS):
-- NUNCA uses frases genéricas como "Detalle superficial", "Información irrelevante", "Opción incorrecta", "Definición opuesta".
+- NUNCA uses frases genéricas como "Detalle superficial irrelevante", "Información no relacionada directamente", "Definición opuesta al concepto", "Concepto erróneo común", "Opción incorrecta", "Ninguna de las anteriores".
+- NUNCA uses descripciones del tipo de respuesta (metadatos).
 - NUNCA dejes opciones vacías o con placeholders.
-- NUNCA uses "Todas las anteriores" o "Ninguna de las anteriores".
 
-SIEMPRE genera 4 opciones de texto completo y técnico.
+SIEMPRE genera 4 opciones de texto completo, técnico y específico del tema.
 
 REGLA DE ALEATORIEDAD:
 - La respuesta correcta DEBE cambiar de posición aleatoriamente (0, 1, 2 o 3).
@@ -606,9 +606,7 @@ LLM REQUEST END`;
                                         }
                                     }
 
-                                    // Validate Options (Paso G) - MODIFIED
-                                    // Global uniqueness of options is too restrictive for technical quizzes (e.g. re-using "True/False" or numbers).
-                                    // We rely on the Prompt quality to avoid generic placeholders.
+                                    // Validate Options (Paso G) - Validar opciones semánticamente únicas
                                     let optionsValid = true;
                                     let optionEmbeddings = [];
                                     
@@ -617,6 +615,25 @@ LLM REQUEST END`;
                                              // Generate embeddings in parallel for speed
                                              const embeddings = await Promise.all(q.options.map(opt => embeddingService.embedQuery(opt)));
                                              optionEmbeddings = q.options.map((opt, i) => ({ text: opt, embedding: embeddings[i] }));
+
+                                             // Validar unicidad de opciones contra el historial del usuario
+                                             for (const optEmbObj of optionEmbeddings) {
+                                                if (optEmbObj.embedding) {
+                                                    const { data: similarOptions } = await supabase.client.rpc('match_options', {
+                                                        query_embedding: optEmbObj.embedding,
+                                                        match_threshold: 0.95, // Umbral muy alto para evitar falsos positivos con palabras cortas
+                                                        match_count: 1,
+                                                        filter_user_id: userId
+                                                    });
+                                                    
+                                                    if (similarOptions && similarOptions.length > 0) {
+                                                        console.log(`🚫 Rechazando opción repetida (${(similarOptions[0].similarity*100).toFixed(1)}%): "${optEmbObj.text}"`);
+                                                        optionsValid = false;
+                                                        break;
+                                                    }
+                                                }
+                                             }
+
                                         } catch (e) {
                                              console.warn("⚠️ Option embedding failed, falling back to null", e.message);
                                              optionEmbeddings = q.options.map(o => ({ text: o, embedding: null }));
@@ -626,7 +643,7 @@ LLM REQUEST END`;
                                         optionEmbeddings = q.options.map(o => ({ text: o, embedding: null }));
                                     }
 
-                                    if (!optionsValid) { // Kept for logic structure consistency
+                                    if (!optionsValid) { 
                                         continue;
                                     }
 
