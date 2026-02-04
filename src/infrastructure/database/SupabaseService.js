@@ -838,26 +838,46 @@ CREATE TABLE public.videos (
                 let qHash = q.question_hash;
                 let qEmbed = q.question_embedding || q.embedding;
 
+                // 1. Ensure Hash Exists
                 if (!qHash && qText) {
-                    // Generate SHA-256 Hash
-                    const crypto = (await
-                        import ('crypto')).default;
-                    qHash = crypto.createHash('sha256').update(qText.toLowerCase().trim()).digest('hex');
-                }
-
-                if (!qEmbed && qText) {
                     try {
-                        // Generate Embedding if missing
-                        qEmbed = await embeddingService.embedQuery(qText);
+                        const crypto = await
+                        import ('crypto');
+                        qHash = crypto.createHash('sha256').update(qText.toLowerCase().trim()).digest('hex');
                     } catch (e) {
-                        logger.warn(`⚠️ Failed to generate embedding in fallback save: ${e.message}`);
+                        // Fallback to internal simple hash if crypto fails
+                        logger.warn(`⚠️ Crypto import failed, using simple hash: ${e.message}`);
+                        qHash = this._generateHash(qText);
                     }
                 }
 
-                // CRITICAL SAFETY V2: Abort if embedding failed. Do NOT insert NULL.
+                // 2. Ensure Embedding Exists (Strict No-Null Policy)
+                if ((!qEmbed || !Array.isArray(qEmbed) || qEmbed.length === 0) && qText) {
+                    try {
+                        // Attempt AI Embedding
+                        if (embeddingService.isReady()) {
+                            qEmbed = await embeddingService.embedQuery(qText);
+                        }
+                    } catch (e) {
+                        logger.warn(`⚠️ AI Embedding failed: ${e.message}`);
+                    }
+
+                    // Fallback to Mathematical Embedding if AI failed
+                    if (!qEmbed || !Array.isArray(qEmbed) || qEmbed.length === 0) {
+                        logger.warn(`⚠️ Using Fallback Embedding for Question: "${qText.substring(0,20)}..."`);
+                        qEmbed = embeddingService._fallbackEmbed(qText);
+                    }
+                }
+
+                // CRITICAL SAFETY V2: Abort if embedding is STILL missing (should be impossible now)
                 if (!qEmbed || !Array.isArray(qEmbed) || qEmbed.length === 0) {
-                    logger.error(`❌ FATAL: Skipping question save because embedding is missing/failed: "${qText.substring(0,25)}..."`);
+                    logger.error(`❌ FATAL: Skipping question save - Embedding completely failed: "${qText.substring(0,25)}..."`);
                     continue;
+                }
+
+                // Ensure Hash is not null
+                if (!qHash) {
+                    qHash = this._generateHash(qText || 'unknown');
                 }
 
                 // 🔍 UNIQUENESS CHECK: Check if question with this hash already exists
