@@ -704,11 +704,17 @@ NO USES JAMÁS en preguntas u opciones:
                                 console.log(`💾 Saving ${validQuestions.length} validated questions to Supabase...`);
                                 // Call MCPService saver with Strict Uniqueness
                                 const mcpSaver = new MCPService();
-                                await mcpSaver.saveReinforcementHistory(userId, courseId, validQuestions, topicId, taskId, sessionId);
+                                const savedResult = await mcpSaver.saveReinforcementHistory(userId, courseId, validQuestions, topicId, taskId, sessionId);
+                                // UPDATE: Use ONLY the questions that were actually saved (unique)
+                                if (savedResult && savedResult.savedQuestions) {
+                                     filtered = savedResult.savedQuestions;
+                                     console.log(`✅ Accepted ${filtered.length} unique questions (Rejected ${validQuestions.length - filtered.length} duplicates).`);
+                                } else {
+                                     filtered = []; 
+                                }
+                            } else {
+                                filtered = [];
                             }
-                            
-                            filtered = validQuestions;
-                            console.log(`✅ Accepted ${filtered.length} questions.`);
 
                         } catch (e) {
                             console.warn('⚠️ Failed to consult/save reinforcement history (DB check):', e?.message || e);
@@ -826,14 +832,20 @@ NO USES JAMÁS en preguntas u opciones:
                                                         });
 
                                                         if (newlyFiltered.length > 0) {
-                                                            filtered = newlyFiltered;
-                                                            // Upsert these into history
                                                             try {
                                                                 // Save using MCPService with Strict Uniqueness
                                                                 const mcpSaver = new MCPService();
-                                                                await mcpSaver.saveReinforcementHistory(userId, courseId, filtered, topicId, taskId, sessionId);
+                                                                const retrySaveResult = await mcpSaver.saveReinforcementHistory(userId, courseId, newlyFiltered, topicId, taskId, sessionId);
+                                                                
+                                                                if (retrySaveResult && retrySaveResult.savedQuestions && retrySaveResult.savedQuestions.length > 0) {
+                                                                    filtered = retrySaveResult.savedQuestions;
+                                                                    console.log(`✅ Retry accepted ${filtered.length} unique questions.`);
+                                                                    break; // Success!
+                                                                } else {
+                                                                    console.warn('⚠️ Retry questions were all duplicates (rejected by DB).');
+                                                                    filtered = []; // Continue loop
+                                                                }
                                                             } catch (upErr) { console.warn('⚠️ Failed to save retry results:', upErr?.message || upErr); }
-                                                            break;
                                                         }
                                                     }
                                                 } catch (parseErr) {
