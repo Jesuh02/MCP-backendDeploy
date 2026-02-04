@@ -702,13 +702,9 @@ NO USES JAMÁS en preguntas u opciones:
                             // 3. Save to Supabase (Robust Method)
                             if (validQuestions.length > 0) {
                                 console.log(`💾 Saving ${validQuestions.length} validated questions to Supabase...`);
-                                // Call the helper method I added to SupabaseService
-                                await supabase.saveGeneratedQuestions({
-                                    userId: userId,
-                                    courseId: courseId,
-                                    questions: validQuestions,
-                                    sessionId: sessionId
-                                });
+                                // Call MCPService saver with Strict Uniqueness
+                                const mcpSaver = new MCPService();
+                                await mcpSaver.saveReinforcementHistory(userId, courseId, validQuestions, topicId, taskId, sessionId);
                             }
                             
                             filtered = validQuestions;
@@ -833,13 +829,9 @@ NO USES JAMÁS en preguntas u opciones:
                                                             filtered = newlyFiltered;
                                                             // Upsert these into history
                                                             try {
-                                                                const supabase = SupabaseService.getInstance();
-                                                                await supabase.saveGeneratedQuestions({
-                                                                    userId: userId,
-                                                                    courseId: courseId,
-                                                                    questions: filtered,
-                                                                    sessionId: sessionId
-                                                                });
+                                                                // Save using MCPService with Strict Uniqueness
+                                                                const mcpSaver = new MCPService();
+                                                                await mcpSaver.saveReinforcementHistory(userId, courseId, filtered, topicId, taskId, sessionId);
                                                             } catch (upErr) { console.warn('⚠️ Failed to save retry results:', upErr?.message || upErr); }
                                                             break;
                                                         }

@@ -209,7 +209,7 @@ export class EmbeddingService extends IEmbeddingProvider {
         // Priority 4: Simple hash-based embeddings (fallback, no external dependency)
         console.warn("⚠️ No embedding provider available, using simple hash-based fallback");
         this.provider = 'fallback';
-        this.dimensions = 384;
+        this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '4096');
     }
 
     /**
