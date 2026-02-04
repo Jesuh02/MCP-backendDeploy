@@ -542,10 +542,17 @@ export class MCPService {
                 let questionEmbedding = null;
                 try {
                     // Embed using the 4096-dim model (Qwen) by default
-                    questionEmbedding = await embeddingService.embedQuery(qText);
+                    if (embeddingService.isReady()) {
+                        questionEmbedding = await embeddingService.embedQuery(qText);
+                    }
                 } catch (e) {
-                    logger.error(`❌ Failed to embed question: ${e.message}`);
-                    continue;
+                    logger.warn(`⚠️ Failed to embed question: ${e.message}`);
+                }
+
+                // Fallback to Mathematical Embedding if AI failed
+                if (!questionEmbedding || !Array.isArray(questionEmbedding) || questionEmbedding.length === 0) {
+                    logger.warn(`⚠️ Using Fallback Embedding for Question in History: "${qText.substring(0,20)}..."`);
+                    questionEmbedding = embeddingService._fallbackEmbed(qText);
                 }
 
                 // STRICT VALIDATION: Ensure embedding is valid to prevent NULLs in DB
@@ -598,13 +605,15 @@ export class MCPService {
                         optionEmbeddings = await embeddingService.embedDocuments(optionsArray.map(o => String(o).trim()));
                     } catch (e) {
                         logger.error(`❌ Failed to embed options: ${e.message}`);
-                        continue;
+                        // Fallback: Continue with empty embeddings array -> will trigger fallback in map loop
+                        optionEmbeddings = [];
                     }
 
                     // Validate option embeddings
                     if (!Array.isArray(optionEmbeddings) || optionEmbeddings.length !== optionsArray.length) {
-                        logger.warn(`⚠️ Option embeddings count mismatch or invalid (Expected ${optionsArray.length}, Got ${optionEmbeddings?.length}). Skipping question.`);
-                        continue;
+                        logger.warn(`⚠️ Option embeddings count mismatch (Expected ${optionsArray.length}, Got ${optionEmbeddings?.length}). Using mathematical fallback.`);
+                        // Reset to force mathematical fallback
+                        optionEmbeddings = [];
                     }
 
                     // Strict check: if any option is too similar to a previous option for this user? 
