@@ -513,6 +513,7 @@ export class MCPService {
             }
 
             let savedCount = 0;
+            const acceptedQuestions = [];
 
             // B. Process Each Question
             for (const q of questions) {
@@ -690,10 +691,15 @@ export class MCPService {
                 }
 
                 savedCount++;
+                acceptedQuestions.push(q);
             }
 
             logger.info(`✅ MCPService: Saved ${savedCount} unique questions to history.`);
-            return savedCount > 0;
+            return {
+                success: savedCount > 0,
+                savedCount,
+                savedQuestions: acceptedQuestions
+            };
 
         } catch (error) {
             logger.error(`❌ Critical error in saveReinforcementHistory: ${error.message}`);
