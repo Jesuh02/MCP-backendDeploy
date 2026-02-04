@@ -824,7 +824,36 @@ CREATE TABLE public.videos (
         try {
             logger.info(`💾 Saving ${questions.length} questions to history (User: ${userId}, Course: ${courseId})`);
 
+            // Lazy Load EmbeddingService to avoid circular dependency
+            const EmbeddingService = (await
+                import ('../ai/EmbeddingService.js')).EmbeddingService;
+            const embeddingService = EmbeddingService.getInstance();
+            if (!embeddingService.isReady()) {
+                logger.warn('⚠️ EmbeddingService not ready in SupabaseService fallback.');
+            }
+
             for (const q of questions) {
+                // Ensure Embedding & Hash exist
+                let qText = q.question || q.question_text || '';
+                let qHash = q.question_hash;
+                let qEmbed = q.question_embedding || q.embedding;
+
+                if (!qHash && qText) {
+                    // Generate SHA-256 Hash
+                    const crypto = (await
+                        import ('crypto')).default;
+                    qHash = crypto.createHash('sha256').update(qText.toLowerCase().trim()).digest('hex');
+                }
+
+                if (!qEmbed && qText) {
+                    try {
+                        // Generate Embedding if missing
+                        qEmbed = await embeddingService.embedQuery(qText);
+                    } catch (e) {
+                        logger.warn(`⚠️ Failed to generate embedding in fallback save: ${e.message}`);
+                    }
+                }
+
                 // 1. Insert Question
                 const { data: qData, error: qError } = await this.client
                     .from('questions_history')
@@ -832,18 +861,17 @@ CREATE TABLE public.videos (
                         user_id: userId,
                         course_id: courseId,
                         session_id: sessionId,
-                        question_text: q.question,
+                        question_text: qText,
                         correct_index: q.correctIndex,
                         explanation: q.explanation,
-                        // Ensure embeddings and hash are saved if provided (Fallback support)
-                        question_embedding: q.question_embedding || q.embedding || null,
-                        question_hash: q.question_hash || this._generateHash(q.question + (q.explanation || ''))
+                        question_embedding: qEmbed || null,
+                        question_hash: qHash || null
                     })
                     .select('id')
                     .single();
 
                 if (qError) {
-                    logger.warn(`⚠️ Error saving question: ${qError.message}`);
+                    logger.warn(`⚠️ Error saving question (SaveGeneratedQuestions): ${qError.message}`);
                     continue;
                 }
 
@@ -851,12 +879,22 @@ CREATE TABLE public.videos (
 
                 // 2. Insert Options
                 if (q.options && Array.isArray(q.options)) {
+                    // Generate embeddings for options if missing
+                    let optEmbeds = q.option_embeddings || [];
+                    if ((!optEmbeds || optEmbeds.length === 0) && embeddingService.isReady()) {
+                        try {
+                            const optTexts = q.options.map(o => (typeof o === 'object' ? (o.text || o.option_text) : String(o)));
+                            optEmbeds = await embeddingService.embedDocuments(optTexts);
+                        } catch (e) {
+                            logger.warn(`⚠️ Failed to generate option embeddings: ${e.message}`);
+                        }
+                    }
+
                     const optionsPayload = q.options.map((optText, idx) => ({
                         question_id: questionId,
                         option_text: typeof optText === 'object' ? (optText.text || optText.option_text) : optText,
                         order_index: idx,
-                        // Support option embeddings if mapped
-                        option_embedding: (q.option_embeddings && q.option_embeddings[idx]) ? q.option_embeddings[idx] : null
+                        option_embedding: optEmbeds[idx] || null
                     }));
 
                     const { error: oError } = await this.client
@@ -868,10 +906,9 @@ CREATE TABLE public.videos (
                     }
                 }
             }
-            logger.info('✅ Questions history saved successfully.');
+            logger.info('✅ Questions history saved successfully (Fallback Method).');
         } catch (error) {
             logger.error('❌ Error in saveGeneratedQuestions:', error.message);
-            // Don't throw, just log, so we don't block the response to client
         }
     }
 
