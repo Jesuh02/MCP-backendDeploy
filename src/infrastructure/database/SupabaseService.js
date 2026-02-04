@@ -851,15 +851,13 @@ CREATE TABLE public.videos (
                         qEmbed = await embeddingService.embedQuery(qText);
                     } catch (e) {
                         logger.warn(`⚠️ Failed to generate embedding in fallback save: ${e.message}`);
-                        // Fallback
-                        qEmbed = new Array(embeddingService.dimensions || 1536).fill(0.01);
                     }
                 }
 
                 // CRITICAL SAFETY V2: Abort if embedding failed. Do NOT insert NULL.
                 if (!qEmbed || !Array.isArray(qEmbed) || qEmbed.length === 0) {
-                    logger.warn(`⚠️ Embedding missing/invalid. Using zero-vector fallback.`);
-                    qEmbed = new Array(embeddingService.dimensions || 1536).fill(0.01);
+                    logger.error(`❌ FATAL: Skipping question save because embedding is missing/failed: "${qText.substring(0,25)}..."`);
+                    continue;
                 }
 
                 // 1. Insert Question
@@ -872,8 +870,8 @@ CREATE TABLE public.videos (
                         question_text: qText,
                         correct_index: q.correctIndex,
                         explanation: q.explanation,
-                        question_embedding: qEmbed, // Removed || null, it must be valid now
-                        question_hash: qHash || null
+                        question_embedding: qEmbed,
+                        question_hash: qHash
                     })
                     .select('id')
                     .single();
