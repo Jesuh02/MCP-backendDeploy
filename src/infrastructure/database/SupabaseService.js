@@ -835,8 +835,9 @@ CREATE TABLE public.videos (
                         question_text: q.question,
                         correct_index: q.correctIndex,
                         explanation: q.explanation,
-                        // Generate simple hash to avoid exact duplicates
-                        question_hash: this._generateHash(q.question + (q.explanation || ''))
+                        // Ensure embeddings and hash are saved if provided (Fallback support)
+                        question_embedding: q.question_embedding || q.embedding || null,
+                        question_hash: q.question_hash || this._generateHash(q.question + (q.explanation || ''))
                     })
                     .select('id')
                     .single();
@@ -852,8 +853,10 @@ CREATE TABLE public.videos (
                 if (q.options && Array.isArray(q.options)) {
                     const optionsPayload = q.options.map((optText, idx) => ({
                         question_id: questionId,
-                        option_text: optText,
-                        order_index: idx
+                        option_text: typeof optText === 'object' ? (optText.text || optText.option_text) : optText,
+                        order_index: idx,
+                        // Support option embeddings if mapped
+                        option_embedding: (q.option_embeddings && q.option_embeddings[idx]) ? q.option_embeddings[idx] : null
                     }));
 
                     const { error: oError } = await this.client
