@@ -541,18 +541,17 @@ export class MCPService {
                 // --- 2. Embedding Generation (Paso C) ---
                 let questionEmbedding = null;
                 try {
-                    // Embed using the 4096-dim model (Qwen) by default, or service default
+                    // Embed using the 4096-dim model (Qwen) by default
                     questionEmbedding = await embeddingService.embedQuery(qText);
                 } catch (e) {
-                    logger.warn(`⚠️ Failed to embed question: ${e.message}. Using fallback zero vector.`);
-                    // Fallback to zero vector to ensure saving
-                    questionEmbedding = new Array(embeddingService.dimensions || 1536).fill(0.01);
+                    logger.error(`❌ Failed to embed question: ${e.message}`);
+                    continue;
                 }
 
                 // STRICT VALIDATION: Ensure embedding is valid to prevent NULLs in DB
                 if (!Array.isArray(questionEmbedding) || questionEmbedding.length === 0) {
-                    logger.warn(`⚠️ Embedding invalid. Using fallback.`);
-                    questionEmbedding = new Array(embeddingService.dimensions || 1536).fill(0.01);
+                    logger.warn(`⚠️ Embedding service returned invalid result for: "${qText.substring(0,30)}...". Skipping save.`);
+                    continue;
                 }
 
                 // --- 3. Semantic Search (Paso D & E) ---
@@ -620,8 +619,14 @@ export class MCPService {
 
                 // --- 5. Save Question & Options (Paso F & H) ---
                 // Save Question
-                if (!questionEmbedding) {
-                    logger.error(`❌ CRITICAL: Attempted to save question without embedding: "${qText.substring(0,30)}..." - SKIPPING`);
+                // STRICT PRE-INSERT VALIDATION
+                if (!questionEmbedding || !Array.isArray(questionEmbedding) || questionEmbedding.length === 0) {
+                    logger.error(`❌ FATAL: Logic error - Question embedding lost before save: "${qText.substring(0,30)}..."`);
+                    continue;
+                }
+
+                if (!questionHash) {
+                    logger.error(`❌ FATAL: Logic error - Question hash missing: "${qText.substring(0,30)}..."`);
                     continue;
                 }
 
@@ -633,7 +638,7 @@ export class MCPService {
                         course_id: courseId,
                         question_text: qText,
                         question_hash: questionHash,
-                        question_embedding: questionEmbedding, // Save the vector!
+                        question_embedding: questionEmbedding,
                         correct_index: qIndex,
                         explanation: qExplanation
                     })
