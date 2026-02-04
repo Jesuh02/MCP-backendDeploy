@@ -860,6 +860,18 @@ CREATE TABLE public.videos (
                     continue;
                 }
 
+                // 🔍 UNIQUENESS CHECK: Check if question with this hash already exists
+                const { data: existingQ } = await this.client
+                    .from('questions_history')
+                    .select('id')
+                    .eq('question_hash', qHash)
+                    .maybeSingle();
+
+                if (existingQ) {
+                    logger.info(`♻️ Skipped duplicate question (Hash: ${qHash.substring(0,8)}...)`);
+                    continue;
+                }
+
                 // 1. Insert Question
                 const { data: qData, error: qError } = await this.client
                     .from('questions_history')
