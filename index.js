@@ -51,6 +51,7 @@ const app = express();
 // LOGGING CRÍTICO PARA DEPURACIÓN EN RAILWAY
 console.log('=================================================');
 console.log('🚀 INICIANDO SERVIDOR - DIAGNÓSTICO DE ARRANQUE');
+console.log('✅ V2.5 FIX: STRICT EMBEDDING ENFORCEMENT ACTIVE');
 console.log('=================================================');
 console.log(`📌 NODE_ENV: ${process.env.NODE_ENV}`);
 console.log(`📌 PORT (env): ${process.env.PORT}`);

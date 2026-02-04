@@ -619,6 +619,11 @@ export class MCPService {
 
                 // --- 5. Save Question & Options (Paso F & H) ---
                 // Save Question
+                if (!questionEmbedding) {
+                    logger.error(`❌ CRITICAL: Attempted to save question without embedding: "${qText.substring(0,30)}..." - SKIPPING`);
+                    continue;
+                }
+
                 const { data: savedQ, error: saveError } = await supabase
                     .from('questions_history')
                     .insert({
@@ -651,12 +656,18 @@ export class MCPService {
                         question_id: questionId,
                         option_text: String(opt),
                         order_index: idx,
-                        option_embedding: optionEmbeddings[idx] || null // Save option vector!
+                        option_embedding: (optionEmbeddings && optionEmbeddings[idx]) ? optionEmbeddings[idx] : [] // Force array or empty, never null if possible, but triggers error if empty in vector column
                     }));
+
+                    // Filter out invalid option embeddings to be safe? 
+                    // No, DB requires vector. If we send [], it might fail. 
+                    // If we send null, it violates requirement.
+                    // We MUST have embeddings.
 
                     const { error: optError } = await supabase
                         .from('question_options')
                         .insert(optionsPayload);
+
 
                     if (optError) {
                         logger.error(`❌ Error saving options: ${optError.message}`);

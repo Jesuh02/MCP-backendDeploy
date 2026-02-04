@@ -854,6 +854,12 @@ CREATE TABLE public.videos (
                     }
                 }
 
+                // CRITICAL SAFETY V2: Abort if embedding failed. Do NOT insert NULL.
+                if (!qEmbed || !Array.isArray(qEmbed) || qEmbed.length === 0) {
+                    logger.error(`❌ FATAL: Skipping question save because embedding is missing/failed: "${qText.substring(0,25)}..."`);
+                    continue;
+                }
+
                 // 1. Insert Question
                 const { data: qData, error: qError } = await this.client
                     .from('questions_history')
@@ -864,7 +870,7 @@ CREATE TABLE public.videos (
                         question_text: qText,
                         correct_index: q.correctIndex,
                         explanation: q.explanation,
-                        question_embedding: qEmbed || null,
+                        question_embedding: qEmbed, // Removed || null, it must be valid now
                         question_hash: qHash || null
                     })
                     .select('id')
