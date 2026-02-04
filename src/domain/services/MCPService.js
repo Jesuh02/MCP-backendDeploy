@@ -548,6 +548,12 @@ export class MCPService {
                     continue;
                 }
 
+                // STRICT VALIDATION: Ensure embedding is valid to prevent NULLs in DB
+                if (!Array.isArray(questionEmbedding) || questionEmbedding.length === 0) {
+                    logger.warn(`⚠️ Embedding service returned invalid result for: "${qText.substring(0,30)}...". Skipping save.`);
+                    continue;
+                }
+
                 // --- 3. Semantic Search (Paso D & E) ---
                 if (questionEmbedding) {
                     // Use raw SQL via RPC or fallback to match_questions
@@ -592,6 +598,12 @@ export class MCPService {
                         optionEmbeddings = await embeddingService.embedDocuments(optionsArray.map(o => String(o).trim()));
                     } catch (e) {
                         logger.error(`❌ Failed to embed options: ${e.message}`);
+                        continue;
+                    }
+
+                    // Validate option embeddings
+                    if (!Array.isArray(optionEmbeddings) || optionEmbeddings.length !== optionsArray.length) {
+                        logger.warn(`⚠️ Option embeddings count mismatch or invalid (Expected ${optionsArray.length}, Got ${optionEmbeddings?.length}). Skipping question.`);
                         continue;
                     }
 
