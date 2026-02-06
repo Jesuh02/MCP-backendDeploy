@@ -5,13 +5,14 @@
 
 [![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![DeepSeek](https://img.shields.io/badge/Inteligencia-DeepSeek_V3.2-blue?style=for-the-badge)](https://deepseek.com)
+[![Qwen](https://img.shields.io/badge/Embeddings-Qwen_2.5_VL-violet?style=for-the-badge)](https://huggingface.co/Qwen)
 [![Protocol](https://img.shields.io/badge/Protocolo-MCP-orange?style=for-the-badge)](https://modelcontextprotocol.io)
 
 API • Motor de inteligencia • Despliegue 
 </div>
 
 
-### 🗺️ Diagrama Interactivo Navegable (Estilo Lucidchart)
+### 🗺️ Diagrama Interactivo Navegable  
 
 <div align="center">
   
@@ -26,6 +27,7 @@ API • Motor de inteligencia • Despliegue
 ## 🔥 Últimas novedades
 
 - **DeepSeek-V3.2**: Migración completa — inferencia más rápida y mejor lógica SQL.
+- **Qwen-2.5-VL Integration**: Motor de embeddings dedicado para garantizar unicidad semántica y análisis visual.
 - **Pipeline RAG**: Soporta chunking de PDFs y almacenamiento vectorial en Supabase/pgvector.
 - **Text-to-SQL con autocorrección**: Mayor robustez frente a errores de esquema.
 
@@ -45,6 +47,23 @@ Este microservicio actúa como el "cerebro" del ecosistema CourseV. No sólo ree
 ### Agente evaluador (RAG / Grader)
 - Integración: embeddings, búsqueda vectorial y comparación con rúbricas almacenadas en la base vectorial (Supabase).
 - Resultado: feedback detallado y puntuado por ítem.
+
+### 🛡️ Protocolo de Unicidad y Ecosistema (DeepSeek + Qwen)
+
+Para garantizar un aprendizaje no repetitivo, el sistema implementa un **Protocolo de Unicidad Estricta** que orquesta múltiples modelos de IA:
+
+1.  **El Generador (DeepSeek V3)**: Construye preguntas pedagógicas complejas y variadas.
+2.  **El Auditor Semántico (Qwen-VL)**: Antes de guardar una pregunta, **Qwen** analiza su "significado vectorial".
+    *   **Fase 1 (Literal)**: Se verifica la huella digital exacta (Hash) del texto.
+    *   **Fase 2 (Semántica)**: Qwen proyecta la pregunta en un espacio conceptual. Si la nueva pregunta se parece demasiado en *significado* a una anterior (aunque las palabras sean distintas), se detecta la colisión y se descarta.
+
+<div align="center">
+
+[![Diagrama de Flujo de Unicidad](https://img.shields.io/badge/Ver_Diagrama_de_Flujo-Logica_de_Unicidad-7A5BE2?style=for-the-badge&logo=mermaid)](https://mermaid.ai/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/a0a51f98-5ba2-4734-b1ec-96e510856661/version/v0.1/edit?shouldShowPopup=true)
+
+</div>
+
+Este mecanismo ("Zero-Duplication") obliga al sistema a explorar constantemente nuevos ángulos del mismo tema, evitando bucles de contenido.
 
 ## 📂 Estructura del proyecto (resumen práctico)
 
