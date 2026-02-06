@@ -5,7 +5,7 @@
 
 [![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![DeepSeek](https://img.shields.io/badge/Inteligencia-DeepSeek_V3.2-blue?style=for-the-badge)](https://deepseek.com)
-[![Qwen](https://img.shields.io/badge/Embeddings-Qwen_2.5_VL-violet?style=for-the-badge)](https://huggingface.co/Qwen)
+[![Qwen](https://img.shields.io/badge/Embeddings-Qwen3_Embedding_8B-violet?style=for-the-badge)](https://huggingface.co/Qwen)
 [![Protocol](https://img.shields.io/badge/Protocolo-MCP-orange?style=for-the-badge)](https://modelcontextprotocol.io)
 
 API • Motor de inteligencia • Despliegue 
@@ -27,7 +27,7 @@ API • Motor de inteligencia • Despliegue
 ## 🔥 Últimas novedades
 
 - **DeepSeek-V3.2**: Migración completa — inferencia más rápida y mejor lógica SQL.
-- **Qwen-2.5-VL Integration**: Motor de embeddings dedicado para garantizar unicidad semántica y análisis visual.
+- **Qwen3 Embedding 8B Integration**: Motor de embeddings dedicado para garantizar unicidad semántica y análisis visual.
 - **Pipeline RAG**: Soporta chunking de PDFs y almacenamiento vectorial en Supabase/pgvector.
 - **Text-to-SQL con autocorrección**: Mayor robustez frente a errores de esquema.
 
@@ -48,14 +48,14 @@ Este microservicio actúa como el "cerebro" del ecosistema CourseV. No sólo ree
 - Integración: embeddings, búsqueda vectorial y comparación con rúbricas almacenadas en la base vectorial (Supabase).
 - Resultado: feedback detallado y puntuado por ítem.
 
-### 🛡️ Arquitectura de Pensamiento Único (DeepSeek + Qwen)
+### 🛡️ Arquitectura de Pensamiento Único (DeepSeek + Qwen3)
 
 Para garantizar un aprendizaje evolutivo y evitar la fatiga por repetición, el backend actúa como un "Consejo Cognitivo" donde dos modelos de Inteligencia Artificial colaboran con roles estrictos:
 
 1.  **El Arquitecto Creativo (DeepSeek V3)**: 
     *   Su función es puramente **pedagógica**. Analiza el historial del estudiante, detecta brechas de conocimiento y diseña escenarios de refuerzo complejos. No se preocupa por la base de datos, solo por la calidad educativa.
 
-2.  **El Juez Semántico (Qwen-2.5-VL)**: 
+2.  **El Juez Semántico (Qwen3 Embedding 8B)**: 
     *   Actúa como auditor de calidad y **garante de unicidad**. Antes de que cualquier pregunta llegue al alumno, Qwen la "lee" para entender su significado profundo, más allá de las palabras utilizadas.
 
 #### ¿Cómo funciona el filtro "Zero-Duplication"?
