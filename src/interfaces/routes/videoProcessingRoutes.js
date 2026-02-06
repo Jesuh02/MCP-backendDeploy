@@ -441,6 +441,47 @@ router.post('/process-url', async(req, res) => {
                 masterPlaylistUrl: masterUrl,
                 qualities: result.qualities.map(q => q.quality)
             };
+        } else {
+            // Passthrough with Fast Start Optimization
+            console.log(`🚀 [Process URL] Optimizing video for fast start...`);
+            const outputDir = path.join(os.tmpdir(), `coursev-output-${videoId}`);
+            await fs.mkdir(outputDir, { recursive: true });
+            const optimizedPath = path.join(outputDir, 'optimized.mp4');
+
+            try {
+                // Apply fast start
+                await videoService.applyFastStart(tempPath, optimizedPath);
+                
+                // Upload optimized file
+                const optimizedContent = await fs.readFile(optimizedPath);
+                const videoUrl = await r2Service.uploadFile(
+                    optimizedContent,
+                    `videos/${username}/${videoId}/video.mp4`,
+                    'video/mp4'
+                );
+
+                result = {
+                    type: 'passthrough',
+                    url: videoUrl,
+                    optimized: true
+                };
+            } catch (error) {
+                console.warn('⚠️ Fast start optimization failed in process-url, using original:', error.message);
+                
+                // Fallback to original
+                const originalContent = await fs.readFile(tempPath);
+                const videoUrl = await r2Service.uploadFile(
+                    originalContent,
+                    `videos/${username}/${videoId}/video.mp4`,
+                    'video/mp4'
+                );
+
+                result = {
+                    type: 'passthrough',
+                    url: videoUrl,
+                    optimized: false
+                };
+            }
         }
 
         // Cleanup
@@ -599,10 +640,32 @@ router.post('/insert', upload.single('videoFile'), async (req, res) => {
         // If multipart upload provided a file, read it from disk and attach as base64
         if (req.file && req.file.path) {
             try {
-                const fileBuffer = await fs.readFile(req.file.path);
+                // Get video service instance for optimization
+                const videoService = VideoProcessingService.getInstance();
+                const optimizedPath = `${req.file.path}_optimized.mp4`;
+                let fileToRead = req.file.path;
+
+                // Attempt to apply fast start optimization
+                try {
+                    console.log('🚀 [Insert] Applying fast start optimization...');
+                    await videoService.applyFastStart(req.file.path, optimizedPath);
+                    fileToRead = optimizedPath;
+                    console.log('✅ [Insert] Optimization successful');
+                } catch (optError) {
+                    console.warn('⚠️ [Insert] Optimization failed, using original file:', optError.message);
+                    // Continue with original fileToRead
+                }
+
+                const fileBuffer = await fs.readFile(fileToRead);
                 payload.videoBase64 = fileBuffer.toString('base64');
                 payload.originalFilename = req.file.originalname || `${title.replace(/\s+/g, '_')}.mp4`;
                 payload.contentType = req.file.mimetype || 'video/mp4';
+                
+                // Cleanup optimized file if created
+                if (fileToRead !== req.file.path) {
+                    try { await fs.unlink(optimizedPath); } catch (e) { /* ignore */ }
+                }
+                
                 // Remove temp file after reading
                 try { await fs.unlink(req.file.path); } catch (e) { /* ignore */ }
             } catch (e) {
