@@ -48,22 +48,31 @@ Este microservicio actúa como el "cerebro" del ecosistema CourseV. No sólo ree
 - Integración: embeddings, búsqueda vectorial y comparación con rúbricas almacenadas en la base vectorial (Supabase).
 - Resultado: feedback detallado y puntuado por ítem.
 
-### 🛡️ Protocolo de Unicidad y Ecosistema (DeepSeek + Qwen)
+### 🛡️ Arquitectura de Pensamiento Único (DeepSeek + Qwen)
 
-Para garantizar un aprendizaje no repetitivo, el sistema implementa un **Protocolo de Unicidad Estricta** que orquesta múltiples modelos de IA:
+Para garantizar un aprendizaje evolutivo y evitar la fatiga por repetición, el backend actúa como un "Consejo Cognitivo" donde dos modelos de Inteligencia Artificial colaboran con roles estrictos:
 
-1.  **El Generador (DeepSeek V3)**: Construye preguntas pedagógicas complejas y variadas.
-2.  **El Auditor Semántico (Qwen-VL)**: Antes de guardar una pregunta, **Qwen** analiza su "significado vectorial".
-    *   **Fase 1 (Literal)**: Se verifica la huella digital exacta (Hash) del texto.
-    *   **Fase 2 (Semántica)**: Qwen proyecta la pregunta en un espacio conceptual. Si la nueva pregunta se parece demasiado en *significado* a una anterior (aunque las palabras sean distintas), se detecta la colisión y se descarta.
+1.  **El Arquitecto Creativo (DeepSeek V3)**: 
+    *   Su función es puramente **pedagógica**. Analiza el historial del estudiante, detecta brechas de conocimiento y diseña escenarios de refuerzo complejos. No se preocupa por la base de datos, solo por la calidad educativa.
+
+2.  **El Juez Semántico (Qwen-2.5-VL)**: 
+    *   Actúa como auditor de calidad y **garante de unicidad**. Antes de que cualquier pregunta llegue al alumno, Qwen la "lee" para entender su significado profundo, más allá de las palabras utilizadas.
+
+#### ¿Cómo funciona el filtro "Zero-Duplication"?
+El sistema aplica un proceso de purificación en dos niveles para cada pregunta generada:
+
+*   **Validador de Identidad (Nivel 1)**: Se asegura de que la redacción no sea idéntica a ninguna anterior.
+*   **Auditoría Conceptual (Nivel 2 - Powered by Qwen)**: Aquí ocurre la magia. Qwen transforma el texto en un "mapa de ideas".
+    *   Si el sistema detecta que la nueva pregunta tiene el mismo *significado* o *intención* que una anterior (aunque use palabras totalmente distintas, sinónimos o estructuras diferentes), **Qwen la bloquea**.
+    *   Esto obliga al Generador (DeepSeek) a buscar ángulos, casos de uso o matices completamente nuevos sobre el mismo tema.
 
 <div align="center">
 
-[![Diagrama de Flujo de Unicidad](https://img.shields.io/badge/Ver_Diagrama_de_Flujo-Logica_de_Unicidad-7A5BE2?style=for-the-badge&logo=mermaid)](https://mermaid.ai/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/a0a51f98-5ba2-4734-b1ec-96e510856661/version/v0.1/edit?shouldShowPopup=true)
+[![Diagrama de Flujo de Unicidad](https://img.shields.io/badge/Ver_Flujo_de_Pensamiento-Arquitectura_de_Agentes-7A5BE2?style=for-the-badge&logo=mermaid)](https://mermaid.ai/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/a0a51f98-5ba2-4734-b1ec-96e510856661/version/v0.1/edit?shouldShowPopup=true)
 
 </div>
 
-Este mecanismo ("Zero-Duplication") obliga al sistema a explorar constantemente nuevos ángulos del mismo tema, evitando bucles de contenido.
+Este ecosistema asegura que el usuario siempre enfrente **desafíos cognitivos frescos**, maximizando la retención mediante la novedad constante.
 
 ## 📂 Estructura del proyecto (resumen práctico)
 
