@@ -290,21 +290,46 @@ router.post('/process', upload.single('video'), async(req, res) => {
             };
 
         } else {
-            // Passthrough - upload original
-            console.log(`📤 Uploading original video ${videoId}...`);
+            // Passthrough - optimize with fast start and upload
+            console.log(`📤 Optimizing (fast start) and uploading original video ${videoId}...`);
 
-            const originalContent = await fs.readFile(req.file.path);
-            const originalUrl = await r2Service.uploadFile(
-                originalContent,
-                `videos/${username}/${videoId}/video.mp4`,
-                'video/mp4'
-            );
+            // Apply fast start (move moov atom to beginning)
+            const optimizedPath = path.join(outputDir, 'optimized.mp4');
+            await fs.mkdir(outputDir, { recursive: true });
+            
+            try {
+                await videoService.applyFastStart(req.file.path, optimizedPath);
+                
+                const optimizedContent = await fs.readFile(optimizedPath);
+                const originalUrl = await r2Service.uploadFile(
+                    optimizedContent,
+                    `videos/${username}/${videoId}/video.mp4`,
+                    'video/mp4'
+                );
 
-            result = {
-                type: 'passthrough',
-                url: originalUrl,
-                size: metadata.fileSize
-            };
+                result = {
+                    type: 'passthrough',
+                    url: originalUrl,
+                    size: metadata.fileSize
+                };
+            } catch (error) {
+                console.warn('⚠️ Fast start optimization failed, falling back to original file:', error.message);
+                
+                // Fallback to original if optimization fails
+                const originalContent = await fs.readFile(req.file.path);
+                const originalUrl = await r2Service.uploadFile(
+                    originalContent,
+                    `videos/${username}/${videoId}/video.mp4`,
+                    'video/mp4'
+                );
+                
+                result = {
+                    type: 'passthrough',
+                    url: originalUrl,
+                    size: metadata.fileSize,
+                    optimizationFailed: true
+                };
+            }
         }
 
         // Cleanup temp files

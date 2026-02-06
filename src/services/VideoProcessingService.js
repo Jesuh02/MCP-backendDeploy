@@ -573,6 +573,45 @@ class VideoProcessingService extends EventEmitter {
     }
 
     /**
+     * Apply fast start optimization (move moov atom to beginning)
+     * This allows playback to start before the whole file is downloaded
+     * @param {string} inputPath - Path to input video
+     * @param {string} outputPath - Path for output video
+     * @returns {Promise<string>} Path to optimized video
+     */
+    async applyFastStart(inputPath, outputPath) {
+        console.log('🚀 [Fast Start] Applying fast start optimization...');
+        
+        return new Promise((resolve, reject) => {
+            const args = [
+                '-i', inputPath,
+                '-c', 'copy',
+                '-movflags', '+faststart',
+                '-y',
+                outputPath
+            ];
+
+            const ffmpeg = spawn(this.ffmpegPath, args);
+            let stderr = '';
+
+            ffmpeg.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+            
+            ffmpeg.on('close', (code) => {
+                if (code !== 0) {
+                    reject(new Error(`Fast start failed with code ${code}: ${stderr}`));
+                } else {
+                    console.log('✅ [Fast Start] Optimization complete');
+                    resolve(outputPath);
+                }
+            });
+            
+            ffmpeg.on('error', (err) => reject(new Error(`Failed to spawn FFmpeg: ${err.message}`)));
+        });
+    }
+
+    /**
      * Get job status
      * @param {string} jobId - Job ID
      * @returns {Object|null} Job status or null if not found
