@@ -57,9 +57,11 @@ router.post('/procesar-prompt', async(req, res) => {
                 const submissionId = parseId(req.body.submissionId || req.body.submission_id); // 🔥 Extract submissionId
 
                 // 🔥 NEW LOGIC: Fetch submission context from DB if missing in request and submissionId is provided
-                // Check if fileContent is effectively empty OR if it's just the URL string
+                // Check if fileContent is effectively empty OR if it's just the URL string OR just the metadata header
                 const seemsLikeUrl = fileContent && fileContent.trim().startsWith('http') && fileContent.length < 500;
-                const seemsEmpty = !fileContent || fileContent.length < 50;
+                const hasMetadataHeader = fileContent && fileContent.includes('=== INFORMACIÓN DEL ARCHIVO ENVIADO ===');
+                // If has header, we expect content to follow. If total length is small (e.g. < 400), it's likely just the header.
+                const seemsEmpty = !fileContent || fileContent.length < 50 || (hasMetadataHeader && fileContent.length < 400);
 
                 if (submissionId && (seemsEmpty || seemsLikeUrl)) {
                     try {
