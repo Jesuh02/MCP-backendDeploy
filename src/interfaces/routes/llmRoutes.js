@@ -18,7 +18,7 @@ const router = Router();
 
 router.post('/procesar-prompt', async(req, res) => {
             try {
-                const { prompt, ollamaUrl, model, jsonContent, taskDescription, fileContent } = req.body;
+                let { prompt, ollamaUrl, model, jsonContent, taskDescription, fileContent } = req.body;
 
                 // 🛑 CHECK: Determine if we should process this as a Chat/Generation request or purely Ingestion
                 // If prompt contains keywords like "pregunta", "quiz", "examen", we assume generation intent
@@ -58,12 +58,26 @@ router.post('/procesar-prompt', async(req, res) => {
 
                 // 🔥 NEW LOGIC: Fetch submission context from DB if missing in request and submissionId is provided
                 // Check if fileContent is effectively empty OR if it's just the URL string OR just the metadata header
-                const seemsLikeUrl = fileContent && fileContent.trim().startsWith('http') && fileContent.length < 500;
+                const seemsLikeUrl = fileContent && (fileContent.trim().startsWith('http') || fileContent.trim().match(/^https?:\/\/[^\s]+$/)) && fileContent.length < 500;
                 const hasMetadataHeader = fileContent && fileContent.includes('=== INFORMACIÓN DEL ARCHIVO ENVIADO ===');
-                // If has header, we expect content to follow. If total length is small (e.g. < 400), it's likely just the header.
-                const seemsEmpty = !fileContent || fileContent.length < 50 || (hasMetadataHeader && fileContent.length < 400);
 
-                if (submissionId && (seemsEmpty || seemsLikeUrl)) {
+                // Advanced Empty Check: If header exists, check if there is real content after the marker
+                let isContentEmpty = !fileContent || fileContent.length < 50;
+                if (hasMetadataHeader) {
+                    const parts = fileContent.split('=== CONTENIDO DEL ARCHIVO ===');
+                    if (parts.length > 1) {
+                        const actualBody = parts[1].trim();
+                        // If body is empty or very short (e.g. just newlines), consider it empty
+                        if (actualBody.length < 50) isContentEmpty = true;
+                    } else {
+                        // Header present but no content marker -> Empty
+                        isContentEmpty = true;
+                    }
+                }
+
+                console.log(`🔍 Submission Check: ID=${submissionId}, SeemsURL=${seemsLikeUrl}, IsEmpty=${isContentEmpty}, Len=${fileContent ? fileContent.length : 0}`);
+
+                if (submissionId && (isContentEmpty || seemsLikeUrl)) {
                     try {
                         console.log(`🔍 Buscando entrega en DB para SubmissionId: ${submissionId}...`);
                         const { data: submission } = await SupabaseService.getInstance().client
