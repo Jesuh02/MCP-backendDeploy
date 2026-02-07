@@ -53,6 +53,92 @@ router.post('/procesar-prompt', async(req, res) => {
                 const courseId = parseId(req.body.courseId || req.body.course_id || req.body.idCurso);
                 const contentItemId = parseId(req.body.contentItemId || req.body.content_item_id);
                 const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+                const submissionId = parseId(req.body.submissionId || req.body.submission_id); // 🔥 Extract submissionId
+
+                // 🔥 NEW LOGIC: Fetch submission context from DB if missing in request and submissionId is provided
+                if (submissionId && (!fileContent || fileContent.length < 50)) {
+                    try {
+                        console.log(`🔍 Buscando entrega en DB para SubmissionId: ${submissionId}...`);
+                        const { data: submission } = await SupabaseService.getInstance().client
+                            .from('task_submissions')
+                            .select('file_uri, file_name, feedback, grade')
+                            .eq('id', submissionId)
+                            .maybeSingle();
+
+                        if (submission && submission.file_uri) {
+                            console.log(`✅ Entrega encontrada en DB: ${submission.file_name} (${submission.file_uri})`);
+
+                            // Attempt to download file content
+                            const r2Service = R2StorageService.getInstance();
+                            // Reuse logic similar to jsonContent processing
+                            const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, submission.file_name);
+
+                            if (fileData && fileData.content) {
+                                let fetchedContent = "";
+                                const rawName = submission.file_name || "";
+                                const nameLower = rawName.toLowerCase();
+                                const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+
+                                if (isPdf) {
+                                    try {
+                                        const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                        const pdfData = await pdf(pdfBuffer);
+                                        if (pdfData.text) fetchedContent = pdfData.text;
+                                    } catch (pdfErr) {
+                                        console.warn(`Error parsing PDF from DB: ${pdfErr.message}`);
+                                    }
+                                } else if (nameLower.match(/\.xlsx?$/)) {
+                                    try {
+                                        const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
+                                        for (const sheetName of workbook.SheetNames) {
+                                            fetchedContent += `\n[Sheet: ${sheetName}]\n${xlsx.utils.sheet_to_csv(workbook.Sheets[sheetName])}\n`;
+                                        }
+                                    } catch (xlsErr) {
+                                        console.warn(`Error parsing Excel from DB: ${xlsErr.message}`);
+                                    }
+                                } else if (!fileData.isBase64) {
+                                    fetchedContent = fileData.content;
+                                }
+
+                                if (fetchedContent && fetchedContent.length > 50) {
+                                    if (!fileContent) fileContent = "";
+                                    fileContent += `\n\n[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`; // Generous limit
+                                    console.log(`📄 Contenido inyectado desde DB (${fetchedContent.length} chars).`);
+                                }
+                            }
+                        }
+                    } catch (dbErr) {
+                        console.warn('⚠️ Error buscando entrega en DB por submissionId:', dbErr.message);
+                    }
+                }
+                // Fallback: search by taskId + userId if submissionId not valid but those are
+                else if (taskId && userId && (!fileContent || fileContent.length < 50)) {
+                    try {
+                        console.log(`🔍 Buscando entrega en DB por TaskId: ${taskId} + StudentId: ${userId}...`);
+                        const { data: submission } = await SupabaseService.getInstance().client
+                            .from('task_submissions')
+                            .select('file_uri, file_name')
+                            .eq('task_id', taskId)
+                            .eq('student_id', userId)
+                            .order('created_at', { ascending: false })
+                            .limit(1)
+                            .maybeSingle();
+
+                        if (submission && submission.file_uri) {
+                            console.log(`✅ Entrega encontrada (Task+User): ${submission.file_name}`);
+                            const r2Service = R2StorageService.getInstance();
+                            const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, submission.file_name);
+                            // ... simplified fetch logic for fallback ...
+                            if (fileData && !fileData.isBase64) { // Text only for fallback simplicity
+                                const fetchedText = fileData.content;
+                                if (fetchedText.length > 50) {
+                                    if (!fileContent) fileContent = "";
+                                    fileContent += `\n\n[CONTENIDO RECUPERADO DB]:\n${fetchedText.substring(0, 30000)}`;
+                                }
+                            }
+                        }
+                    } catch (e) { console.warn('Fallback DB search failed:', e.message); }
+                }
 
                 // Check if session exists to see if we can skip ingestion (User Rule: omit creation of new embeddings if session exists)
                 let skipIngestion = false;
@@ -396,7 +482,7 @@ NO USES JAMÁS en preguntas u opciones:
                     try {
                         const systemPrompt = isQuizGeneration 
                             ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
-                            : 'Eres un tutor inteligente, amable y experto que ayuda a los estudiantes. Responde siempre en español de manera clara y motivadora. Si el usuario pide calificar o dar feedback de una tarea, DEBES ser objetivo y constructivo, y si la entrega es válida, DEBES incluir al final de tu respuesta el texto "**calificación actual: X/10**" (donde X es la nota) para que el sistema procese la nota. Si no puedes calificar, explica por qué.';
+                            : 'Eres un tutor inteligente y experto. Responde en español. MODO CALIFICACIÓN: Si recibes una tarea y una entrega, evalúa rigurosamente si la entrega cumple la descripción. Si el usuario pide calificar, DEBES incluir al final de tu respuesta "**calificación actual: X/10**" (donde X es la nota, ejemplo "calificación actual: 8/10") para activar la interfaz de calificación. Sin esta frase, el profesor no podrá guardar la nota.';
                             
                         console.log(`🧠 Usando DeepSeek (${isQuizGeneration ? 'QUIZ MODE' : 'CHAT MODE'})...`);
                         
@@ -882,11 +968,36 @@ NO USES JAMÁS en preguntas u opciones:
             respuestaTexto = data.response;
         }
 
+        // Extract grade if present (Backend-side parsing to ensure Android buttons appear)
+        let extractedGrade = null;
+        let isGrading = false;
+
+        if (typeof respuestaTexto === 'string') {
+            try {
+                // Regex to find **calificación actual: X/10** or similar patterns
+                // Matches: **calificación actual: 8/10**, **calificación actual: 8.5/10**, etc.
+                const gradeMatch = respuestaTexto.match(/\*\*calificación actual:\s*([\d\.]+)\/10\*\*/i) ||
+                                  respuestaTexto.match(/calificación actual:\s*([\d\.]+)\/10/i) ||
+                                  respuestaTexto.match(/Nota:\s*([\d\.]+)\/10/i);
+
+                if (gradeMatch && gradeMatch[1]) {
+                    const val = parseFloat(gradeMatch[1]);
+                    if (!isNaN(val)) {
+                        extractedGrade = val;
+                        isGrading = true;
+                        console.log(`🎓 Grade extracted from response: ${extractedGrade}/10`);
+                    }
+                }
+            } catch (e) {
+                console.warn('⚠️ Error extracting grade from response:', e.message);
+            }
+        }
+
         // Return in MicroservicioPromptResponse format matching Android expectations
         res.json({
             respuesta_texto: respuestaTexto,
-            nota: null,
-            esCalificacion: false,
+            nota: extractedGrade,
+            esCalificacion: isGrading,
             contenidoVacio: false,
             error: null
         });
