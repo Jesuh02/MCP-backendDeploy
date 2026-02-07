@@ -68,7 +68,7 @@ El sistema aplica un proceso de purificación en dos niveles para cada pregunta 
 
 <div align="center">
 
-[![Diagrama de Flujo de Unicidad](https://img.shields.io/badge/Ver_Flujo_de_Pensamiento-Arquitectura_de_Agentes-7A5BE2?style=for-the-badge&logo=mermaid)](https://mermaid.ai/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/a0a51f98-5ba2-4734-b1ec-96e510856661/version/v0.1/edit?shouldShowPopup=true)
+[![Diagrama de Flujo de Unicidad](https://www.mermaidchart.com/raw/a0a51f98-5ba2-4734-b1ec-96e510856661?theme=light&version=v0.1&format=svg)](https://mermaid.ai/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/a0a51f98-5ba2-4734-b1ec-96e510856661/version/v0.1/edit?shouldShowPopup=true)
 
 </div>
 
