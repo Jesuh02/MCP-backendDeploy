@@ -56,7 +56,11 @@ router.post('/procesar-prompt', async(req, res) => {
                 const submissionId = parseId(req.body.submissionId || req.body.submission_id); // 🔥 Extract submissionId
 
                 // 🔥 NEW LOGIC: Fetch submission context from DB if missing in request and submissionId is provided
-                if (submissionId && (!fileContent || fileContent.length < 50)) {
+                // Check if fileContent is effectively empty OR if it's just the URL string
+                const seemsLikeUrl = fileContent && fileContent.trim().startsWith('http') && fileContent.length < 500;
+                const seemsEmpty = !fileContent || fileContent.length < 50;
+
+                if (submissionId && (seemsEmpty || seemsLikeUrl)) {
                     try {
                         console.log(`🔍 Buscando entrega en DB para SubmissionId: ${submissionId}...`);
                         const { data: submission } = await SupabaseService.getInstance().client
@@ -72,8 +76,8 @@ router.post('/procesar-prompt', async(req, res) => {
                             const r2Service = R2StorageService.getInstance();
                             let fetchedContent = "";
                             // Default to .txt if name is missing to force text processing
-                            const rawName = submission.file_name || "archivo_recuperado.txt"; 
-                            
+                            const rawName = submission.file_name || "archivo_recuperado.txt";
+
                             try {
                                 // Try R2/DB Service first
                                 const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, rawName, submissionId);
@@ -119,8 +123,14 @@ router.post('/procesar-prompt', async(req, res) => {
                             }
 
                             if (fetchedContent && fetchedContent.length > 5) { // Reduced threshold to 5 chars
-                                if (!fileContent) fileContent = "";
-                                fileContent += `\n\n[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`; 
+                                // IMPORTANT: Validar que no estemos concatenando lo mismo
+                                if (!fileContent || fileContent.includes(submission.file_uri)) {
+                                     // If fileContent was just the URL or empty, replace it or init it
+                                     fileContent = `[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`;
+                                } else {
+                                     // Append if there was something else meaningful
+                                     fileContent += `\n\n[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`; 
+                                }
                                 console.log(`📄 Contenido inyectado desde DB (${fetchedContent.length} chars).`);
                             }
                         }
