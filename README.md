@@ -70,7 +70,8 @@ El sistema aplica un proceso de purificación en dos niveles para cada pregunta 
 
 **Haz clic en el botón para ver el flujo de decisión de los agentes** 🔍
 
-[![Diagrama de Flujo de Unicidad](https://img.shields.io/badge/Ver_Flujo_de_Pensamiento-Arquitectura_de_Agentes-7A5BE2?style=for-the-badge&logo=mermaid)](https://mermaid.ai/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/a0a51f98-5ba2-4734-b1ec-96e510856661/share/invite/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkb2N1bWVudElEIjoiYTBhNTFmOTgtNWJhMi00NzM0LWIxZWMtOTZlNTEwODU2NjYxIiwiYWNjZXNzIjoiVmlldyIsImlhdCI6MTc3MDQyNDE0MH0.LA4PARskFVvZR-_MNUT61ENR2HIk1of4w_fxlV29PC0)
+[![Diagrama de flujo](https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/uploads/Untitled%20diagram-2026-02-07-004641.png)](https://mermaid.ai/app/projects/fa72bcaf-267c-492e-89e6-1c4b155de335/diagrams/a0a51f98-5ba2-4734-b1ec-96e510856661/share/invite/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkb2N1bWVudElEIjoiYTBhNTFmOTgtNWJhMi00NzM0LWIxZWMtOTZlNTEwODU2NjYxIiwiYWNjZXNzIjoiVmlldyIsImlhdCI6MTc3MDQyNDE0MH0.LA4PARskFVvZR-_MNUT61ENR2HIk1of4w_fxlV29PC0)
+
 
 <sub>🧠 **Flujo de Pensamiento Único** — Visualiza cómo DeepSeek y Qwen colaboran para garantizar la novedad conceptual en cada pregunta generada.</sub>
 
