@@ -70,42 +70,58 @@ router.post('/procesar-prompt', async(req, res) => {
 
                             // Attempt to download file content
                             const r2Service = R2StorageService.getInstance();
-                            // Reuse logic similar to jsonContent processing
-                            // 🔥 FIX: Pass submissionId to allow checking file_contexts table
-                            const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, submission.file_name, submissionId);
+                            let fetchedContent = "";
+                            // Default to .txt if name is missing to force text processing
+                            const rawName = submission.file_name || "archivo_recuperado.txt"; 
+                            
+                            try {
+                                // Try R2/DB Service first
+                                const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, rawName, submissionId);
 
-                            if (fileData && fileData.content) {
-                                let fetchedContent = "";
-                                const rawName = submission.file_name || "";
-                                const nameLower = rawName.toLowerCase();
-                                const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+                                if (fileData && fileData.content) {
+                                    const nameLower = rawName.toLowerCase();
+                                    const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
 
-                                if (isPdf) {
-                                    try {
-                                        const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
-                                        const pdfData = await pdf(pdfBuffer);
-                                        if (pdfData.text) fetchedContent = pdfData.text;
-                                    } catch (pdfErr) {
-                                        console.warn(`Error parsing PDF from DB: ${pdfErr.message}`);
-                                    }
-                                } else if (nameLower.match(/\.xlsx?$/)) {
-                                    try {
-                                        const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
-                                        for (const sheetName of workbook.SheetNames) {
-                                            fetchedContent += `\n[Sheet: ${sheetName}]\n${xlsx.utils.sheet_to_csv(workbook.Sheets[sheetName])}\n`;
+                                    if (isPdf) {
+                                        try {
+                                            const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                            const pdfData = await pdf(pdfBuffer);
+                                            if (pdfData.text) fetchedContent = pdfData.text;
+                                        } catch (pdfErr) { console.warn(`Error parsing PDF from DB: ${pdfErr.message}`); }
+                                    } else if (nameLower.match(/\.xlsx?$/)) {
+                                        try {
+                                            const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
+                                            for (const sheetName of workbook.SheetNames) {
+                                                fetchedContent += `\n[Sheet: ${sheetName}]\n${xlsx.utils.sheet_to_csv(workbook.Sheets[sheetName])}\n`;
+                                            }
+                                        } catch (xlsErr) { console.warn(`Error parsing Excel from DB: ${xlsErr.message}`); }
+                                    } else {
+                                        // Text / Code files
+                                        if (fileData.isBase64) {
+                                            // Always try decoding base64 to utf-8 for code files if r2 returned base64
+                                            fetchedContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
+                                        } else {
+                                            fetchedContent = fileData.content;
                                         }
-                                    } catch (xlsErr) {
-                                        console.warn(`Error parsing Excel from DB: ${xlsErr.message}`);
                                     }
-                                } else if (!fileData.isBase64) {
-                                    fetchedContent = fileData.content;
                                 }
+                            } catch (r2Err) {
+                                console.warn(`⚠️ Error en R2Service, intentando descarga directa: ${r2Err.message}`);
+                                // Fallback: Direct Fetch for Public URLs (bypassing R2 logic if it failed)
+                                if (submission.file_uri && submission.file_uri.startsWith('http')) {
+                                    try {
+                                        const resp = await fetch(submission.file_uri);
+                                        if (resp.ok) fetchedContent = await resp.text();
+                                    } catch (fetchErr) {
+                                        console.error(`❌ Fallback fetch failed: ${fetchErr.message}`);
+                                    }
+                                }
+                            }
 
-                                if (fetchedContent && fetchedContent.length > 50) {
-                                    if (!fileContent) fileContent = "";
-                                    fileContent += `\n\n[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`; // Generous limit
-                                    console.log(`📄 Contenido inyectado desde DB (${fetchedContent.length} chars).`);
-                                }
+                            if (fetchedContent && fetchedContent.length > 5) { // Reduced threshold to 5 chars
+                                if (!fileContent) fileContent = "";
+                                fileContent += `\n\n[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`; 
+                                console.log(`📄 Contenido inyectado desde DB (${fetchedContent.length} chars).`);
                             }
                         }
                     } catch (dbErr) {
