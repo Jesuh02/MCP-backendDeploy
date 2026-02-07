@@ -566,6 +566,48 @@ NO USES JAMÁS en preguntas u opciones:
             // Ensure we have a string to search for JSON array
             const raw = typeof respuestaTexto === 'string' ? respuestaTexto : JSON.stringify(respuestaTexto);
             
+            // IF NOT QUIZ GENERATION: Try to extract grade for Chat Mode
+            const promptLower = (req.body.prompt || '').toLowerCase();
+            const isQuizGeneration = promptLower.includes('genera') && 
+                                   (promptLower.includes('preguntas') || promptLower.includes('quiz') || promptLower.includes('examen'));
+
+            let extractedGrade = null;
+            let extractedIsGrade = false;
+
+            if (!isQuizGeneration) {
+                // Regex to find grades like "Nota: 8/10", "Calificación: 9", "9/10", etc.
+                // Looks for numbers between 0-10 or 0-100, optionally followed by /10 or /100
+                const gradeRegex = /(?:nota|calificaci[oó]n|puntuaci[oó]n|score|grade)\s*[:=]?\s*(\d+(?:\.\d+)?)(?:\s*\/\s*(?:10|100))?/i;
+                const match = raw.match(gradeRegex);
+                
+                if (match && match[1]) {
+                    let gradeVal = parseFloat(match[1]);
+                    // Normalize 0-100 scale to 0-10 if needed (heuristic: if > 10, assume 100 scale)
+                    if (gradeVal > 10 && gradeVal <= 100) {
+                        gradeVal = gradeVal / 10;
+                    }
+                    
+                    if (!isNaN(gradeVal) && gradeVal >= 0 && gradeVal <= 10) {
+                        extractedGrade = gradeVal;
+                        extractedIsGrade = true;
+                        console.log(`🎓 Grade extracted from response: ${extractedGrade}`);
+                    }
+                } else {
+                    // Fallback: look for lonely "X/10" pattern if explicit keyword missing
+                    const simpleGradeRegex = /(\d+(?:\.\d+)?)\s*\/\s*10/i;
+                    const simpleMatch = raw.match(simpleGradeRegex);
+                    if (simpleMatch && simpleMatch[1]) {
+                         let gradeVal = parseFloat(simpleMatch[1]);
+                         if (!isNaN(gradeVal) && gradeVal >= 0 && gradeVal <= 10) {
+                            extractedGrade = gradeVal;
+                            extractedIsGrade = true;
+                            console.log(`🎓 Simple Grade extracted from response: ${extractedGrade}`);
+                         }
+                    }
+                }
+            }
+
+
             console.log('🔍 Attempting to extract JSON from response...');
             const start = raw.indexOf('[');
             const end = raw.lastIndexOf(']');
@@ -642,8 +684,9 @@ NO USES JAMÁS en preguntas u opciones:
 
                     let filtered = [];
 
-                    if (userId && courseId) {
+                    if (isQuizGeneration && userId && courseId) {
                         try {
+                            // Guarded by isQuizGeneration to prevent ChatBot confusion
                             const supabase = SupabaseService.getInstance();
 
                             // 1. Ensure Session Exists (Paso 0)
@@ -729,7 +772,7 @@ NO USES JAMÁS en preguntas u opciones:
                     }
 
                                 // If everything was filtered out (duplicates/disallowed), attempt up to 2 retries
-                                if ((userId && courseId) && Array.isArray(filtered) && filtered.length === 0 && historyQuestionsList.length > 0) {
+                                if (isQuizGeneration && (userId && courseId) && Array.isArray(filtered) && filtered.length === 0 && historyQuestionsList.length > 0) {
                                     console.log('🔁 All questions filtered; attempting DeepSeek/LLM retries to generate distinct questions');
                                     for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
                                         try {
@@ -865,6 +908,13 @@ NO USES JAMÁS en preguntas u opciones:
                                 respuestaTexto = JSON.stringify(filtered);
                 }
             }
+        
+            // Ensure extracted grade is passed along in the final response (Chat Mode)
+            if (!isQuizGeneration && extractedIsGrade) {
+                data.nota = extractedGrade;
+                data.esCalificacion = true;
+            }
+
         } catch (e) {
             console.warn('⚠️ Could not parse/shuffle LLM response JSON array:', e?.message || e);
             // Keep original data.response in case of parse failure
@@ -874,8 +924,8 @@ NO USES JAMÁS en preguntas u opciones:
         // Return in MicroservicioPromptResponse format matching Android expectations
         res.json({
             respuesta_texto: respuestaTexto,
-            nota: null,
-            esCalificacion: false,
+            nota: data.nota || null,
+            esCalificacion: data.esCalificacion || false,
             contenidoVacio: false,
             error: null
         });
