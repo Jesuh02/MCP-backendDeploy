@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import axios from 'axios';
 import { R2StorageService } from '../../services/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { MCPService } from '../../domain/services/MCPService.js';
@@ -110,26 +111,34 @@ router.post('/procesar-prompt', async(req, res) => {
                                     }
                                 }
                             } catch (r2Err) {
-                                console.warn(`⚠️ Error en R2Service, intentando descarga directa: ${r2Err.message}`);
-                                // Fallback: Direct Fetch for Public URLs (bypassing R2 logic if it failed)
-                                if (submission.file_uri && submission.file_uri.startsWith('http')) {
-                                    try {
-                                        const resp = await fetch(submission.file_uri);
-                                        if (resp.ok) fetchedContent = await resp.text();
-                                    } catch (fetchErr) {
-                                        console.error(`❌ Fallback fetch failed: ${fetchErr.message}`);
+                                console.warn(`⚠️ Error en R2Service durante recuperación primaria: ${r2Err.message}`);
+                            }
+
+                            // AGGRESSIVE FALLBACK: If R2 failed OR returned empty, and we have a URL, try direct download
+                            if ((!fetchedContent || fetchedContent.length < 20) && submission.file_uri && submission.file_uri.startsWith('http')) {
+                                console.log(`🌐 Intentando descarga directa (AXIOS Fallback) para: ${submission.file_uri}`);
+                                try {
+                                    const resp = await axios.get(submission.file_uri, { responseType: 'text', timeout: 15000 });
+                                    if (resp.data) {
+                                        const rawData = typeof resp.data === 'object' ? JSON.stringify(resp.data) : resp.data;
+                                        if (rawData && rawData.length > 5) {
+                                            fetchedContent = rawData;
+                                            console.log(`✅ Contenido recuperado vía Axios fallback (${fetchedContent.length} chars)`);
+                                        }
                                     }
+                                } catch (axiosErr) {
+                                    console.error(`❌ Fallback Axios failed: ${axiosErr.message}`);
                                 }
                             }
 
                             if (fetchedContent && fetchedContent.length > 5) { // Reduced threshold to 5 chars
                                 // IMPORTANT: Validar que no estemos concatenando lo mismo
                                 if (!fileContent || fileContent.includes(submission.file_uri)) {
-                                     // If fileContent was just the URL or empty, replace it or init it
-                                     fileContent = `[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`;
+                                    // If fileContent was just the URL or empty, replace it or init it
+                                    fileContent = `[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`;
                                 } else {
-                                     // Append if there was something else meaningful
-                                     fileContent += `\n\n[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`; 
+                                    // Append if there was something else meaningful
+                                    fileContent += `\n\n[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`;
                                 }
                                 console.log(`📄 Contenido inyectado desde DB (${fetchedContent.length} chars).`);
                             }
