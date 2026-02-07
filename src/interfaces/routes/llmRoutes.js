@@ -152,8 +152,9 @@ router.post('/procesar-prompt', async(req, res) => {
                         console.warn('⚠️ Error buscando entrega en DB por submissionId:', dbErr.message);
                     }
                 }
-                // Fallback: search by taskId + userId/studentId if submissionId not valid but those are
-                else if (taskId && (userId || studentId) && (seemsEmpty || seemsLikeUrl)) {
+                // 🔥 STRATEGY 2 (WATERFALL): Recalcular seemsEmpty y buscar por taskId + studentId si aún falta contenido
+                const seemsEmpty2 = !fileContent || fileContent.length < 50;
+                if (taskId && (userId || studentId) && seemsEmpty2) {
                     const lookupStudentId = studentId || userId;
                     try {
                         console.log(`🔍 Buscando entrega en DB por TaskId: ${taskId} + StudentId: ${lookupStudentId}...`);
@@ -200,8 +201,9 @@ router.post('/procesar-prompt', async(req, res) => {
                         }
                     } catch (e) { console.warn('Fallback DB search (Task+User) failed:', e.message); }
                 }
-                // 🔥 STRATEGY 3: fileUri provided directly by client — download it
-                else if (fileUri && fileUri.startsWith('http') && (seemsEmpty || seemsLikeUrl)) {
+                // 🔥 STRATEGY 3 (WATERFALL): Recalcular seemsEmpty y descargar vía fileUri directa si aún falta contenido
+                const seemsEmpty3 = !fileContent || fileContent.length < 50;
+                if (fileUri && fileUri.startsWith('http') && seemsEmpty3) {
                     console.log(`🌐 fileUri proporcionada por cliente, descargando directamente: ${fileUri.substring(0, 80)}...`);
                     try {
                         const resp = await axios.get(fileUri, { responseType: 'text', timeout: 15000 });
