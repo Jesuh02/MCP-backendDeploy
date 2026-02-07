@@ -19,6 +19,8 @@ const router = Router();
 router.post('/procesar-prompt', async(req, res) => {
             try {
                 let { prompt, ollamaUrl, model, jsonContent, taskDescription, fileContent } = req.body;
+                const fileUri = req.body.fileUri || req.body.file_uri || null; // 🔥 Extract fileUri from client
+                const studentId = req.body.studentId || req.body.student_id || null; // 🔥 Extract studentId from client
 
                 // 🛑 CHECK: Determine if we should process this as a Chat/Generation request or purely Ingestion
                 // If prompt contains keywords like "pregunta", "quiz", "examen", we assume generation intent
@@ -56,28 +58,15 @@ router.post('/procesar-prompt', async(req, res) => {
                 const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
                 const submissionId = parseId(req.body.submissionId || req.body.submission_id); // 🔥 Extract submissionId
 
-                // 🔥 NEW LOGIC: Fetch submission context from DB if missing in request and submissionId is provided
-                // Check if fileContent is effectively empty OR if it's just the URL string OR just the metadata header
-                const seemsLikeUrl = fileContent && (fileContent.trim().startsWith('http') || fileContent.trim().match(/^https?:\/\/[^\s]+$/)) && fileContent.length < 500;
+                // 🔥 LOGIC: Determine if fileContent needs to be fetched from the database or URL
+                const seemsLikeUrl = fileContent && fileContent.trim().startsWith('http') && fileContent.length < 500;
                 const hasMetadataHeader = fileContent && fileContent.includes('=== INFORMACIÓN DEL ARCHIVO ENVIADO ===');
+                const seemsEmpty = !fileContent || fileContent.length < 50 || (hasMetadataHeader && fileContent.length < 400);
 
-                // Advanced Empty Check: If header exists, check if there is real content after the marker
-                let isContentEmpty = !fileContent || fileContent.length < 50;
-                if (hasMetadataHeader) {
-                    const parts = fileContent.split('=== CONTENIDO DEL ARCHIVO ===');
-                    if (parts.length > 1) {
-                        const actualBody = parts[1].trim();
-                        // If body is empty or very short (e.g. just newlines), consider it empty
-                        if (actualBody.length < 50) isContentEmpty = true;
-                    } else {
-                        // Header present but no content marker -> Empty
-                        isContentEmpty = true;
-                    }
-                }
+                console.log(`🔍 Submission Check: ID=${submissionId}, fileUri=${fileUri ? fileUri.substring(0, 60) + '...' : 'null'}, SeemsURL=${seemsLikeUrl}, IsEmpty=${seemsEmpty}, Len=${(fileContent || '').length}, studentId=${studentId}`);
 
-                console.log(`🔍 Submission Check: ID=${submissionId}, SeemsURL=${seemsLikeUrl}, IsEmpty=${isContentEmpty}, Len=${fileContent ? fileContent.length : 0}`);
-
-                if (submissionId && (isContentEmpty || seemsLikeUrl)) {
+                // 🔥 STRATEGY 1: Use submissionId to look up and download from DB
+                if (submissionId && (seemsEmpty || seemsLikeUrl)) {
                     try {
                         console.log(`🔍 Buscando entrega en DB para SubmissionId: ${submissionId}...`);
                         const { data: submission } = await SupabaseService.getInstance().client
@@ -163,34 +152,70 @@ router.post('/procesar-prompt', async(req, res) => {
                         console.warn('⚠️ Error buscando entrega en DB por submissionId:', dbErr.message);
                     }
                 }
-                // Fallback: search by taskId + userId if submissionId not valid but those are
-                else if (taskId && userId && (!fileContent || fileContent.length < 50)) {
+                // Fallback: search by taskId + userId/studentId if submissionId not valid but those are
+                else if (taskId && (userId || studentId) && (seemsEmpty || seemsLikeUrl)) {
+                    const lookupStudentId = studentId || userId;
                     try {
-                        console.log(`🔍 Buscando entrega en DB por TaskId: ${taskId} + StudentId: ${userId}...`);
+                        console.log(`🔍 Buscando entrega en DB por TaskId: ${taskId} + StudentId: ${lookupStudentId}...`);
                         const { data: submission } = await SupabaseService.getInstance().client
                             .from('task_submissions')
                             .select('id, file_uri, file_name')
                             .eq('task_id', taskId)
-                            .eq('student_id', userId)
+                            .eq('student_id', lookupStudentId)
                             .order('created_at', { ascending: false })
                             .limit(1)
                             .maybeSingle();
 
                         if (submission && submission.file_uri) {
-                            console.log(`✅ Entrega encontrada (Task+User): ${submission.file_name}`);
-                            const r2Service = R2StorageService.getInstance();
-                            // 🔥 FIX: Pass submission.id to allow checking file_contexts table
-                            const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, submission.file_name, submission.id);
-                            // ... simplified fetch logic for fallback ...
-                            if (fileData && !fileData.isBase64) { // Text only for fallback simplicity
-                                const fetchedText = fileData.content;
-                                if (fetchedText.length > 50) {
-                                    if (!fileContent) fileContent = "";
-                                    fileContent += `\n\n[CONTENIDO RECUPERADO DB]:\n${fetchedText.substring(0, 30000)}`;
+                            console.log(`✅ Entrega encontrada (Task+User): ${submission.file_name} -> ${submission.file_uri}`);
+                            let fetchedContent = "";
+                            const rawName = submission.file_name || "archivo_recuperado.txt";
+
+                            // Try R2 first
+                            try {
+                                const r2Service = R2StorageService.getInstance();
+                                const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, rawName, submission.id);
+                                if (fileData && fileData.content) {
+                                    fetchedContent = fileData.isBase64 ? Buffer.from(fileData.content, 'base64').toString('utf-8') : fileData.content;
                                 }
+                            } catch (r2Err) {
+                                console.warn(`⚠️ R2 failed for Task+User lookup: ${r2Err.message}`);
+                            }
+
+                            // Axios fallback
+                            if ((!fetchedContent || fetchedContent.length < 20) && submission.file_uri.startsWith('http')) {
+                                try {
+                                    const resp = await axios.get(submission.file_uri, { responseType: 'text', timeout: 15000 });
+                                    if (resp.data) {
+                                        fetchedContent = typeof resp.data === 'object' ? JSON.stringify(resp.data) : resp.data;
+                                    }
+                                } catch (axErr) { console.error(`❌ Axios fallback (Task+User) failed: ${axErr.message}`); }
+                            }
+
+                            if (fetchedContent && fetchedContent.length > 5) {
+                                if (!fileContent) fileContent = "";
+                                fileContent += `\n\n[CONTENIDO RECUPERADO DB (${rawName})]:\n${fetchedContent.substring(0, 50000)}`;
+                                console.log(`📄 Contenido inyectado vía Task+User lookup (${fetchedContent.length} chars).`);
                             }
                         }
-                    } catch (e) { console.warn('Fallback DB search failed:', e.message); }
+                    } catch (e) { console.warn('Fallback DB search (Task+User) failed:', e.message); }
+                }
+                // 🔥 STRATEGY 3: fileUri provided directly by client — download it
+                else if (fileUri && fileUri.startsWith('http') && (seemsEmpty || seemsLikeUrl)) {
+                    console.log(`🌐 fileUri proporcionada por cliente, descargando directamente: ${fileUri.substring(0, 80)}...`);
+                    try {
+                        const resp = await axios.get(fileUri, { responseType: 'text', timeout: 15000 });
+                        if (resp.data) {
+                            const rawData = typeof resp.data === 'object' ? JSON.stringify(resp.data) : resp.data;
+                            if (rawData && rawData.length > 5) {
+                                if (!fileContent) fileContent = "";
+                                fileContent += `\n\n[CONTENIDO DESCARGADO DESDE URL]:\n${rawData.substring(0, 50000)}`;
+                                console.log(`✅ Contenido descargado vía fileUri directa (${rawData.length} chars).`);
+                            }
+                        }
+                    } catch (urlErr) {
+                        console.error(`❌ Descarga directa de fileUri fallida: ${urlErr.message}`);
+                    }
                 }
 
                 // Check if session exists to see if we can skip ingestion (User Rule: omit creation of new embeddings if session exists)
