@@ -1,4 +1,3 @@
-import { ChatOllama } from "@langchain/community/chat_models/ollama";
 import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 
@@ -39,16 +38,9 @@ export class LLMService {
                 maxRetries: 2
             });
         } else {
-            console.log("Initializing Ollama LLM...");
-            this.provider = 'ollama';
-            // Initialize Ollama with Llama 3:8b
-            this.model = new ChatOllama({
-                baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
-                model: "llama3:8b",
-                temperature: 0,
-                // Reduced timeout to 30s to prevent long hangs
-                timeout: 30000
-            });
+            console.warn("⚠️ No DeepSeek API Key provided and Local LLM is disabled.");
+            this.provider = 'none';
+            this.model = null;
         }
 
         LLMService.instance = this;
