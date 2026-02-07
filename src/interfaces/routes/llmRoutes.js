@@ -322,8 +322,14 @@ router.post('/procesar-prompt', async(req, res) => {
             }
         }
 
+        // 🛑 DETECT INTENT: Check if this is a Quiz Generation request vs. Standard Chat/Grading
+        const isQuizGeneration = promptLower.includes('genera') && 
+                               (promptLower.includes('preguntas') || promptLower.includes('quiz') || promptLower.includes('examen'));
 
-                const llmRequestHeader = `🎯 SISTEMA DE GENERACIÓN DE PREGUNTAS - MODO ESTRICTO (DEEPSEEK ONLY)
+        let llmRequestHeader = "";
+        
+        if (isQuizGeneration) {
+             llmRequestHeader = `🎯 SISTEMA DE GENERACIÓN DE PREGUNTAS - MODO ESTRICTO (DEEPSEEK ONLY)
 
 CONTEXTO: Se te proporciona contenido educativo real. DEBES crear preguntas basadas ÚNICAMENTE en la información específica de este contenido.
 
@@ -352,16 +358,17 @@ NO USES JAMÁS en preguntas u opciones:
 - Frases genéricas como "La respuesta correcta es..." en la explicación. Sé directo: "X es Y porque Z".
 
 `; 
+            // Prepend header only for quiz generation
+            augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
 
-                // Prepend header so the model sees the requirement first
-                augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
-
-                // APPEND Reminder for Recency Bias & Strict Constraints
-                augmentedPrompt += `\n\n🔎 REVISIÓN FINAL OBLIGATORIA:
+             // APPEND Reminder for Recency Bias & Strict Constraints
+            augmentedPrompt += `\n\n🔎 REVISIÓN FINAL OBLIGATORIA:
 1. Verifica que NO hay textos genéricos ("Información irrelevante").
 2. Elimina cualquier marca "(Ref: X)".
 3. Asegura que las preguntas NO sean plantillas repetidas.
 4. Genera JSON válido.`;
+        }
+
 
                 // ═══════════════════════════════════════════════════════════════
                 // 🔥 DEEPSEEK PRIORITY: Siempre usar DeepSeek para generación
@@ -373,10 +380,14 @@ NO USES JAMÁS en preguntas u opciones:
                 
                 let data;
                 
-                // ALWAYS prefer DeepSeek for question generation
+                // ALWAYS prefer DeepSeek
                 if (deepseekApiKey) {
                     try {
-                        console.log('🧠 Usando DeepSeek para generación de preguntas (STRICT MODE)...');
+                        const systemPrompt = isQuizGeneration 
+                            ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
+                            : 'Eres un tutor inteligente, amable y experto que ayuda a los estudiantes, califica tareas con justicia y responde dudas. Responde siempre en español de manera clara y motivadora. Si se pide calificar, sé objetivo y constructivo.';
+                            
+                        console.log(`🧠 Usando DeepSeek (${isQuizGeneration ? 'QUIZ MODE' : 'CHAT MODE'})...`);
                         
                         const controller = new AbortController();
                         const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout
@@ -392,7 +403,7 @@ NO USES JAMÁS en preguntas u opciones:
                                 messages: [
                                     {
                                         role: 'system',
-                                        content: 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
+                                        content: systemPrompt
                                     },
                                     {
                                         role: 'user', 
@@ -418,18 +429,11 @@ NO USES JAMÁS en preguntas u opciones:
                             response: json.choices?.[0]?.message?.content || ""
                         };
                         console.log('✅ DeepSeek respondió correctamente.');
-                        console.log('📜 LLM Raw Response (DeepSeek):', data.response);
+                        console.log('📜 LLM Raw Response (DeepSeek):', data.response); // Keep log for debugging
                         
                     } catch (deepseekError) {
                         console.error('❌ Error CRÍTICO con DeepSeek:', deepseekError.message);
-                        // User specifically asked to "solucionar esto" focusing on DeepSeek.
-                        // We will NOT fall back to lesser models if DeepSeek was configured but failed,
-                        // unless it's a connectivity issue.
-                        // However, to keep the system running, we might fall back but log heavily.
-                        // But seeing the user requirement "se debe usar deepseek", let's prioritize it.
-                        // We will try one retry with DeepSeek if the first one failed? 
-                        
-                        // For now, let's allow fallback but warn loudly.
+                        // Fallback logic continues below...
                         data = null;
                     }
                 }
