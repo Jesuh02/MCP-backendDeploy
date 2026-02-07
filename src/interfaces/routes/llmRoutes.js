@@ -71,7 +71,8 @@ router.post('/procesar-prompt', async(req, res) => {
                             // Attempt to download file content
                             const r2Service = R2StorageService.getInstance();
                             // Reuse logic similar to jsonContent processing
-                            const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, submission.file_name);
+                            // 🔥 FIX: Pass submissionId to allow checking file_contexts table
+                            const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, submission.file_name, submissionId);
 
                             if (fileData && fileData.content) {
                                 let fetchedContent = "";
@@ -117,7 +118,7 @@ router.post('/procesar-prompt', async(req, res) => {
                         console.log(`🔍 Buscando entrega en DB por TaskId: ${taskId} + StudentId: ${userId}...`);
                         const { data: submission } = await SupabaseService.getInstance().client
                             .from('task_submissions')
-                            .select('file_uri, file_name')
+                            .select('id, file_uri, file_name')
                             .eq('task_id', taskId)
                             .eq('student_id', userId)
                             .order('created_at', { ascending: false })
@@ -127,7 +128,8 @@ router.post('/procesar-prompt', async(req, res) => {
                         if (submission && submission.file_uri) {
                             console.log(`✅ Entrega encontrada (Task+User): ${submission.file_name}`);
                             const r2Service = R2StorageService.getInstance();
-                            const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, submission.file_name);
+                            // 🔥 FIX: Pass submission.id to allow checking file_contexts table
+                            const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, submission.file_name, submission.id);
                             // ... simplified fetch logic for fallback ...
                             if (fileData && !fileData.isBase64) { // Text only for fallback simplicity
                                 const fetchedText = fileData.content;
