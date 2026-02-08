@@ -473,10 +473,21 @@ router.post('/procesar-prompt', async(req, res) => {
                     throw new Error('ollamaUrl is required');
                 }
 
-                // If userId/courseId provided, fetch reinforcement history and instruct LLM to avoid repeats
+                // 🛑 DETECT GRADING INTENT FIRST: If taskDescription, fileContent, or submissionId are present,
+                // this is a GRADING request from ChatBotFragment, NOT a quiz generation request.
+                const hasGradingContext = !!(taskDescription || (fileContent && fileContent.length > 50) || submissionId);
+                const gradingKeywords = ['calific', 'nota', 'evalu', 'puntaje', 'grade', 'score', 'revisar entrega'];
+                const hasGradingKeyword = gradingKeywords.some(kw => promptLower.includes(kw));
+                // isGradingRequest is true if we have grading context (taskDescription/fileContent/submissionId)
+                // OR if grading keywords appear in the prompt WITHOUT quiz generation pattern
+                const isGradingRequest = hasGradingContext || (hasGradingKeyword && !promptLower.includes('genera') && !promptLower.includes('quiz'));
+
+                console.log(`🔍 Intent Detection: hasGradingContext=${hasGradingContext}, hasGradingKeyword=${hasGradingKeyword}, isGradingRequest=${isGradingRequest}`);
+
+                // If userId/courseId provided AND this is NOT a grading request, fetch reinforcement history
                 let historyQuestionsList = [];
                 let existingHistory = [];
-                if (userId && courseId) {
+                if (userId && courseId && !isGradingRequest) {
                     try {
                         const mcpService = new MCPService();
                         existingHistory = await mcpService.getReinforcementHistory(userId, courseId);
@@ -500,8 +511,11 @@ router.post('/procesar-prompt', async(req, res) => {
         }
 
         // 🛑 DETECT INTENT: Check if this is a Quiz Generation request vs. Standard Chat/Grading
-        const isQuizGeneration = promptLower.includes('genera') && 
+        // CRITICAL: If grading context is present, NEVER treat as quiz generation
+        const isQuizGeneration = !isGradingRequest && promptLower.includes('genera') && 
                                (promptLower.includes('preguntas') || promptLower.includes('quiz') || promptLower.includes('examen'));
+
+        console.log(`🎯 Final Intent: isQuizGeneration=${isQuizGeneration}, isGradingRequest=${isGradingRequest}`);
 
         let llmRequestHeader = "";
         
@@ -562,7 +576,9 @@ NO USES JAMÁS en preguntas u opciones:
                     try {
                         const systemPrompt = isQuizGeneration 
                             ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
-                            : 'Eres un tutor inteligente y experto. Responde en español. MODO CALIFICACIÓN: Si recibes una tarea y una entrega, evalúa rigurosamente si la entrega cumple la descripción. Si el usuario pide calificar, DEBES incluir al final de tu respuesta "**calificación actual: X/10**" (donde X es la nota, ejemplo "calificación actual: 8/10") para activar la interfaz de calificación. Sin esta frase, el profesor no podrá guardar la nota.';
+                            : isGradingRequest
+                            ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. OBLIGATORIO: Incluir al final de tu respuesta la línea exacta "**calificación actual: X/10**" (donde X es la nota numérica). Sin esta línea, el profesor NO podrá guardar la nota en el sistema. Ejemplo: "**calificación actual: 8/10**"\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué.'
+                            : 'Eres un tutor inteligente y experto. Responde en español. Si recibes una tarea y una entrega, evalúa rigurosamente si la entrega cumple la descripción. Si el usuario pide calificar, DEBES incluir al final de tu respuesta "**calificación actual: X/10**" (donde X es la nota, ejemplo "calificación actual: 8/10") para activar la interfaz de calificación. Sin esta frase, el profesor no podrá guardar la nota.';
                             
                         console.log(`🧠 Usando DeepSeek (${isQuizGeneration ? 'QUIZ MODE' : 'CHAT MODE'})...`);
                         
@@ -655,6 +671,12 @@ NO USES JAMÁS en preguntas u opciones:
                             body: JSON.stringify({
                                 model: openRouterModel, 
                                 messages: [
+                                    { role: "system", content: isQuizGeneration 
+                                        ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA.'
+                                        : isGradingRequest
+                                        ? 'Eres un profesor experto evaluador. Responde en español. Evalúa la entrega del estudiante contra los requisitos de la tarea. OBLIGATORIO: Incluir al final "**calificación actual: X/10**".'
+                                        : 'Eres un tutor inteligente y experto. Responde en español.'
+                                    },
                                     { role: "user", content: augmentedPrompt }
                                 ],
                                 temperature: 0.7
@@ -1055,10 +1077,14 @@ NO USES JAMÁS en preguntas u opciones:
         if (typeof respuestaTexto === 'string') {
             try {
                 // Regex to find **calificación actual: X/10** or similar patterns
-                // Matches: **calificación actual: 8/10**, **calificación actual: 8.5/10**, etc.
+                // Matches: **calificación actual: 8/10**, **calificación actual: 8.5/10**, Nota: 7/10, Calificación: 9/10 etc.
                 const gradeMatch = respuestaTexto.match(/\*\*calificación actual:\s*([\d\.]+)\/10\*\*/i) ||
                                   respuestaTexto.match(/calificación actual:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/Nota:\s*([\d\.]+)\/10/i);
+                                  respuestaTexto.match(/\*\*calificación:\s*([\d\.]+)\/10\*\*/i) ||
+                                  respuestaTexto.match(/calificación:\s*([\d\.]+)\/10/i) ||
+                                  respuestaTexto.match(/\*\*nota:\s*([\d\.]+)\/10\*\*/i) ||
+                                  respuestaTexto.match(/nota:\s*([\d\.]+)\/10/i) ||
+                                  respuestaTexto.match(/\*\*nota final:\s*([\d\.]+)\/10\*\*/i);
 
                 if (gradeMatch && gradeMatch[1]) {
                     const val = parseFloat(gradeMatch[1]);
