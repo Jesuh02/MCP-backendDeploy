@@ -56,3 +56,4 @@ scripts/fix_vector_dimensions.sql
 scripts/setup_rag_tables.sql
 scripts/setup_rag_tables.sql
 scripts/setup_rag_tables.sql
+.env.QA
