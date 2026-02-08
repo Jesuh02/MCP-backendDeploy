@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import axios from 'axios';
 import { R2StorageService } from '../../services/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { MCPService } from '../../domain/services/MCPService.js';
@@ -17,7 +18,9 @@ const router = Router();
 
 router.post('/procesar-prompt', async(req, res) => {
             try {
-                const { prompt, ollamaUrl, model, jsonContent } = req.body;
+                let { prompt, ollamaUrl, model, jsonContent, taskDescription, fileContent } = req.body;
+                const fileUri = req.body.fileUri || req.body.file_uri || null; // 🔥 Extract fileUri from client
+                const studentId = req.body.studentId || req.body.student_id || null; // 🔥 Extract studentId from client
 
                 // 🛑 CHECK: Determine if we should process this as a Chat/Generation request or purely Ingestion
                 // If prompt contains keywords like "pregunta", "quiz", "examen", we assume generation intent
@@ -53,6 +56,169 @@ router.post('/procesar-prompt', async(req, res) => {
                 const courseId = parseId(req.body.courseId || req.body.course_id || req.body.idCurso);
                 const contentItemId = parseId(req.body.contentItemId || req.body.content_item_id);
                 const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+                const submissionId = parseId(req.body.submissionId || req.body.submission_id); // 🔥 Extract submissionId
+
+                // 🔥 LOGIC: Determine if fileContent needs to be fetched from the database or URL
+                const seemsLikeUrl = fileContent && fileContent.trim().startsWith('http') && fileContent.length < 500;
+                const hasMetadataHeader = fileContent && fileContent.includes('=== INFORMACIÓN DEL ARCHIVO ENVIADO ===');
+                const seemsEmpty = !fileContent || fileContent.length < 50 || (hasMetadataHeader && fileContent.length < 400);
+
+                console.log(`🔍 Submission Check: ID=${submissionId}, fileUri=${fileUri ? fileUri.substring(0, 60) + '...' : 'null'}, SeemsURL=${seemsLikeUrl}, IsEmpty=${seemsEmpty}, Len=${(fileContent || '').length}, studentId=${studentId}`);
+
+                // 🔥 STRATEGY 1: Use submissionId to look up and download from DB
+                if (submissionId && (seemsEmpty || seemsLikeUrl)) {
+                    try {
+                        console.log(`🔍 Buscando entrega en DB para SubmissionId: ${submissionId}...`);
+                        const { data: submission } = await SupabaseService.getInstance().client
+                            .from('task_submissions')
+                            .select('file_uri, file_name, feedback, grade')
+                            .eq('id', submissionId)
+                            .maybeSingle();
+
+                        if (submission && submission.file_uri) {
+                            console.log(`✅ Entrega encontrada en DB: ${submission.file_name} (${submission.file_uri})`);
+
+                            // Attempt to download file content
+                            const r2Service = R2StorageService.getInstance();
+                            let fetchedContent = "";
+                            // Default to .txt if name is missing to force text processing
+                            const rawName = submission.file_name || "archivo_recuperado.txt";
+
+                            try {
+                                // Try R2/DB Service first
+                                const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, rawName, submissionId);
+
+                                if (fileData && fileData.content) {
+                                    const nameLower = rawName.toLowerCase();
+                                    const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+
+                                    if (isPdf) {
+                                        try {
+                                            const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                            const pdfData = await pdf(pdfBuffer);
+                                            if (pdfData.text) fetchedContent = pdfData.text;
+                                        } catch (pdfErr) { console.warn(`Error parsing PDF from DB: ${pdfErr.message}`); }
+                                    } else if (nameLower.match(/\.xlsx?$/)) {
+                                        try {
+                                            const workbook = xlsx.read(fileData.content, { type: fileData.isBase64 ? 'base64' : 'string' });
+                                            for (const sheetName of workbook.SheetNames) {
+                                                fetchedContent += `\n[Sheet: ${sheetName}]\n${xlsx.utils.sheet_to_csv(workbook.Sheets[sheetName])}\n`;
+                                            }
+                                        } catch (xlsErr) { console.warn(`Error parsing Excel from DB: ${xlsErr.message}`); }
+                                    } else {
+                                        // Text / Code files
+                                        if (fileData.isBase64) {
+                                            // Always try decoding base64 to utf-8 for code files if r2 returned base64
+                                            fetchedContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
+                                        } else {
+                                            fetchedContent = fileData.content;
+                                        }
+                                    }
+                                }
+                            } catch (r2Err) {
+                                console.warn(`⚠️ Error en R2Service durante recuperación primaria: ${r2Err.message}`);
+                            }
+
+                            // AGGRESSIVE FALLBACK: If R2 failed OR returned empty, and we have a URL, try direct download
+                            if ((!fetchedContent || fetchedContent.length < 20) && submission.file_uri && submission.file_uri.startsWith('http')) {
+                                console.log(`🌐 Intentando descarga directa (AXIOS Fallback) para: ${submission.file_uri}`);
+                                try {
+                                    const resp = await axios.get(submission.file_uri, { responseType: 'text', timeout: 15000 });
+                                    if (resp.data) {
+                                        const rawData = typeof resp.data === 'object' ? JSON.stringify(resp.data) : resp.data;
+                                        if (rawData && rawData.length > 5) {
+                                            fetchedContent = rawData;
+                                            console.log(`✅ Contenido recuperado vía Axios fallback (${fetchedContent.length} chars)`);
+                                        }
+                                    }
+                                } catch (axiosErr) {
+                                    console.error(`❌ Fallback Axios failed: ${axiosErr.message}`);
+                                }
+                            }
+
+                            if (fetchedContent && fetchedContent.length > 5) { // Reduced threshold to 5 chars
+                                // IMPORTANT: Validar que no estemos concatenando lo mismo
+                                if (!fileContent || fileContent.includes(submission.file_uri)) {
+                                    // If fileContent was just the URL or empty, replace it or init it
+                                    fileContent = `[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`;
+                                } else {
+                                    // Append if there was something else meaningful
+                                    fileContent += `\n\n[CONTENIDO RECUPERADO DE BASE DE DATOS (${rawName})]:\n${fetchedContent.substring(0, 50000)}`;
+                                }
+                                console.log(`📄 Contenido inyectado desde DB (${fetchedContent.length} chars).`);
+                            }
+                        }
+                    } catch (dbErr) {
+                        console.warn('⚠️ Error buscando entrega en DB por submissionId:', dbErr.message);
+                    }
+                }
+                // 🔥 STRATEGY 2 (WATERFALL): Recalcular seemsEmpty y buscar por taskId + studentId si aún falta contenido
+                const seemsEmpty2 = !fileContent || fileContent.length < 50;
+                if (taskId && (userId || studentId) && seemsEmpty2) {
+                    const lookupStudentId = studentId || userId;
+                    try {
+                        console.log(`🔍 Buscando entrega en DB por TaskId: ${taskId} + StudentId: ${lookupStudentId}...`);
+                        const { data: submission } = await SupabaseService.getInstance().client
+                            .from('task_submissions')
+                            .select('id, file_uri, file_name')
+                            .eq('task_id', taskId)
+                            .eq('student_id', lookupStudentId)
+                            .order('created_at', { ascending: false })
+                            .limit(1)
+                            .maybeSingle();
+
+                        if (submission && submission.file_uri) {
+                            console.log(`✅ Entrega encontrada (Task+User): ${submission.file_name} -> ${submission.file_uri}`);
+                            let fetchedContent = "";
+                            const rawName = submission.file_name || "archivo_recuperado.txt";
+
+                            // Try R2 first
+                            try {
+                                const r2Service = R2StorageService.getInstance();
+                                const fileData = await r2Service.getSubmissionFileContent(submission.file_uri, rawName, submission.id);
+                                if (fileData && fileData.content) {
+                                    fetchedContent = fileData.isBase64 ? Buffer.from(fileData.content, 'base64').toString('utf-8') : fileData.content;
+                                }
+                            } catch (r2Err) {
+                                console.warn(`⚠️ R2 failed for Task+User lookup: ${r2Err.message}`);
+                            }
+
+                            // Axios fallback
+                            if ((!fetchedContent || fetchedContent.length < 20) && submission.file_uri.startsWith('http')) {
+                                try {
+                                    const resp = await axios.get(submission.file_uri, { responseType: 'text', timeout: 15000 });
+                                    if (resp.data) {
+                                        fetchedContent = typeof resp.data === 'object' ? JSON.stringify(resp.data) : resp.data;
+                                    }
+                                } catch (axErr) { console.error(`❌ Axios fallback (Task+User) failed: ${axErr.message}`); }
+                            }
+
+                            if (fetchedContent && fetchedContent.length > 5) {
+                                if (!fileContent) fileContent = "";
+                                fileContent += `\n\n[CONTENIDO RECUPERADO DB (${rawName})]:\n${fetchedContent.substring(0, 50000)}`;
+                                console.log(`📄 Contenido inyectado vía Task+User lookup (${fetchedContent.length} chars).`);
+                            }
+                        }
+                    } catch (e) { console.warn('Fallback DB search (Task+User) failed:', e.message); }
+                }
+                // 🔥 STRATEGY 3 (WATERFALL): Recalcular seemsEmpty y descargar vía fileUri directa si aún falta contenido
+                const seemsEmpty3 = !fileContent || fileContent.length < 50;
+                if (fileUri && fileUri.startsWith('http') && seemsEmpty3) {
+                    console.log(`🌐 fileUri proporcionada por cliente, descargando directamente: ${fileUri.substring(0, 80)}...`);
+                    try {
+                        const resp = await axios.get(fileUri, { responseType: 'text', timeout: 15000 });
+                        if (resp.data) {
+                            const rawData = typeof resp.data === 'object' ? JSON.stringify(resp.data) : resp.data;
+                            if (rawData && rawData.length > 5) {
+                                if (!fileContent) fileContent = "";
+                                fileContent += `\n\n[CONTENIDO DESCARGADO DESDE URL]:\n${rawData.substring(0, 50000)}`;
+                                console.log(`✅ Contenido descargado vía fileUri directa (${rawData.length} chars).`);
+                            }
+                        }
+                    } catch (urlErr) {
+                        console.error(`❌ Descarga directa de fileUri fallida: ${urlErr.message}`);
+                    }
+                }
 
                 // Check if session exists to see if we can skip ingestion (User Rule: omit creation of new embeddings if session exists)
                 let skipIngestion = false;
@@ -77,6 +243,17 @@ router.post('/procesar-prompt', async(req, res) => {
                 console.log(`🤖 Processing prompt with model ${model || 'default'} at ${ollamaUrl} (Task: ${taskId}, Topic: ${topicId}, ContentItem: ${contentItemId})`);
 
                 let augmentedPrompt = prompt;
+
+                // 📝 APPEND TASK CONTEXT IF PROVIDED (Critical for Grading)
+                // If the app sent taskDescription and fileContent (e.g. from ChatBotFragment for grading), we must include it in the prompt.
+                if (taskDescription || fileContent) {
+                    console.log('📄 Appending task context & file content to prompt for analysis/grading...');
+                    augmentedPrompt += "\n\n--- CONTEXTO DE LA TAREA ---\n";
+                    if (taskDescription) augmentedPrompt += `DESCRIPCIÓN DE LA TAREA:\n${taskDescription}\n\n`;
+                    if (fileContent) augmentedPrompt += `CONTENIDO DEL ARCHIVO DEL ESTUDIANTE:\n${fileContent}\n\n`;
+                    augmentedPrompt += "--- FIN DEL CONTEXTO ---\n";
+                }
+
                 let contextFromRAG = false;
 
                 // RAG & FILE PROCESSING LOGIC
@@ -296,10 +473,21 @@ router.post('/procesar-prompt', async(req, res) => {
                     throw new Error('ollamaUrl is required');
                 }
 
-                // If userId/courseId provided, fetch reinforcement history and instruct LLM to avoid repeats
+                // 🛑 DETECT GRADING INTENT FIRST: If taskDescription, fileContent, or submissionId are present,
+                // this is a GRADING request from ChatBotFragment, NOT a quiz generation request.
+                const hasGradingContext = !!(taskDescription || (fileContent && fileContent.length > 50) || submissionId);
+                const gradingKeywords = ['calific', 'nota', 'evalu', 'puntaje', 'grade', 'score', 'revisar entrega'];
+                const hasGradingKeyword = gradingKeywords.some(kw => promptLower.includes(kw));
+                // isGradingRequest is true if we have grading context (taskDescription/fileContent/submissionId)
+                // OR if grading keywords appear in the prompt WITHOUT quiz generation pattern
+                const isGradingRequest = hasGradingContext || (hasGradingKeyword && !promptLower.includes('genera') && !promptLower.includes('quiz'));
+
+                console.log(`🔍 Intent Detection: hasGradingContext=${hasGradingContext}, hasGradingKeyword=${hasGradingKeyword}, isGradingRequest=${isGradingRequest}`);
+
+                // If userId/courseId provided AND this is NOT a grading request, fetch reinforcement history
                 let historyQuestionsList = [];
                 let existingHistory = [];
-                if (userId && courseId) {
+                if (userId && courseId && !isGradingRequest) {
                     try {
                         const mcpService = new MCPService();
                         existingHistory = await mcpService.getReinforcementHistory(userId, courseId);
@@ -322,8 +510,17 @@ router.post('/procesar-prompt', async(req, res) => {
             }
         }
 
+        // 🛑 DETECT INTENT: Check if this is a Quiz Generation request vs. Standard Chat/Grading
+        // CRITICAL: If grading context is present, NEVER treat as quiz generation
+        const isQuizGeneration = !isGradingRequest && promptLower.includes('genera') && 
+                               (promptLower.includes('preguntas') || promptLower.includes('quiz') || promptLower.includes('examen'));
 
-                const llmRequestHeader = `🎯 SISTEMA DE GENERACIÓN DE PREGUNTAS - MODO ESTRICTO (DEEPSEEK ONLY)
+        console.log(`🎯 Final Intent: isQuizGeneration=${isQuizGeneration}, isGradingRequest=${isGradingRequest}`);
+
+        let llmRequestHeader = "";
+        
+        if (isQuizGeneration) {
+             llmRequestHeader = `🎯 SISTEMA DE GENERACIÓN DE PREGUNTAS - MODO ESTRICTO (DEEPSEEK ONLY)
 
 CONTEXTO: Se te proporciona contenido educativo real. DEBES crear preguntas basadas ÚNICAMENTE en la información específica de este contenido.
 
@@ -352,16 +549,17 @@ NO USES JAMÁS en preguntas u opciones:
 - Frases genéricas como "La respuesta correcta es..." en la explicación. Sé directo: "X es Y porque Z".
 
 `; 
+            // Prepend header only for quiz generation
+            augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
 
-                // Prepend header so the model sees the requirement first
-                augmentedPrompt = llmRequestHeader + "\n\n" + augmentedPrompt;
-
-                // APPEND Reminder for Recency Bias & Strict Constraints
-                augmentedPrompt += `\n\n🔎 REVISIÓN FINAL OBLIGATORIA:
+             // APPEND Reminder for Recency Bias & Strict Constraints
+            augmentedPrompt += `\n\n🔎 REVISIÓN FINAL OBLIGATORIA:
 1. Verifica que NO hay textos genéricos ("Información irrelevante").
 2. Elimina cualquier marca "(Ref: X)".
 3. Asegura que las preguntas NO sean plantillas repetidas.
 4. Genera JSON válido.`;
+        }
+
 
                 // ═══════════════════════════════════════════════════════════════
                 // 🔥 DEEPSEEK PRIORITY: Siempre usar DeepSeek para generación
@@ -373,10 +571,16 @@ NO USES JAMÁS en preguntas u opciones:
                 
                 let data;
                 
-                // ALWAYS prefer DeepSeek for question generation
+                // ALWAYS prefer DeepSeek
                 if (deepseekApiKey) {
                     try {
-                        console.log('🧠 Usando DeepSeek para generación de preguntas (STRICT MODE)...');
+                        const systemPrompt = isQuizGeneration 
+                            ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
+                            : isGradingRequest
+                            ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. OBLIGATORIO: Incluir al final de tu respuesta la línea exacta "**calificación actual: X/10**" (donde X es la nota numérica). Sin esta línea, el profesor NO podrá guardar la nota en el sistema. Ejemplo: "**calificación actual: 8/10**"\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué.'
+                            : 'Eres un tutor inteligente y experto. Responde en español. Si recibes una tarea y una entrega, evalúa rigurosamente si la entrega cumple la descripción. Si el usuario pide calificar, DEBES incluir al final de tu respuesta "**calificación actual: X/10**" (donde X es la nota, ejemplo "calificación actual: 8/10") para activar la interfaz de calificación. Sin esta frase, el profesor no podrá guardar la nota.';
+                            
+                        console.log(`🧠 Usando DeepSeek (${isQuizGeneration ? 'QUIZ MODE' : 'CHAT MODE'})...`);
                         
                         const controller = new AbortController();
                         const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout
@@ -392,7 +596,7 @@ NO USES JAMÁS en preguntas u opciones:
                                 messages: [
                                     {
                                         role: 'system',
-                                        content: 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
+                                        content: systemPrompt
                                     },
                                     {
                                         role: 'user', 
@@ -418,18 +622,11 @@ NO USES JAMÁS en preguntas u opciones:
                             response: json.choices?.[0]?.message?.content || ""
                         };
                         console.log('✅ DeepSeek respondió correctamente.');
-                        console.log('📜 LLM Raw Response (DeepSeek):', data.response);
+                        console.log('📜 LLM Raw Response (DeepSeek):', data.response); // Keep log for debugging
                         
                     } catch (deepseekError) {
                         console.error('❌ Error CRÍTICO con DeepSeek:', deepseekError.message);
-                        // User specifically asked to "solucionar esto" focusing on DeepSeek.
-                        // We will NOT fall back to lesser models if DeepSeek was configured but failed,
-                        // unless it's a connectivity issue.
-                        // However, to keep the system running, we might fall back but log heavily.
-                        // But seeing the user requirement "se debe usar deepseek", let's prioritize it.
-                        // We will try one retry with DeepSeek if the first one failed? 
-                        
-                        // For now, let's allow fallback but warn loudly.
+                        // Fallback logic continues below...
                         data = null;
                     }
                 }
@@ -474,6 +671,12 @@ NO USES JAMÁS en preguntas u opciones:
                             body: JSON.stringify({
                                 model: openRouterModel, 
                                 messages: [
+                                    { role: "system", content: isQuizGeneration 
+                                        ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA.'
+                                        : isGradingRequest
+                                        ? 'Eres un profesor experto evaluador. Responde en español. Evalúa la entrega del estudiante contra los requisitos de la tarea. OBLIGATORIO: Incluir al final "**calificación actual: X/10**".'
+                                        : 'Eres un tutor inteligente y experto. Responde en español.'
+                                    },
                                     { role: "user", content: augmentedPrompt }
                                 ],
                                 temperature: 0.7
@@ -867,11 +1070,40 @@ NO USES JAMÁS en preguntas u opciones:
             respuestaTexto = data.response;
         }
 
+        // Extract grade if present (Backend-side parsing to ensure Android buttons appear)
+        let extractedGrade = null;
+        let isGrading = false;
+
+        if (typeof respuestaTexto === 'string') {
+            try {
+                // Regex to find **calificación actual: X/10** or similar patterns
+                // Matches: **calificación actual: 8/10**, **calificación actual: 8.5/10**, Nota: 7/10, Calificación: 9/10 etc.
+                const gradeMatch = respuestaTexto.match(/\*\*calificación actual:\s*([\d\.]+)\/10\*\*/i) ||
+                                  respuestaTexto.match(/calificación actual:\s*([\d\.]+)\/10/i) ||
+                                  respuestaTexto.match(/\*\*calificación:\s*([\d\.]+)\/10\*\*/i) ||
+                                  respuestaTexto.match(/calificación:\s*([\d\.]+)\/10/i) ||
+                                  respuestaTexto.match(/\*\*nota:\s*([\d\.]+)\/10\*\*/i) ||
+                                  respuestaTexto.match(/nota:\s*([\d\.]+)\/10/i) ||
+                                  respuestaTexto.match(/\*\*nota final:\s*([\d\.]+)\/10\*\*/i);
+
+                if (gradeMatch && gradeMatch[1]) {
+                    const val = parseFloat(gradeMatch[1]);
+                    if (!isNaN(val)) {
+                        extractedGrade = val;
+                        isGrading = true;
+                        console.log(`🎓 Grade extracted from response: ${extractedGrade}/10`);
+                    }
+                }
+            } catch (e) {
+                console.warn('⚠️ Error extracting grade from response:', e.message);
+            }
+        }
+
         // Return in MicroservicioPromptResponse format matching Android expectations
         res.json({
             respuesta_texto: respuestaTexto,
-            nota: null,
-            esCalificacion: false,
+            nota: extractedGrade,
+            esCalificacion: isGrading,
             contenidoVacio: false,
             error: null
         });
