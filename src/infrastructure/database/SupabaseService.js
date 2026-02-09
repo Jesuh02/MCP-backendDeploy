@@ -685,7 +685,7 @@ CREATE TABLE public.videos (
             if (targetRemoteId) {
                 // Ensure integer
                 targetRemoteId = parseInt(targetRemoteId);
-                
+
                 // Check if user exists to avoid FK constraint violation
                 try {
                     const { data: userExists, error: userCheckError } = await this.client
@@ -693,7 +693,7 @@ CREATE TABLE public.videos (
                         .select('id')
                         .eq('id', targetRemoteId)
                         .maybeSingle(); // Use maybeSingle to avoid error if not found
-                    
+
                     if (!userExists) {
                         logger.warn(`⚠️ User ID ${targetRemoteId} provided for video insertion does not exist in 'usuarios' table.`);
                         logger.warn(`   Action: Setting remote_id to NULL to allow insertion without FK violation.`);
