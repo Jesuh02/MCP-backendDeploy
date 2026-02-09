@@ -57,3 +57,5 @@ scripts/setup_rag_tables.sql
 scripts/setup_rag_tables.sql
 scripts/setup_rag_tables.sql
 .env.QA
+scripts/ddlpro.sql
+scripts/ddlqa.sql
