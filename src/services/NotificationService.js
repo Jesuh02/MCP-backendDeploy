@@ -9,15 +9,16 @@
 import axios from 'axios';
 import { createRequire } from 'module';
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
-import { 
-    generateGradeEmailHTML, 
-    generateGradeModifiedEmailHTML, 
-    generateNewCourseEmailHTML, 
+import {
+    generateGradeEmailHTML,
+    generateGradeModifiedEmailHTML,
+    generateNewCourseEmailHTML,
     generateGenericEmailHTML,
-    generateChatResponseEmailHTML 
+    generateChatResponseEmailHTML
 } from '../templates/emailTemplates.js';
 
-const require = createRequire(import.meta.url);
+const require = createRequire(
+    import.meta.url);
 
 // ============================================================
 // SINGLETON INSTANCE
@@ -50,6 +51,17 @@ class NotificationService {
             instance = new NotificationService();
         }
         return instance;
+    }
+
+    /**
+     * Send notification (Wrapper for sendPushNotification to fix missing method error)
+     * @param {number} userId 
+     * @param {string} title 
+     * @param {string} body 
+     */
+    async sendNotification(userId, title, body) {
+        // Enforce using sendPushNotification compatible signature
+        return this.sendPushNotification(userId, title, body);
     }
 
     /**
@@ -240,7 +252,7 @@ class NotificationService {
             for (let i = 0; i < uniqueTokens.length; i++) {
                 const token = uniqueTokens[i];
                 try {
-                    const message = { ...baseMessage, token };
+                    const message = {...baseMessage, token };
                     const messageId = await this.admin.messaging().send(message);
                     results.push({ success: true, messageId });
                     console.log(`   ✅ Token ${i + 1}/${uniqueTokens.length}: Sent (${messageId})`);
@@ -343,7 +355,7 @@ class NotificationService {
             console.log(`✅ Email sent to ${email} via Resend: ${response.data.id}`);
             return true;
         } catch (error) {
-            console.error('❌ Error with Resend:', error.response?.data || error.message);
+            console.error('❌ Error with Resend:', error.response ? .data || error.message);
 
             // Retry with fallback
             console.log('🔄 Retrying email send...');
@@ -362,7 +374,7 @@ class NotificationService {
                 console.log(`✅ Email sent to ${email} via fallback: ${fallbackResponse.data.id}`);
                 return true;
             } catch (fallbackError) {
-                console.error('❌ Fallback also failed:', fallbackError.response?.data || fallbackError.message);
+                console.error('❌ Fallback also failed:', fallbackError.response ? .data || fallbackError.message);
             }
         }
 
@@ -407,7 +419,7 @@ class NotificationService {
             console.log(`✅ Email sent to ${email} via SendGrid: ${response.status}`);
             return true;
         } catch (error) {
-            console.error('❌ Error with SendGrid:', error.response?.data || error.message);
+            console.error('❌ Error with SendGrid:', error.response ? .data || error.message);
             return false;
         }
     }
@@ -633,7 +645,7 @@ class NotificationService {
      */
     async notifySubscribersOfNewCourse(creatorUserId, creatorUsername, courseData) {
         console.log(`📢 Notifying subscribers of ${creatorUsername} about new course: ${courseData.title}`);
-        
+
         try {
             // 1. Fetch Subscribers from Supabase
             // Table: subscriptions (subscriber_id, creator_id)
@@ -683,12 +695,11 @@ class NotificationService {
             // Use sendBulkNotifications
             const pushTitle = '¡Nuevo Curso!';
             const pushMessage = `${creatorUsername} acaba de publicar "${courseData.title}". ¡Échale un vistazo!`;
-            
+
             const results = await this.sendBulkNotifications(
-                subscriberIds, 
-                pushTitle, 
-                pushMessage,
-                {
+                subscriberIds,
+                pushTitle,
+                pushMessage, {
                     // Push data payload
                     pushData: {
                         type: 'new_course',
@@ -728,11 +739,11 @@ class NotificationService {
      */
     async notifyVideoComment(videoOwnerId, videoId, commentId, commentAuthor, commentAuthorAvatar, videoThumbnail, commentText = '') {
         console.log(`💬 Notifying user ${videoOwnerId} about comment from ${commentAuthor} on video ${videoId}`);
-        
+
         try {
             // Create metadata with comment_id for navigation
             const metadata = JSON.stringify({ comment_id: commentId });
-            
+
             // Insert notification into database
             const notification = {
                 user_id: videoOwnerId,
@@ -767,8 +778,7 @@ class NotificationService {
                     videoOwnerId,
                     'Nuevo comentario',
                     'Nuevo comentario',
-                    notification.message,
-                    {
+                    notification.message, {
                         pushData: {
                             type: 'comment',
                             videoId: String(videoId),
@@ -801,11 +811,11 @@ class NotificationService {
      */
     async notifyCommentLike(commentOwnerId, videoId, commentId, likerUsername, likerAvatar, videoThumbnail) {
         console.log(`❤️ Notifying user ${commentOwnerId} about like from ${likerUsername} on comment ${commentId}`);
-        
+
         try {
             // Create metadata with comment_id for navigation
             const metadata = JSON.stringify({ comment_id: commentId });
-            
+
             // Insert notification into database
             const notification = {
                 user_id: commentOwnerId,
@@ -840,8 +850,7 @@ class NotificationService {
                     commentOwnerId,
                     'Le gusta tu comentario',
                     'Le gusta tu comentario',
-                    notification.message,
-                    {
+                    notification.message, {
                         pushData: {
                             type: 'like',
                             videoId: String(videoId),
@@ -876,11 +885,11 @@ class NotificationService {
      */
     async notifyCommentReply(parentCommentOwnerId, videoId, parentCommentId, replyCommentId, replyAuthor, replyAuthorAvatar, videoThumbnail, replyText = '') {
         console.log(`↩️ Notifying user ${parentCommentOwnerId} about reply from ${replyAuthor} to comment ${parentCommentId}`);
-        
+
         try {
             // Create metadata with comment_id pointing to the reply for navigation
             const metadata = JSON.stringify({ comment_id: replyCommentId, parent_comment_id: parentCommentId });
-            
+
             // Insert notification into database
             const notification = {
                 user_id: parentCommentOwnerId,
@@ -915,8 +924,7 @@ class NotificationService {
                     parentCommentOwnerId,
                     'Respuesta a tu comentario',
                     'Respuesta a tu comentario',
-                    notification.message,
-                    {
+                    notification.message, {
                         pushData: {
                             type: 'comment',
                             videoId: String(videoId),

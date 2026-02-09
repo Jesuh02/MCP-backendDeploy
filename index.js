@@ -681,6 +681,7 @@ try {
 function getSupabaseForReq(req) {
     return req._supabaseOverride || supabaseService;
 }
+
 function getMCPForReq(req) {
     return req._mcpServiceOverride || mcpService || new MCPService();
 }

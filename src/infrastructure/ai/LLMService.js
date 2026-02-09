@@ -152,6 +152,19 @@ export class LLMService {
         } catch (error) {
             console.error("Error generating LLM response:", error);
 
+            // 🛑 HANDLE 402 INSUFFICIENT BALANCE (Production Fix)
+            // Esto evita que la aplicación explote cuando se acaba el saldo de OpenAI/OpenRouter
+            if (error ? .status === 402 ||
+                error ? .code === 'insufficient_quota' ||
+                (error ? .message && (error.message.includes('Insufficient Balance') || error.message.includes('402')))) {
+
+                console.warn("⚠️ CRITICAL: LLM Quota exceeded (402). Returning fallback message.");
+
+                return new AIMessage({
+                    content: "Lo siento, el sistema de IA está temporalmente fuera de servicio debido a límites de cuota (402). Por favor contacta al administrador o intenta más tarde."
+                });
+            }
+
             // If the error is about tool_calls, try without tools
             if (error.message && error.message.includes('tool_calls')) {
                 console.warn("Tool call error detected, retrying without tools...");
