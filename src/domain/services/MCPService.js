@@ -12,9 +12,9 @@ import { HumanMessage, SystemMessage, ToolMessage, AIMessage } from "@langchain/
 import crypto from 'crypto';
 
 export class MCPService {
-    constructor() {
+    constructor(supabaseOverride = null) {
         this.ragService = new RAGService();
-        this.supabase = SupabaseService.getInstance();
+        this.supabase = supabaseOverride || SupabaseService.getInstance();
         this.llmService = LLMService.getInstance();
         this.githubService = getGitHubService();
 

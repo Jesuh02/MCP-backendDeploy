@@ -10,14 +10,17 @@ import R2StorageService from '../../services/R2StorageService.js';
 
 export class SupabaseService {
     static instance = null;
+    // Cache of dynamic clients keyed by Supabase URL
+    static _dynamicInstances = new Map();
 
-    constructor() {
-        if (SupabaseService.instance) {
+    constructor(customUrl = null, customKey = null) {
+        // If custom credentials provided, skip singleton check (per-request instance)
+        if (!customUrl && SupabaseService.instance) {
             return SupabaseService.instance;
         }
 
-        const supabaseUrl = process.env.SUPABASE_URL;
-        const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
+        const supabaseUrl = customUrl || process.env.SUPABASE_URL;
+        const supabaseKey = customKey || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
 
         if (!supabaseUrl || !supabaseKey) {
             console.error('❌ Supabase credentials missing!');
@@ -35,7 +38,10 @@ export class SupabaseService {
             }
         });
 
-        SupabaseService.instance = this;
+        // Only set as singleton if this is the default (no custom credentials)
+        if (!customUrl) {
+            SupabaseService.instance = this;
+        }
     }
 
     static getInstance() {
@@ -43,6 +49,29 @@ export class SupabaseService {
             SupabaseService.instance = new SupabaseService();
         }
         return SupabaseService.instance;
+    }
+
+    /**
+     * Get or create a SupabaseService instance for specific credentials.
+     * Cached by URL to avoid recreating clients on every request.
+     * @param {string} url - Supabase project URL
+     * @param {string} key - Supabase API key (anon or service)
+     * @returns {SupabaseService} A SupabaseService instance connected to the given project
+     */
+    static getInstanceForCredentials(url, key) {
+        if (!url || !key) return SupabaseService.getInstance();
+
+        const normalizedUrl = url.replace(/\/+$/, '');
+        const cacheKey = normalizedUrl;
+
+        if (SupabaseService._dynamicInstances.has(cacheKey)) {
+            return SupabaseService._dynamicInstances.get(cacheKey);
+        }
+
+        console.log(`🔄 Creating dynamic SupabaseService for: ${normalizedUrl}`);
+        const instance = new SupabaseService(normalizedUrl, key);
+        SupabaseService._dynamicInstances.set(cacheKey, instance);
+        return instance;
     }
 
     /**
