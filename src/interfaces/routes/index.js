@@ -2,20 +2,22 @@ import notificationRoutes from './notificationRoutes.js';
 import llmRoutes from './llmRoutes.js';
 import excelRoutes from './excelRoutes.js';
 import mcpRoutes from './MCPRoutes.js';
+import courseRoutes from './courseRoutes.js';
 
 /**
  * routes/index.js
  * Exportaciones centralizadas de todas las rutas
  */
 
-export { notificationRoutes, llmRoutes, excelRoutes, mcpRoutes };
+export { notificationRoutes, llmRoutes, excelRoutes, mcpRoutes, courseRoutes };
 
 // Route configuration helper
 export function configureRoutes(app) {
     const routes = [
-        { path: '/notifications', router: notificationRoutes, name: 'Notifications' }, 
-        { path: '/llm', router: llmRoutes, name: 'LLM' }, 
+        { path: '/notifications', router: notificationRoutes, name: 'Notifications' },
+        { path: '/llm', router: llmRoutes, name: 'LLM' },
         { path: '/excel', router: excelRoutes, name: 'Excel' },
+        { path: '/courses', router: courseRoutes, name: 'Courses' },
         { path: '/', router: mcpRoutes, name: 'MCP' } // MCP routes are mounted at root to handle /tools/call etc.
     ];
 
@@ -34,5 +36,6 @@ export default {
     notificationRoutes,
     llmRoutes,
     excelRoutes,
-    mcpRoutes
+    mcpRoutes,
+    courseRoutes
 };
