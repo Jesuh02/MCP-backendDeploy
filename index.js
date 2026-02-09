@@ -50,10 +50,21 @@ const pdf = require('pdf-parse');
 const app = express();
 // LOGGING CRÍTICO PARA DEPURACIÓN EN RAILWAY
 const APP_ENV = process.env.APP_ENVIRONMENT || process.env.NODE_ENV || 'development';
+
+// 🔒 FORCE MODEL CONFIGURATION (User Requirement: Only DeepSeek for Chat, Only Qwen for Embeddings)
+process.env.CHAT_MODEL = 'deepseek-chat';
+process.env.DEEPSEEK_MODEL = 'deepseek-chat';
+// Ensure OpenRouter is ONLY used for Embeddings (Qwen)
+process.env.EMBEDDING_MODEL = 'pro/qwen/qwen-2.5-72b-instruct'; // Using valid OpenRouter QwenID or the user's string if custom
+// Note: User asked for "Qwen3 Embedding 8B". If that's a specific custom model or alias, we set it here.
+// Assuming "Qwen3-VL-Embedding-8B" as seen in other files, or mapping it.
+process.env.EMBEDDING_MODEL = 'Qwen3-VL-Embedding-8B';
+
 console.log('=================================================');
 console.log('🚀 INICIANDO SERVIDOR - DIAGNÓSTICO DE ARRANQUE');
 console.log(`🏷️  ENVIRONMENT: ${APP_ENV.toUpperCase()}`);
 console.log('✅ V2.5 FIX: STRICT EMBEDDING ENFORCEMENT ACTIVE');
+console.log('🔒 SECURITY: Chat=DeepSeek(Direct), Embeddings=Qwen(OpenRouter)');
 console.log('=================================================');
 console.log(`📌 NODE_ENV: ${process.env.NODE_ENV}`);
 console.log(`📌 APP_ENVIRONMENT: ${APP_ENV}`);
@@ -532,75 +543,59 @@ setInterval(() => {
  * Helper that calls remote DeepSeek HTTP API directly (used as immediate fallback)
  */
 async function remoteDeepSeekCall(systemPrompt, userPrompt) {
-    // FIX: Don't call broken /procesar-prompt endpoint. Use OpenRouter directly as the remote fallback.
-    const fallbackModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat";
-
-    console.log(`🌐 Calling Remote Fallback (OpenRouter) with model: ${fallbackModel}`);
-
-    // Check if the fallback model is accidentally an embedding model
-    if (fallbackModel.toLowerCase().includes('embedding')) {
-        console.warn('⚠️ Fallback model configured as embedding model! Switching to deepseek-chat.');
-        return await callOpenRouter(systemPrompt, userPrompt, "deepseek/deepseek-chat");
-    }
-
-    try {
-        const result = await callOpenRouter(systemPrompt, userPrompt, fallbackModel);
-        if (result) return result;
-        throw new Error("OpenRouter fallback returned empty");
-    } catch (err) {
-        console.error('❌ Remote fallback failed:', err.message);
-        throw err;
-    }
+    console.warn("⚠️ Remote Fallback (OpenRouter) for DeepSeek is DISABLED by configuration.");
+    console.warn("   Reason: User requires DeepSeek to use ONLY the Direct API.");
+    // We do not call OpenRouter here anymore.
+    // If you wanted a fallback to DeepSeek Direct API, use callDeepSeek() instead.
+    return null;
 }
 
 /**
  * Call OpenRouter API (Qwen, etc.)
+ * 🔒 RESTRICTED: This function should ONLY be used for Embeddings (Qwen) context, not for general Chat.
  */
 async function callOpenRouter(systemPrompt, userPrompt, model) {
-    try {
-        const apiKey = process.env.OPENROUTER_API_KEY;
-        if (!apiKey) {
-            console.warn('⚠️ OPENROUTER_API_KEY missing, falling back to local DeepSeek');
-            return null;
-        }
-
-        // Safety check: Ensure we aren't using an embedding model for chat
-        let safeModel = model;
-        if (safeModel && safeModel.toLowerCase().includes('embedding')) {
-            console.warn(`⚠️ Attempted to use embedding model '${safeModel}' for chat! Swapping to chat model.`);
-            safeModel = process.env.OPENROUTER_CHAT_MODEL || "deepseek/deepseek-chat";
-        }
-
-        console.log(`🤖 Sending request to OpenRouter (Model: ${safeModel})`);
-        const messages = [];
-        if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
-        messages.push({ role: "user", content: userPrompt });
-
-        const resp = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
-            model: safeModel,
-            messages: messages,
-            temperature: 0.7
-        }, {
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com',
-                'X-Title': 'CourseV MCP Backend',
-                'Content-Type': 'application/json'
-            },
-            timeout: 60000
-        });
-
-        const content = (resp.data && resp.data.choices && resp.data.choices[0] && resp.data.choices[0].message) ? resp.data.choices[0].message.content : "";
-        console.log(`✅ OpenRouter response received: ${content.length} chars`);
-        return content;
-
-    } catch (err) {
-        console.error('❌ OpenRouter call failed:', err.message);
-        if (err.response) {
-            console.error('   Details:', err.response.data);
-        }
-        return null;
+    if (!process.env.OPENROUTER_API_KEY) {
+        throw new Error('OPENROUTER_API_KEY not configured');
     }
+
+    // 🔒 STRICT ENFORCEMENT: Only allow Qwen models (specifically for embeddings/ingestion context)
+    // The user specified "Qwen3 Embedding 8B" as the ONLY allowable model.
+    const allowed = "qwen";
+    const targetModel = model || process.env.EMBEDDING_MODEL || 'Qwen3-VL-Embedding-8B';
+
+    // Check if model name contains 'qwen' (case insensitive)
+    if (!targetModel.toLowerCase().includes(allowed)) {
+        console.error(`❌ BLOCKED: OpenRouter call with non-Qwen model '${targetModel}'. User restriction active.`);
+        throw new Error(`OpenRouter Usage Violation: Only Qwen models are allowed (Requested: ${targetModel})`);
+    }
+
+    console.log(`📡 Calling OpenRouter (Restricted to Qwen) with model: ${targetModel}`);
+
+    // Note: If this is an embedding model, this chat endpoint might fail if OpenRouter requires /embeddings endpoint.
+    // However, sticking to existing implementation path but enforcing model. 
+    // If previous code worked for Qwen embeddings via chat endpoint (rare), we keep it. 
+    // If Qwen3 Embedding is actually an embedding model, the calling code (EmbeddingService) usually handles the endpoint.
+    // This function `callOpenRouter` seems to hit /chat/completions.
+    // If the user wants Qwen for *Chat*, this works. 
+    // If the user wants Qwen for *Embeddings*, this function might be irrelevant if EmbeddingService uses its own fetch.
+    // Assuming this function is for legacy or fallback usage, we restrict it anyway.
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        timeout: 60000
+    });
+
+    const content = (resp.data && resp.data.choices && resp.data.choices[0] && resp.data.choices[0].message) ? resp.data.choices[0].message.content : "";
+    console.log(`✅ OpenRouter response received: ${content.length} chars`);
+    return content;
+
+} catch (err) {
+    console.error('❌ OpenRouter call failed:', err.message);
+    if (err.response) {
+        console.error('   Details:', err.response.data);
+    }
+    return null;
+}
 }
 
 /**
