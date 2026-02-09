@@ -171,7 +171,7 @@ export class SupabaseService {
     getStaticFallbackSchema() {
         return `
 -- WARNING: This is a FALLBACK schema. Dynamic fetch failed.
--- Table order and constraints may not be valid for execution.
+-- Table order and constraints may not be valid for execution. 
 
 CREATE TABLE public.chat_messages (
   id bigint NOT NULL DEFAULT nextval('chat_messages_id_seq'::regclass),
@@ -670,7 +670,30 @@ CREATE TABLE public.videos (
 
             // Build insert payload (snake_case for Postgres)
             // Map creator_user_id (from request) to remote_id (database column)
-            const targetRemoteId = creator_user_id || remoteId;
+            let targetRemoteId = creator_user_id || remoteId;
+
+            // Validate strict foreign key integrity
+            if (targetRemoteId) {
+                // Ensure integer
+                targetRemoteId = parseInt(targetRemoteId);
+                
+                // Check if user exists to avoid FK constraint violation
+                try {
+                    const { data: userExists, error: userCheckError } = await this.client
+                        .from('usuarios')
+                        .select('id')
+                        .eq('id', targetRemoteId)
+                        .maybeSingle(); // Use maybeSingle to avoid error if not found
+                    
+                    if (!userExists) {
+                        logger.warn(`⚠️ User ID ${targetRemoteId} provided for video insertion does not exist in 'usuarios' table.`);
+                        logger.warn(`   Action: Setting remote_id to NULL to allow insertion without FK violation.`);
+                        targetRemoteId = null;
+                    }
+                } catch (fkCheckErr) {
+                    logger.warn(`⚠️ Error checking user existence: ${fkCheckErr.message}. Proceeding with original ID.`);
+                }
+            }
 
             const insertPayload = {
                 title,
