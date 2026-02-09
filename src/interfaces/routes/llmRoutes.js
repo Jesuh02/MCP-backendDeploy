@@ -874,7 +874,9 @@ NO USES JAMÁS en preguntas u opciones:
                                      filtered = savedResult.savedQuestions;
                                      console.log(`✅ Accepted ${filtered.length} unique questions (Rejected ${validQuestions.length - filtered.length} duplicates).`);
                                 } else {
-                                     filtered = []; 
+                                     // Fallback: If save failed (e.g. user not found), return ALL valid questions
+                                     console.warn("⚠️ Save failed or no result. Returning original valid questions.");
+                                     filtered = validQuestions; 
                                 }
                             } else {
                                 filtered = [];
@@ -1020,6 +1022,14 @@ NO USES JAMÁS en preguntas u opciones:
                                             console.warn('⚠️ Retry attempt failed:', retryErr?.message || retryErr);
                                         }
                                     }
+                                }
+
+                                // 🔥 FIX: If all questions were filtered out (duplicates) and retries failed,
+                                // RETURN THE ORIGINAL QUESTIONS (transformed) instead of empty list.
+                                // It is better to show duplicate questions than to show nothing.
+                                if (filtered.length === 0 && transformed.length > 0) {
+                                    console.warn('⚠️ STRICT UNIQUE FILTER BLOCKED ALL QUESTIONS. FALLING BACK TO ORIGINALS.');
+                                    filtered = transformed;
                                 }
 
                                 respuestaTexto = JSON.stringify(filtered);
