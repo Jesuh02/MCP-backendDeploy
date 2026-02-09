@@ -555,47 +555,54 @@ async function remoteDeepSeekCall(systemPrompt, userPrompt) {
  * 🔒 RESTRICTED: This function should ONLY be used for Embeddings (Qwen) context, not for general Chat.
  */
 async function callOpenRouter(systemPrompt, userPrompt, model) {
-    if (!process.env.OPENROUTER_API_KEY) {
-        throw new Error('OPENROUTER_API_KEY not configured');
+    try {
+        if (!process.env.OPENROUTER_API_KEY) {
+            throw new Error('OPENROUTER_API_KEY not configured');
+        }
+
+        // 🔒 STRICT ENFORCEMENT: Only allow Qwen models (specifically for embeddings/ingestion context)
+        // The user specified "Qwen3 Embedding 8B" as the ONLY allowable model.
+        const allowed = "qwen";
+        const targetModel = model || process.env.EMBEDDING_MODEL || 'Qwen3-VL-Embedding-8B';
+
+        // Check if model name contains 'qwen' (case insensitive)
+        if (!targetModel.toLowerCase().includes(allowed)) {
+            console.error(`❌ BLOCKED: OpenRouter call with non-Qwen model '${targetModel}'. User restriction active.`);
+            throw new Error(`OpenRouter Usage Violation: Only Qwen models are allowed (Requested: ${targetModel})`);
+        }
+
+        console.log(`📡 Calling OpenRouter (Restricted to Qwen) with model: ${targetModel}`);
+
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": process.env.PUBLIC_URL || "https://yisuscompany.com",
+            },
+            body: JSON.stringify({
+                model: targetModel,
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: userPrompt }
+                ]
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`OpenRouter API error: ${response.status} - ${errText}`);
+        }
+
+        const data = await response.json();
+        const content = (data.choices && data.choices[0] && data.choices[0].message) ? data.choices[0].message.content : "";
+        console.log(`✅ OpenRouter response received: ${content.length} chars`);
+        return content;
+
+    } catch (err) {
+        console.error('❌ OpenRouter call failed:', err.message);
+        return null;
     }
-
-    // 🔒 STRICT ENFORCEMENT: Only allow Qwen models (specifically for embeddings/ingestion context)
-    // The user specified "Qwen3 Embedding 8B" as the ONLY allowable model.
-    const allowed = "qwen";
-    const targetModel = model || process.env.EMBEDDING_MODEL || 'Qwen3-VL-Embedding-8B';
-
-    // Check if model name contains 'qwen' (case insensitive)
-    if (!targetModel.toLowerCase().includes(allowed)) {
-        console.error(`❌ BLOCKED: OpenRouter call with non-Qwen model '${targetModel}'. User restriction active.`);
-        throw new Error(`OpenRouter Usage Violation: Only Qwen models are allowed (Requested: ${targetModel})`);
-    }
-
-    console.log(`📡 Calling OpenRouter (Restricted to Qwen) with model: ${targetModel}`);
-
-    // Note: If this is an embedding model, this chat endpoint might fail if OpenRouter requires /embeddings endpoint.
-    // However, sticking to existing implementation path but enforcing model. 
-    // If previous code worked for Qwen embeddings via chat endpoint (rare), we keep it. 
-    // If Qwen3 Embedding is actually an embedding model, the calling code (EmbeddingService) usually handles the endpoint.
-    // This function `callOpenRouter` seems to hit /chat/completions.
-    // If the user wants Qwen for *Chat*, this works. 
-    // If the user wants Qwen for *Embeddings*, this function might be irrelevant if EmbeddingService uses its own fetch.
-    // Assuming this function is for legacy or fallback usage, we restrict it anyway.
-
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        timeout: 60000
-    });
-
-    const content = (resp.data && resp.data.choices && resp.data.choices[0] && resp.data.choices[0].message) ? resp.data.choices[0].message.content : "";
-    console.log(`✅ OpenRouter response received: ${content.length} chars`);
-    return content;
-
-} catch (err) {
-    console.error('❌ OpenRouter call failed:', err.message);
-    if (err.response) {
-        console.error('   Details:', err.response.data);
-    }
-    return null;
-}
 }
 
 /**
