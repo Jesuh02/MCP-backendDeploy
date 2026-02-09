@@ -24,7 +24,19 @@ export class RAGService {
     constructor(options = {}) {
         // Dependency Injection - allows swapping implementations
         this.supabase = options.supabase || SupabaseService.getInstance();
-        this.vectorStore = options.vectorStore || SupabaseVectorStore.getInstance();
+
+        // CRITICAL FIX: Ensure VectorStore uses the SAME supabase instance as RAGService.
+        // If specific supabase instance is provided (e.g. for QA environment), we must NOT use the singleton VectorStore.
+        if (options.vectorStore) {
+            this.vectorStore = options.vectorStore;
+        } else if (options.supabase) {
+            // Create a request-scoped VectorStore using the specific Supabase connection
+            this.vectorStore = new SupabaseVectorStore(this.supabase);
+        } else {
+            // Fallback to singleton for default requests
+            this.vectorStore = SupabaseVectorStore.getInstance();
+        }
+
         this.cache = options.cache || CacheService.getInstance();
         this.embeddingService = options.embeddingService || EmbeddingService.getInstance();
         this.documentProcessor = options.documentProcessor || new DocumentProcessor({
@@ -449,7 +461,7 @@ export class RAGService {
      */
     _detectFileType(fileName) {
         if (!fileName) return 'txt';
-        const ext = fileName.split('.').pop()?.toLowerCase();
+        const ext = fileName.split('.').pop() ? .toLowerCase();
         return ext || 'txt';
     }
 

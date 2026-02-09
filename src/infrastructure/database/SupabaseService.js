@@ -10,14 +10,17 @@ import R2StorageService from '../../services/R2StorageService.js';
 
 export class SupabaseService {
     static instance = null;
+    // Cache of dynamic clients keyed by Supabase URL
+    static _dynamicInstances = new Map();
 
-    constructor() {
-        if (SupabaseService.instance) {
+    constructor(customUrl = null, customKey = null) {
+        // If custom credentials provided, skip singleton check (per-request instance)
+        if (!customUrl && SupabaseService.instance) {
             return SupabaseService.instance;
         }
 
-        const supabaseUrl = process.env.SUPABASE_URL;
-        const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
+        const supabaseUrl = customUrl || process.env.SUPABASE_URL;
+        const supabaseKey = customKey || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
 
         if (!supabaseUrl || !supabaseKey) {
             console.error('❌ Supabase credentials missing!');
@@ -35,7 +38,10 @@ export class SupabaseService {
             }
         });
 
-        SupabaseService.instance = this;
+        // Only set as singleton if this is the default (no custom credentials)
+        if (!customUrl) {
+            SupabaseService.instance = this;
+        }
     }
 
     static getInstance() {
@@ -43,6 +49,29 @@ export class SupabaseService {
             SupabaseService.instance = new SupabaseService();
         }
         return SupabaseService.instance;
+    }
+
+    /**
+     * Get or create a SupabaseService instance for specific credentials.
+     * Cached by URL to avoid recreating clients on every request.
+     * @param {string} url - Supabase project URL
+     * @param {string} key - Supabase API key (anon or service)
+     * @returns {SupabaseService} A SupabaseService instance connected to the given project
+     */
+    static getInstanceForCredentials(url, key) {
+        if (!url || !key) return SupabaseService.getInstance();
+
+        const normalizedUrl = url.replace(/\/+$/, '');
+        const cacheKey = normalizedUrl;
+
+        if (SupabaseService._dynamicInstances.has(cacheKey)) {
+            return SupabaseService._dynamicInstances.get(cacheKey);
+        }
+
+        console.log(`🔄 Creating dynamic SupabaseService for: ${normalizedUrl}`);
+        const instance = new SupabaseService(normalizedUrl, key);
+        SupabaseService._dynamicInstances.set(cacheKey, instance);
+        return instance;
     }
 
     /**
@@ -171,7 +200,7 @@ export class SupabaseService {
     getStaticFallbackSchema() {
         return `
 -- WARNING: This is a FALLBACK schema. Dynamic fetch failed.
--- Table order and constraints may not be valid for execution.
+-- Table order and constraints may not be valid for execution. 
 
 CREATE TABLE public.chat_messages (
   id bigint NOT NULL DEFAULT nextval('chat_messages_id_seq'::regclass),
@@ -300,6 +329,15 @@ CREATE TABLE public.roles (
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT roles_pkey PRIMARY KEY (id)
 );
+CREATE TABLE public.usuarios_roles (
+  usuario_id bigint not null,
+  rol_id integer not null,
+  asignado_en timestamp with time zone null default now(),
+  constraint usuarios_roles_pkey primary key (usuario_id, rol_id),
+  constraint fk_usuarios_roles_rol foreign KEY (rol_id) references roles (id) on delete CASCADE,
+  constraint fk_usuarios_roles_usuario foreign KEY (usuario_id) references usuarios (id) on delete CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_usuarios_roles_rol ON public.usuarios_roles USING btree (rol_id);
 CREATE TABLE public.subscriptions (
   subscription_date bigint,
   created_at timestamp with time zone DEFAULT now(),
@@ -643,7 +681,8 @@ CREATE TABLE public.videos (
                 thumbnailUri,
                 price,
                 remoteId,
-                courseId
+                courseId,
+                creator_user_id // Extract creator_user_id from input
             } = videoData;
 
             // Validate required fields
@@ -668,6 +707,32 @@ CREATE TABLE public.videos (
             }
 
             // Build insert payload (snake_case for Postgres)
+            // Map creator_user_id (from request) to remote_id (database column)
+            let targetRemoteId = creator_user_id || remoteId;
+
+            // Validate strict foreign key integrity
+            if (targetRemoteId) {
+                // Ensure integer
+                targetRemoteId = parseInt(targetRemoteId);
+
+                // Check if user exists to avoid FK constraint violation
+                try {
+                    const { data: userExists, error: userCheckError } = await this.client
+                        .from('usuarios')
+                        .select('id')
+                        .eq('id', targetRemoteId)
+                        .maybeSingle(); // Use maybeSingle to avoid error if not found
+
+                    if (!userExists) {
+                        logger.warn(`⚠️ User ID ${targetRemoteId} provided for video insertion does not exist in 'usuarios' table.`);
+                        logger.warn(`   Action: Setting remote_id to NULL to allow insertion without FK violation.`);
+                        targetRemoteId = null;
+                    }
+                } catch (fkCheckErr) {
+                    logger.warn(`⚠️ Error checking user existence: ${fkCheckErr.message}. Proceeding with original ID.`);
+                }
+            }
+
             const insertPayload = {
                 title,
                 description: description || null,
@@ -675,12 +740,11 @@ CREATE TABLE public.videos (
                 video_uri_string: (uploaded && uploaded.publicUrl) ? uploaded.publicUrl : (videoUriString || null),
                 // store the object key in local_file_path for now (backend uses it as key)
                 local_file_path: (uploaded && uploaded.key) ? uploaded.key : (localFilePath || null),
-                local_file_path: localFilePath || null,
                 timestamp: timestamp || Date.now(),
                 is_paid: isPaid || false,
                 thumbnail_uri: thumbnailUri || null,
                 price: price || null,
-                remote_id: remoteId || null,
+                remote_id: targetRemoteId || null,
                 course_id: courseId || null
             };
 
@@ -830,6 +894,20 @@ CREATE TABLE public.videos (
             const embeddingService = EmbeddingService.getInstance();
             if (!embeddingService.isReady()) {
                 logger.warn('⚠️ EmbeddingService not ready in SupabaseService fallback.');
+            }
+
+            // 🔍 VALIDATION: Check if user exists to prevent FK violations
+            if (userId) {
+                const { data: userExists } = await this.client
+                    .from('usuarios')
+                    .select('id')
+                    .eq('id', userId)
+                    .maybeSingle();
+                    
+                if (!userExists) {
+                    logger.warn(`⚠️ User ID ${userId} not found in 'usuarios'. SupabaseService skipping save.`);
+                    return;
+                }
             }
 
             for (const q of questions) {

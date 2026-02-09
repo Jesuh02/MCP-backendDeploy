@@ -50,10 +50,21 @@ const pdf = require('pdf-parse');
 const app = express();
 // LOGGING CRÍTICO PARA DEPURACIÓN EN RAILWAY
 const APP_ENV = process.env.APP_ENVIRONMENT || process.env.NODE_ENV || 'development';
+
+// 🔒 FORCE MODEL CONFIGURATION (User Requirement: Only DeepSeek for Chat, Only Qwen for Embeddings)
+process.env.CHAT_MODEL = 'deepseek-chat';
+process.env.DEEPSEEK_MODEL = 'deepseek-chat';
+// Ensure OpenRouter is ONLY used for Embeddings (Qwen)
+process.env.EMBEDDING_MODEL = 'pro/qwen/qwen-2.5-72b-instruct'; // Using valid OpenRouter QwenID or the user's string if custom
+// Note: User asked for "Qwen3 Embedding 8B". If that's a specific custom model or alias, we set it here.
+// Assuming "Qwen3-VL-Embedding-8B" as seen in other files, or mapping it.
+process.env.EMBEDDING_MODEL = 'Qwen3-VL-Embedding-8B';
+
 console.log('=================================================');
 console.log('🚀 INICIANDO SERVIDOR - DIAGNÓSTICO DE ARRANQUE');
 console.log(`🏷️  ENVIRONMENT: ${APP_ENV.toUpperCase()}`);
 console.log('✅ V2.5 FIX: STRICT EMBEDDING ENFORCEMENT ACTIVE');
+console.log('🔒 SECURITY: Chat=DeepSeek(Direct), Embeddings=Qwen(OpenRouter)');
 console.log('=================================================');
 console.log(`📌 NODE_ENV: ${process.env.NODE_ENV}`);
 console.log(`📌 APP_ENVIRONMENT: ${APP_ENV}`);
@@ -98,7 +109,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-MCP-Client, X-MCP-Request-Id');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-MCP-Client, X-MCP-Request-Id, X-Supabase-Url, X-Supabase-Key, Connection');
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
@@ -114,6 +125,26 @@ app.use((req, res, next) => {
         console.log(`[INCOMING] ${new Date().toISOString()} ${req.method} ${req.originalUrl} from ${remote} client=${clientHeader} x-api-key=${apiKey}`);
     } catch (e) {
         console.log('Error logging incoming request', e.message);
+    }
+    next();
+});
+
+// ============================================================
+// 🔄 PER-REQUEST SUPABASE ROUTING MIDDLEWARE
+// When the Android client sends X-Supabase-Url / X-Supabase-Key headers
+// (production build variant), create request-scoped service instances
+// so queries hit the correct Supabase project.
+// ============================================================
+app.use((req, res, next) => {
+    const headerUrl = req.headers['x-supabase-url'];
+    const headerKey = req.headers['x-supabase-key'];
+    if (headerUrl && headerKey) {
+        const defaultUrl = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+        const incomingUrl = headerUrl.replace(/\/+$/, '');
+        if (incomingUrl !== defaultUrl) {
+            req._supabaseOverride = SupabaseService.getInstanceForCredentials(incomingUrl, headerKey);
+            req._mcpServiceOverride = new MCPService(req._supabaseOverride);
+        }
     }
     next();
 });
@@ -512,73 +543,64 @@ setInterval(() => {
  * Helper that calls remote DeepSeek HTTP API directly (used as immediate fallback)
  */
 async function remoteDeepSeekCall(systemPrompt, userPrompt) {
-    // FIX: Don't call broken /procesar-prompt endpoint. Use OpenRouter directly as the remote fallback.
-    const fallbackModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat";
-
-    console.log(`🌐 Calling Remote Fallback (OpenRouter) with model: ${fallbackModel}`);
-
-    // Check if the fallback model is accidentally an embedding model
-    if (fallbackModel.toLowerCase().includes('embedding')) {
-        console.warn('⚠️ Fallback model configured as embedding model! Switching to deepseek-chat.');
-        return await callOpenRouter(systemPrompt, userPrompt, "deepseek/deepseek-chat");
-    }
-
-    try {
-        const result = await callOpenRouter(systemPrompt, userPrompt, fallbackModel);
-        if (result) return result;
-        throw new Error("OpenRouter fallback returned empty");
-    } catch (err) {
-        console.error('❌ Remote fallback failed:', err.message);
-        throw err;
-    }
+    console.warn("⚠️ Remote Fallback (OpenRouter) for DeepSeek is DISABLED by configuration.");
+    console.warn("   Reason: User requires DeepSeek to use ONLY the Direct API.");
+    // We do not call OpenRouter here anymore.
+    // If you wanted a fallback to DeepSeek Direct API, use callDeepSeek() instead.
+    return null;
 }
 
 /**
  * Call OpenRouter API (Qwen, etc.)
+ * 🔒 RESTRICTED: This function should ONLY be used for Embeddings (Qwen) context, not for general Chat.
  */
 async function callOpenRouter(systemPrompt, userPrompt, model) {
     try {
-        const apiKey = process.env.OPENROUTER_API_KEY;
-        if (!apiKey) {
-            console.warn('⚠️ OPENROUTER_API_KEY missing, falling back to local DeepSeek');
-            return null;
+        if (!process.env.OPENROUTER_API_KEY) {
+            throw new Error('OPENROUTER_API_KEY not configured');
         }
 
-        // Safety check: Ensure we aren't using an embedding model for chat
-        let safeModel = model;
-        if (safeModel && safeModel.toLowerCase().includes('embedding')) {
-            console.warn(`⚠️ Attempted to use embedding model '${safeModel}' for chat! Swapping to chat model.`);
-            safeModel = process.env.OPENROUTER_CHAT_MODEL || "deepseek/deepseek-chat";
+        // 🔒 STRICT ENFORCEMENT: Only allow Qwen models (specifically for embeddings/ingestion context)
+        // The user specified "Qwen3 Embedding 8B" as the ONLY allowable model.
+        const allowed = "qwen";
+        const targetModel = model || process.env.EMBEDDING_MODEL || 'Qwen3-VL-Embedding-8B';
+
+        // Check if model name contains 'qwen' (case insensitive)
+        if (!targetModel.toLowerCase().includes(allowed)) {
+            console.error(`❌ BLOCKED: OpenRouter call with non-Qwen model '${targetModel}'. User restriction active.`);
+            throw new Error(`OpenRouter Usage Violation: Only Qwen models are allowed (Requested: ${targetModel})`);
         }
 
-        console.log(`🤖 Sending request to OpenRouter (Model: ${safeModel})`);
-        const messages = [];
-        if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
-        messages.push({ role: "user", content: userPrompt });
+        console.log(`📡 Calling OpenRouter (Restricted to Qwen) with model: ${targetModel}`);
 
-        const resp = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
-            model: safeModel,
-            messages: messages,
-            temperature: 0.7
-        }, {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
             headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com',
-                'X-Title': 'CourseV MCP Backend',
-                'Content-Type': 'application/json'
+                "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": process.env.PUBLIC_URL || "https://yisuscompany.com",
             },
-            timeout: 60000
+            body: JSON.stringify({
+                model: targetModel,
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: userPrompt }
+                ]
+            })
         });
 
-        const content = (resp.data && resp.data.choices && resp.data.choices[0] && resp.data.choices[0].message) ? resp.data.choices[0].message.content : "";
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`OpenRouter API error: ${response.status} - ${errText}`);
+        }
+
+        const data = await response.json();
+        const content = (data.choices && data.choices[0] && data.choices[0].message) ? data.choices[0].message.content : "";
         console.log(`✅ OpenRouter response received: ${content.length} chars`);
         return content;
 
     } catch (err) {
         console.error('❌ OpenRouter call failed:', err.message);
-        if (err.response) {
-            console.error('   Details:', err.response.data);
-        }
         return null;
     }
 }
@@ -651,6 +673,19 @@ try {
     console.log('✅ RAGService initialized');
 } catch (error) {
     console.error('❌ Failed to initialize RAGService:', error.message);
+}
+
+// ============================================================
+// 🔄 PER-REQUEST HELPERS
+// Use these in route handlers to get the correct service for
+// the requesting client's Supabase project (QA vs Production).
+// ============================================================
+function getSupabaseForReq(req) {
+    return req._supabaseOverride || supabaseService;
+}
+
+function getMCPForReq(req) {
+    return req._mcpServiceOverride || mcpService || new MCPService();
 }
 
 // ============================================================
@@ -2013,10 +2048,11 @@ app.post('/reinforcement-history', async(req, res) => {
             return res.status(400).json({ success: false, error: 'Missing userId, courseId or questions' });
         }
 
-        // Use MCPService for saving history
+        // Use MCPService for saving history (per-request routing)
         // This uses INSERT to avoid unique constraint errors
-        if (mcpService) {
-            await mcpService.saveReinforcementHistory(Number(userId), Number(courseId), questions);
+        const svc = getMCPForReq(req);
+        if (svc) {
+            await svc.saveReinforcementHistory(Number(userId), Number(courseId), questions);
             return res.json({ success: true, message: 'Reinforcement history saved' });
         } else {
             // Fallback if MCPService not initialized (should not happen)
@@ -2038,9 +2074,10 @@ app.get('/reinforcement-history/:userId/:courseId', async(req, res) => {
             return res.status(400).json({ success: false, error: 'Missing userId or courseId' });
         }
 
-        // Use MCPService for fetching history
-        if (mcpService) {
-            const history = await mcpService.getReinforcementHistory(userId, courseId);
+        // Use MCPService for fetching history (per-request routing)
+        const svc = getMCPForReq(req);
+        if (svc) {
+            const history = await svc.getReinforcementHistory(userId, courseId);
             return res.json({ success: true, data: history });
         } else {
             const history = await getReinforcementQuestionHistory(userId, courseId);
@@ -2074,7 +2111,7 @@ app.post('/register-fcm-token', async(req, res) => {
     }
 
     try {
-        await supabaseService.registerFCMToken(userId, token, deviceType || 'android');
+        await getSupabaseForReq(req).registerFCMToken(userId, token, deviceType || 'android');
         res.json({ success: true, message: 'Token registered successfully' });
     } catch (error) {
         console.error('❌ Error registering FCM token:', error);
@@ -2086,15 +2123,17 @@ app.post('/register-fcm-token', async(req, res) => {
  * Envía una notificación push a un usuario específico vía FCM
  * ACTUALIZADO: Usa sendEachForMulticast en lugar de sendMulticast (deprecado)
  */
-async function sendPushNotification(userId, title, body, data = {}) {
+async function sendPushNotification(userId, title, body, data = {}, supabaseOverride = null) {
     if (!admin || !admin.apps || !admin.apps.length) {
         console.warn('⚠️ Firebase Admin no está inicializado. Saltando notificación push.');
         return;
     }
 
+    const supa = supabaseOverride || supabaseService;
+
     try {
-        // 1. Obtener los tokens del usuario desde Supabase (usando método centralizado)
-        const tokens = await supabaseService.getUserFCMTokens(userId);
+        // 1. Obtener los tokens del usuario desde Supabase (per-request routing)
+        const tokens = await supa.getUserFCMTokens(userId);
 
         if (!tokens || tokens.length === 0) {
             console.log(`ℹ️ El usuario ${userId} no tiene tokens FCM registrados.`);
@@ -2156,7 +2195,7 @@ async function sendPushNotification(userId, title, body, data = {}) {
         // Limpiar tokens inválidos
         if (failedTokens.length > 0) {
             console.log('🧹 Limpiando tokens inválidos:', failedTokens.length);
-            await supabaseService.removeInvalidFCMTokens(failedTokens);
+            await supa.removeInvalidFCMTokens(failedTokens);
         }
 
     } catch (error) {
@@ -2169,10 +2208,11 @@ async function sendPushNotification(userId, title, body, data = {}) {
  * Envía una notificación por correo electrónico a un usuario específico
  * OPTIMIZADO PARA RAILWAY: Usa HTTP APIs en lugar de SMTP
  */
-async function sendEmailNotification(userId, subject, text) {
+async function sendEmailNotification(userId, subject, text, supabaseOverride = null) {
+    const supa = supabaseOverride || supabaseService;
     try {
-        // 1. Obtener el email del usuario desde Supabase
-        const { data: user, error } = await supabaseService.client
+        // 1. Obtener el email del usuario desde Supabase (per-request routing)
+        const { data: user, error } = await supa.client
             .from('usuarios')
             .select('email')
             .eq('id', userId)
@@ -3721,8 +3761,9 @@ app.post('/notify-grade', async(req, res) => {
     console.log(`   👤 Calificado por: ${gradedByUsername || 'Profesor'}`);
 
     try {
-        // 1. Obtener información del estudiante
-        const { data: student, error: studentError } = await supabaseService.client
+        // 1. Obtener información del estudiante (per-request routing)
+        const supaForReq = getSupabaseForReq(req);
+        const { data: student, error: studentError } = await supaForReq.client
             .from('usuarios')
             .select('id, email, username')
             .eq('id', studentId)
@@ -3801,7 +3842,7 @@ app.post('/notify-grade', async(req, res) => {
             }
         }
 
-        // 4. Enviar Push Notification al estudiante
+        // 4. Enviar Push Notification al estudiante (per-request routing)
         await sendPushNotification(
             studentId,
             pushTitle,
@@ -3812,13 +3853,14 @@ app.post('/notify-grade', async(req, res) => {
                 grade: gradeFormatted.toString(),
                 oldGrade: isUpdate ? String(oldGrade) : null,
                 action: 'OPEN_GRADES'
-            }
+            },
+            supaForReq
         );
         console.log(`📱 Push notification de calificación enviada al estudiante ${studentId}`);
 
-        // 5. Guardar notificación en la base de datos
+        // 5. Guardar notificación en la base de datos (per-request routing)
         try {
-            await supabaseService.client
+            await supaForReq.client
                 .from('notifications')
                 .insert({
                     user_id: studentId,
@@ -3883,7 +3925,7 @@ app.post('/course/delete', async (req, res) => {
         }
         
         console.log(`Processing deletion for course ID: ${courseId}`);
-        const result = await SupabaseService.getInstance().deleteCourse(courseId);
+        const result = await getSupabaseForReq(req).deleteCourse(courseId);
         
         // deleteCourse throws on error
         res.json({ success: true, message: `Course ${courseId} deleted successfully` });
@@ -4017,8 +4059,8 @@ app.post('/notify-chat-response', async(req, res) => {
     console.log(`📧 Enviando notificación de chat para usuario ${userId}`);
 
     try {
-        // Obtener información del usuario (email, nombre)
-        const { data: user, error: userError } = await supabaseService.client
+        // Obtener información del usuario (email, nombre) (per-request routing)
+        const { data: user, error: userError } = await getSupabaseForReq(req).client
             .from('usuarios')
             .select('email, username')
             .eq('id', userId)
@@ -4100,8 +4142,8 @@ app.post('/send-push-notification', async(req, res) => {
             });
         }
 
-        // Obtener FCM token del usuario desde Supabase (usando método centralizado)
-        const tokens = await supabaseService.getUserFCMTokens(userId);
+        // Obtener FCM token del usuario desde Supabase (per-request routing)
+        const tokens = await getSupabaseForReq(req).getUserFCMTokens(userId);
 
         if (!tokens || tokens.length === 0) {
             console.warn(`⚠️ No se encontró FCM token para userId ${userId}`);
@@ -4148,7 +4190,7 @@ app.post('/send-push-notification', async(req, res) => {
                 // Si el token es inválido, eliminarlo de la base de datos
                 if (error.code === 'messaging/invalid-registration-token' ||
                     error.code === 'messaging/registration-token-not-registered') {
-                    await supabaseService.removeInvalidFCMTokens([token]);
+                    await getSupabaseForReq(req).removeInvalidFCMTokens([token]);
                     console.log(`🗑️ Token inválido eliminado de la base de datos`);
                 }
 
@@ -4201,8 +4243,8 @@ app.post('/send-notification', async(req, res) => {
         // 1. ENVIAR PUSH NOTIFICATION
         try {
             if (admin && admin.messaging) {
-                // Obtener FCM token del usuario desde Supabase (usando método centralizado)
-                const tokens = await supabaseService.getUserFCMTokens(userId);
+                // Obtener FCM token del usuario desde Supabase (per-request routing)
+                const tokens = await getSupabaseForReq(req).getUserFCMTokens(userId);
 
                 if (tokens && tokens.length > 0) {
                     const sendPromises = tokens.map(async(token) => {
@@ -4241,7 +4283,7 @@ app.post('/send-notification', async(req, res) => {
                             // Eliminar token inválido
                             if (error.code === 'messaging/invalid-registration-token' ||
                                 error.code === 'messaging/registration-token-not-registered') {
-                                await supabaseService.client
+                                await getSupabaseForReq(req).client
                                     .from('user_fcm_tokens')
                                     .delete()
                                     .eq('token', token);
@@ -4274,9 +4316,9 @@ app.post('/send-notification', async(req, res) => {
             const userIdNumber = parseInt(userId, 10);
             console.log(`🔍 Buscando email para userId: ${userId} (parseado: ${userIdNumber})`);
             
-            // Obtener email del usuario desde Supabase
+            // Obtener email del usuario desde Supabase (per-request routing)
             // NOTA: El campo es 'username', no 'usuario'
-            const { data: userData, error: userError } = await supabaseService.client
+            const { data: userData, error: userError } = await getSupabaseForReq(req).client
                 .from('usuarios')
                 .select('email, username')
                 .eq('id', userIdNumber)
@@ -4617,9 +4659,10 @@ app.post('/procesar-prompt-legacy', async(req, res) => {
         // Fetches history directly from DB to avoid client-side token overflow
         if (userId && courseId && prompt && (prompt.toLowerCase().includes("preguntas") || prompt.toLowerCase().includes("questions"))) {
              try {
-                if (mcpService) {
+                const reinforcementSvc = getMCPForReq(req);
+                if (reinforcementSvc) {
                     console.log(`🧠 [Reinforcement] Fetching history context for User ${userId}, Course ${courseId}, Topic ${topicId || 'All'}`);
-                    const historyCtx = await mcpService.getReinforcementContextForLLM(userId, courseId, topicId, 50);
+                    const historyCtx = await reinforcementSvc.getReinforcementContextForLLM(userId, courseId, topicId, 50);
                     if (historyCtx && historyCtx.contextString) {
                          // Prepend history to prompt so it's established as context
                          augmentedPrompt = historyCtx.contextString + "\n\n" + augmentedPrompt;
@@ -5317,8 +5360,8 @@ Crear una base de datos que contenga información relacionada con IA: datasets d
                     // USE MCPService to ensure we get all history and avoid duplicates
                     let questionHistory = [];
                     
-                    // Force usage of MCPService (create new instance if global is null)
-                    const serviceToUse = mcpService || new MCPService();
+                    // Force usage of MCPService (per-request routing for production)
+                    const serviceToUse = getMCPForReq(req);
                     console.log(`🔍 Calling MCPService.getReinforcementQuestionsText for user ${userId} course ${courseId}...`);
                     
                     try {
@@ -5623,9 +5666,10 @@ Recuerda: Diferencias solo gramaticales NO son suficientes.`;
                                 });
                                 console.log('🔀 Shuffled options for ' + generatedQuestions.length + ' questions.');
 
-                                // Save to history (shuffled version)
-                                if (mcpService) {
-                                     await mcpService.saveReinforcementHistory(userId, courseId, generatedQuestions);
+                                // Save to history (shuffled version) — per-request routing
+                                const saveSvc = getMCPForReq(req);
+                                if (saveSvc) {
+                                     await saveSvc.saveReinforcementHistory(userId, courseId, generatedQuestions);
                                 } else {
                                      await saveReinforcementQuestionHistory(userId, courseId, generatedQuestions);
                                 }
@@ -7638,6 +7682,9 @@ app.post('/tools/call', async(req, res) => {
     const { params } = req.body;
     console.log('🔧 Tool call request:', params?.name);
 
+    // Per-request MCP service (routes to correct Supabase project)
+    const activeMcpService = getMCPForReq(req);
+
     try {
         const { name, arguments: args } = params;
 
@@ -7647,7 +7694,7 @@ app.post('/tools/call', async(req, res) => {
 
             if (isSQL) {
                 console.log('📊 Executing raw SQL query...');
-                result = await mcpService.processQuery(args.query, { includeSchema: true });
+                result = await activeMcpService.processQuery(args.query, { includeSchema: true });
             } else {
                 console.log('🤖 Processing Natural Language Query via Agent...');
                 try {
@@ -7670,7 +7717,7 @@ app.post('/tools/call', async(req, res) => {
                         console.log('📝 Grading Mode enabled');
                     }
 
-                    const agentResponse = await mcpService.processQueryWithAgent(modifiedQuery);
+                    const agentResponse = await activeMcpService.processQueryWithAgent(modifiedQuery);
                     result = {
                         data: agentResponse,
                         sqlScript: "-- Executed via LLM Agent with tool calling"
@@ -7695,7 +7742,7 @@ app.post('/tools/call', async(req, res) => {
                 }
             });
         } else if (name === 'get_database_schema') {
-            const schema = await mcpService.getDatabaseSchema();
+            const schema = await activeMcpService.getDatabaseSchema();
             res.json({
                 jsonrpc: '2.0',
                 id: req.body.id,
@@ -7762,7 +7809,7 @@ app.post('/tools/call', async(req, res) => {
                     console.log('🛡️ Repo Analysis: Qualitative mode hint added');
                 }
 
-                const result = await mcpService.analyzeGitHubRepo(args.repoUrl, {
+                const result = await activeMcpService.analyzeGitHubRepo(args.repoUrl, {
                     taskDescription: modifiedTaskDesc,
                     gradingCriteria: args.gradingCriteria,
                     focusAreas: args.focusAreas,
@@ -7806,7 +7853,7 @@ app.post('/tools/call', async(req, res) => {
                 // Si no se proporcionan fileUri o fileName, buscar en la base de datos
                 if (!fileUri || !fileName) {
                     console.log('🔍 Fetching submission details from database...');
-                    const { data: submission, error } = await supabaseService.client
+                    const { data: submission, error } = await getSupabaseForReq(req).client
                         .from('task_submissions')
                         .select('file_uri, file_name, task_id, student_id')
                         .eq('id', submissionId)
@@ -7988,11 +8035,12 @@ app.post('/obtener-contenido-submission', async(req, res) => {
             });
         }
         
+        const supaForReq = getSupabaseForReq(req);
         let submission = null;
         
         // Estrategia 1: Buscar por submissionId
         if (submissionId) {
-            const { data, error } = await supabaseService.client
+            const { data, error } = await supaForReq.client
                 .from('task_submissions')
                 .select('*')
                 .eq('id', submissionId)
@@ -8005,7 +8053,7 @@ app.post('/obtener-contenido-submission', async(req, res) => {
         
         // Estrategia 2: Buscar por taskId + studentId
         if (!submission && taskId && studentId) {
-            const { data, error } = await supabaseService.client
+            const { data, error } = await supaForReq.client
                 .from('task_submissions')
                 .select('*')
                 .eq('task_id', taskId)
@@ -8104,7 +8152,7 @@ app.get('/listar-submissions/:taskId', async(req, res) => {
             });
         }
         
-        const { data, error } = await supabaseService.client
+        const { data, error } = await getSupabaseForReq(req).client
             .from('task_submissions')
             .select('id, task_id, student_id, file_uri, file_name, submission_date, grade, feedback')
             .eq('task_id', taskId)

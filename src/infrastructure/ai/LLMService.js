@@ -1,4 +1,3 @@
-import { ChatOllama } from "@langchain/community/chat_models/ollama";
 import { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
 
@@ -25,13 +24,14 @@ export class LLMService {
         if (useDeepSeek) {
             // DeepSeek V3 (Chat) is preferred over Reasoner for generic tasks to avoid loops/timeouts
             // API Docs: https://api-docs.deepseek.com/
-            const modelName = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-            console.log(`🧠 Initializing DeepSeek ${modelName} ...`);
+            // 🔒 STRICT: DeepSeek Direct API Only
+            const modelName = "deepseek-chat";
+            console.log(`🧠 Initializing DeepSeek ${modelName} (Direct API) ...`);
             this.provider = 'deepseek';
             this.model = new ChatOpenAI({
                 openAIApiKey: deepSeekApiKey,
                 configuration: {
-                    baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
+                    baseURL: "https://api.deepseek.com", // Force Direct API
                 },
                 modelName: modelName,
                 temperature: 0.3,
@@ -39,16 +39,9 @@ export class LLMService {
                 maxRetries: 2
             });
         } else {
-            console.log("Initializing Ollama LLM...");
-            this.provider = 'ollama';
-            // Initialize Ollama with Llama 3:8b
-            this.model = new ChatOllama({
-                baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
-                model: "llama3:8b",
-                temperature: 0,
-                // Reduced timeout to 30s to prevent long hangs
-                timeout: 30000
-            });
+            console.warn("⚠️ No DeepSeek API Key provided and Local LLM is disabled.");
+            this.provider = 'none';
+            this.model = null;
         }
 
         LLMService.instance = this;
@@ -159,6 +152,19 @@ export class LLMService {
             return response;
         } catch (error) {
             console.error("Error generating LLM response:", error);
+
+            // 🛑 HANDLE 402 INSUFFICIENT BALANCE (Production Fix)
+            // Esto evita que la aplicación explote cuando se acaba el saldo de OpenAI/OpenRouter
+            if (error?.status === 402 ||
+                error?.code === 'insufficient_quota' ||
+                (error?.message && (error.message.includes('Insufficient Balance') || error.message.includes('402')))) {
+
+                console.warn("⚠️ CRITICAL: LLM Quota exceeded (402). Returning fallback message.");
+
+                return new AIMessage({
+                    content: "Lo siento, el sistema de IA está temporalmente fuera de servicio debido a límites de cuota (402). Por favor contacta al administrador o intenta más tarde."
+                });
+            }
 
             // If the error is about tool_calls, try without tools
             if (error.message && error.message.includes('tool_calls')) {
