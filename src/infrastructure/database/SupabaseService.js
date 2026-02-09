@@ -643,7 +643,8 @@ CREATE TABLE public.videos (
                 thumbnailUri,
                 price,
                 remoteId,
-                courseId
+                courseId,
+                creator_user_id // Extract creator_user_id from input
             } = videoData;
 
             // Validate required fields
@@ -681,7 +682,8 @@ CREATE TABLE public.videos (
                 thumbnail_uri: thumbnailUri || null,
                 price: price || null,
                 remote_id: remoteId || null,
-                course_id: courseId || null
+                course_id: courseId || null,
+                creator_user_id: creator_user_id || null // Include creator_user_id in payload
             };
 
             logger.info(`📹 [SupabaseService] Inserting video: ${title}`);
