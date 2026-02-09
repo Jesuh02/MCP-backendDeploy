@@ -22,7 +22,32 @@ router.post('/procesar-prompt', async(req, res) => {
                 const fileUri = req.body.fileUri || req.body.file_uri || null; // 🔥 Extract fileUri from client
                 const studentId = req.body.studentId || req.body.student_id || null; // 🔥 Extract studentId from client
 
-                // 🛑 CHECK: Determine if we should process this as a Chat/Generation request or purely Ingestion
+                // � Per-request Supabase: if client sends X-Supabase-Url/Key headers, use those credentials
+                const reqSupaUrl = req.headers['x-supabase-url'];
+                const reqSupaKey = req.headers['x-supabase-key'];
+                const getSupabaseForRequest = () => {
+                    if (reqSupaUrl && reqSupaKey) {
+                        const defaultUrl = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+                        const incomingUrl = reqSupaUrl.replace(/\/+$/, '');
+                        if (incomingUrl !== defaultUrl) {
+                            return SupabaseService.getInstanceForCredentials(incomingUrl, reqSupaKey);
+                        }
+                    }
+                    return SupabaseService.getInstance();
+                };
+                const getMCPServiceForRequest = () => {
+                    if (reqSupaUrl && reqSupaKey) {
+                        const defaultUrl = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+                        const incomingUrl = reqSupaUrl.replace(/\/+$/, '');
+                        if (incomingUrl !== defaultUrl) {
+                            const supa = SupabaseService.getInstanceForCredentials(incomingUrl, reqSupaKey);
+                            return new MCPService(supa);
+                        }
+                    }
+                    return new MCPService();
+                };
+
+                // �🛑 CHECK: Determine if we should process this as a Chat/Generation request or purely Ingestion
                 // If prompt contains keywords like "pregunta", "quiz", "examen", we assume generation intent
                 // regardless of the model name provided (often clients default to embedding model by mistake)
                 const promptLower = (prompt || '').toLowerCase();
@@ -69,7 +94,7 @@ router.post('/procesar-prompt', async(req, res) => {
                 if (submissionId && (seemsEmpty || seemsLikeUrl)) {
                     try {
                         console.log(`🔍 Buscando entrega en DB para SubmissionId: ${submissionId}...`);
-                        const { data: submission } = await SupabaseService.getInstance().client
+                        const { data: submission } = await getSupabaseForRequest().client
                             .from('task_submissions')
                             .select('file_uri, file_name, feedback, grade')
                             .eq('id', submissionId)
@@ -158,7 +183,7 @@ router.post('/procesar-prompt', async(req, res) => {
                     const lookupStudentId = studentId || userId;
                     try {
                         console.log(`🔍 Buscando entrega en DB por TaskId: ${taskId} + StudentId: ${lookupStudentId}...`);
-                        const { data: submission } = await SupabaseService.getInstance().client
+                        const { data: submission } = await getSupabaseForRequest().client
                             .from('task_submissions')
                             .select('id, file_uri, file_name')
                             .eq('task_id', taskId)
@@ -224,7 +249,7 @@ router.post('/procesar-prompt', async(req, res) => {
                 let skipIngestion = false;
                 if (userId && taskId && topicId) {
                     try {
-                        const { data } = await SupabaseService.getInstance().client
+                        const { data } = await getSupabaseForRequest().client
                             .from('question_sessions')
                             .select('id')
                             .eq('user_id', userId)
@@ -489,7 +514,7 @@ router.post('/procesar-prompt', async(req, res) => {
                 let existingHistory = [];
                 if (userId && courseId && !isGradingRequest) {
                     try {
-                        const mcpService = new MCPService();
+                        const mcpService = getMCPServiceForRequest();
                         existingHistory = await mcpService.getReinforcementHistory(userId, courseId);
 
                         // Extract plain question text for guidance
@@ -843,7 +868,7 @@ NO USES JAMÁS en preguntas u opciones:
 
                     if (userId && courseId) {
                         try {
-                            const supabase = SupabaseService.getInstance();
+                            const supabase = getSupabaseForRequest();
 
                             // 1. Ensure Session Exists (Paso 0)
                             let sessionId = null;
@@ -906,7 +931,7 @@ NO USES JAMÁS en preguntas u opciones:
                             if (validQuestions.length > 0) {
                                 console.log(`💾 Saving ${validQuestions.length} validated questions to Supabase...`);
                                 // Call MCPService saver with Strict Uniqueness
-                                const mcpSaver = new MCPService();
+                                const mcpSaver = getMCPServiceForRequest();
                                 const savedResult = await mcpSaver.saveReinforcementHistory(userId, courseId, validQuestions, topicId, taskId, sessionId);
                                 // UPDATE: Use ONLY the questions that were actually saved (unique)
                                 if (savedResult && savedResult.savedQuestions) {
@@ -1037,7 +1062,7 @@ NO USES JAMÁS en preguntas u opciones:
                                                         if (newlyFiltered.length > 0) {
                                                             try {
                                                                 // Save using MCPService with Strict Uniqueness
-                                                                const mcpSaver = new MCPService();
+                                                                const mcpSaver = getMCPServiceForRequest();
                                                                 const retrySaveResult = await mcpSaver.saveReinforcementHistory(userId, courseId, newlyFiltered, topicId, taskId, sessionId);
                                                                 
                                                                 if (retrySaveResult && retrySaveResult.savedQuestions && retrySaveResult.savedQuestions.length > 0) {
