@@ -449,8 +449,9 @@ export class RAGService {
      */
     _detectFileType(fileName) {
         if (!fileName) return 'txt';
-        const ext = fileName.split('.').pop()?.toLowerCase();
-        return ext || 'txt';
+        const parts = fileName.split('.');
+        const ext = parts.pop();
+        return ext ? ext.toLowerCase() : 'txt';
     }
 
     /**
