@@ -49,17 +49,20 @@ const pdf = require('pdf-parse');
 
 const app = express();
 // LOGGING CRÍTICO PARA DEPURACIÓN EN RAILWAY
+const APP_ENV = process.env.APP_ENVIRONMENT || process.env.NODE_ENV || 'development';
 console.log('=================================================');
 console.log('🚀 INICIANDO SERVIDOR - DIAGNÓSTICO DE ARRANQUE');
+console.log(`🏷️  ENVIRONMENT: ${APP_ENV.toUpperCase()}`);
 console.log('✅ V2.5 FIX: STRICT EMBEDDING ENFORCEMENT ACTIVE');
 console.log('=================================================');
 console.log(`📌 NODE_ENV: ${process.env.NODE_ENV}`);
+console.log(`📌 APP_ENVIRONMENT: ${APP_ENV}`);
+console.log(`📌 SUPABASE_URL: ${process.env.SUPABASE_URL || 'NOT SET'}`);
 console.log(`📌 PORT (env): ${process.env.PORT}`);
 console.log(`📌 RAILWAY_STATIC_URL: ${process.env.RAILWAY_STATIC_URL}`);
 console.log(`📌 PUBLIC_URL: ${process.env.PUBLIC_URL}`);
 console.log(`📌 CHAT_MODEL: ${process.env.CHAT_MODEL || process.env.OPENROUTER_CHAT_MODEL || 'default'}`);
 console.log(`📌 EMBEDDING_MODEL: ${process.env.EMBEDDING_MODEL || process.env.OPENROUTER_EMBEDDING_MODEL || 'default'}`);
-console.log('✨ GPT-5.2-Codex Status: ENABLED for all clients');
 console.log('\n🎬 FFmpeg Configuration:');
 console.log(`   FFMPEG_PATH: ${process.env.FFMPEG_PATH || 'system default'}`);
 console.log(`   FFPROBE_PATH: ${process.env.FFPROBE_PATH || 'system default'}`);
@@ -195,7 +198,12 @@ app.get('/', (req, res) => {
         lastHealthcheckAt = Date.now();
         forceRemoteLLM = false;
     } catch (e) {}
-    res.status(200).send('YisusCompany MCP Server is Running');
+    res.status(200).json({
+        status: 'running',
+        service: 'YisusCompany MCP Server',
+        environment: APP_ENV,
+        timestamp: new Date().toISOString()
+    });
 });
 
 app.get('/health', (req, res) => {
@@ -206,7 +214,11 @@ app.get('/health', (req, res) => {
         forceRemoteLLM = false;
         try { setUseRemoteLLM(false); } catch (e) {}
     } catch (e) {}
-    res.status(200).send('OK');
+    res.status(200).json({
+        status: 'OK',
+        environment: APP_ENV,
+        supabaseProject: (process.env.SUPABASE_URL || '').replace('https://', '').replace('.supabase.co', '')
+    });
 });
 
 // Also respond to / for basic health checks
