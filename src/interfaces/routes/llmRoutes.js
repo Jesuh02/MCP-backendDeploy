@@ -493,9 +493,10 @@ router.post('/procesar-prompt', async(req, res) => {
                     });
                 }
 
-                // Ensure ollamaUrl is valid
+                // Ensure ollamaUrl is valid (WARN ONLY)
                 if (!ollamaUrl) {
-                    throw new Error('ollamaUrl is required');
+                    console.warn('⚠️ ollamaUrl is missing in request body. Continuing with Cloud LLMs only.');
+                    // Warning only - do NOT throw error here as it breaks the flow if client defaults are missing
                 }
 
                 // 🛑 DETECT GRADING INTENT FIRST: If taskDescription, fileContent, or submissionId are present,
@@ -1027,9 +1028,13 @@ NO USES JAMÁS en preguntas u opciones:
                                 // 🔥 FIX: If all questions were filtered out (duplicates) and retries failed,
                                 // RETURN THE ORIGINAL QUESTIONS (transformed) instead of empty list.
                                 // It is better to show duplicate questions than to show nothing.
-                                if (filtered.length === 0 && transformed.length > 0) {
+                                console.log(`🕵️ Reviewing Result: Transformed=${transformed?.length}, Filtered=${filtered?.length}, User=${userId}`);
+                                
+                                if ((!filtered || filtered.length === 0) && transformed && transformed.length > 0) {
                                     console.warn('⚠️ STRICT UNIQUE FILTER BLOCKED ALL QUESTIONS. FALLING BACK TO ORIGINALS.');
                                     filtered = transformed;
+                                } else {
+                                    console.log(`✅ Final set contains ${filtered.length} questions.`);
                                 }
 
                                 respuestaTexto = JSON.stringify(filtered);
