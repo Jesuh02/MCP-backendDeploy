@@ -155,9 +155,9 @@ export class LLMService {
 
             // 🛑 HANDLE 402 INSUFFICIENT BALANCE (Production Fix)
             // Esto evita que la aplicación explote cuando se acaba el saldo de OpenAI/OpenRouter
-            if (error ? .status === 402 ||
-                error ? .code === 'insufficient_quota' ||
-                (error ? .message && (error.message.includes('Insufficient Balance') || error.message.includes('402')))) {
+            if (error?.status === 402 ||
+                error?.code === 'insufficient_quota' ||
+                (error?.message && (error.message.includes('Insufficient Balance') || error.message.includes('402')))) {
 
                 console.warn("⚠️ CRITICAL: LLM Quota exceeded (402). Returning fallback message.");
 
