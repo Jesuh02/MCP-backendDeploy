@@ -485,6 +485,22 @@ export class MCPService {
             const embeddingService = EmbeddingService.getInstance();
             const supabase = this.supabase.client;
 
+            // 🔍 VALIDATION: Check if user exists to prevent FK violations
+            // This is critical because if the frontend sends a cached ID that was deleted or doesn't exist in this env,
+            // the foreign key constraint will fail hard.
+            if (userId) {
+                const { data: userExists } = await supabase
+                    .from('usuarios')
+                    .select('id')
+                    .eq('id', userId)
+                    .maybeSingle();
+
+                if (!userExists) {
+                    logger.warn(`⚠️ User ID ${userId} not found in 'usuarios' table. Skipping history save to avoid FK violation.`);
+                    return { success: false, reason: "User not found" };
+                }
+            }
+
             // Ensure services are ready
             if (!embeddingService.isReady()) {
                 logger.warn('⚠️ EmbeddingService not ready. Attempting to initialize...');

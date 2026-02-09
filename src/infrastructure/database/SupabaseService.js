@@ -896,6 +896,20 @@ CREATE TABLE public.videos (
                 logger.warn('⚠️ EmbeddingService not ready in SupabaseService fallback.');
             }
 
+            // 🔍 VALIDATION: Check if user exists to prevent FK violations
+            if (userId) {
+                const { data: userExists } = await this.client
+                    .from('usuarios')
+                    .select('id')
+                    .eq('id', userId)
+                    .maybeSingle();
+                    
+                if (!userExists) {
+                    logger.warn(`⚠️ User ID ${userId} not found in 'usuarios'. SupabaseService skipping save.`);
+                    return;
+                }
+            }
+
             for (const q of questions) {
                 // Ensure Embedding & Hash exist
                 let qText = q.question || q.question_text || '';
