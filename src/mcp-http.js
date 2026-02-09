@@ -20,10 +20,25 @@ app.use((req, res, next) => {
     // Enable CORS for Android emulator
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, X-Supabase-Url, X-Supabase-Key, X-MCP-Client, X-MCP-Request-Id, Connection');
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
+
+    // Per-request Supabase override: if the client sends X-Supabase-Url and X-Supabase-Key,
+    // create a request-scoped SupabaseService and MCPService connected to that project.
+    const reqSupaUrl = req.headers['x-supabase-url'];
+    const reqSupaKey = req.headers['x-supabase-key'];
+    if (reqSupaUrl && reqSupaKey) {
+        const defaultUrl = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+        const incomingUrl = reqSupaUrl.replace(/\/+$/, '');
+        if (incomingUrl !== defaultUrl) {
+            console.log(`🔄 Request uses custom Supabase: ${incomingUrl}`);
+            const dynamicSupa = SupabaseService.getInstanceForCredentials(incomingUrl, reqSupaKey);
+            req._mcpService = new MCPService(dynamicSupa);
+        }
+    }
+
     next();
 });
 
@@ -259,6 +274,9 @@ app.post('/tools/call', async(req, res) => {
     const { params } = req.body;
     console.log('🔧 Tool call request:', params?.name);
 
+    // Use per-request MCPService if available (different Supabase), else default
+    const activeMcpService = req._mcpService || mcpService;
+
     try {
         const { name, arguments: args } = params;
 
@@ -267,18 +285,18 @@ app.post('/tools/call', async(req, res) => {
             // Check if it's likely SQL
             const isSQL = /^\s*(select|insert|update|delete|with)\s/i.test(args.query);
 
-            if (!mcpService) {
+            if (!activeMcpService) {
                 throw new Error('MCPService not initialized');
             }
 
             if (isSQL) {
                 console.log('📊 Executing raw SQL query...');
-                result = await mcpService.processQuery(args.query, { includeSchema: true });
+                result = await activeMcpService.processQuery(args.query, { includeSchema: true });
             } else {
                 console.log('🤖 Processing Natural Language Query via Agent...');
                 // Use Agent DIRECTLY for Natural Language (bypasses processQuery snapshot logic)
                 try {
-                    const agentResponse = await mcpService.processQueryWithAgent(args.query);
+                    const agentResponse = await activeMcpService.processQueryWithAgent(args.query);
 
                     // Agent should return a natural language response string
                     console.log('✅ Agent response type:', typeof agentResponse);
@@ -309,10 +327,10 @@ app.post('/tools/call', async(req, res) => {
                 }
             });
         } else if (name === 'get_database_schema') {
-            if (!mcpService) {
+            if (!activeMcpService) {
                 throw new Error('MCPService not initialized');
             }
-            const schema = await mcpService.getDatabaseSchema();
+            const schema = await activeMcpService.getDatabaseSchema();
             res.json({
                 jsonrpc: '2.0',
                 id: req.body.id,
@@ -324,14 +342,14 @@ app.post('/tools/call', async(req, res) => {
                 }
             });
         } else if (name === 'analyze_github_repo') {
-            if (!mcpService) {
+            if (!activeMcpService) {
                 throw new Error('MCPService not initialized');
             }
             // Nueva herramienta para analizar y calificar repositorios de GitHub
             console.log('🐙 Analyzing GitHub repository:', args.repoUrl);
 
             try {
-                const result = await mcpService.analyzeGitHubRepo(args.repoUrl, {
+                const result = await activeMcpService.analyzeGitHubRepo(args.repoUrl, {
                     taskDescription: args.taskDescription,
                     gradingCriteria: args.gradingCriteria,
                     focusAreas: args.focusAreas,
@@ -359,7 +377,7 @@ app.post('/tools/call', async(req, res) => {
                             text: JSON.stringify({
                                 error: true,
                                 message: `Error analizando repositorio: ${githubError.message}`,
-                                hint: mcpService.getGitHubErrorHint ? mcpService.getGitHubErrorHint(githubError.message) : null
+                                hint: activeMcpService.getGitHubErrorHint ? activeMcpService.getGitHubErrorHint(githubError.message) : null
                             }, null, 2)
                         }]
                     }

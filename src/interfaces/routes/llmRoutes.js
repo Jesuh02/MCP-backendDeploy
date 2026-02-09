@@ -22,7 +22,32 @@ router.post('/procesar-prompt', async(req, res) => {
                 const fileUri = req.body.fileUri || req.body.file_uri || null; // 🔥 Extract fileUri from client
                 const studentId = req.body.studentId || req.body.student_id || null; // 🔥 Extract studentId from client
 
-                // 🛑 CHECK: Determine if we should process this as a Chat/Generation request or purely Ingestion
+                // � Per-request Supabase: if client sends X-Supabase-Url/Key headers, use those credentials
+                const reqSupaUrl = req.headers['x-supabase-url'];
+                const reqSupaKey = req.headers['x-supabase-key'];
+                const getSupabaseForRequest = () => {
+                    if (reqSupaUrl && reqSupaKey) {
+                        const defaultUrl = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+                        const incomingUrl = reqSupaUrl.replace(/\/+$/, '');
+                        if (incomingUrl !== defaultUrl) {
+                            return SupabaseService.getInstanceForCredentials(incomingUrl, reqSupaKey);
+                        }
+                    }
+                    return SupabaseService.getInstance();
+                };
+                const getMCPServiceForRequest = () => {
+                    if (reqSupaUrl && reqSupaKey) {
+                        const defaultUrl = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+                        const incomingUrl = reqSupaUrl.replace(/\/+$/, '');
+                        if (incomingUrl !== defaultUrl) {
+                            const supa = SupabaseService.getInstanceForCredentials(incomingUrl, reqSupaKey);
+                            return new MCPService(supa);
+                        }
+                    }
+                    return new MCPService();
+                };
+
+                // �🛑 CHECK: Determine if we should process this as a Chat/Generation request or purely Ingestion
                 // If prompt contains keywords like "pregunta", "quiz", "examen", we assume generation intent
                 // regardless of the model name provided (often clients default to embedding model by mistake)
                 const promptLower = (prompt || '').toLowerCase();
@@ -69,7 +94,7 @@ router.post('/procesar-prompt', async(req, res) => {
                 if (submissionId && (seemsEmpty || seemsLikeUrl)) {
                     try {
                         console.log(`🔍 Buscando entrega en DB para SubmissionId: ${submissionId}...`);
-                        const { data: submission } = await SupabaseService.getInstance().client
+                        const { data: submission } = await getSupabaseForRequest().client
                             .from('task_submissions')
                             .select('file_uri, file_name, feedback, grade')
                             .eq('id', submissionId)
@@ -158,7 +183,7 @@ router.post('/procesar-prompt', async(req, res) => {
                     const lookupStudentId = studentId || userId;
                     try {
                         console.log(`🔍 Buscando entrega en DB por TaskId: ${taskId} + StudentId: ${lookupStudentId}...`);
-                        const { data: submission } = await SupabaseService.getInstance().client
+                        const { data: submission } = await getSupabaseForRequest().client
                             .from('task_submissions')
                             .select('id, file_uri, file_name')
                             .eq('task_id', taskId)
@@ -224,7 +249,7 @@ router.post('/procesar-prompt', async(req, res) => {
                 let skipIngestion = false;
                 if (userId && taskId && topicId) {
                     try {
-                        const { data } = await SupabaseService.getInstance().client
+                        const { data } = await getSupabaseForRequest().client
                             .from('question_sessions')
                             .select('id')
                             .eq('user_id', userId)
@@ -468,9 +493,10 @@ router.post('/procesar-prompt', async(req, res) => {
                     });
                 }
 
-                // Ensure ollamaUrl is valid
+                // Ensure ollamaUrl is valid (WARN ONLY)
                 if (!ollamaUrl) {
-                    throw new Error('ollamaUrl is required');
+                    console.warn('⚠️ ollamaUrl is missing in request body. Continuing with Cloud LLMs only.');
+                    // Warning only - do NOT throw error here as it breaks the flow if client defaults are missing
                 }
 
                 // 🛑 DETECT GRADING INTENT FIRST: If taskDescription, fileContent, or submissionId are present,
@@ -489,7 +515,7 @@ router.post('/procesar-prompt', async(req, res) => {
                 let existingHistory = [];
                 if (userId && courseId && !isGradingRequest) {
                     try {
-                        const mcpService = new MCPService();
+                        const mcpService = getMCPServiceForRequest();
                         existingHistory = await mcpService.getReinforcementHistory(userId, courseId);
 
                         // Extract plain question text for guidance
@@ -577,8 +603,8 @@ NO USES JAMÁS en preguntas u opciones:
                         const systemPrompt = isQuizGeneration 
                             ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
                             : isGradingRequest
-                            ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. OBLIGATORIO: Incluir al final de tu respuesta la línea exacta "**calificación actual: X/10**" (donde X es la nota numérica). Sin esta línea, el profesor NO podrá guardar la nota en el sistema. Ejemplo: "**calificación actual: 8/10**"\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué.'
-                            : 'Eres un tutor inteligente y experto. Responde en español. Si recibes una tarea y una entrega, evalúa rigurosamente si la entrega cumple la descripción. Si el usuario pide calificar, DEBES incluir al final de tu respuesta "**calificación actual: X/10**" (donde X es la nota, ejemplo "calificación actual: 8/10") para activar la interfaz de calificación. Sin esta frase, el profesor no podrá guardar la nota.';
+                            ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. OBLIGATORIO: Incluir al final de tu respuesta la línea exacta "**calificación actual: X/10**" (donde X es la nota numérica). Sin esta línea, el profesor NO podrá guardar la nota en el sistema. Ejemplo: "**calificación actual: 8/10**"\n6. OBLIGATORIO: Como PRIMERA línea de tu respuesta escribe exactamente "[GRADING_SIGNAL]" (sin comillas). Esto activa la interfaz de calificación en la app. SOLO inclúyela cuando estés calificando una entrega real.\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué. Incluye [GRADING_SIGNAL] igualmente porque sigue siendo una calificación.'
+                            : 'Eres un tutor inteligente y experto. Responde en español.\n\n═══ SISTEMA DE SEÑAL DE CALIFICACIÓN ═══\nExiste una señal especial llamada [GRADING_SIGNAL] que activa botones de calificación en la app del estudiante.\n\nREGLAS ABSOLUTAS:\n1. INCLUYE "[GRADING_SIGNAL]" como PRIMERA línea de tu respuesta ÚNICAMENTE cuando el usuario te pide EXPLÍCITAMENTE calificar, evaluar, puntuar o dar nota a una entrega/tarea específica.\n2. NUNCA incluyas [GRADING_SIGNAL] si el usuario solo está conversando, haciendo preguntas académicas, pidiendo explicaciones o usando palabras como "nota", "evaluación" en sentido coloquial.\n3. Cuando incluyas [GRADING_SIGNAL], DEBES también incluir al final: "**calificación actual: X/10**"\n\nEJEMPLOS DONDE **NO** DEBES INCLUIR [GRADING_SIGNAL]:\n- "¿qué se nota al hablar de Marie Curie?" → "nota" = observar, NO calificación\n- "¿cómo me evalúo a mí mismo?" → pregunta general, no pide calificar entrega\n- "explícame la nota musical Do" → "nota" = nota musical\n- "dame un resumen del tema" → solicitud informativa\n- "¿qué calificación necesito para aprobar?" → pregunta informativa, NO pide calificar\n\nEJEMPLOS DONDE **SÍ** DEBES INCLUIR [GRADING_SIGNAL]:\n- "califica mi entrega" / "califica esta tarea"\n- "ponle nota a mi trabajo" / "dame la nota de esta entrega"\n- "evalúa mi tarea" / "revisa y califica mi entrega"\n- "¿cuánto saqué?" (cuando hay contexto de tarea enviada)\n\nRecuerda: Si no estás 100% seguro de que el usuario quiere una calificación numérica de una entrega de tarea, NO incluyas [GRADING_SIGNAL].';
                             
                         console.log(`🧠 Usando DeepSeek (${isQuizGeneration ? 'QUIZ MODE' : 'CHAT MODE'})...`);
                         
@@ -626,86 +652,22 @@ NO USES JAMÁS en preguntas u opciones:
                         
                     } catch (deepseekError) {
                         console.error('❌ Error CRÍTICO con DeepSeek:', deepseekError.message);
-                        // Fallback logic continues below...
+                        // Fallback would normally go here, but user DISABLED OpenRouter for Chat.
+                        // data remains null, will hit 500 or Ollama if available.
                         data = null;
+                        
+                        // We do NOT configure OpenRouter here as per strict requirements.
                     }
                 }
                 
-                // Fallback: OpenRouter if DeepSeek failed
+                // 🔒 DEACTIVATED: OpenRouter Fallback logic
+                // The user requires: "el unico modelo de chat que exista sea deepseek".
+                // OpenRouter is STRICTLY reserved for Qwen (Embeddings) only.
+                /*
                 if (!data && process.env.OPENROUTER_API_KEY) {
-                    try {
-                        // -------------------------------------------------------------------------
-                        // OPENROUTER API CALL (OpenAI Compatible)
-                        // -------------------------------------------------------------------------
-                        const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
-                        // Prioritize Chat-specific env var, then generic, then fallback. Avoid using embedding models for chat.
-                        const envModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL;
-                        const safeEnvModel = (envModel && !envModel.toLowerCase().includes('embedding')) ? envModel : null;
-                        
-                        // Fix for invalid model IDs sent by older clients (specifically Qwen3-Embedding incorrectly sent to Chat)
-                        // User Request: Force DeepSeek (via OpenRouter or Native)
-                        let finalModel = model;
-                        if (!finalModel || finalModel === "Qwen3-VL-Embedding-8B" || finalModel === "qwen/qwen3-embedding-8b" || (typeof finalModel === 'string' && finalModel.toLowerCase().includes('embedding'))) {
-                             console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to 'deepseek/deepseek-chat'.`);
-                             finalModel = "deepseek/deepseek-chat";
-                        }
-
-                        let openRouterModel = safeEnvModel || finalModel || "deepseek/deepseek-chat";
-                        
-                        // FINAL SAFETY CHECK: If the resolved model is still an embedding model (e.g. from misconfigured env var), FORCE a chat model.
-                        if (openRouterModel.toLowerCase().includes('embedding')) {
-                            console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to 'deepseek/deepseek-chat'.`);
-                            openRouterModel = "deepseek/deepseek-chat";
-                        }
-                        
-                        console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
-                        
-                        const response = await fetch(openRouterUrl, {
-                            method: 'POST',
-                            headers: { 
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                                'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com', // Required by OpenRouter
-                                'X-Title': 'CourseV MCP Backend'
-                            },
-                            body: JSON.stringify({
-                                model: openRouterModel, 
-                                messages: [
-                                    { role: "system", content: isQuizGeneration 
-                                        ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA.'
-                                        : isGradingRequest
-                                        ? 'Eres un profesor experto evaluador. Responde en español. Evalúa la entrega del estudiante contra los requisitos de la tarea. OBLIGATORIO: Incluir al final "**calificación actual: X/10**".'
-                                        : 'Eres un tutor inteligente y experto. Responde en español.'
-                                    },
-                                    { role: "user", content: augmentedPrompt }
-                                ],
-                                temperature: 0.7
-                            })
-                        });
-
-                        if (!response.ok) {
-                            const errText = await response.text();
-                            throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errText}`);
-                        }
-
-                        const json = await response.json();
-                        // Normalize OpenRouter (OpenAI-style) response to expected Ollama-style internal format for processing
-                        data = {
-                            response: json.choices?.[0]?.message?.content || ""
-                        };
-                    } catch (orError) {
-                         // 🛑 CRITICAL: Do NOT fallback if error is Context Length (token limit) related
-                         // This prevents trying to send a massive prompt to a local model which will likely crash or also fail.
-                         if (orError.message && (orError.message.includes('context length') || orError.message.includes('tokens') || orError.message.includes('too large'))) {
-                             console.error(`❌ OpenRouter Context Length Error: ${orError.message}`);
-                             console.warn("🚫 Aborting fallback to local model due to Context Length violation. This request should probably be handled via RAG/Ingest.");
-                             throw orError; 
-                         }
-
-                        console.warn(`⚠️ OpenRouter call failed: ${orError.message}. Falling back to local DeepSeek/Ollama.`);
-                        // Fallback proceeds to next block if data is still undefined
-                    }
+                    // ... Disabled OpenRouter Chat Fallback ...
                 } 
+                */
                 
                 // Fallback or Standard Local Call (Ollama local)
                 if (!data && ollamaUrl) {
@@ -843,7 +805,7 @@ NO USES JAMÁS en preguntas u opciones:
 
                     if (userId && courseId) {
                         try {
-                            const supabase = SupabaseService.getInstance();
+                            const supabase = getSupabaseForRequest();
 
                             // 1. Ensure Session Exists (Paso 0)
                             let sessionId = null;
@@ -906,14 +868,16 @@ NO USES JAMÁS en preguntas u opciones:
                             if (validQuestions.length > 0) {
                                 console.log(`💾 Saving ${validQuestions.length} validated questions to Supabase...`);
                                 // Call MCPService saver with Strict Uniqueness
-                                const mcpSaver = new MCPService();
+                                const mcpSaver = getMCPServiceForRequest();
                                 const savedResult = await mcpSaver.saveReinforcementHistory(userId, courseId, validQuestions, topicId, taskId, sessionId);
                                 // UPDATE: Use ONLY the questions that were actually saved (unique)
                                 if (savedResult && savedResult.savedQuestions) {
                                      filtered = savedResult.savedQuestions;
                                      console.log(`✅ Accepted ${filtered.length} unique questions (Rejected ${validQuestions.length - filtered.length} duplicates).`);
                                 } else {
-                                     filtered = []; 
+                                     // Fallback: If save failed (e.g. user not found), return ALL valid questions
+                                     console.warn("⚠️ Save failed or no result. Returning original valid questions.");
+                                     filtered = validQuestions; 
                                 }
                             } else {
                                 filtered = [];
@@ -1037,7 +1001,7 @@ NO USES JAMÁS en preguntas u opciones:
                                                         if (newlyFiltered.length > 0) {
                                                             try {
                                                                 // Save using MCPService with Strict Uniqueness
-                                                                const mcpSaver = new MCPService();
+                                                                const mcpSaver = getMCPServiceForRequest();
                                                                 const retrySaveResult = await mcpSaver.saveReinforcementHistory(userId, courseId, newlyFiltered, topicId, taskId, sessionId);
                                                                 
                                                                 if (retrySaveResult && retrySaveResult.savedQuestions && retrySaveResult.savedQuestions.length > 0) {
@@ -1061,6 +1025,18 @@ NO USES JAMÁS en preguntas u opciones:
                                     }
                                 }
 
+                                // 🔥 FIX: If all questions were filtered out (duplicates) and retries failed,
+                                // RETURN THE ORIGINAL QUESTIONS (transformed) instead of empty list.
+                                // It is better to show duplicate questions than to show nothing.
+                                console.log(`🕵️ Reviewing Result: Transformed=${transformed?.length}, Filtered=${filtered?.length}, User=${userId}`);
+                                
+                                if ((!filtered || filtered.length === 0) && transformed && transformed.length > 0) {
+                                    console.warn('⚠️ STRICT UNIQUE FILTER BLOCKED ALL QUESTIONS. FALLING BACK TO ORIGINALS.');
+                                    filtered = transformed;
+                                } else {
+                                    console.log(`✅ Final set contains ${filtered.length} questions.`);
+                                }
+
                                 respuestaTexto = JSON.stringify(filtered);
                 }
             }
@@ -1075,27 +1051,41 @@ NO USES JAMÁS en preguntas u opciones:
         let isGrading = false;
 
         if (typeof respuestaTexto === 'string') {
-            try {
-                // Regex to find **calificación actual: X/10** or similar patterns
-                // Matches: **calificación actual: 8/10**, **calificación actual: 8.5/10**, Nota: 7/10, Calificación: 9/10 etc.
-                const gradeMatch = respuestaTexto.match(/\*\*calificación actual:\s*([\d\.]+)\/10\*\*/i) ||
-                                  respuestaTexto.match(/calificación actual:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/\*\*calificación:\s*([\d\.]+)\/10\*\*/i) ||
-                                  respuestaTexto.match(/calificación:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/\*\*nota:\s*([\d\.]+)\/10\*\*/i) ||
-                                  respuestaTexto.match(/nota:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/\*\*nota final:\s*([\d\.]+)\/10\*\*/i);
+            // 🎯 SEMANTIC GRADING SIGNAL: The LLM includes [GRADING_SIGNAL] ONLY when it semantically
+            // determines the user is requesting a task grade. This prevents false positives like
+            // "que se nota al hablar de Marie Curie?" from triggering grading buttons.
+            if (respuestaTexto.includes('[GRADING_SIGNAL]')) {
+                isGrading = true;
+                // Strip the tag from the visible response
+                respuestaTexto = respuestaTexto.replace(/\[GRADING_SIGNAL\]\s*/g, '').trim();
+                console.log('🎯 [GRADING_SIGNAL] detected - LLM confirms this is a grading request');
+            }
 
-                if (gradeMatch && gradeMatch[1]) {
-                    const val = parseFloat(gradeMatch[1]);
-                    if (!isNaN(val)) {
-                        extractedGrade = val;
-                        isGrading = true;
-                        console.log(`🎓 Grade extracted from response: ${extractedGrade}/10`);
+            // Only extract grade if [GRADING_SIGNAL] was present
+            // This prevents conversational mentions of "nota" from activating grading UI
+            if (isGrading) {
+                try {
+                    // Regex to find **calificación actual: X/10** or similar patterns
+                    const gradeMatch = respuestaTexto.match(/\*\*calificación actual:\s*([\d\.]+)\/10\*\*/i) ||
+                                      respuestaTexto.match(/calificación actual:\s*([\d\.]+)\/10/i) ||
+                                      respuestaTexto.match(/\*\*calificación:\s*([\d\.]+)\/10\*\*/i) ||
+                                      respuestaTexto.match(/calificación:\s*([\d\.]+)\/10/i) ||
+                                      respuestaTexto.match(/\*\*nota:\s*([\d\.]+)\/10\*\*/i) ||
+                                      respuestaTexto.match(/nota:\s*([\d\.]+)\/10/i) ||
+                                      respuestaTexto.match(/\*\*nota final:\s*([\d\.]+)\/10\*\*/i);
+
+                    if (gradeMatch && gradeMatch[1]) {
+                        const val = parseFloat(gradeMatch[1]);
+                        if (!isNaN(val)) {
+                            extractedGrade = val;
+                            console.log(`🎓 Grade extracted from response: ${extractedGrade}/10 (with GRADING_SIGNAL)`);
+                        }
                     }
+                } catch (e) {
+                    console.warn('⚠️ Error extracting grade from response:', e.message);
                 }
-            } catch (e) {
-                console.warn('⚠️ Error extracting grade from response:', e.message);
+            } else {
+                console.log('ℹ️ No [GRADING_SIGNAL] in response - grading UI will NOT be activated');
             }
         }
 
