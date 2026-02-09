@@ -651,86 +651,22 @@ NO USES JAMÁS en preguntas u opciones:
                         
                     } catch (deepseekError) {
                         console.error('❌ Error CRÍTICO con DeepSeek:', deepseekError.message);
-                        // Fallback logic continues below...
+                        // Fallback would normally go here, but user DISABLED OpenRouter for Chat.
+                        // data remains null, will hit 500 or Ollama if available.
                         data = null;
+                        
+                        // We do NOT configure OpenRouter here as per strict requirements.
                     }
                 }
                 
-                // Fallback: OpenRouter if DeepSeek failed
+                // 🔒 DEACTIVATED: OpenRouter Fallback logic
+                // The user requires: "el unico modelo de chat que exista sea deepseek".
+                // OpenRouter is STRICTLY reserved for Qwen (Embeddings) only.
+                /*
                 if (!data && process.env.OPENROUTER_API_KEY) {
-                    try {
-                        // -------------------------------------------------------------------------
-                        // OPENROUTER API CALL (OpenAI Compatible)
-                        // -------------------------------------------------------------------------
-                        const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
-                        // Prioritize Chat-specific env var, then generic, then fallback. Avoid using embedding models for chat.
-                        const envModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL;
-                        const safeEnvModel = (envModel && !envModel.toLowerCase().includes('embedding')) ? envModel : null;
-                        
-                        // Fix for invalid model IDs sent by older clients (specifically Qwen3-Embedding incorrectly sent to Chat)
-                        // User Request: Force DeepSeek (via OpenRouter or Native)
-                        let finalModel = model;
-                        if (!finalModel || finalModel === "Qwen3-VL-Embedding-8B" || finalModel === "qwen/qwen3-embedding-8b" || (typeof finalModel === 'string' && finalModel.toLowerCase().includes('embedding'))) {
-                             console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to 'deepseek/deepseek-chat'.`);
-                             finalModel = "deepseek/deepseek-chat";
-                        }
-
-                        let openRouterModel = safeEnvModel || finalModel || "deepseek/deepseek-chat";
-                        
-                        // FINAL SAFETY CHECK: If the resolved model is still an embedding model (e.g. from misconfigured env var), FORCE a chat model.
-                        if (openRouterModel.toLowerCase().includes('embedding')) {
-                            console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to 'deepseek/deepseek-chat'.`);
-                            openRouterModel = "deepseek/deepseek-chat";
-                        }
-                        
-                        console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
-                        
-                        const response = await fetch(openRouterUrl, {
-                            method: 'POST',
-                            headers: { 
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                                'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com', // Required by OpenRouter
-                                'X-Title': 'CourseV MCP Backend'
-                            },
-                            body: JSON.stringify({
-                                model: openRouterModel, 
-                                messages: [
-                                    { role: "system", content: isQuizGeneration 
-                                        ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA.'
-                                        : isGradingRequest
-                                        ? 'Eres un profesor experto evaluador. Responde en español. Evalúa la entrega del estudiante contra los requisitos de la tarea. OBLIGATORIO: Incluir al final "**calificación actual: X/10**". Como PRIMERA línea escribe exactamente "[GRADING_SIGNAL]".'
-                                        : 'Eres un tutor inteligente y experto. Responde en español. SOLO incluye "[GRADING_SIGNAL]" como primera línea si el usuario EXPLÍCITAMENTE pide calificar/evaluar/puntuar una entrega de tarea. Si solo conversa, hace preguntas o usa palabras como "nota" en sentido coloquial (ej: "qué se nota"), NO incluyas [GRADING_SIGNAL] bajo ninguna circunstancia.'
-                                    },
-                                    { role: "user", content: augmentedPrompt }
-                                ],
-                                temperature: 0.7
-                            })
-                        });
-
-                        if (!response.ok) {
-                            const errText = await response.text();
-                            throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errText}`);
-                        }
-
-                        const json = await response.json();
-                        // Normalize OpenRouter (OpenAI-style) response to expected Ollama-style internal format for processing
-                        data = {
-                            response: json.choices?.[0]?.message?.content || ""
-                        };
-                    } catch (orError) {
-                         // 🛑 CRITICAL: Do NOT fallback if error is Context Length (token limit) related
-                         // This prevents trying to send a massive prompt to a local model which will likely crash or also fail.
-                         if (orError.message && (orError.message.includes('context length') || orError.message.includes('tokens') || orError.message.includes('too large'))) {
-                             console.error(`❌ OpenRouter Context Length Error: ${orError.message}`);
-                             console.warn("🚫 Aborting fallback to local model due to Context Length violation. This request should probably be handled via RAG/Ingest.");
-                             throw orError; 
-                         }
-
-                        console.warn(`⚠️ OpenRouter call failed: ${orError.message}. Falling back to local DeepSeek/Ollama.`);
-                        // Fallback proceeds to next block if data is still undefined
-                    }
+                    // ... Disabled OpenRouter Chat Fallback ...
                 } 
+                */
                 
                 // Fallback or Standard Local Call (Ollama local)
                 if (!data && ollamaUrl) {

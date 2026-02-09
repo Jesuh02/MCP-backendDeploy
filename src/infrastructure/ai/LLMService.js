@@ -24,13 +24,14 @@ export class LLMService {
         if (useDeepSeek) {
             // DeepSeek V3 (Chat) is preferred over Reasoner for generic tasks to avoid loops/timeouts
             // API Docs: https://api-docs.deepseek.com/
-            const modelName = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-            console.log(`🧠 Initializing DeepSeek ${modelName} ...`);
+            // 🔒 STRICT: DeepSeek Direct API Only
+            const modelName = "deepseek-chat";
+            console.log(`🧠 Initializing DeepSeek ${modelName} (Direct API) ...`);
             this.provider = 'deepseek';
             this.model = new ChatOpenAI({
                 openAIApiKey: deepSeekApiKey,
                 configuration: {
-                    baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
+                    baseURL: "https://api.deepseek.com", // Force Direct API
                 },
                 modelName: modelName,
                 temperature: 0.3,
