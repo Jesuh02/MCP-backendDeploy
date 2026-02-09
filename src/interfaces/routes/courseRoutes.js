@@ -83,7 +83,7 @@ router.get('/:courseId/submissions', async(req, res) => {
             `;
 
             const result = await supabaseService.executeRawSQL(sqlQuery);
-            const submissions = Array.isArray(result) ? result : (result ? .data || []);
+            const submissions = Array.isArray(result) ? result : (result?.data || []);
             console.log(`✅ Found ${submissions.length} submissions for course ${courseId} (via SQL)`);
             return res.json(submissions);
         } catch (sqlError) {
