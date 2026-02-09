@@ -845,9 +845,23 @@ NO USES JAMÁS en preguntas u opciones:
                         try {
                             const supabase = SupabaseService.getInstance();
 
+                            // 0. Verify User Exists (Fix foreign key constraint errors)
+                            let userExists = false;
+                            const { data: uCheck } = await supabase.client
+                                .from('usuarios')
+                                .select('id')
+                                .eq('id', userId)
+                                .maybeSingle();
+                            
+                            if (uCheck) {
+                                userExists = true;
+                            } else {
+                                console.warn(`⚠️ User ID ${userId} not found in DB. Skipping history save to prevent FK errors.`);
+                            }
+
                             // 1. Ensure Session Exists (Paso 0)
                             let sessionId = null;
-                            if (taskId && topicId) {
+                            if (taskId && topicId && userExists) {
                                 try {
                                     const { data: sessionData } = await supabase.client
                                         .from('question_sessions')
@@ -904,20 +918,25 @@ NO USES JAMÁS en preguntas u opciones:
 
                             // 3. Save to Supabase (Robust Method)
                             if (validQuestions.length > 0) {
-                                console.log(`💾 Saving ${validQuestions.length} validated questions to Supabase...`);
-                                // Call MCPService saver with Strict Uniqueness
-                                const mcpSaver = new MCPService();
-                                const savedResult = await mcpSaver.saveReinforcementHistory(userId, courseId, validQuestions, topicId, taskId, sessionId);
-                                
-                                // UPDATE: Use ONLY the questions that were actually saved (unique)
-                                if (savedResult && savedResult.savedQuestions && savedResult.savedQuestions.length > 0) {
-                                     filtered = savedResult.savedQuestions;
-                                     console.log(`✅ Accepted ${filtered.length} unique questions (Refined from ${validQuestions.length}).`);
+                                if (userExists) {
+                                    console.log(`💾 Saving ${validQuestions.length} validated questions to Supabase...`);
+                                    // Call MCPService saver with Strict Uniqueness
+                                    const mcpSaver = new MCPService();
+                                    const savedResult = await mcpSaver.saveReinforcementHistory(userId, courseId, validQuestions, topicId, taskId, sessionId);
+                                    
+                                    // UPDATE: Use ONLY the questions that were actually saved (unique)
+                                    if (savedResult && savedResult.savedQuestions && savedResult.savedQuestions.length > 0) {
+                                         filtered = savedResult.savedQuestions;
+                                         console.log(`✅ Accepted ${filtered.length} unique questions (Refined from ${validQuestions.length}).`);
+                                    } else {
+                                         // FALLBACK: If save failed (e.g. invalid permissions, foreign key error, or all duplicates),
+                                         // but we have valid generated questions, return them anyway to the user so the app doesn't break.
+                                         console.warn(`⚠️ Save failed or returned 0 questions (Constraint/Duplication). Returning original ${validQuestions.length} questions to user without saving history.`);
+                                         filtered = validQuestions; 
+                                    }
                                 } else {
-                                     // FALLBACK: If save failed (e.g. invalid permissions, foreign key error, or all duplicates),
-                                     // but we have valid generated questions, return them anyway to the user so the app doesn't break.
-                                     console.warn(`⚠️ Save failed or returned 0 questions (Constraint/Duplication). Returning original ${validQuestions.length} questions to user without saving history.`);
-                                     filtered = validQuestions; 
+                                    console.log(`⚠️ Invalid User ID ${userId}. Skipping save/deduplication and returning derived questions directly.`);
+                                    filtered = validQuestions;
                                 }
                             } else {
                                 filtered = [];
@@ -1041,17 +1060,23 @@ NO USES JAMÁS en preguntas u opciones:
 
                                                         if (newlyFiltered.length > 0) {
                                                             try {
-                                                                // Save using MCPService with Strict Uniqueness
-                                                                const mcpSaver = new MCPService();
-                                                                const retrySaveResult = await mcpSaver.saveReinforcementHistory(userId, courseId, newlyFiltered, topicId, taskId, sessionId);
-                                                                
-                                                                if (retrySaveResult && retrySaveResult.savedQuestions && retrySaveResult.savedQuestions.length > 0) {
-                                                                    filtered = retrySaveResult.savedQuestions;
-                                                                    console.log(`✅ Retry accepted ${filtered.length} unique questions.`);
-                                                                    break; // Success!
+                                                                if (userExists) {
+                                                                    // Save using MCPService with Strict Uniqueness
+                                                                    const mcpSaver = new MCPService();
+                                                                    const retrySaveResult = await mcpSaver.saveReinforcementHistory(userId, courseId, newlyFiltered, topicId, taskId, sessionId);
+                                                                    
+                                                                    if (retrySaveResult && retrySaveResult.savedQuestions && retrySaveResult.savedQuestions.length > 0) {
+                                                                        filtered = retrySaveResult.savedQuestions;
+                                                                        console.log(`✅ Retry accepted ${filtered.length} unique questions.`);
+                                                                        break; // Success!
+                                                                    } else {
+                                                                        console.warn('⚠️ Retry questions were all duplicates (rejected by DB).');
+                                                                        filtered = []; // Continue loop
+                                                                    }
                                                                 } else {
-                                                                    console.warn('⚠️ Retry questions were all duplicates (rejected by DB).');
-                                                                    filtered = []; // Continue loop
+                                                                     filtered = newlyFiltered;
+                                                                     console.log(`✅ Retry accepted ${filtered.length} questions (User invalid/skip).`);
+                                                                     break; 
                                                                 }
                                                             } catch (upErr) { console.warn('⚠️ Failed to save retry results:', upErr?.message || upErr); }
                                                         }
