@@ -168,6 +168,46 @@ export class SupabaseVectorStore extends IVectorStore {
                     }
                 }
 
+                // HANDLE FOREIGN KEY VIOLATIONS (Code 23503)
+                // This happens when inserting a record with a reference ID (taskId, topicId) that doesn't exist in DB
+                if (error.code === '23503') {
+                    logger.warn(`Constraint violation detected (${error.details || error.message}). Retrying with nullified invalid key...`);
+
+                    const retryRecord = {...record };
+                    let retried = false;
+
+                    // Nullify the field mentioned in error details
+                    if (error.details) {
+                        if (error.details.includes('task_id')) {
+                            retryRecord.task_id = null;
+                            retried = true;
+                        } else if (error.details.includes('topic_id')) {
+                            retryRecord.topic_id = null;
+                            retried = true;
+                        } else if (error.details.includes('course_id')) {
+                            retryRecord.course_id = null;
+                            retried = true;
+                        } else if (error.details.includes('content_item_id')) {
+                            retryRecord.content_item_id = null;
+                            retried = true;
+                        }
+                    }
+
+                    if (retried) {
+                        const retry = await this.supabase.client
+                            .from(this.tableName)
+                            .insert([retryRecord])
+                            .select();
+
+                        if (!retry.error) {
+                            logger.info('✅ Retry successful with nullified key');
+                            return retry.data[0];
+                        }
+                        // If fails again, log and continue to throw/fallback
+                        logger.warn('❌ Retry failed:', retry.error);
+                    }
+                }
+
                 // If table doesn't exist, try knowledge_base as fallback
                 // Also if expected columns are missing (404/406 or schema error), try generic insert
                 if (error.code === 'PGRST116' || error.message.includes('does not exist') || error.message.includes('column')) {
