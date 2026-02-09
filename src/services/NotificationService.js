@@ -355,7 +355,7 @@ class NotificationService {
             console.log(`✅ Email sent to ${email} via Resend: ${response.data.id}`);
             return true;
         } catch (error) {
-            console.error('❌ Error with Resend:', error.response ? .data || error.message);
+            console.error('❌ Error with Resend:', error.response?.data || error.message);
 
             // Retry with fallback
             console.log('🔄 Retrying email send...');
@@ -374,7 +374,7 @@ class NotificationService {
                 console.log(`✅ Email sent to ${email} via fallback: ${fallbackResponse.data.id}`);
                 return true;
             } catch (fallbackError) {
-                console.error('❌ Fallback also failed:', fallbackError.response ? .data || fallbackError.message);
+                console.error('❌ Fallback also failed:', fallbackError.response?.data || fallbackError.message);
             }
         }
 
@@ -419,7 +419,7 @@ class NotificationService {
             console.log(`✅ Email sent to ${email} via SendGrid: ${response.status}`);
             return true;
         } catch (error) {
-            console.error('❌ Error with SendGrid:', error.response ? .data || error.message);
+            console.error('❌ Error with SendGrid:', error.response?.data || error.message);
             return false;
         }
     }

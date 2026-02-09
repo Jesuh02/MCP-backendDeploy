@@ -272,7 +272,7 @@ Provide a GitHub URL and optional evaluation criteria.
  */
 app.post('/tools/call', async(req, res) => {
     const { params } = req.body;
-    console.log('🔧 Tool call request:', params ? .name);
+    console.log('🔧 Tool call request:', params?.name);
 
     // Use per-request MCPService if available (different Supabase), else default
     const activeMcpService = req._mcpService || mcpService;
