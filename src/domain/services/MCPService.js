@@ -1303,6 +1303,7 @@ GROUP BY u.id, u.username
             let consecutiveEmptyResponses = 0;
             const MAX_EMPTY_RESPONSES = 3; // Increased slightly since we have schema pre-loaded
             let lastSuccessfulData = null;
+            let lastFinalAnswer = null; // Track final answer from LLM to avoid infinite loops
 
             while (iteration < MAX_SAFETY_ITERATIONS) {
                 iteration++;
@@ -1319,6 +1320,7 @@ GROUP BY u.id, u.username
 
                 if (toolCall) {
                     consecutiveEmptyResponses = 0; // Reset on valid tool call
+                    lastFinalAnswer = null; // Reset since LLM is still querying
                     logger.info(`🛠️ Tool call detected: ${toolCall.tool}`);
                     logger.info(`📥 Tool arguments:`, JSON.stringify(toolCall.arguments, null, 2));
 
@@ -1392,19 +1394,27 @@ La consulta se ejecutó pero devolvió 0 resultados. Antes de rendirte, VERIFICA
 ${JSON.stringify(toolResult, null, 2)}
 \`\`\`${emptyHint}
 
-Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un error, USA EL FEEDBACK para corregir tu consulta (ej. usar ILIKE) y reintenta. Si estás seguro que no hay datos, presenta la respuesta final.`;
+Analiza estos datos y presenta tu respuesta final al usuario en lenguaje natural. NO generes más SQL a menos que los datos sean insuficientes.`;
                     }
                     
                     const toolResultMessage = new HumanMessage(toolResultText);
                     conversationHistory.push(toolResultMessage);
 
                 } else {
-                    // No tool call - check if it's a final response or empty
+                    // No tool call - this should be the final answer
                     const trimmedResponse = responseContent.trim();
                     
-                    // If we have meaningful content (not just empty), treat as final response
-                    if (trimmedResponse.length > 50) {
-                        logger.info(`✅ Agent completed after ${iteration} iterations`);
+                    // 🔥 FIX: If the LLM responded with ANY non-empty text that is NOT a tool call,
+                    // treat it as a final answer. The previous check (length > 50) was too strict
+                    // and caused infinite loops when the LLM gave short but valid answers.
+                    if (trimmedResponse.length > 5) {
+                        // Check if the LLM is repeating the same final answer (infinite loop detection)
+                        if (lastFinalAnswer && trimmedResponse === lastFinalAnswer.trim()) {
+                            logger.warn(`⚠️ LLM repeated same final answer. Breaking loop.`);
+                            return trimmedResponse;
+                        }
+                        
+                        logger.info(`✅ Agent completed after ${iteration} iterations (final answer: ${trimmedResponse.length} chars)`);
                         
                         // Clean up any residual code blocks that shouldn't be shown
                         let finalResponse = responseContent;
@@ -1413,7 +1423,7 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                         return finalResponse.trim();
                     }
                     
-                    // Empty or too short response - track consecutive failures
+                    // Truly empty response - track consecutive failures
                     consecutiveEmptyResponses++;
                     logger.warn(`⚠️ Empty/short response (${consecutiveEmptyResponses}/${MAX_EMPTY_RESPONSES})`);
                     
@@ -1421,7 +1431,14 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                         // Return last successful data if available
                         if (lastSuccessfulData) {
                             logger.info(`📊 Returning last successful data after empty responses`);
-                            return `Datos obtenidos:\n\`\`\`json\n${JSON.stringify(lastSuccessfulData.results || lastSuccessfulData, null, 2)}\n\`\`\``;
+                            const results = lastSuccessfulData.results || lastSuccessfulData;
+                            if (Array.isArray(results) && results.length === 1) {
+                                // Single result: format nicely
+                                const row = results[0];
+                                const parts = Object.entries(row).map(([k, v]) => `**${k}:** ${v}`);
+                                return parts.join(', ');
+                            }
+                            return `Datos obtenidos:\n\`\`\`json\n${JSON.stringify(results, null, 2)}\n\`\`\``;
                         }
                         
                         // Try fallback SQL based on query analysis
@@ -1450,11 +1467,19 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                         return "No se pudo generar una respuesta. Por favor intenta reformular tu pregunta con más detalle o usa una consulta SQL directa.";
                     }
                     
-                    // Add retry message with example specific to the query
+                    // Add retry message - but don't ask for SQL if we already got data
                     conversationHistory.push(new AIMessage(responseContent || "(sin respuesta)"));
-                    conversationHistory.push(new HumanMessage(
-                        `Genera una consulta SQL para responder la pregunta. Formato requerido:\n\`\`\`json\n{"tool": "query_database", "arguments": {"query": "SELECT ... FROM ... LIMIT 50"}}\n\`\`\`\n\nRecuerda usar SOLO las columnas del esquema proporcionado.`
-                    ));
+                    
+                    if (lastSuccessfulData) {
+                        // We have data, ask the LLM to summarize it instead of generating more SQL
+                        conversationHistory.push(new HumanMessage(
+                            `Ya tienes los datos. Presenta un resumen claro y conciso al usuario en lenguaje natural. NO generes más SQL.`
+                        ));
+                    } else {
+                        conversationHistory.push(new HumanMessage(
+                            `Genera una consulta SQL para responder la pregunta. Formato requerido:\n\`\`\`json\n{"tool": "query_database", "arguments": {"query": "SELECT ... FROM ... LIMIT 50"}}\n\`\`\`\n\nRecuerda usar SOLO las columnas del esquema proporcionado.`
+                        ));
+                    }
                 }
             }
 
