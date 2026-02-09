@@ -18,11 +18,20 @@ export class SupabaseVectorStore extends IVectorStore {
         return SupabaseVectorStore.instance;
     }
 
-    constructor() {
+    constructor(supabaseClient = null) {
         super();
-        if (SupabaseVectorStore.instance) return SupabaseVectorStore.instance;
+        // If a specific client is provided, we create a new standalone instance (scoped).
+        // If no client is provided, we use/create the global singleton.
 
-        this.supabase = SupabaseService.getInstance();
+        if (supabaseClient) {
+            this.supabase = supabaseClient;
+            // Note: Scoped instances are NOT cached in SupabaseVectorStore.instance
+        } else {
+            if (SupabaseVectorStore.instance) return SupabaseVectorStore.instance;
+            this.supabase = SupabaseService.getInstance();
+            SupabaseVectorStore.instance = this;
+        }
+
         this.tableName = 'rag_documents';
         this._initialized = false;
     }
@@ -379,7 +388,7 @@ export class SupabaseVectorStore extends IVectorStore {
             if (error) throw error;
 
             logger.info(`Deleted ${data?.length || 0} documents from vector store`);
-            return data?.length || 0;
+            return data ? .length || 0;
         } catch (error) {
             logger.error('Error deleting documents:', error);
             return 0;
