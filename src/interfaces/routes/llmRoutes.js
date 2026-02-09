@@ -473,31 +473,14 @@ router.post('/procesar-prompt', async(req, res) => {
                     throw new Error('ollamaUrl is required');
                 }
 
-                // 🛑 DETECT GRADING INTENT FIRST: If taskDescription, fileContent, or submissionId are present,
-                // this is a GRADING request from ChatBotFragment, NOT a quiz generation request.
-                const hasGradingContext = !!(taskDescription || (fileContent && fileContent.length > 50) || submissionId);
+                // 🛑 DETECT GRADING INTENT: Only activate grading mode when there's ACTUAL
+                // submission content to evaluate (fileContent > 50 chars or submissionId).
+                // taskDescription alone is just informational context, NOT grading intent.
+                // The LLM itself decides whether to grade via ___GRADING_SIGNAL___ in its output.
+                const hasSubmissionContent = !!((fileContent && fileContent.length > 50) || submissionId);
+                const isGradingRequest = hasSubmissionContent;
 
-                // 🎯 IMPROVED: Use word-boundary regex instead of substring matching
-                // to avoid false positives like "se nota al hablar de Marie Curie"
-                const gradingPatterns = [
-                    /\bcalifi[ck]a/i, // califica, calificar, calificación
-                    /\bpuntaje\b/i,
-                    /\bevalua/i, // evalua, evaluar, evaluación
-                    /\bgrade\b/i,
-                    /\bscore\b/i,
-                    /\bmi nota\b/i,
-                    /\bla nota\b/i,
-                    /\bdame.*nota/i,
-                    /\bpon(er|ga|le)?.*nota/i,
-                    /\bnota\s*:?\s*\d/i, // "nota: 8" or "nota 8"
-                    /\brevisar entrega/i
-                ];
-                const hasGradingKeyword = gradingPatterns.some(rx => rx.test(promptLower));
-                // isGradingRequest is true if we have grading context (taskDescription/fileContent/submissionId)
-                // OR if grading keywords appear in the prompt WITHOUT quiz generation pattern
-                const isGradingRequest = hasGradingContext || (hasGradingKeyword && !promptLower.includes('genera') && !promptLower.includes('quiz'));
-
-                console.log(`🔍 Intent Detection: hasGradingContext=${hasGradingContext}, hasGradingKeyword=${hasGradingKeyword}, isGradingRequest=${isGradingRequest}`);
+                console.log(`🔍 Intent Detection: hasSubmissionContent=${hasSubmissionContent}, isGradingRequest=${isGradingRequest}, hasTaskDescription=${!!taskDescription}`);
 
                 // If userId/courseId provided AND this is NOT a grading request, fetch reinforcement history
                 let historyQuestionsList = [];
