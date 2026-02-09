@@ -37,6 +37,7 @@ import paymentRoutes from './src/interfaces/routes/paymentRoutes.js';
 import PaymentService from './src/services/PaymentService.js';
 import notificationRoutes from './src/interfaces/routes/notificationRoutes.js';
 import llmRoutes from './src/interfaces/routes/llmRoutes.js';
+import courseRoutes from './src/interfaces/routes/courseRoutes.js';
 // Note: Additional refactored modules available:
 // - fileUtils: ./src/utils/fileUtils.js  
 // - githubUtils: ./src/utils/githubUtils.js
@@ -173,6 +174,12 @@ console.log('   💸 Available endpoints:');
 // Register Notification Routes
 app.use('/', notificationRoutes);
 console.log('🔔 Notification routes registered at /');
+
+// Register Course Routes (New Modular)
+app.use('/courses', courseRoutes);
+console.log('📚 Course routes registered at /courses');
+console.log('   🎓 Available endpoints:');
+console.log('      GET /courses/creator/:userId/with-submissions');
 
 // Register LLM/Prompt Routes (RAG + Uniqueness logic)
 app.use('/', llmRoutes);
