@@ -13,8 +13,9 @@ import crypto from 'crypto';
 
 export class MCPService {
     constructor(supabaseOverride = null) {
-        this.ragService = new RAGService();
         this.supabase = supabaseOverride || SupabaseService.getInstance();
+        // CRITICAL FIX: Pass the specific Supabase instance to RAGService to ensure env consistency (QA vs Prod)
+        this.ragService = new RAGService({ supabase: this.supabase });
         this.llmService = LLMService.getInstance();
         this.githubService = getGitHubService();
 
