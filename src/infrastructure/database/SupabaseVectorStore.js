@@ -124,18 +124,62 @@ export class SupabaseVectorStore extends IVectorStore {
      * @param {object} metadata - Additional metadata
      * @returns {Promise<object>} - Stored document
      */
+    /**
+     * Validate that foreign key references exist in the database before inserting.
+     * Returns an object with only the valid FK values (invalid ones set to null).
+     */
+    async _validateForeignKeys(metadata) {
+        const fkFields = {
+            course_id: { value: metadata.courseId || metadata.course_id || null, table: 'courses' },
+            topic_id: { value: metadata.topicId || metadata.topic_id || null, table: 'topics' },
+            task_id: { value: metadata.taskId || metadata.task_id || null, table: 'tasks' },
+            content_item_id: { value: metadata.contentItemId || metadata.content_item_id || null, table: 'content_items' }
+        };
+
+        const validated = {};
+
+        for (const [field, { value, table }] of Object.entries(fkFields)) {
+            if (value == null) {
+                validated[field] = null;
+                continue;
+            }
+            try {
+                const { data, error } = await this.supabase.client
+                    .from(table)
+                    .select('id')
+                    .eq('id', value)
+                    .limit(1);
+
+                if (error || !data || data.length === 0) {
+                    logger.warn(`⚠️ FK validation: ${field}=${value} not found in '${table}'. Setting to null.`);
+                    validated[field] = null;
+                } else {
+                    validated[field] = value;
+                }
+            } catch (e) {
+                logger.warn(`⚠️ FK validation check failed for ${field}=${value}: ${e.message}. Setting to null.`);
+                validated[field] = null;
+            }
+        }
+
+        return validated;
+    }
+
     async store(content, embedding, metadata = {}) {
         await this.initialize();
 
         try {
+            // Validate FK references exist in DB before inserting to avoid constraint violations
+            const validatedFKs = await this._validateForeignKeys(metadata);
+
             const record = {
                 content,
                 embedding: `[${embedding.join(',')}]`, // Format for pgvector
                 metadata: JSON.stringify(metadata),
-                course_id: metadata.courseId || metadata.course_id || null,
-                topic_id: metadata.topicId || metadata.topic_id || null,
-                task_id: metadata.taskId || metadata.task_id || null,
-                content_item_id: metadata.contentItemId || metadata.content_item_id || null,
+                course_id: validatedFKs.course_id,
+                topic_id: validatedFKs.topic_id,
+                task_id: validatedFKs.task_id,
+                content_item_id: validatedFKs.content_item_id,
                 file_name: metadata.fileName || null,
                 file_type: metadata.fileType || null,
                 chunk_index: metadata.chunkIndex || 0,
@@ -171,41 +215,28 @@ export class SupabaseVectorStore extends IVectorStore {
                 // HANDLE FOREIGN KEY VIOLATIONS (Code 23503)
                 // This happens when inserting a record with a reference ID (taskId, topicId) that doesn't exist in DB
                 if (error.code === '23503') {
-                    logger.warn(`Constraint violation detected (${error.details || error.message}). Retrying with nullified invalid key...`);
+                    logger.warn(`Constraint violation detected (${error.details || error.message}). Retrying with ALL FK fields nullified...`);
 
-                    const retryRecord = {...record };
-                    let retried = false;
+                    // Nullify ALL FK fields at once to avoid cascading failures
+                    const retryRecord = {
+                        ...record,
+                        task_id: null,
+                        topic_id: null,
+                        course_id: null,
+                        content_item_id: null
+                    };
 
-                    // Nullify the field mentioned in error details
-                    if (error.details) {
-                        if (error.details.includes('task_id')) {
-                            retryRecord.task_id = null;
-                            retried = true;
-                        } else if (error.details.includes('topic_id')) {
-                            retryRecord.topic_id = null;
-                            retried = true;
-                        } else if (error.details.includes('course_id')) {
-                            retryRecord.course_id = null;
-                            retried = true;
-                        } else if (error.details.includes('content_item_id')) {
-                            retryRecord.content_item_id = null;
-                            retried = true;
-                        }
+                    const retry = await this.supabase.client
+                        .from(this.tableName)
+                        .insert([retryRecord])
+                        .select();
+
+                    if (!retry.error) {
+                        logger.info('✅ Retry successful with all FK fields nullified');
+                        return retry.data[0];
                     }
-
-                    if (retried) {
-                        const retry = await this.supabase.client
-                            .from(this.tableName)
-                            .insert([retryRecord])
-                            .select();
-
-                        if (!retry.error) {
-                            logger.info('✅ Retry successful with nullified key');
-                            return retry.data[0];
-                        }
-                        // If fails again, log and continue to throw/fallback
-                        logger.warn('❌ Retry failed:', retry.error);
-                    }
+                    // If fails again, log and continue to throw/fallback
+                    logger.warn('❌ Retry failed:', retry.error);
                 }
 
                 // If table doesn't exist, try knowledge_base as fallback
@@ -304,6 +335,8 @@ export class SupabaseVectorStore extends IVectorStore {
         try {
             // Note: We use rag_documents as the fallback table name too, just passing metadata in JSONB
             // This handles cases where specific columns (course_id, topic_id) might be missing
+            // IMPORTANT: Do NOT set FK fields here — they already failed validation or caused constraint errors.
+            // Store context IDs only inside the metadata JSONB column for reference.
             const { data, error } = await this.supabase.client
                 .from('rag_documents')
                 .insert([{
@@ -311,10 +344,10 @@ export class SupabaseVectorStore extends IVectorStore {
                     embedding: embedding ? `[${embedding.join(',')}]` : null,
                     metadata,
                     created_at: new Date().toISOString(),
-                    course_id: metadata.courseId || metadata.course_id || null,
-                    topic_id: metadata.topicId || metadata.topic_id || null,
-                    task_id: metadata.taskId || metadata.task_id || null,
-                    content_item_id: metadata.contentItemId || metadata.content_item_id || null
+                    course_id: null,
+                    topic_id: null,
+                    task_id: null,
+                    content_item_id: null
                 }])
                 .select();
 
@@ -419,7 +452,7 @@ export class SupabaseVectorStore extends IVectorStore {
             if (error) throw error;
 
             logger.info(`Deleted ${data?.length || 0} documents from vector store`);
-            return data?.length || 0;
+            return data ? .length || 0;
         } catch (error) {
             logger.error('Error deleting documents:', error);
             return 0;
