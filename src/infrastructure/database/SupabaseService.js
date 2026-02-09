@@ -669,6 +669,9 @@ CREATE TABLE public.videos (
             }
 
             // Build insert payload (snake_case for Postgres)
+            // Map creator_user_id (from request) to remote_id (database column)
+            const targetRemoteId = creator_user_id || remoteId;
+
             const insertPayload = {
                 title,
                 description: description || null,
@@ -676,14 +679,12 @@ CREATE TABLE public.videos (
                 video_uri_string: (uploaded && uploaded.publicUrl) ? uploaded.publicUrl : (videoUriString || null),
                 // store the object key in local_file_path for now (backend uses it as key)
                 local_file_path: (uploaded && uploaded.key) ? uploaded.key : (localFilePath || null),
-                local_file_path: localFilePath || null,
                 timestamp: timestamp || Date.now(),
                 is_paid: isPaid || false,
                 thumbnail_uri: thumbnailUri || null,
                 price: price || null,
-                remote_id: remoteId || null,
-                course_id: courseId || null,
-                creator_user_id: creator_user_id || null // Include creator_user_id in payload
+                remote_id: targetRemoteId || null,
+                course_id: courseId || null
             };
 
             logger.info(`📹 [SupabaseService] Inserting video: ${title}`);
