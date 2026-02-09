@@ -577,8 +577,8 @@ NO USES JAMÁS en preguntas u opciones:
                         const systemPrompt = isQuizGeneration 
                             ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
                             : isGradingRequest
-                            ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. OBLIGATORIO: Incluir al final de tu respuesta la línea exacta "**calificación actual: X/10**" (donde X es la nota numérica). Sin esta línea, el profesor NO podrá guardar la nota en el sistema. Ejemplo: "**calificación actual: 8/10**"\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué.'
-                            : 'Eres un tutor inteligente y experto. Responde en español. Si recibes una tarea y una entrega, evalúa rigurosamente si la entrega cumple la descripción. Si el usuario pide calificar, DEBES incluir al final de tu respuesta "**calificación actual: X/10**" (donde X es la nota, ejemplo "calificación actual: 8/10") para activar la interfaz de calificación. Sin esta frase, el profesor no podrá guardar la nota.';
+                            ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. OBLIGATORIO: Incluir al final de tu respuesta la línea exacta "**calificación actual: X/10**" (donde X es la nota numérica). Sin esta línea, el profesor NO podrá guardar la nota en el sistema. Ejemplo: "**calificación actual: 8/10**"\n6. OBLIGATORIO: Como PRIMERA línea de tu respuesta escribe exactamente "[GRADING_SIGNAL]" (sin comillas). Esto activa la interfaz de calificación en la app. SOLO inclúyela cuando estés calificando una entrega real.\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué. Incluye [GRADING_SIGNAL] igualmente porque sigue siendo una calificación.'
+                            : 'Eres un tutor inteligente y experto. Responde en español.\n\n═══ SISTEMA DE SEÑAL DE CALIFICACIÓN ═══\nExiste una señal especial llamada [GRADING_SIGNAL] que activa botones de calificación en la app del estudiante.\n\nREGLAS ABSOLUTAS:\n1. INCLUYE "[GRADING_SIGNAL]" como PRIMERA línea de tu respuesta ÚNICAMENTE cuando el usuario te pide EXPLÍCITAMENTE calificar, evaluar, puntuar o dar nota a una entrega/tarea específica.\n2. NUNCA incluyas [GRADING_SIGNAL] si el usuario solo está conversando, haciendo preguntas académicas, pidiendo explicaciones o usando palabras como "nota", "evaluación" en sentido coloquial.\n3. Cuando incluyas [GRADING_SIGNAL], DEBES también incluir al final: "**calificación actual: X/10**"\n\nEJEMPLOS DONDE **NO** DEBES INCLUIR [GRADING_SIGNAL]:\n- "¿qué se nota al hablar de Marie Curie?" → "nota" = observar, NO calificación\n- "¿cómo me evalúo a mí mismo?" → pregunta general, no pide calificar entrega\n- "explícame la nota musical Do" → "nota" = nota musical\n- "dame un resumen del tema" → solicitud informativa\n- "¿qué calificación necesito para aprobar?" → pregunta informativa, NO pide calificar\n\nEJEMPLOS DONDE **SÍ** DEBES INCLUIR [GRADING_SIGNAL]:\n- "califica mi entrega" / "califica esta tarea"\n- "ponle nota a mi trabajo" / "dame la nota de esta entrega"\n- "evalúa mi tarea" / "revisa y califica mi entrega"\n- "¿cuánto saqué?" (cuando hay contexto de tarea enviada)\n\nRecuerda: Si no estás 100% seguro de que el usuario quiere una calificación numérica de una entrega de tarea, NO incluyas [GRADING_SIGNAL].';
                             
                         console.log(`🧠 Usando DeepSeek (${isQuizGeneration ? 'QUIZ MODE' : 'CHAT MODE'})...`);
                         
@@ -674,8 +674,8 @@ NO USES JAMÁS en preguntas u opciones:
                                     { role: "system", content: isQuizGeneration 
                                         ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA.'
                                         : isGradingRequest
-                                        ? 'Eres un profesor experto evaluador. Responde en español. Evalúa la entrega del estudiante contra los requisitos de la tarea. OBLIGATORIO: Incluir al final "**calificación actual: X/10**".'
-                                        : 'Eres un tutor inteligente y experto. Responde en español.'
+                                        ? 'Eres un profesor experto evaluador. Responde en español. Evalúa la entrega del estudiante contra los requisitos de la tarea. OBLIGATORIO: Incluir al final "**calificación actual: X/10**". Como PRIMERA línea escribe exactamente "[GRADING_SIGNAL]".'
+                                        : 'Eres un tutor inteligente y experto. Responde en español. SOLO incluye "[GRADING_SIGNAL]" como primera línea si el usuario EXPLÍCITAMENTE pide calificar/evaluar/puntuar una entrega de tarea. Si solo conversa, hace preguntas o usa palabras como "nota" en sentido coloquial (ej: "qué se nota"), NO incluyas [GRADING_SIGNAL] bajo ninguna circunstancia.'
                                     },
                                     { role: "user", content: augmentedPrompt }
                                 ],
@@ -1075,27 +1075,41 @@ NO USES JAMÁS en preguntas u opciones:
         let isGrading = false;
 
         if (typeof respuestaTexto === 'string') {
-            try {
-                // Regex to find **calificación actual: X/10** or similar patterns
-                // Matches: **calificación actual: 8/10**, **calificación actual: 8.5/10**, Nota: 7/10, Calificación: 9/10 etc.
-                const gradeMatch = respuestaTexto.match(/\*\*calificación actual:\s*([\d\.]+)\/10\*\*/i) ||
-                                  respuestaTexto.match(/calificación actual:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/\*\*calificación:\s*([\d\.]+)\/10\*\*/i) ||
-                                  respuestaTexto.match(/calificación:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/\*\*nota:\s*([\d\.]+)\/10\*\*/i) ||
-                                  respuestaTexto.match(/nota:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/\*\*nota final:\s*([\d\.]+)\/10\*\*/i);
+            // 🎯 SEMANTIC GRADING SIGNAL: The LLM includes [GRADING_SIGNAL] ONLY when it semantically
+            // determines the user is requesting a task grade. This prevents false positives like
+            // "que se nota al hablar de Marie Curie?" from triggering grading buttons.
+            if (respuestaTexto.includes('[GRADING_SIGNAL]')) {
+                isGrading = true;
+                // Strip the tag from the visible response
+                respuestaTexto = respuestaTexto.replace(/\[GRADING_SIGNAL\]\s*/g, '').trim();
+                console.log('🎯 [GRADING_SIGNAL] detected - LLM confirms this is a grading request');
+            }
 
-                if (gradeMatch && gradeMatch[1]) {
-                    const val = parseFloat(gradeMatch[1]);
-                    if (!isNaN(val)) {
-                        extractedGrade = val;
-                        isGrading = true;
-                        console.log(`🎓 Grade extracted from response: ${extractedGrade}/10`);
+            // Only extract grade if [GRADING_SIGNAL] was present
+            // This prevents conversational mentions of "nota" from activating grading UI
+            if (isGrading) {
+                try {
+                    // Regex to find **calificación actual: X/10** or similar patterns
+                    const gradeMatch = respuestaTexto.match(/\*\*calificación actual:\s*([\d\.]+)\/10\*\*/i) ||
+                                      respuestaTexto.match(/calificación actual:\s*([\d\.]+)\/10/i) ||
+                                      respuestaTexto.match(/\*\*calificación:\s*([\d\.]+)\/10\*\*/i) ||
+                                      respuestaTexto.match(/calificación:\s*([\d\.]+)\/10/i) ||
+                                      respuestaTexto.match(/\*\*nota:\s*([\d\.]+)\/10\*\*/i) ||
+                                      respuestaTexto.match(/nota:\s*([\d\.]+)\/10/i) ||
+                                      respuestaTexto.match(/\*\*nota final:\s*([\d\.]+)\/10\*\*/i);
+
+                    if (gradeMatch && gradeMatch[1]) {
+                        const val = parseFloat(gradeMatch[1]);
+                        if (!isNaN(val)) {
+                            extractedGrade = val;
+                            console.log(`🎓 Grade extracted from response: ${extractedGrade}/10 (with GRADING_SIGNAL)`);
+                        }
                     }
+                } catch (e) {
+                    console.warn('⚠️ Error extracting grade from response:', e.message);
                 }
-            } catch (e) {
-                console.warn('⚠️ Error extracting grade from response:', e.message);
+            } else {
+                console.log('ℹ️ No [GRADING_SIGNAL] in response - grading UI will NOT be activated');
             }
         }
 
