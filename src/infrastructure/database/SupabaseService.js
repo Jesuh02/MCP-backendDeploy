@@ -300,6 +300,15 @@ CREATE TABLE public.roles (
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT roles_pkey PRIMARY KEY (id)
 );
+CREATE TABLE public.usuarios_roles (
+  usuario_id bigint not null,
+  rol_id integer not null,
+  asignado_en timestamp with time zone null default now(),
+  constraint usuarios_roles_pkey primary key (usuario_id, rol_id),
+  constraint fk_usuarios_roles_rol foreign KEY (rol_id) references roles (id) on delete CASCADE,
+  constraint fk_usuarios_roles_usuario foreign KEY (usuario_id) references usuarios (id) on delete CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_usuarios_roles_rol ON public.usuarios_roles USING btree (rol_id);
 CREATE TABLE public.subscriptions (
   subscription_date bigint,
   created_at timestamp with time zone DEFAULT now(),
