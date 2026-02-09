@@ -476,8 +476,23 @@ router.post('/procesar-prompt', async(req, res) => {
                 // 🛑 DETECT GRADING INTENT FIRST: If taskDescription, fileContent, or submissionId are present,
                 // this is a GRADING request from ChatBotFragment, NOT a quiz generation request.
                 const hasGradingContext = !!(taskDescription || (fileContent && fileContent.length > 50) || submissionId);
-                const gradingKeywords = ['calific', 'nota', 'evalu', 'puntaje', 'grade', 'score', 'revisar entrega'];
-                const hasGradingKeyword = gradingKeywords.some(kw => promptLower.includes(kw));
+
+                // 🎯 IMPROVED: Use word-boundary regex instead of substring matching
+                // to avoid false positives like "se nota al hablar de Marie Curie"
+                const gradingPatterns = [
+                    /\bcalifi[ck]a/i, // califica, calificar, calificación
+                    /\bpuntaje\b/i,
+                    /\bevalua/i, // evalua, evaluar, evaluación
+                    /\bgrade\b/i,
+                    /\bscore\b/i,
+                    /\bmi nota\b/i,
+                    /\bla nota\b/i,
+                    /\bdame.*nota/i,
+                    /\bpon(er|ga|le)?.*nota/i,
+                    /\bnota\s*:?\s*\d/i, // "nota: 8" or "nota 8"
+                    /\brevisar entrega/i
+                ];
+                const hasGradingKeyword = gradingPatterns.some(rx => rx.test(promptLower));
                 // isGradingRequest is true if we have grading context (taskDescription/fileContent/submissionId)
                 // OR if grading keywords appear in the prompt WITHOUT quiz generation pattern
                 const isGradingRequest = hasGradingContext || (hasGradingKeyword && !promptLower.includes('genera') && !promptLower.includes('quiz'));
@@ -574,11 +589,37 @@ NO USES JAMÁS en preguntas u opciones:
                 // ALWAYS prefer DeepSeek
                 if (deepseekApiKey) {
                     try {
+                        // ═══════════════════════════════════════════════════════════
+                        // 🎯 GRADING SIGNAL STRATEGY: Instead of relying on fragile
+                        // regex patterns in the LLM's free text, we instruct the LLM
+                        // to append a machine-readable JSON signal block at the very
+                        // end of its response ONLY when it is performing a grading
+                        // evaluation. The backend parses this signal, strips it from
+                        // the visible text, and returns esCalificacion + nota reliably.
+                        // ═══════════════════════════════════════════════════════════
+                        const GRADING_SIGNAL_INSTRUCTION = `
+
+REGLA CRÍTICA DE SEÑALIZACIÓN:
+Cuando evalúes/califiques una tarea o entrega de un estudiante y asignes una nota numérica, DEBES incluir al FINAL ABSOLUTO de tu respuesta (después de todo el texto visible) el siguiente bloque de señal exactamente así:
+
+___GRADING_SIGNAL___
+{"esCalificacion": true, "nota": X}
+___END_SIGNAL___
+
+Donde X es la nota numérica (0-10, acepta decimales como 8.5).
+Ejemplo correcto al final de una evaluación:
+___GRADING_SIGNAL___
+{"esCalificacion": true, "nota": 8}
+___END_SIGNAL___
+
+Si NO estás calificando (por ejemplo, respondiendo una pregunta general, dando información, o conversando), NO incluyas este bloque de señal. NUNCA lo incluyas si no estás dando una nota numérica a una entrega.
+Esta señal es invisible para el usuario y es procesada por el sistema.`;
+
                         const systemPrompt = isQuizGeneration 
                             ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
                             : isGradingRequest
-                            ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. OBLIGATORIO: Incluir al final de tu respuesta la línea exacta "**calificación actual: X/10**" (donde X es la nota numérica). Sin esta línea, el profesor NO podrá guardar la nota en el sistema. Ejemplo: "**calificación actual: 8/10**"\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué.'
-                            : 'Eres un tutor inteligente y experto. Responde en español. Si recibes una tarea y una entrega, evalúa rigurosamente si la entrega cumple la descripción. Si el usuario pide calificar, DEBES incluir al final de tu respuesta "**calificación actual: X/10**" (donde X es la nota, ejemplo "calificación actual: 8/10") para activar la interfaz de calificación. Sin esta frase, el profesor no podrá guardar la nota.';
+                            ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. Asignar una nota numérica de 0 a 10\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué.' + GRADING_SIGNAL_INSTRUCTION
+                            : 'Eres un tutor inteligente y experto. Responde en español. Si el usuario te pide explícitamente calificar o evaluar una entrega y le asignas una nota, incluye la señal de calificación. Si solo conversa o hace preguntas generales, NO incluyas señal de calificación.' + GRADING_SIGNAL_INSTRUCTION;
                             
                         console.log(`🧠 Usando DeepSeek (${isQuizGeneration ? 'QUIZ MODE' : 'CHAT MODE'})...`);
                         
@@ -674,8 +715,8 @@ NO USES JAMÁS en preguntas u opciones:
                                     { role: "system", content: isQuizGeneration 
                                         ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA.'
                                         : isGradingRequest
-                                        ? 'Eres un profesor experto evaluador. Responde en español. Evalúa la entrega del estudiante contra los requisitos de la tarea. OBLIGATORIO: Incluir al final "**calificación actual: X/10**".'
-                                        : 'Eres un tutor inteligente y experto. Responde en español.'
+                                        ? 'Eres un profesor experto evaluador. Responde en español. Evalúa la entrega del estudiante contra los requisitos de la tarea. Asigna una nota de 0 a 10. Al FINAL ABSOLUTO de tu respuesta incluye:\n___GRADING_SIGNAL___\n{"esCalificacion": true, "nota": X}\n___END_SIGNAL___\nDonde X es la nota numérica. Si NO estás calificando, NO incluyas este bloque.'
+                                        : 'Eres un tutor inteligente y experto. Responde en español. Si el usuario te pide calificar una entrega y asignas nota, incluye al final:\n___GRADING_SIGNAL___\n{"esCalificacion": true, "nota": X}\n___END_SIGNAL___\nSi solo conversas, NO incluyas este bloque.'
                                     },
                                     { role: "user", content: augmentedPrompt }
                                 ],
@@ -1100,28 +1141,63 @@ NO USES JAMÁS en preguntas u opciones:
             respuestaTexto = data.response;
         }
 
-        // Extract grade if present (Backend-side parsing to ensure Android buttons appear)
+        // ═══════════════════════════════════════════════════════════════
+        // 🎯 GRADING SIGNAL PARSING: Extract the ___GRADING_SIGNAL___ block
+        // from the LLM response. This is the PRIMARY and RELIABLE method.
+        // Falls back to legacy regex only if the signal block is missing.
+        // ═══════════════════════════════════════════════════════════════
         let extractedGrade = null;
         let isGrading = false;
 
         if (typeof respuestaTexto === 'string') {
             try {
-                // Regex to find **calificación actual: X/10** or similar patterns
-                // Matches: **calificación actual: 8/10**, **calificación actual: 8.5/10**, Nota: 7/10, Calificación: 9/10 etc.
-                const gradeMatch = respuestaTexto.match(/\*\*calificación actual:\s*([\d\.]+)\/10\*\*/i) ||
-                                  respuestaTexto.match(/calificación actual:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/\*\*calificación:\s*([\d\.]+)\/10\*\*/i) ||
-                                  respuestaTexto.match(/calificación:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/\*\*nota:\s*([\d\.]+)\/10\*\*/i) ||
-                                  respuestaTexto.match(/nota:\s*([\d\.]+)\/10/i) ||
-                                  respuestaTexto.match(/\*\*nota final:\s*([\d\.]+)\/10\*\*/i);
+                // PRIMARY: Parse ___GRADING_SIGNAL___ block
+                const signalRegex = /___GRADING_SIGNAL___\s*\n?\s*(\{[^}]+\})\s*\n?\s*___END_SIGNAL___/;
+                const signalMatch = respuestaTexto.match(signalRegex);
 
-                if (gradeMatch && gradeMatch[1]) {
-                    const val = parseFloat(gradeMatch[1]);
-                    if (!isNaN(val)) {
-                        extractedGrade = val;
-                        isGrading = true;
-                        console.log(`🎓 Grade extracted from response: ${extractedGrade}/10`);
+                if (signalMatch && signalMatch[1]) {
+                    try {
+                        const signalData = JSON.parse(signalMatch[1]);
+                        if (signalData.esCalificacion === true && signalData.nota !== undefined) {
+                            extractedGrade = parseFloat(signalData.nota);
+                            if (!isNaN(extractedGrade)) {
+                                isGrading = true;
+                                // Clamp grade to 0-10 range
+                                extractedGrade = Math.max(0, Math.min(10, extractedGrade));
+                                console.log(`🎯 GRADING SIGNAL detected: nota=${extractedGrade}/10`);
+                            }
+                        }
+                    } catch (parseErr) {
+                        console.warn('⚠️ Failed to parse GRADING_SIGNAL JSON:', parseErr.message);
+                    }
+
+                    // Strip the signal block from visible text
+                    respuestaTexto = respuestaTexto.replace(/\s*___GRADING_SIGNAL___\s*\n?\s*\{[^}]+\}\s*\n?\s*___END_SIGNAL___\s*/g, '').trim();
+                }
+
+                // FALLBACK: Legacy regex for backward compatibility (only if signal not found)
+                if (!isGrading) {
+                    const gradeMatch = respuestaTexto.match(/\*\*calificación actual:\s*([\d\.]+)\/10\*\*/i) ||
+                                      respuestaTexto.match(/calificación actual:\s*([\d\.]+)\/10/i) ||
+                                      respuestaTexto.match(/\*\*calificación:\s*([\d\.]+)\/10\*\*/i) ||
+                                      respuestaTexto.match(/calificación:\s*([\d\.]+)\/10/i) ||
+                                      respuestaTexto.match(/\*\*nota:\s*([\d\.]+)\/10\*\*/i) ||
+                                      respuestaTexto.match(/nota:\s*([\d\.]+)\/10/i) ||
+                                      respuestaTexto.match(/\*\*nota final:\s*([\d\.]+)\/10\*\*/i);
+
+                    if (gradeMatch && gradeMatch[1]) {
+                        const val = parseFloat(gradeMatch[1]);
+                        if (!isNaN(val)) {
+                            // Only activate grading via fallback if this was actually a grading request
+                            // This prevents false positives like "que se nota al hablar de Marie Curie"
+                            if (isGradingRequest) {
+                                extractedGrade = val;
+                                isGrading = true;
+                                console.log(`🎓 Grade extracted via FALLBACK regex: ${extractedGrade}/10 (isGradingRequest=${isGradingRequest})`);
+                            } else {
+                                console.log(`⚠️ Grade pattern found in text (${val}/10) but isGradingRequest=false — ignoring to prevent false positive`);
+                            }
+                        }
                     }
                 }
             } catch (e) {
