@@ -24,9 +24,12 @@ export class NotificationDomainService {
         return Result.ok({ message: 'Todas las notificaciones leídas' });
     }
 
-    async send(userId, { title, message, type, data }) {
+    async send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
         // 1. Guardar en BD
-        const notif = await this.notifRepo.create({ userId, title, message, type, data });
+        const notif = await this.notifRepo.create({
+            userId, title, message, type, data,
+            relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata
+        });
 
         // 2. Push notification
         if (this.push.isAvailable()) {
@@ -40,10 +43,10 @@ export class NotificationDomainService {
         }
         return Result.ok(notif);
     }
-    async sendBulk(userIds, { title, message, type, data }) {
+    async sendBulk(userIds, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
         const results = [];
         for (const userId of userIds) {
-            const result = await this.send(userId, { title, message, type, data });
+            const result = await this.send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata });
             results.push({ userId, success: result.isOk() });
         }
         return Result.ok(results);

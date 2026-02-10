@@ -90,6 +90,11 @@ export const sendNotificationSchema = Joi.object({
     message: Joi.string().min(1).max(5000).required(),
     type: Joi.string().max(50).default('generic'),
     data: Joi.object().allow(null).optional(),
+    relatedId: Joi.number().integer().allow(null).optional(),
+    senderUsername: Joi.string().max(100).allow(null, '').optional(),
+    senderAvatarUrl: Joi.string().max(1000).allow(null, '').optional(),
+    thumbnailUrl: Joi.string().max(1000).allow(null, '').optional(),
+    metadata: Joi.string().max(5000).allow(null, '').optional(),
 });
 
 // ─── Payment ─────────────────────────────────────────────
