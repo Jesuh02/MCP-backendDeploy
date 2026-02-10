@@ -7,13 +7,19 @@ export class SupabaseNotificationRepository {
     }
 
     async create(notifData) {
-        const { data, error } = await this.client.from('notifications').insert({
+        const payload = {
             user_id: notifData.userId,
             title: notifData.title,
             message: notifData.message,
             type: notifData.type || 'generic',
-            data: notifData.data || null,
-        }).select().single();
+            related_id: notifData.relatedId || notifData.related_id || null,
+            sender_username: notifData.senderUsername || notifData.sender_username || null,
+            sender_avatar_url: notifData.senderAvatarUrl || notifData.sender_avatar_url || null,
+            thumbnail_url: notifData.thumbnailUrl || notifData.thumbnail_url || null,
+            metadata: notifData.metadata || null,
+            is_read: false,
+        };
+        const { data, error } = await this.client.from('notifications').insert(payload).select().single();
         if (error) throw new Error(error.message);
         return data;
     }
