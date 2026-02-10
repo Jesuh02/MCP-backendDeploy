@@ -21,6 +21,14 @@ import { RAGService } from './src/domain/services/RAGService.js';
 import { S3Client, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 
 // ============================================================
+// 🏗️ HEXAGONAL ARCHITECTURE — v2 Clean Architecture modules
+// ============================================================
+import { createContainer } from './src/config/container.js';
+import { createV1Router } from './src/interfaces/http/routes/v1/index.js';
+import { createAuthMiddleware, requireRoles } from './src/infrastructure/middleware/AuthMiddleware.js';
+import { errorHandler } from './src/infrastructure/middleware/ErrorHandler.js';
+
+// ============================================================
 // 📦 REFACTORED MODULES - New modular architecture
 // These modules provide cleaner, more maintainable code
 // The legacy functions below are kept for backwards compatibility
@@ -121,6 +129,53 @@ app.use((req, res, next) => {
 
 // Register Excel Routes
 app.use('/excel', excelRoutes);
+
+// ============================================================
+// 🏗️ V2 HEXAGONAL ARCHITECTURE — Mount clean architecture routes
+// ============================================================
+try {
+    const container = createContainer();
+    const authMiddleware = createAuthMiddleware(container.jwtAdapter);
+    const v1Router = createV1Router({
+        ...container,
+        authMiddleware,
+        requireRoles,
+    });
+    app.use('/api/v1', v1Router);
+
+    // Global error handler for v1 routes
+    app.use('/api/v1', errorHandler);
+
+    console.log('');
+    console.log('🏗️  ═══════════════════════════════════════════════');
+    console.log('🏗️  HEXAGONAL ARCHITECTURE v2 — Routes mounted');
+    console.log('🏗️  Base path: /api/v1');
+    console.log('🏗️  ───────────────────────────────────────────────');
+    console.log('🏗️  POST   /api/v1/auth/register');
+    console.log('🏗️  POST   /api/v1/auth/login');
+    console.log('🏗️  POST   /api/v1/auth/refresh-token');
+    console.log('🏗️  GET    /api/v1/users/me');
+    console.log('🏗️  GET    /api/v1/courses');
+    console.log('🏗️  GET    /api/v1/videos');
+    console.log('🏗️  GET    /api/v1/topics/course/:courseId');
+    console.log('🏗️  GET    /api/v1/tasks/topic/:topicId');
+    console.log('🏗️  POST   /api/v1/submissions');
+    console.log('🏗️  POST   /api/v1/subscriptions/:creatorId');
+    console.log('🏗️  GET    /api/v1/progress/my');
+    console.log('🏗️  POST   /api/v1/likes/toggle');
+    console.log('🏗️  GET    /api/v1/comments/video/:videoId');
+    console.log('🏗️  GET    /api/v1/notifications/my');
+    console.log('🏗️  POST   /api/v1/payment/initiate');
+    console.log('🏗️  POST   /api/v1/storage/upload');
+    console.log('🏗️  GET    /api/v1/health');
+    console.log('🏗️  ... and more (16 resource groups)');
+    console.log('🏗️  ═══════════════════════════════════════════════');
+    console.log('');
+} catch (err) {
+    console.error('⚠️ Failed to initialize Hexagonal Architecture v2:', err.message);
+    console.error('   Legacy routes will still work. Fix errors above to enable v2.');
+}
+
 
 // Register TTS Routes (Text-to-Speech with natural human voices)
 app.use('/tts', ttsRoutes);

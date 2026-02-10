@@ -1,0 +1,26 @@
+/**
+ * Joi Validation Schemas — Video
+ */
+import Joi from 'joi';
+
+export const createVideoSchema = Joi.object({
+    title: Joi.string().min(1).max(300).required(),
+    description: Joi.string().max(5000).allow('').optional(),
+    videoUri: Joi.string().uri().required(),
+    thumbnailUri: Joi.string().uri().allow(null, '').optional(),
+    duration: Joi.number().min(0).allow(null).optional(),
+    username: Joi.string().required(),
+    courseId: Joi.number().integer().allow(null).optional(),
+    type: Joi.string().valid('video', 'short', 'live').default('video'),
+    hlsUrl: Joi.string().uri().allow(null, '').optional(),
+});
+
+export const updateVideoSchema = Joi.object({
+    title: Joi.string().min(1).max(300).optional(),
+    description: Joi.string().max(5000).allow('').optional(),
+    thumbnailUri: Joi.string().uri().allow(null, '').optional(),
+    duration: Joi.number().min(0).allow(null).optional(),
+    type: Joi.string().valid('video', 'short', 'live').optional(),
+    hlsUrl: Joi.string().uri().allow(null, '').optional(),
+    isPublished: Joi.boolean().optional(),
+}).min(1);
