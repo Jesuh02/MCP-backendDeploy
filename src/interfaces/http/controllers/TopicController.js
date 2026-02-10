@@ -1,10 +1,21 @@
 import { createTopicSchema, updateTopicSchema } from '../../../domain/validators/CommonSchemas.js';
 import { ValidationError } from '../../../shared/errors/index.js';
+import { parsePagination, buildPaginatedResponse } from '../../../shared/pagination.js';
 
 export class TopicController {
     constructor({ topicService }) {
         this.topicService = topicService;
     }
+
+    list = async(req, res, next) => {
+        try {
+            const pg = parsePagination(req.query);
+            const result = await this.topicService.list(pg);
+            if (result.isFail()) return next(result.getError());
+            const { topics, total } = result.getValue();
+            res.json(buildPaginatedResponse(topics, total, pg.page, pg.pageSize));
+        } catch (err) { next(err); }
+    };
 
     getByCourse = async(req, res, next) => {
         try {
