@@ -43,7 +43,7 @@ export class CommentDomainService {
                 const parentComment = await this.commentRepo.findById(parentId);
                 // Check parentComment user (handle both camelCase and snake_case just in case)
                 const parentUserId = parentComment ? (parentComment.userId || parentComment.usuario_id || parentComment.user_id) : null;
-                
+
                 if (parentComment && parentUserId && parentUserId !== userId) {
                     await this.notificationService.send(parentUserId, {
                         type: 'comment_reply',

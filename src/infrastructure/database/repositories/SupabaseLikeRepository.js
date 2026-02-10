@@ -25,7 +25,7 @@
     }
 
     async countByEntity(entityType, entityId) {
-        const { count, error } = await this.client.from('likes').select('id', { count: 'exact', head: true }).eq('entity_type', entityType).eq('entity_id', entityId);
+        const { count, error } = await this.client.from('likes').select('*', { count: 'exact', head: true }).eq('entity_type', entityType).eq('entity_id', entityId);
         return error ? 0 : count;
     }
 
