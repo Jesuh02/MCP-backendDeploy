@@ -72,8 +72,21 @@ export class LikeDomainService {
     }
 
     async getLikeStatus(userId, entityType, entityIds) {
-        const liked = await this.likeRepo.findByUserAndEntities(userId, entityType, entityIds);
-        return Result.ok(liked);
+        const likedList = await this.likeRepo.findByUserAndEntities(userId, entityType, entityIds);
+        // Convert to map { [entityId]: true }
+        const result = {};
+        if (entityIds && entityIds.length > 0) {
+            // Default all to false
+            entityIds.forEach(id => { result[id] = false; });
+            
+            // Set found ones to true
+            if (likedList) {
+                likedList.forEach(like => {
+                    result[like.entity_id] = true;
+                });
+            }
+        }
+        return Result.ok(result);
     }
 
     async getCount(entityType, entityId) {
