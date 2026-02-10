@@ -1,6 +1,15 @@
 ﻿export class SupabaseTaskRepository {
     constructor(client) { this.client = client; }
 
+    async findAll(pg = {}) {
+        const { offset = 0, limit = 20, sortOrder = 'desc' } = pg;
+        const { data, error, count } = await this.client.from('tasks').select('*', { count: 'exact' })
+            .order('created_at', { ascending: sortOrder === 'asc' })
+            .range(offset, offset + limit - 1);
+        if (error) throw new Error(error.message);
+        return { tasks: data || [], total: count || 0 };
+    }
+
     async findById(id) {
         const { data, error } = await this.client.from('tasks').select('*').eq('id', id).single();
         if (error || !data) return null;

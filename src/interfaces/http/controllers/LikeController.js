@@ -31,5 +31,16 @@ export class LikeController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    checkSingle = async(req, res, next) => {
+        try {
+            const entityId = parseInt(req.params.entityId);
+            const result = await this.likeService.getLikeStatus(req.user.userId, req.params.entityType, [entityId]);
+            if (result.isFail()) return next(result.getError());
+            const statusMap = result.getValue();
+            const liked = statusMap[entityId] || false;
+            res.json({ success: true, data: liked });
+        } catch (err) { next(err); }
+    };
 }
 export default LikeController;

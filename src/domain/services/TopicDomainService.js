@@ -7,6 +7,11 @@ export class TopicDomainService {
         this.courseRepo = courseRepository;
     }
 
+    async list(pg) {
+        const { topics, total } = await this.topicRepo.findAll(pg);
+        return Result.ok({ topics, total });
+    }
+
     async getByCourse(courseId) {
         const topics = await this.topicRepo.findByCourse(courseId);
         return Result.ok(topics);

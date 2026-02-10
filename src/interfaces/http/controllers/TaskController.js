@@ -1,10 +1,21 @@
 import { createTaskSchema, updateTaskSchema } from '../../../domain/validators/CommonSchemas.js';
 import { ValidationError } from '../../../shared/errors/index.js';
+import { parsePagination, buildPaginatedResponse } from '../../../shared/pagination.js';
 
 export class TaskController {
     constructor({ taskService }) {
         this.taskService = taskService;
     }
+
+    list = async(req, res, next) => {
+        try {
+            const pg = parsePagination(req.query);
+            const result = await this.taskService.list(pg);
+            if (result.isFail()) return next(result.getError());
+            const { tasks, total } = result.getValue();
+            res.json(buildPaginatedResponse(tasks, total, pg.page, pg.pageSize));
+        } catch (err) { next(err); }
+    };
 
     getById = async(req, res, next) => {
         try {

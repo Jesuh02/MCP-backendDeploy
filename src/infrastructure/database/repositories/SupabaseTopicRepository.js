@@ -1,6 +1,15 @@
 ﻿export class SupabaseTopicRepository {
     constructor(client) { this.client = client; }
 
+    async findAll(pg = {}) {
+        const { offset = 0, limit = 20, sortOrder = 'asc' } = pg;
+        const { data, error, count } = await this.client.from('topics').select('*', { count: 'exact' })
+            .order('order_index', { ascending: sortOrder !== 'desc' })
+            .range(offset, offset + limit - 1);
+        if (error) throw new Error(error.message);
+        return { topics: data || [], total: count || 0 };
+    }
+
     async findById(id) {
         const { data, error } = await this.client.from('topics').select('*').eq('id', id).single();
         if (error || !data) return null;

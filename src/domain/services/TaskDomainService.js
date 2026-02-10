@@ -7,6 +7,11 @@ export class TaskDomainService {
         this.topicRepo = topicRepository;
     }
 
+    async list(pg) {
+        const { tasks, total } = await this.taskRepo.findAll(pg);
+        return Result.ok({ tasks, total });
+    }
+
     async getById(id) {
         const task = await this.taskRepo.findById(id);
         if (!task) return Result.fail(new NotFoundError('Tarea', id));

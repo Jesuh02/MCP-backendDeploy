@@ -3,6 +3,7 @@ import { Router } from 'express';
 export function topicRoutes({ topicController }) {
     const router = Router();
 
+    router.get('/', topicController.list);
     router.get('/course/:courseId', topicController.getByCourse);
     router.get('/:id', topicController.getById);
     router.post('/', topicController.create);
