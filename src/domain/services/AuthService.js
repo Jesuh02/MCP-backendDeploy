@@ -36,7 +36,26 @@ export class AuthService {
             return Result.fail(new UnauthorizedError('Credenciales inválidas'));
         }
 
-        const valid = await this.jwt.comparePassword(password, user.password);
+        let valid = false;
+        // Check if stored password is a bcrypt hash (starts with $2a$, $2b$, or $2y$)
+        const isBcryptHash = user.password && /^\$2[aby]\$/.test(user.password);
+        if (isBcryptHash) {
+            valid = await this.jwt.comparePassword(password, user.password);
+        } else {
+            // Fallback: plain-text comparison (for legacy users inserted directly into DB)
+            valid = (password === user.password);
+            if (valid) {
+                // Auto-migrate: hash the plain-text password for future logins
+                console.log(`[AuthService] Auto-migrating plain-text password to bcrypt for user '${username}'`);
+                try {
+                    const hashedPassword = await this.jwt.hashPassword(password);
+                    await this.userRepo.update(user.id, { password: hashedPassword });
+                    console.log(`[AuthService] Password migration successful for '${username}'`);
+                } catch (migrationErr) {
+                    console.error(`[AuthService] Password migration failed for '${username}':`, migrationErr.message);
+                }
+            }
+        }
         if (!valid) {
             console.log(`[AuthService] Password validation failed for '${username}'`);
             return Result.fail(new UnauthorizedError('Credenciales inválidas'));
