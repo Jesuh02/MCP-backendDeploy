@@ -13,7 +13,8 @@ export class SupabaseUserRepository {
     }
 
     async findById(id) {
-        const { data, error } = await this.client.from('usuarios').select('*, personas(*)').eq('id', id).maybeSingle();
+        // Use FK hint to disambiguate duplicate foreign keys on persona_id
+        const { data, error } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').eq('id', id).maybeSingle();
         if (error) {
             console.warn(`[UserRepo] findById error (with join): ${error.message}, trying without join`);
             const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').eq('id', id).maybeSingle();
@@ -25,7 +26,7 @@ export class SupabaseUserRepository {
     }
 
     async findByUsername(username) {
-        const { data, error } = await this.client.from('usuarios').select('*, personas(*)').ilike('username', username).maybeSingle();
+        const { data, error } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').ilike('username', username).maybeSingle();
         if (error) {
             console.warn(`[UserRepo] findByUsername error (with join): ${error.message}, trying without join`);
             const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').ilike('username', username).maybeSingle();
@@ -37,7 +38,7 @@ export class SupabaseUserRepository {
     }
 
     async findByEmail(email) {
-        const { data, error } = await this.client.from('usuarios').select('*, personas(*)').ilike('email', email).maybeSingle();
+        const { data, error } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').ilike('email', email).maybeSingle();
         if (error) {
             console.warn(`[UserRepo] findByEmail error (with join): ${error.message}, trying without join`);
             const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').ilike('email', email).maybeSingle();
