@@ -1,0 +1,20 @@
+import { Router } from 'express';
+
+export function progressRoutes({ progressController }) {
+    const router = Router();
+
+    router.get('/my', progressController.getMyProgress);
+    router.get('/my/enrolled-course-ids', progressController.getEnrolledCourseIds);
+    router.get('/top-students', progressController.getTopStudents);
+    router.get('/course/:courseId', progressController.getByCourse);
+    router.get('/course/:courseId/all', progressController.getAllByCourse);
+    router.get('/course/:courseId/enrolled-count', progressController.getEnrolledCount);
+    router.get('/course/:courseId/enrolled', progressController.isEnrolled);
+    router.get('/leaderboard/:courseId', progressController.getLeaderboard);
+    router.post('/upsert', progressController.upsert);
+    router.post('/course/:courseId/certificate', progressController.issueCertificate);
+    router.put('/course/:courseId/certificate-url', progressController.updateCertificateUrl);
+
+    return router;
+}
+export default progressRoutes;
