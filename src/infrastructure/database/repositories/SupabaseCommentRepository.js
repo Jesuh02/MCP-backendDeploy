@@ -38,18 +38,26 @@
     }
 
     // Helper to map DB row to Domain Entity shape (VideoComment)
+    // Returns both camelCase (internal use) and snake_case (Android client compatibility)
     _mapToDomain(row) {
         if (!row) return null;
         return {
             id: row.id,
+            // camelCase (for backend domain services)
             videoId: row.video_id,
-            userId: row.usuario_id, // Map usuario_id -> userId
-            username: row.username || null, // Might be missing if no join
-            content: row.comment,   // Map comment -> content
+            userId: row.usuario_id,
+            content: row.comment,
             parentId: row.parent_id,
             likeCount: row.like_count || 0,
             createdAt: row.created_at,
-            updatedAt: row.updated_at
+            updatedAt: row.updated_at,
+            username: row.username || null,
+            // snake_case aliases (for Android client @SerializedName compatibility)
+            video_id: row.video_id,
+            usuario_id: row.usuario_id,
+            comment: row.comment,
+            parent_id: row.parent_id,
+            created_at: row.created_at,
         };
     }
 

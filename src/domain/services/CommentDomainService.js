@@ -81,7 +81,8 @@ export class CommentDomainService {
     async update(id, data, requesterId) {
         const comment = await this.commentRepo.findById(id);
         if (!comment) return Result.fail(new NotFoundError('Comentario', id));
-        if (comment.user_id !== requesterId) {
+        const commentOwnerId = comment.userId || comment.usuario_id;
+        if (commentOwnerId !== requesterId) {
             return Result.fail(new ForbiddenError('No puedes editar este comentario'));
         }
         const updated = await this.commentRepo.update(id, data);
@@ -91,7 +92,8 @@ export class CommentDomainService {
     async delete(id, requesterId) {
         const comment = await this.commentRepo.findById(id);
         if (!comment) return Result.fail(new NotFoundError('Comentario', id));
-        if (comment.user_id !== requesterId) {
+        const commentOwnerId = comment.userId || comment.usuario_id;
+        if (commentOwnerId !== requesterId) {
             return Result.fail(new ForbiddenError('No puedes eliminar este comentario'));
         }
         await this.commentRepo.delete(id);
