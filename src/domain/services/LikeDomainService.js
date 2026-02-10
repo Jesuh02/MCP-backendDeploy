@@ -78,7 +78,7 @@ export class LikeDomainService {
         if (entityIds && entityIds.length > 0) {
             // Default all to false
             entityIds.forEach(id => { result[id] = false; });
-            
+
             // Set found ones to true
             if (likedList) {
                 likedList.forEach(like => {
