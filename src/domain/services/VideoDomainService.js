@@ -25,6 +25,11 @@ export class VideoDomainService {
         return Result.ok(videos);
     }
 
+    async findByCreatorId(userId, pagination) {
+        const videos = await this.videoRepo.findByCreatorId(userId, pagination);
+        return Result.ok(videos);
+    }
+
     async findByCourse(courseId, pagination) {
         const videos = await this.videoRepo.findByCourse(courseId, pagination);
         return Result.ok(videos);

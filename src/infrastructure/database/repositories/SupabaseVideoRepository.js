@@ -16,7 +16,38 @@
     }
 
     async findByCreator(username, { offset = 0, limit = 20 } = {}) {
-        const { data, error } = await this.client.from('videos').select('*').ilike('username', username).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        // First get the user ID using the username
+        const { data: userData, error: userError } = await this.client
+            .from('usuarios')
+            .select('id')
+            .eq('username', username)
+            .single();
+
+        if (userError || !userData) {
+            console.warn(`[SupabaseVideoRepository] User not found for username: ${username}`);
+            return [];
+        }
+
+        // Query videos using remote_id (user ID)
+        const { data, error } = await this.client
+            .from('videos')
+            .select('*')
+            .eq('remote_id', userData.id)
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+            
+        if (error) throw new Error(error.message);
+        return data || [];
+    }
+
+    async findByCreatorId(userId, { offset = 0, limit = 20 } = {}) {
+        const { data, error } = await this.client
+            .from('videos')
+            .select('*')
+            .eq('remote_id', userId)
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+            
         if (error) throw new Error(error.message);
         return data || [];
     }

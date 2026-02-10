@@ -33,6 +33,15 @@ export class VideoController {
         } catch (err) { next(err); }
     };
 
+    getByCreatorId = async(req, res, next) => {
+        try {
+            const pg = parsePagination(req.query);
+            const result = await this.videoService.findByCreatorId(parseInt(req.params.userId), pg);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getByCourse = async(req, res, next) => {
         try {
             const pg = parsePagination(req.query);
