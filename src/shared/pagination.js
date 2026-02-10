@@ -17,7 +17,7 @@
  */
 export function parsePagination(params = {}) {
     const page = Math.max(1, parseInt(params.page, 10) || 1);
-    const pageSize = Math.min(100, Math.max(1, parseInt(params.pageSize, 10) || 20));
+    const pageSize = Math.min(500, Math.max(1, parseInt(params.pageSize, 10) || 20));
     const offset = (page - 1) * pageSize;
     // Usar undefined en lugar de null para permitir valores por defecto en desestructuración
     const sortBy = params.sortBy || undefined;
