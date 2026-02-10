@@ -23,16 +23,16 @@ export class UserDomainService {
             else if (file.mimetype === 'image/jpeg') ext = 'jpg';
             else if (file.mimetype === 'image/webp') ext = 'webp';
         }
-        
+
         const key = `avatars/avatar_${userId}_${timestamp}.${ext}`;
 
         try {
             // Upload
             const publicUrl = await this.storage.uploadFile(file.buffer, key, file.mimetype || 'image/jpeg');
-            
+
             // Update user profile
             await this.userRepo.update(userId, { avatar: publicUrl });
-            
+
             return Result.ok({ avatarUrl: publicUrl });
         } catch (error) {
             return Result.fail(error);
