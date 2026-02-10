@@ -137,7 +137,7 @@ export function createContainer() {
     // ═══════════════════════════════════════════════════════════
 
     const authService = new AuthService({ userRepository: userRepo, jwtAdapter });
-    const userService = new UserDomainService({ userRepository: userRepo });
+    const userService = new UserDomainService({ userRepository: userRepo, fileStoragePort: storageAdapter });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
     const courseService = new CourseDomainService({ courseRepository: courseRepo });
     const videoService = new VideoDomainService({ videoRepository: videoRepo });
