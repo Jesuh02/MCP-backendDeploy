@@ -1,5 +1,5 @@
 import { sendNotificationSchema } from '../../../domain/validators/CommonSchemas.js';
-import { ValidationError } from '../../../shared/errors/index.js';
+import { ValidationError, UnauthorizedError } from '../../../shared/errors/index.js';
 import { parsePagination } from '../../../shared/pagination.js';
 
 export class NotificationController {
@@ -9,6 +9,7 @@ export class NotificationController {
 
     getMyNotifications = async(req, res, next) => {
         try {
+            if (!req.user || !req.user.userId) return next(new UnauthorizedError('User context missing'));
             const pg = parsePagination(req.query);
             const result = await this.notifService.getByUser(req.user.userId, pg);
             if (result.isFail()) return next(result.getError());
@@ -25,6 +26,7 @@ export class NotificationController {
     };
     markAllAsRead = async(req, res, next) => {
         try {
+            if (!req.user || !req.user.userId) return next(new UnauthorizedError('User context missing'));
             const result = await this.notifService.markAllAsRead(req.user.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
@@ -51,6 +53,9 @@ export class NotificationController {
 
     getUnreadCount = async(req, res, next) => {
         try {
+            if (!req.user || !req.user.userId) {
+                return next(new UnauthorizedError('User context missing'));
+            }
             const result = await this.notifService.getUnreadCount(req.user.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });

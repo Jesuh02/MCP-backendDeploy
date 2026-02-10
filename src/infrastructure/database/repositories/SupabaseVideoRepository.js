@@ -8,7 +8,9 @@
     }
 
     async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc' } = {}) {
-        const { data, error } = await this.client.from('videos').select('*').order(sortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
+        // Asegurar que sortBy no sea null ni string "null"
+        const effectiveSortBy = (sortBy && sortBy !== 'null') ? sortBy : 'created_at';
+        const { data, error } = await this.client.from('videos').select('*').order(effectiveSortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }

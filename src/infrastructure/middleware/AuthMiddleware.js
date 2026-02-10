@@ -30,7 +30,10 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
 
     return (req, _res, next) => {
         // ── Rutas públicas ──
-        const path = req.path;
+        // Usamos originalUrl para obtener la ruta completa (incluyendo /api/v1)
+        // y eliminamos query params si existen.
+        const path = req.originalUrl.split('?')[0];
+        
         if (publicPaths.some((p) => path === p || path.startsWith(p + '/'))) {
             return next();
         }
