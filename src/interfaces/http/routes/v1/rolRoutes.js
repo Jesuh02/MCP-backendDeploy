@@ -8,8 +8,8 @@ export function rolRoutes({ rolController }) {
     router.get('/:id', rolController.getRolById);
 
     // User roles
-    router.get('/user/:userId', rolController.getUserRoles);
-    router.get('/user/:userId/is-docente', rolController.isDocente);
+    router.get('/user/:userId', rolController.getUserRoleIds);
+    router.get('/user/:userId/is-docente', rolController.isUserDocente);
     router.post('/user/:userId/promote-docente', rolController.promoteToDocente);
 
     // Recursos
@@ -18,7 +18,6 @@ export function rolRoutes({ rolController }) {
 
     // Rol-Recursos mapping
     router.get('/rol-recursos/all', rolController.listRolRecursos);
-    router.get('/rol-recursos/by-rol/:rolId', rolController.getRolRecursosByRol);
 
     return router;
 }
