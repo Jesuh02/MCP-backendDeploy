@@ -4,6 +4,7 @@ export function courseRoutes({ courseController }) {
     const router = Router();
 
     router.get('/', courseController.list);
+    router.get('/stats', courseController.getStats);
     router.get('/search', courseController.search);
     router.get('/free', courseController.getFreeCourses);
     router.get('/by-ids', courseController.getByIds);
