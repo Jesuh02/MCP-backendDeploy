@@ -21,11 +21,26 @@ export class AuthService {
         return Result.ok({ user: this._safeUser(user), ...tokens });
     }
     async login({ username, password }) {
-        const user = await this.userRepo.findByUsername(username);
-        if (!user) return Result.fail(new UnauthorizedError('Credenciales inválidas'));
+        console.log(`[AuthService] Login attempt for: ${username}`);
+        
+        // 1. Try by username
+        let user = await this.userRepo.findByUsername(username);
+        
+        // 2. If not found, try by email
+        if (!user) {
+             user = await this.userRepo.findByEmail(username);
+        }
+
+        if (!user) {
+            console.log(`[AuthService] User/Email '${username}' not found`);
+            return Result.fail(new UnauthorizedError('Credenciales inválidas'));
+        }
 
         const valid = await this.jwt.comparePassword(password, user.password);
-        if (!valid) return Result.fail(new UnauthorizedError('Credenciales inválidas'));
+        if (!valid) {
+            console.log(`[AuthService] Password validation failed for '${username}'`);
+            return Result.fail(new UnauthorizedError('Credenciales inválidas'));
+        }
 
         const tokens = this._generateTokens(user);
         return Result.ok({ user: this._safeUser(user), ...tokens });
