@@ -655,14 +655,29 @@ class NotificationService {
             const subscriberIds = subscribers.map(s => s.subscriber_id);
             console.log(`👥 Found ${subscriberIds.length} subscribers.`);
 
+            // Fetch creator avatar for notification display
+            let creatorAvatar = null;
+            try {
+                const { data: creatorData } = await this.supabaseService.client
+                    .from('usuarios')
+                    .select('avatar')
+                    .eq('id', creatorUserId)
+                    .single();
+                creatorAvatar = creatorData?.avatar || null;
+            } catch (e) {
+                console.warn('⚠️ Could not fetch creator avatar:', e.message);
+            }
+
             // 2. Insert into 'notifications' table for In-App History
-            // Table: notifications (user_id, type, title, message, related_id, is_read, created_at)
             const notificationsToInsert = subscriberIds.map(userId => ({
                 user_id: userId,
                 type: 'new_course', // Must match Android Notification.TYPE_NEW_COURSE
                 title: '¡Nuevo curso disponible!',
                 message: `${creatorUsername} ha publicado un nuevo curso: ${courseData.title}`,
                 related_id: courseData.id,
+                sender_username: creatorUsername,
+                sender_avatar_url: creatorAvatar,
+                thumbnail_url: courseData.thumbnailUri || courseData.thumbnail_uri || null,
                 is_read: false,
                 created_at: new Date()
             }));
