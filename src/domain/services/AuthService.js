@@ -22,13 +22,13 @@ export class AuthService {
     }
     async login({ username, password }) {
         console.log(`[AuthService] Login attempt for: ${username}`);
-        
+
         // 1. Try by username
         let user = await this.userRepo.findByUsername(username);
-        
+
         // 2. If not found, try by email
         if (!user) {
-             user = await this.userRepo.findByEmail(username);
+            user = await this.userRepo.findByEmail(username);
         }
 
         if (!user) {

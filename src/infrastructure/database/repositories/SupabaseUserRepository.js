@@ -4,22 +4,30 @@
 export class SupabaseUserRepository {
     constructor(client) { this.client = client; }
 
+    /** Map DB row (contrasena) to domain model (password) */
+    _mapUser(data) {
+        if (!data) return null;
+        const mapped = { ...data, password: data.contrasena };
+        delete mapped.contrasena;
+        return mapped;
+    }
+
     async findById(id) {
         const { data, error } = await this.client.from('usuarios').select('*, personas(*)').eq('id', id).single();
         if (error || !data) return null;
-        return this._enrichWithRoles(data);
+        return this._enrichWithRoles(this._mapUser(data));
     }
 
     async findByUsername(username) {
         const { data, error } = await this.client.from('usuarios').select('*, personas(*)').ilike('username', username).single();
         if (error || !data) return null;
-        return this._enrichWithRoles(data);
+        return this._enrichWithRoles(this._mapUser(data));
     }
 
     async findByEmail(email) {
         const { data, error } = await this.client.from('usuarios').select('*, personas(*)').ilike('email', email).single();
         if (error || !data) return null;
-        return this._enrichWithRoles(data);
+        return this._enrichWithRoles(this._mapUser(data));
     }
 
     async create(userData) {
@@ -27,8 +35,8 @@ export class SupabaseUserRepository {
         let personaId = userData.personaId || null;
         if (userData.persona && !personaId) {
             const { data: p, error: pe } = await this.client.from('personas').insert({
-                nombre: userData.persona.nombre,
-                apellido: userData.persona.apellido || '',
+                nombres: userData.persona.nombre || userData.persona.nombres || '',
+                apellidos: userData.persona.apellido || userData.persona.apellidos || '',
                 identificacion: userData.persona.identificacion || '',
                 telefono: userData.persona.telefono || '',
             }).select().single();
@@ -39,7 +47,7 @@ export class SupabaseUserRepository {
         const { data, error } = await this.client.from('usuarios').insert({
             username: userData.username,
             email: userData.email,
-            password: userData.password,
+            contrasena: userData.password,
             avatar: userData.avatar || null,
             persona_id: personaId,
         }).select().single();
@@ -53,11 +61,10 @@ export class SupabaseUserRepository {
         if (data.username !== undefined) updatePayload.username = data.username;
         if (data.email !== undefined) updatePayload.email = data.email;
         if (data.avatar !== undefined) updatePayload.avatar = data.avatar;
-        if (data.password !== undefined) updatePayload.password = data.password;
-        updatePayload.updated_at = new Date().toISOString();
+        if (data.password !== undefined) updatePayload.contrasena = data.password;
         const { data: updated, error } = await this.client.from('usuarios').update(updatePayload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando usuario: ${error.message}`);
-        return updated;
+        return this._mapUser(updated);
     }
     async exists(username) {
         const { count, error } = await this.client.from('usuarios').select('id', { count: 'exact', head: true }).ilike('username', username);
