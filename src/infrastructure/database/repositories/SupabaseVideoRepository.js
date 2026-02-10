@@ -35,7 +35,7 @@
             .eq('remote_id', userData.id)
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
-            
+
         if (error) throw new Error(error.message);
         return data || [];
     }
@@ -47,7 +47,7 @@
             .eq('remote_id', userId)
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
-            
+
         if (error) throw new Error(error.message);
         return data || [];
     }
