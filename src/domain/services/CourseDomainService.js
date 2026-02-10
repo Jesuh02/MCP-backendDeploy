@@ -20,6 +20,11 @@ export class CourseDomainService {
         return Result.ok({ courses, total });
     }
 
+    async getStats() {
+        const total = await this.courseRepo.count({});
+        return Result.ok({ total });
+    }
+
     async findByCreator(username, pagination) {
         const courses = await this.courseRepo.findByCreator(username, pagination);
         return Result.ok(courses);
