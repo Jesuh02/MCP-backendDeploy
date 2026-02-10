@@ -42,7 +42,7 @@ export class SubscriptionDomainService {
 
     async getSubscriberCount(creatorId) {
         const count = await this.subRepo.countByCreator(creatorId);
-        return Result.ok({ count });
+        return Result.ok(count);
     }
 
     async getSubscriptionCount(subscriberId) {
