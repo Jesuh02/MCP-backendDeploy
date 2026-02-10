@@ -27,42 +27,50 @@ export class CommentDomainService {
         try {
             if (!this.notificationService || !this.videoRepo || !this.userRepo) return;
 
-            const video = await this.videoRepo.findById(comment.video_id);
+            // Use camelCase properties as they come from VideoComment entity
+            const videoId = comment.videoId || comment.video_id;
+            const userId = comment.userId || comment.usuario_id || comment.user_id;
+
+            const video = await this.videoRepo.findById(videoId);
             if (!video) return;
 
-            const commenter = await this.userRepo.findById(comment.usuario_id);
+            const commenter = await this.userRepo.findById(userId);
             const avatar = commenter ? commenter.avatar : '';
 
             // 1. Si es respuesta a otro comentario (reply)
-            if (comment.parent_id) {
-                const parentComment = await this.commentRepo.findById(comment.parent_id);
-                if (parentComment && parentComment.usuario_id !== comment.usuario_id) {
-                    await this.notificationService.send(parentComment.usuario_id, {
+            const parentId = comment.parentId || comment.parent_id;
+            if (parentId) {
+                const parentComment = await this.commentRepo.findById(parentId);
+                // Check parentComment user (handle both camelCase and snake_case just in case)
+                const parentUserId = parentComment ? (parentComment.userId || parentComment.usuario_id || parentComment.user_id) : null;
+                
+                if (parentComment && parentUserId && parentUserId !== userId) {
+                    await this.notificationService.send(parentUserId, {
                         type: 'comment_reply',
                         title: 'Nueva respuesta',
                         message: `${comment.username || 'Alguien'} respondió a tu comentario`,
-                        data: { videoId: comment.video_id, commentId: comment.id, type: 'comment_reply' },
-                        relatedId: comment.video_id,
+                        data: { videoId: videoId, commentId: comment.id, type: 'comment_reply' },
+                        relatedId: videoId,
                         senderUsername: comment.username,
                         senderAvatarUrl: avatar,
                         thumbnailUrl: video.thumbnail_uri,
-                        metadata: { replyText: comment.comment }
+                        metadata: { replyText: comment.comment || comment.content }
                     });
                 }
             }
             // 2. Si es comentario raíz, notificar al dueño del video
-            else if (video.remote_id && video.remote_id !== comment.usuario_id) {
+            else if (video.remote_id && video.remote_id !== userId) {
                 // Verificar si el dueño del video no es el mismo que comenta
                 await this.notificationService.send(video.remote_id, {
                     type: 'video_comment',
                     title: 'Nuevo comentario',
                     message: `${comment.username || 'Alguien'} comentó tu video`,
-                    data: { videoId: comment.video_id, commentId: comment.id, type: 'video_comment' },
-                    relatedId: comment.video_id,
+                    data: { videoId: videoId, commentId: comment.id, type: 'video_comment' },
+                    relatedId: videoId,
                     senderUsername: comment.username,
                     senderAvatarUrl: avatar,
                     thumbnailUrl: video.thumbnail_uri,
-                    metadata: { commentText: comment.comment }
+                    metadata: { commentText: comment.comment || comment.content }
                 });
             }
         } catch (error) {
