@@ -52,7 +52,9 @@ export class LikeDomainService {
             } else if (entityType === 'comment' || entityType === 'video_comment') {
                 if (!this.commentRepo || !this.videoRepo) return;
                 const comment = await this.commentRepo.findById(entityId);
-                if (comment && comment.usuario_id !== userId) {
+                
+                // Ensure target user exists and is not the same as the liker
+                if (comment && comment.usuario_id && comment.usuario_id !== userId) {
                     const video = await this.videoRepo.findById(comment.video_id);
                     await this.notificationService.send(comment.usuario_id, {
                         type: 'comment_like',
