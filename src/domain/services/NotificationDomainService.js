@@ -33,7 +33,7 @@ export class NotificationDomainService {
             const tokens = await this.userRepo.getUserFCMTokens(userId);
             if (tokens.length > 0) {
                 const result = await this.push.sendToTokens(tokens, title, message, data || {});
-                if (result.invalidTokens ? .length > 0) {
+                if (result.invalidTokens?.length > 0) {
                     await this.userRepo.removeInvalidFCMTokens(result.invalidTokens);
                 }
             }
