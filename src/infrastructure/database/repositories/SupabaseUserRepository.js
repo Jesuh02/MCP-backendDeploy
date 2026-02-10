@@ -7,26 +7,44 @@ export class SupabaseUserRepository {
     /** Map DB row (contrasena) to domain model (password) */
     _mapUser(data) {
         if (!data) return null;
-        const mapped = { ...data, password: data.contrasena };
+        const mapped = {...data, password: data.contrasena };
         delete mapped.contrasena;
         return mapped;
     }
 
     async findById(id) {
-        const { data, error } = await this.client.from('usuarios').select('*, personas(*)').eq('id', id).single();
-        if (error || !data) return null;
+        const { data, error } = await this.client.from('usuarios').select('*, personas(*)').eq('id', id).maybeSingle();
+        if (error) {
+            console.warn(`[UserRepo] findById error (with join): ${error.message}, trying without join`);
+            const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').eq('id', id).maybeSingle();
+            if (e2 || !d2) return null;
+            return this._enrichWithRoles(this._mapUser(d2));
+        }
+        if (!data) return null;
         return this._enrichWithRoles(this._mapUser(data));
     }
 
     async findByUsername(username) {
-        const { data, error } = await this.client.from('usuarios').select('*, personas(*)').ilike('username', username).single();
-        if (error || !data) return null;
+        const { data, error } = await this.client.from('usuarios').select('*, personas(*)').ilike('username', username).maybeSingle();
+        if (error) {
+            console.warn(`[UserRepo] findByUsername error (with join): ${error.message}, trying without join`);
+            const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').ilike('username', username).maybeSingle();
+            if (e2 || !d2) { console.error(`[UserRepo] findByUsername fallback also failed: ${e2?.message}`); return null; }
+            return this._enrichWithRoles(this._mapUser(d2));
+        }
+        if (!data) return null;
         return this._enrichWithRoles(this._mapUser(data));
     }
 
     async findByEmail(email) {
-        const { data, error } = await this.client.from('usuarios').select('*, personas(*)').ilike('email', email).single();
-        if (error || !data) return null;
+        const { data, error } = await this.client.from('usuarios').select('*, personas(*)').ilike('email', email).maybeSingle();
+        if (error) {
+            console.warn(`[UserRepo] findByEmail error (with join): ${error.message}, trying without join`);
+            const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').ilike('email', email).maybeSingle();
+            if (e2 || !d2) return null;
+            return this._enrichWithRoles(this._mapUser(d2));
+        }
+        if (!data) return null;
         return this._enrichWithRoles(this._mapUser(data));
     }
 
