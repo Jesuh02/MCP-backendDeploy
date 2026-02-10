@@ -36,12 +36,12 @@
     }
 
     async countByCreator(creatorId) {
-        const { count, error } = await this.client.from('subscriptions').select('id', { count: 'exact', head: true }).eq('creator_id', creatorId);
+        const { count, error } = await this.client.from('subscriptions').select('*', { count: 'exact', head: true }).eq('creator_id', creatorId);
         return error ? 0 : count;
     }
 
     async countBySubscriber(subscriberId) {
-        const { count, error } = await this.client.from('subscriptions').select('id', { count: 'exact', head: true }).eq('subscriber_id', subscriberId);
+        const { count, error } = await this.client.from('subscriptions').select('*', { count: 'exact', head: true }).eq('subscriber_id', subscriberId);
         return error ? 0 : count;
     }
 
