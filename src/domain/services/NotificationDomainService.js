@@ -27,8 +27,16 @@ export class NotificationDomainService {
     async send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
         // 1. Guardar en BD
         const notif = await this.notifRepo.create({
-            userId, title, message, type, data,
-            relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata
+            userId,
+            title,
+            message,
+            type,
+            data,
+            relatedId,
+            senderUsername,
+            senderAvatarUrl,
+            thumbnailUrl,
+            metadata
         });
 
         // 2. Push notification
@@ -54,7 +62,7 @@ export class NotificationDomainService {
 
     async sendEmail(userId, { subject, html, text }) {
         const user = await this.userRepo.findById(userId);
-        if (!user?.email) return Result.fail(new Error('Usuario sin email')); 
+        if (!user?.email) return Result.fail(new Error('Usuario sin email'));
         const sent = await this.email.sendEmail({ to: user.email, subject, html, text });
         return Result.ok({ sent });
     }
