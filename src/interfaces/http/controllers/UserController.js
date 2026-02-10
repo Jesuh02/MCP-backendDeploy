@@ -13,6 +13,16 @@ export class UserController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    uploadAvatar = async(req, res, next) => {
+        try {
+            if (!req.file) return next(new ValidationError('No file provided'));
+            const result = await this.userService.uploadAvatar(req.user.userId, req.file);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getById = async(req, res, next) => {
         try {
             const result = await this.userService.getById(parseInt(req.params.id));
