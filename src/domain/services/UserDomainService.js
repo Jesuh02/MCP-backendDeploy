@@ -7,6 +7,23 @@ export class UserDomainService {
         this.storage = fileStoragePort;
     }
 
+    /**
+     * Sign R2 avatar URLs so they are accessible (bucket is private).
+     */
+    async _signAvatarUrl(user) {
+        if (!user || !this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return;
+        if (user.avatar && !user.avatar.includes('X-Amz-Signature')) {
+            const key = this.storage.extractObjectKey(user.avatar);
+            if (key) {
+                try {
+                    user.avatar = await this.storage.generateDownloadUrl(key, 3600);
+                } catch (e) {
+                    console.warn('[UserDomainService] Error signing avatar URL', e.message);
+                }
+            }
+        }
+    }
+
     async uploadAvatar(userId, file) {
         if (!this.storage) return Result.fail(new Error('Storage service not available'));
         if (!file || !file.buffer) return Result.fail(new Error('Invalid file'));
@@ -43,6 +60,7 @@ export class UserDomainService {
         const user = await this.userRepo.findById(id);
         if (!user) return Result.fail(new NotFoundError('Usuario', id));
         const { password, ...safe } = user;
+        await this._signAvatarUrl(safe);
         return Result.ok(safe);
     }
 
@@ -50,6 +68,7 @@ export class UserDomainService {
         const user = await this.userRepo.findByUsername(username);
         if (!user) return Result.fail(new NotFoundError('Usuario', username));
         const { password, ...safe } = user;
+        await this._signAvatarUrl(safe);
         return Result.ok(safe);
     }
     async updateProfile(id, data) {
@@ -83,11 +102,15 @@ export class UserDomainService {
         const user = await this.userRepo.findByEmail(email);
         if (!user) return Result.fail(new NotFoundError('Usuario (email)', email));
         const { password, ...safe } = user;
+        await this._signAvatarUrl(safe);
         return Result.ok(safe);
     }
 
     async getByIds(ids) {
         const users = await this.userRepo.findByIds(ids);
+        if (Array.isArray(users)) {
+            await Promise.all(users.map(u => this._signAvatarUrl(u)));
+        }
         return Result.ok(users);
     }
 }

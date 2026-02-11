@@ -99,5 +99,21 @@ export class VideoController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    getSignedUrl = async(req, res, next) => {
+        try {
+            const result = await this.videoService.getById(parseInt(req.params.id));
+            if (result.isFail()) return next(result.getError());
+            const video = result.getValue();
+            res.json({
+                success: true,
+                data: {
+                    id: video.id,
+                    videoUriString: video.video_uri_string || video.videoUriString,
+                    thumbnailUri: video.thumbnail_uri || video.thumbnailUri
+                }
+            });
+        } catch (err) { next(err); }
+    };
 }
 export default VideoController;
