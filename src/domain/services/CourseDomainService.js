@@ -2,13 +2,42 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
-    constructor({ courseRepository }) {
+    constructor({ courseRepository, fileStoragePort }) {
         this.courseRepo = courseRepository;
+        this.storage = fileStoragePort || null;
+    }
+
+    /**
+     * Sign R2 thumbnail URLs for courses so they are not blocked by private bucket.
+     */
+    async _signUrls(courses) {
+        if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return courses;
+        const list = Array.isArray(courses) ? courses : [courses];
+        await Promise.all(list.map(async (c) => {
+            if (!c) return;
+            try {
+                if (c.thumbnail_uri || c.thumbnailUri) {
+                    const url = c.thumbnail_uri || c.thumbnailUri;
+                    if (url && !url.includes('X-Amz-Signature')) {
+                        const key = this.storage.extractObjectKey(url);
+                        if (key) {
+                            const signed = await this.storage.generateDownloadUrl(key, 3600);
+                            c.thumbnail_uri = signed;
+                            c.thumbnailUri = signed;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[CourseDomainService] Error signing URL for course', c.id, e.message);
+            }
+        }));
+        return Array.isArray(courses) ? list : list[0];
     }
 
     async getById(id) {
         const course = await this.courseRepo.findById(id);
         if (!course) return Result.fail(new NotFoundError('Curso', id));
+        await this._signUrls(course);
         return Result.ok(course);
     }
 
@@ -17,6 +46,7 @@ export class CourseDomainService {
             this.courseRepo.findAll(pagination),
             this.courseRepo.count({}),
         ]);
+        await this._signUrls(courses);
         return Result.ok({ courses, total });
     }
 
@@ -27,11 +57,13 @@ export class CourseDomainService {
 
     async findByCreator(username, pagination) {
         const courses = await this.courseRepo.findByCreator(username, pagination);
+        await this._signUrls(courses);
         return Result.ok(courses);
     }
 
     async search(query, pagination) {
         const courses = await this.courseRepo.search(query, pagination);
+        await this._signUrls(courses);
         return Result.ok(courses);
     }
 
@@ -63,16 +95,19 @@ export class CourseDomainService {
 
     async findByCreatorUserId(userId, pagination) {
         const courses = await this.courseRepo.findByCreatorUserId(userId, pagination);
+        await this._signUrls(courses);
         return Result.ok(courses);
     }
 
     async findByIds(ids) {
         const courses = await this.courseRepo.findByIds(ids);
+        await this._signUrls(courses);
         return Result.ok(courses);
     }
 
     async findFreeCourses(pagination) {
         const courses = await this.courseRepo.findFree(pagination);
+        await this._signUrls(courses);
         return Result.ok(courses);
     }
 }
