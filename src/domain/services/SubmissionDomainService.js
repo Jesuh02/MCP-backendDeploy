@@ -76,7 +76,7 @@ export class SubmissionDomainService {
     async _updateProgress(userId, taskId) {
         try {
             const task = await this.taskRepo.findById(taskId);
-            if (!task?.course_id) return;
+            if (!task || !task.course_id) return;
             const courseId = task.course_id;
 
             const graded = await this.subRepo.getGradedByUserAndCourse(userId, courseId);

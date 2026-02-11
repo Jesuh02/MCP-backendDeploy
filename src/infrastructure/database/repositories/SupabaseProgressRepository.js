@@ -20,6 +20,9 @@
     }
 
     async upsert(progressData) {
+        // Guard against null/undefined required fields
+        if (!progressData.courseId) throw new Error('courseId is required for progress upsert');
+        if (!progressData.userId) throw new Error('userId is required for progress upsert');
         const payload = {
             usuario_estudiante: progressData.userId,
             curso_id: progressData.courseId,
