@@ -45,13 +45,13 @@ export class SupabaseCourseRepository {
             title: courseData.title,
             description: courseData.description || '',
             thumbnail_uri: courseData.thumbnailUri || null,
-            creator_username: courseData.creatorUsername,
+            // creator_username column does not exist in the schema
             creator_user_id: courseData.creatorUserId || null,
-            is_free: courseData.isFree !== false,
+            // Map isFree to is_premium
+            is_premium: courseData.isFree === false,
             price: courseData.price || 0,
             category: courseData.category || null,
-            level: courseData.level || null,
-            language: courseData.language || 'es',
+            // level and language columns do not exist in the schema
             is_published: courseData.isPublished !== false,
         };
         const { data, error } = await this.client.from('courses').insert(payload).select().single();
@@ -64,10 +64,9 @@ export class SupabaseCourseRepository {
         if (data.title !== undefined) payload.title = data.title;
         if (data.description !== undefined) payload.description = data.description;
         if (data.thumbnailUri !== undefined) payload.thumbnail_uri = data.thumbnailUri;
-        if (data.isFree !== undefined) payload.is_free = data.isFree;
+        if (data.isFree !== undefined) payload.is_premium = data.isFree === false;
         if (data.price !== undefined) payload.price = data.price;
         if (data.category !== undefined) payload.category = data.category;
-        if (data.level !== undefined) payload.level = data.level;
         if (data.isPublished !== undefined) payload.is_published = data.isPublished;
         payload.updated_at = new Date().toISOString();
 
