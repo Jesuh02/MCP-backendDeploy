@@ -48,7 +48,7 @@ export class NotificationDomainService {
             const tokens = await this.userRepo.getUserFCMTokens(userId);
             if (tokens.length > 0) {
                 const result = await this.push.sendToTokens(tokens, title, message, data || {});
-                if (result.invalidTokens?.length > 0) {
+                if (result.invalidTokens ? .length > 0) {
                     await this.userRepo.removeInvalidFCMTokens(result.invalidTokens);
                 }
             }
@@ -66,7 +66,7 @@ export class NotificationDomainService {
 
     async sendEmail(userId, { subject, html, text }) {
         const user = await this.userRepo.findById(userId);
-        if (!user?.email) return Result.fail(new Error('Usuario sin email'));
+        if (!user ? .email) return Result.fail(new Error('Usuario sin email'));
         const sent = await this.email.sendEmail({ to: user.email, subject, html, text });
         return Result.ok({ sent });
     }
