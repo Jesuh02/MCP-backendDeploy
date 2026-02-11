@@ -32,6 +32,13 @@ export class ProgressController {
     upsert = async(req, res, next) => {
         try {
             const data = {...req.body, userId: req.user.userId };
+            // Validate required fields before reaching the database
+            if (!data.courseId && !data.curso_id) {
+                return res.status(400).json({ success: false, error: 'courseId is required' });
+            }
+            // Normalize: accept both camelCase and snake_case from clients
+            if (!data.courseId && data.curso_id) data.courseId = data.curso_id;
+            if (!data.userId && data.usuario_estudiante) data.userId = data.usuario_estudiante;
             const result = await this.progressService.upsert(data);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
