@@ -2,9 +2,10 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
-    constructor({ courseRepository, transactionRepository, fileStoragePort }) {
+    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort }) {
         this.courseRepo = courseRepository;
         this.transactionRepo = transactionRepository;
+        this.progressRepo = progressRepository;
         this.storage = fileStoragePort || null;
     }
 
@@ -14,7 +15,7 @@ export class CourseDomainService {
     async _signUrls(courses) {
         if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return courses;
         const list = Array.isArray(courses) ? courses : [courses];
-        await Promise.all(list.map(async (c) => {
+        await Promise.all(list.map(async(c) => {
             if (!c) return;
             try {
                 const url = c.thumbnail_url || c.thumbnail_uri || c.thumbnailUri;
@@ -118,8 +119,8 @@ export class CourseDomainService {
 
     async findFreeCourses(pagination) {
         const [courses, total] = await Promise.all([
-             this.courseRepo.findFree(pagination),
-             this.courseRepo.count({ isFree: true })
+            this.courseRepo.findFree(pagination),
+            this.courseRepo.count({ isFree: true })
         ]);
         await this._signUrls(courses);
         return Result.ok({ courses, total });
@@ -140,7 +141,7 @@ export class CourseDomainService {
             console.warn('TransactionRepository not injected in CourseDomainService');
             return Result.ok({ courses: [], total: 0 });
         }
-        
+
         // Parallel fetch: IDs for the page, and total count
         const [courseIds, total] = await Promise.all([
             this.transactionRepo.findPurchasedCourseIdsPaginated(userId, pagination),
@@ -148,11 +149,35 @@ export class CourseDomainService {
         ]);
 
         if (courseIds.length === 0) return Result.ok({ courses: [], total });
-        
+
         // Fetch courses for the page IDs
         const courses = await this.courseRepo.findByIds(courseIds);
-        
+
         // Retrieve order because findByIds might not preserve it
+        const sortedCourses = courseIds
+            .map(id => courses.find(c => c.id === id))
+            .filter(c => c);
+
+        await this._signUrls(sortedCourses);
+        return Result.ok({ courses: sortedCourses, total });
+    }
+
+    async findEnrolledCourses(userId, pagination) {
+        if (!this.progressRepo) {
+            console.warn('ProgressRepository not injected in CourseDomainService');
+            return Result.ok({ courses: [], total: 0 });
+        }
+
+        const [courseIds, total] = await Promise.all([
+            this.progressRepo.findEnrolledCourseIdsPaginated(userId, pagination),
+            this.progressRepo.countEnrolled(userId)
+        ]);
+
+        if (courseIds.length === 0) return Result.ok({ courses: [], total });
+
+        const courses = await this.courseRepo.findByIds(courseIds);
+
+        // Preserve order
         const sortedCourses = courseIds
             .map(id => courses.find(c => c.id === id))
             .filter(c => c);

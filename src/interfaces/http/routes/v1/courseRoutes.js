@@ -9,6 +9,7 @@ export function courseRoutes({ courseController }) {
     router.get('/free', courseController.getFreeCourses);
     router.get('/premium', courseController.getPremiumCourses);
     router.get('/purchased', courseController.getPurchasedCourses);
+    router.get('/enrolled', courseController.getEnrolledCourses);
     router.get('/by-ids', courseController.getByIds);
     router.get('/creator/:username', courseController.getByCreator);
     router.get('/creator-id/:userId', courseController.getByCreatorId);
