@@ -72,7 +72,7 @@ export class MCPController {
 
                 case 'tools/call':
                     {
-                        const result = await this._handleToolCall(params ? .name, params ? .arguments);
+                        const result = await this._handleToolCall(params?.name, params?.arguments);
                         response = { jsonrpc: '2.0', id, result };
                         break;
                     }

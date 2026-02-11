@@ -122,9 +122,9 @@ export class LLMAdapter {
             timeout: 120000,
         });
 
-        const choice = response.data.choices ? .[0];
+        const choice = response.data.choices?.[0];
         return {
-            content: choice ? .message ? .content || '',
+            content: choice?.message?.content || '',
             model: chatModel,
             usage: response.data.usage || null,
         };
@@ -152,9 +152,9 @@ export class LLMAdapter {
             timeout: 120000,
         });
 
-        const choice = response.data.choices ? .[0];
+        const choice = response.data.choices?.[0];
         return {
-            content: choice ? .message ? .content || '',
+            content: choice?.message?.content || '',
             model,
             usage: response.data.usage || null,
         };
