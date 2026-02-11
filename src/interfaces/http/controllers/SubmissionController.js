@@ -4,10 +4,14 @@ import { parsePagination } from '../../../shared/pagination.js';
 import path from 'path';
 
 export class SubmissionController {
-    constructor({ submissionService, storageService, storageAdapter }) {
+    constructor({ submissionService, storageService, storageAdapter, notificationService, userService, taskService, courseService }) {
         this.subService = submissionService;
         this.storageService = storageService;
         this.storageAdapter = storageAdapter;
+        this.notificationService = notificationService;
+        this.userService = userService;
+        this.taskService = taskService;
+        this.courseService = courseService;
     }
 
     getById = async(req, res, next) => {
@@ -43,6 +47,47 @@ export class SubmissionController {
             value.username = req.user.username;
             const result = await this.subService.submit(value);
             if (result.isFail()) return next(result.getError());
+            
+            // Notificar al creador del curso si es necesario
+            try {
+                if (this.notificationService && this.taskService && this.courseService) {
+                    const taskResult = await this.taskService.getById(value.taskId);
+                    if (taskResult.isSuccess()) {
+                        const task = taskResult.getValue();
+                        const courseResult = await this.courseService.getById(task.courseId);
+                        if (courseResult.isSuccess()) {
+                            const course = courseResult.getValue();
+                            const creatorId = course.creatorUserId;
+                            
+                            // Obtener avatar del estudiante
+                             let senderAvatarUrl = null;
+                            if (this.userService) {
+                                const userResult = await this.userService.getById(value.userId);
+                                if (userResult.isSuccess()) {
+                                    senderAvatarUrl = userResult.getValue().avatar;
+                                }
+                            }
+                            
+                            const metadataJson = JSON.stringify({ taskId: value.taskId, type: "submission" });
+                            
+                            await this.notificationService.sendNotification({
+                                userId: creatorId,
+                                title: `Nueva entrega: ${task.title}`,
+                                message: `${value.username} ha enviado una entrega para la tarea '${task.title}'`,
+                                type: "submission",
+                                relatedId: value.taskId,
+                                senderUsername: value.username,
+                                senderAvatarUrl: senderAvatarUrl,
+                                thumbnailUrl: senderAvatarUrl, // Usar avatar como thumbnail si no hay imagen específica
+                                metadata: metadataJson
+                            });
+                        }
+                    }
+                }
+            } catch (notifyErr) {
+                console.warn('Error enviando notificación de entrega:', notifyErr);
+            }
+
             res.status(201).json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
