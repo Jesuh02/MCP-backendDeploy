@@ -67,6 +67,12 @@ export class SupabaseTransactionRepository {
         return !error && count > 0;
     }
 
+    async findPurchasedCourseIdsPaginated(userId, { offset = 0, limit = 20 } = {}) {
+        const { data, error } = await this.client.from('transactions').select('course_id').eq('user_id', userId).eq('status', 'approved').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        if (error) return [];
+        return data.map(t => t.course_id);
+    }
+
     async findPurchasedCourseIds(userId) {
         const { data, error } = await this.client.from('transactions').select('course_id').eq('user_id', userId).eq('status', 'approved');
         if (error) return [];
