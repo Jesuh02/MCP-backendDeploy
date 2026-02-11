@@ -473,16 +473,22 @@ router.post('/procesar-prompt', async(req, res) => {
                     throw new Error('ollamaUrl is required');
                 }
 
-                // 🛑 DETECT GRADING INTENT FIRST: If taskDescription, fileContent, or submissionId are present,
-                // this is a GRADING request from ChatBotFragment, NOT a quiz generation request.
+                // 🛑 DETECT GRADING INTENT: The LLM should semantically decide.
+                // hasGradingContext = task/file/submission context is present
+                // hasGradingKeyword = user explicitly asks for a grade
+                // isGradingRequest = BOTH must be true. Having context alone does NOT mean grading.
                 const hasGradingContext = !!(taskDescription || (fileContent && fileContent.length > 50) || submissionId);
-                const gradingKeywords = ['calific', 'nota', 'evalu', 'puntaje', 'grade', 'score', 'revisar entrega'];
-                const hasGradingKeyword = gradingKeywords.some(kw => promptLower.includes(kw));
-                // isGradingRequest is true if we have grading context (taskDescription/fileContent/submissionId)
-                // OR if grading keywords appear in the prompt WITHOUT quiz generation pattern
-                const isGradingRequest = hasGradingContext || (hasGradingKeyword && !promptLower.includes('genera') && !promptLower.includes('quiz'));
+                // More restrictive grading keywords - must indicate explicit grading intent
+                // Excluded: 'nota' (too ambiguous, e.g. 'que se nota al hablar'), 'revisar' (could mean review/read)
+                const gradingPhrases = ['califica', 'calificación', 'calificacion', 'dame la nota', 'ponle nota', 'evalúa', 'evalua', 'evaluación', 'evaluacion', 'puntaje', 'grade this', 'score this', 'revisar entrega', 'calificar entrega', 'nota de la entrega', 'qué nota', 'que nota', 'cuánto saqué', 'cuanto saque'];
+                const hasGradingKeyword = gradingPhrases.some(kw => promptLower.includes(kw));
+                // Also check if the prompt itself contains the system instruction marker for grading
+                const promptHasGradingInstruction = promptLower.includes('ha solicitado explícitamente una calificación') || promptLower.includes('ha solicitado explicitamente una calificacion');
+                // isGradingRequest = user explicitly asks for grading AND there is task/file context
+                // OR the Android app already injected a grading instruction into the prompt
+                const isGradingRequest = (hasGradingKeyword && hasGradingContext) || promptHasGradingInstruction;
 
-                console.log(`🔍 Intent Detection: hasGradingContext=${hasGradingContext}, hasGradingKeyword=${hasGradingKeyword}, isGradingRequest=${isGradingRequest}`);
+                console.log(`🔍 Intent Detection: hasGradingContext=${hasGradingContext}, hasGradingKeyword=${hasGradingKeyword}, promptHasGradingInstruction=${promptHasGradingInstruction}, isGradingRequest=${isGradingRequest}`);
 
                 // If userId/courseId provided AND this is NOT a grading request, fetch reinforcement history
                 let historyQuestionsList = [];
@@ -578,7 +584,7 @@ NO USES JAMÁS en preguntas u opciones:
                             ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
                             : isGradingRequest
                             ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. OBLIGATORIO: Incluir al final de tu respuesta la línea exacta "**calificación actual: X/10**" (donde X es la nota numérica). Sin esta línea, el profesor NO podrá guardar la nota en el sistema. Ejemplo: "**calificación actual: 8/10**"\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué.'
-                            : 'Eres un tutor inteligente y experto. Responde en español. Si recibes una tarea y una entrega, evalúa rigurosamente si la entrega cumple la descripción. Si el usuario pide calificar, DEBES incluir al final de tu respuesta "**calificación actual: X/10**" (donde X es la nota, ejemplo "calificación actual: 8/10") para activar la interfaz de calificación. Sin esta frase, el profesor no podrá guardar la nota.';
+                            : 'Eres un tutor inteligente y experto. Responde en español. IMPORTANTE: NO califiques ni des notas numéricas a menos que el usuario lo pida EXPLÍCITAMENTE con frases como "califica", "dame la nota", "evalúa la entrega". Si el usuario hace una pregunta general (por ejemplo "qué se nota al hablar de X", "explica Y", "qué es Z"), responde como un tutor explicando el tema. NO incluyas "calificación actual: X/10" en preguntas generales. Solo incluye "**calificación actual: X/10**" cuando el usuario PIDA EXPLÍCITAMENTE una calificación.';
                             
                         console.log(`🧠 Usando DeepSeek (${isQuizGeneration ? 'QUIZ MODE' : 'CHAT MODE'})...`);
                         
