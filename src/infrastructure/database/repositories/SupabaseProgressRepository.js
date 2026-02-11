@@ -74,6 +74,17 @@
         return !error && count > 0;
     }
 
+    async countEnrolled(userId) {
+        const { count, error } = await this.client.from('progreso_estudiante').select('curso_id', { count: 'exact', head: true }).eq('usuario_estudiante', userId);
+        return error ? 0 : count;
+    }
+
+    async findEnrolledCourseIdsPaginated(userId, { offset = 0, limit = 20 } = {}) {
+        const { data, error } = await this.client.from('progreso_estudiante').select('curso_id').eq('usuario_estudiante', userId).order('ultima_calculada_en', { ascending: false }).range(offset, offset + limit - 1);
+        if (error) return [];
+        return data.map(p => p.curso_id);
+    }
+
     async updateCertificate(userId, courseId, data) {
         const payload = {};
         if (data.certificateIssuedAt) payload.certificado_emitido_en = data.certificateIssuedAt;
