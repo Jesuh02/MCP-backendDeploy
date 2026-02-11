@@ -16,14 +16,15 @@ export class CourseDomainService {
         await Promise.all(list.map(async (c) => {
             if (!c) return;
             try {
-                if (c.thumbnail_uri || c.thumbnailUri) {
-                    const url = c.thumbnail_uri || c.thumbnailUri;
-                    if (url && !url.includes('X-Amz-Signature')) {
+                const url = c.thumbnail_url || c.thumbnail_uri || c.thumbnailUri;
+                if (url) {
+                    if (!url.includes('X-Amz-Signature')) {
                         const key = this.storage.extractObjectKey(url);
                         if (key) {
                             const signed = await this.storage.generateDownloadUrl(key, 3600);
                             c.thumbnail_uri = signed;
                             c.thumbnailUri = signed;
+                            c.thumbnail_url = signed;
                         }
                     }
                 }

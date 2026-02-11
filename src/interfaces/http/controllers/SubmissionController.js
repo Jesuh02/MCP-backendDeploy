@@ -47,7 +47,7 @@ export class SubmissionController {
             value.username = req.user.username;
             const result = await this.subService.submit(value);
             if (result.isFail()) return next(result.getError());
-            
+
             // Notificar al creador del curso si es necesario
             try {
                 if (this.notificationService && this.taskService && this.courseService) {
@@ -58,18 +58,18 @@ export class SubmissionController {
                         if (courseResult.isSuccess()) {
                             const course = courseResult.getValue();
                             const creatorId = course.creatorUserId;
-                            
+
                             // Obtener avatar del estudiante
-                             let senderAvatarUrl = null;
+                            let senderAvatarUrl = null;
                             if (this.userService) {
                                 const userResult = await this.userService.getById(value.userId);
                                 if (userResult.isSuccess()) {
                                     senderAvatarUrl = userResult.getValue().avatar;
                                 }
                             }
-                            
+
                             const metadataJson = JSON.stringify({ taskId: value.taskId, type: "submission" });
-                            
+
                             await this.notificationService.sendNotification({
                                 userId: creatorId,
                                 title: `Nueva entrega: ${task.title}`,
@@ -78,7 +78,7 @@ export class SubmissionController {
                                 relatedId: value.taskId,
                                 senderUsername: value.username,
                                 senderAvatarUrl: senderAvatarUrl,
-                                thumbnailUrl: senderAvatarUrl, // Usar avatar como thumbnail si no hay imagen específica
+                                thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl || senderAvatarUrl, // Usar thumbnail del curso
                                 metadata: metadataJson
                             });
                         }
