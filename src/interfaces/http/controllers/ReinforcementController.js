@@ -22,6 +22,11 @@ export class ReinforcementController {
 
     saveSession = async(req, res, next) => {
         try {
+            // Fix: Allow user_id from client to satisfy userId requirement
+            if (req.body.user_id && !req.body.userId) {
+                req.body.userId = req.body.user_id;
+            }
+
             const { error, value } = saveSessionSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
             const result = await this.reinforcementService.saveSession(value);
