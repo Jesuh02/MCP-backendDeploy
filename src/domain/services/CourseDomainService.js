@@ -47,7 +47,7 @@ export class CourseDomainService {
     async list(pagination) {
         const [courses, total] = await Promise.all([
             this.courseRepo.findAll(pagination),
-            this.courseRepo.count({}),
+            this.courseRepo.count({ excludeCreatorId: pagination.excludeCreatorId }),
         ]);
         await this._signUrls(courses);
         return Result.ok({ courses, total });
@@ -120,7 +120,7 @@ export class CourseDomainService {
     async findFreeCourses(pagination) {
         const [courses, total] = await Promise.all([
             this.courseRepo.findFree(pagination),
-            this.courseRepo.count({ isFree: true })
+             this.courseRepo.count({ isFree: true, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
         return Result.ok({ courses, total });
@@ -129,10 +129,7 @@ export class CourseDomainService {
     async findPremiumCourses(pagination) {
         const [courses, total] = await Promise.all([
             this.courseRepo.findPremium(pagination),
-            this.courseRepo.count({ isFree: false })
-        ]);
-        await this._signUrls(courses);
-        return Result.ok({ courses, total });
+            this.courseRepo.count({ isFree: false, excludeCreatorId: pagination.excludeCreatorId })
     }
 
     async findPurchasedCourses(userId, pagination) {

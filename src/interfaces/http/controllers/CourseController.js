@@ -10,6 +10,7 @@ export class CourseController {
     list = async(req, res, next) => {
         try {
             const pg = parsePagination(req.query);
+            if (req.query.excludeUserId) pg.excludeCreatorId = parseInt(req.query.excludeUserId);
             const result = await this.courseService.list(pg);
             if (result.isFail()) return next(result.getError());
             const { courses, total } = result.getValue();
@@ -81,6 +82,7 @@ export class CourseController {
     getFreeCourses = async(req, res, next) => {
         try {
             const pg = parsePagination(req.query);
+            if (req.query.excludeUserId) pg.excludeCreatorId = parseInt(req.query.excludeUserId);
             const result = await this.courseService.findFreeCourses(pg);
             if (result.isFail()) return next(result.getError());
             const { courses, total } = result.getValue();
@@ -91,6 +93,7 @@ export class CourseController {
     getPremiumCourses = async(req, res, next) => {
         try {
             const pg = parsePagination(req.query);
+            if (req.query.excludeUserId) pg.excludeCreatorId = parseInt(req.query.excludeUserId);
             const result = await this.courseService.findPremiumCourses(pg);
             if (result.isFail()) return next(result.getError());
             const { courses, total } = result.getValue();
