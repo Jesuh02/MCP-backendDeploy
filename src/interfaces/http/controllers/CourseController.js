@@ -106,7 +106,7 @@ export class CourseController {
             const pg = parsePagination(req.query);
             const result = await this.courseService.findPurchasedCourses(userId, pg);
             if (result.isFail()) return next(result.getError());
-            
+
             const { courses, total } = result.getValue();
             res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
         } catch (err) { next(err); }
@@ -115,6 +115,8 @@ export class CourseController {
     getEnrolledCourses = async(req, res, next) => {
         try {
             const userId = req.user?.userId || req.query.userId;
+            if (!userId) return res.status(400).json({ success: false, error: 'User ID required' });
+
             const pg = parsePagination(req.query);
             const result = await this.courseService.findEnrolledCourses(userId, pg);
             if (result.isFail()) return next(result.getError());
