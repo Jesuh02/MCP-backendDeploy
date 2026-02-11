@@ -27,8 +27,23 @@ export class SubmissionDomainService {
     async submit(data) {
         const task = await this.taskRepo.findById(data.taskId);
         if (!task) return Result.fail(new NotFoundError('Tarea', data.taskId));
-        const created = await this.subRepo.create(data);
-        return Result.ok(created);
+
+        // Check if submission already exists for this user and task
+        const existingSubmission = await this.subRepo.findByUserAndTask(data.userId, data.taskId);
+
+        if (existingSubmission) {
+            // Update existing submission
+            const updated = await this.subRepo.update(existingSubmission.id, {
+                fileUri: data.fileUri,
+                fileName: data.fileName,
+                submissionDate: Date.now()
+            });
+            return Result.ok(updated);
+        } else {
+            // Create new submission
+            const created = await this.subRepo.create(data);
+            return Result.ok(created);
+        }
     }
 
     async grade(id, { grade, feedback }, graderId) {
@@ -61,7 +76,7 @@ export class SubmissionDomainService {
     async _updateProgress(userId, taskId) {
         try {
             const task = await this.taskRepo.findById(taskId);
-            if (!task?.course_id) return;
+            if (!task ? .course_id) return;
             const courseId = task.course_id;
 
             const graded = await this.subRepo.getGradedByUserAndCourse(userId, courseId);

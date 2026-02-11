@@ -29,8 +29,13 @@
             porcentaje_progreso: progressData.progressPercentage || 0,
             ultima_calculada_en: new Date().toISOString(),
         };
-        // If state is provided, map it
-        if (progressData.status) payload.estado = progressData.status;
+        // State is usually generated or has a default, avoid inserting if causing issues
+        // if (progressData.status) payload.estado = progressData.status;
+
+        // Ensure calificacion_ponderada is set if averageGrade is provided, as it drives 'estado'
+        if (progressData.averageGrade !== undefined && progressData.averageGrade !== null) {
+            payload.calificacion_ponderada = progressData.averageGrade;
+        }
 
         const { data, error } = await this.client.from('progreso_estudiante').upsert(payload, { onConflict: 'usuario_estudiante,curso_id' }).select().single();
         if (error) throw new Error(error.message);

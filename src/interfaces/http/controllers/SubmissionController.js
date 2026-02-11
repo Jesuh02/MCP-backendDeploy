@@ -1,10 +1,13 @@
 import { createSubmissionSchema, gradeSubmissionSchema } from '../../../domain/validators/CommonSchemas.js';
 import { ValidationError } from '../../../shared/errors/index.js';
 import { parsePagination } from '../../../shared/pagination.js';
+import path from 'path';
 
 export class SubmissionController {
-    constructor({ submissionService }) {
+    constructor({ submissionService, storageService, storageAdapter }) {
         this.subService = submissionService;
+        this.storageService = storageService;
+        this.storageAdapter = storageAdapter;
     }
 
     getById = async(req, res, next) => {
@@ -78,6 +81,73 @@ export class SubmissionController {
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
+    };
+
+    /**
+     * Upload a submission file to R2 storage.
+     * Returns only the R2 object key (relative path), never the public URL.
+     */
+    uploadFile = async(req, res, next) => {
+        try {
+            if (!req.file) return next(new ValidationError('Se requiere un archivo'));
+            const folder = req.body.folder || req.body.prefix || 'submissions';
+            const key = `${folder}/${Date.now()}_${req.file.originalname}`;
+            const result = await this.storageService.upload(req.file.buffer, key, req.file.mimetype);
+            if (result.isFail()) return next(result.getError());
+            const { key: uploadedKey } = result.getValue();
+            // Only return the relative key, not the public R2 URL
+            res.status(201).json({ success: true, data: { key: uploadedKey } });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * Proxy/stream a submission file from R2 storage.
+     * This avoids exposing the R2 bucket URL to clients.
+     */
+    getFile = async(req, res, next) => {
+        try {
+            const submissionId = parseInt(req.params.id);
+            const result = await this.subService.getById(submissionId);
+            if (result.isFail()) return next(result.getError());
+
+            const submission = result.getValue();
+            const fileUri = submission.file_uri || submission.fileUri;
+
+            if (!fileUri) {
+                return res.status(404).json({ success: false, error: 'No file associated with this submission' });
+            }
+
+            // Determine the R2 object key from the stored fileUri
+            let key = fileUri;
+
+            // If it's a full R2 URL, extract the key
+            if (fileUri.includes('.r2.dev/')) {
+                key = fileUri.split('.r2.dev/')[1];
+            } else if (fileUri.includes('.r2.cloudflarestorage.com/')) {
+                const parts = fileUri.split('.r2.cloudflarestorage.com/');
+                key = parts[1];
+            }
+
+            // If it's a local file:/// URI, we cannot serve it
+            if (fileUri.startsWith('file:///')) {
+                return res.status(404).json({
+                    success: false,
+                    error: 'Archivo almacenado localmente en el dispositivo, no disponible remotamente'
+                });
+            }
+
+            // Fetch file from R2 and stream it
+            const { buffer, contentType } = await this.storageAdapter.fetchFile(key);
+
+            const fileName = submission.file_name || submission.fileName || path.basename(key);
+            res.setHeader('Content-Type', contentType || 'application/octet-stream');
+            res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);
+            res.setHeader('Content-Length', buffer.length);
+            res.send(buffer);
+        } catch (err) {
+            console.error('Error proxying submission file:', err.message);
+            next(err);
+        }
     };
 }
 export default SubmissionController;
