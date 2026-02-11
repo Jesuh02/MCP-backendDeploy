@@ -59,7 +59,7 @@ export class SubmissionController {
                             const course = courseResult.getValue();
                             const creatorId = course.creatorUserId;
 
-                            // Obtener avatar del estudiante para la notificación
+                            // Obtener avatar del estudiante
                             let senderAvatarUrl = null;
                             if (this.userService) {
                                 const userResult = await this.userService.getById(value.userId);
@@ -68,32 +68,24 @@ export class SubmissionController {
                                 }
                             }
 
-                            // Construir el objeto de metadatos de forma segura
-                            const metadataJson = JSON.stringify({
-                                taskId: value.taskId,
-                                type: "submission",
-                                submissionId: result.getValue().id
-                            });
+                            const metadataJson = JSON.stringify({ taskId: value.taskId, type: "submission" });
 
-                            const notificationData = {
+                            await this.notificationService.sendNotification({
                                 userId: creatorId,
                                 title: `Nueva entrega: ${task.title}`,
                                 message: `${value.username} ha enviado una entrega para la tarea '${task.title}'`,
                                 type: "submission",
                                 relatedId: value.taskId,
                                 senderUsername: value.username,
-                                senderAvatarUrl: senderAvatarUrl || 'https://via.placeholder.com/150', // Fallback avatar
-                                thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl || senderAvatarUrl,
+                                senderAvatarUrl: senderAvatarUrl,
+                                thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl || senderAvatarUrl, // Usar thumbnail del curso
                                 metadata: metadataJson
-                            };
-
-                            await this.notificationService.sendNotification(notificationData);
+                            });
                         }
                     }
                 }
             } catch (notifyErr) {
                 console.warn('Error enviando notificación de entrega:', notifyErr);
-                // No fallar la request principal si falla la notificación
             }
 
             res.status(201).json({ success: true, data: result.getValue() });
@@ -103,74 +95,8 @@ export class SubmissionController {
         try {
             const { error, value } = gradeSubmissionSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-
-            const submissionId = parseInt(req.params.id);
-            const graderId = req.user.userId;
-
-            const result = await this.subService.grade(submissionId, value, graderId);
+            const result = await this.subService.grade(parseInt(req.params.id), value, req.user.userId);
             if (result.isFail()) return next(result.getError());
-
-            // Notificar al estudiante sobre la calificación
-            try {
-                if (this.notificationService && this.taskService && this.courseService && this.userService) {
-                    const submission = result.getValue();
-                    const studentId = submission.userId || submission.user_id; // Verificar nombres de propiedades
-
-                    if (studentId) {
-                        // Obtener info de la tarea y curso
-                        const taskId = submission.taskId || submission.task_id;
-                        const taskResult = await this.taskService.getById(taskId);
-
-                        if (taskResult.isSuccess()) {
-                            const task = taskResult.getValue();
-                            const courseResult = await this.courseService.getById(task.courseId);
-
-                            // Obtener info del profesor (grader)
-                            let graderUsername = req.user.username || "El profesor";
-                            let graderAvatarUrl = null;
-                            const userResult = await this.userService.getById(graderId);
-                            if (userResult.isSuccess()) {
-                                const grader = userResult.getValue();
-                                graderUsername = grader.username;
-                                graderAvatarUrl = grader.avatar;
-                            }
-
-                            let courseTitle = "Curso";
-                            let thumbnailUrl = null;
-
-                            if (courseResult.isSuccess()) {
-                                const course = courseResult.getValue();
-                                courseTitle = course.title;
-                                thumbnailUrl = course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl;
-                            }
-
-                            const metadataJson = JSON.stringify({
-                                taskId: taskId,
-                                submissionId: submissionId,
-                                type: "task_graded",
-                                grade: value.grade
-                            });
-
-                            const notificationData = {
-                                userId: studentId,
-                                title: `Tarea calificada en ${courseTitle}`,
-                                message: `${graderUsername} te ha calificado con ${value.grade} en "${task.title}"`,
-                                type: "task_graded",
-                                relatedId: taskId,
-                                senderUsername: graderUsername,
-                                senderAvatarUrl: graderAvatarUrl,
-                                thumbnailUrl: thumbnailUrl || graderAvatarUrl,
-                                metadata: metadataJson
-                            };
-
-                            await this.notificationService.sendNotification(notificationData);
-                        }
-                    }
-                }
-            } catch (notifyErr) {
-                console.warn('Error enviando notificación de calificación:', notifyErr);
-            }
-
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
