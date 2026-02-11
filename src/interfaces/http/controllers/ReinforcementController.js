@@ -4,16 +4,21 @@
 import Joi from 'joi';
 import { ValidationError } from '../../../shared/errors/index.js';
 
+// Accept both camelCase and snake_case field names from clients
 const saveSessionSchema = Joi.object({
-    userId: Joi.number().integer().required(),
-    courseId: Joi.number().integer().required(),
+    userId: Joi.number().integer().optional(),
+    user_id: Joi.number().integer().optional(),
+    courseId: Joi.number().integer().optional(),
+    course_id: Joi.number().integer().optional(),
     topicId: Joi.number().integer().allow(null).optional(),
+    topic_id: Joi.number().integer().allow(null).optional(),
     taskId: Joi.number().integer().allow(null).optional(),
+    task_id: Joi.number().integer().allow(null).optional(),
     questions: Joi.alternatives().try(
         Joi.array().items(Joi.object()),
         Joi.string()
     ).required(),
-});
+}).options({ allowUnknown: true });
 
 export class ReinforcementController {
     constructor({ reinforcementService }) {
@@ -22,14 +27,26 @@ export class ReinforcementController {
 
     saveSession = async(req, res, next) => {
         try {
-            // Fix: Allow user_id from client to satisfy userId requirement
-            if (req.body.user_id && !req.body.userId) {
-                req.body.userId = req.body.user_id;
-            }
-
             const { error, value } = saveSessionSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.reinforcementService.saveSession(value);
+
+            // Normalize snake_case → camelCase, fallback to req.user from auth middleware
+            const normalized = {
+                userId: value.userId || value.user_id || req.user?.userId || req.user?.id || null,
+                courseId: value.courseId || value.course_id,
+                topicId: value.topicId || value.topic_id || null,
+                taskId: value.taskId || value.task_id || null,
+                questions: value.questions,
+            };
+
+            if (!normalized.userId) {
+                return next(new ValidationError('userId is required (send in body or authenticate via JWT)'));
+            }
+            if (!normalized.courseId) {
+                return next(new ValidationError('courseId is required'));
+            }
+
+            const result = await this.reinforcementService.saveSession(normalized);
             if (result.isFail()) return next(result.getError());
             res.status(201).json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

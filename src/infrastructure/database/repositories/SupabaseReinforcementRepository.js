@@ -62,23 +62,24 @@ export class SupabaseReinforcementRepository {
         return data || [];
     }
     async upsertHistory(userId, courseId, questionsJson) {
-        // Save a complete session with questions and options
+        // Save a session record. Individual question saving is handled by
+        // MCPService.saveReinforcementHistory() which generates proper embeddings.
+        // This method only creates the session entry.
         const questions = typeof questionsJson === 'string' ? JSON.parse(questionsJson) : questionsJson;
 
         const session = await this.saveSession({
             userId,
             courseId,
-            totalQuestions: questions.length,
-            correctAnswers: questions.filter(q => q.isCorrect).length,
-            score: questions.length > 0 ? Math.round((questions.filter(q => q.isCorrect).length / questions.length) * 100) : 0,
         });
-        for (const q of questions) {
-            const savedQ = await this.saveQuestions(session.id, [q]);
-            if (savedQ[0] && q.options) {
-                await this.saveOptions(savedQ[0].id, q.options);
-            }
-        }
-        return session;
+
+        // Note: questions_history requires embeddings (NOT NULL) so we cannot
+        // save questions from here without an EmbeddingService.
+        // MCPService.saveReinforcementHistory() handles the full flow with embeddings.
+        // We just return the session with question count metadata.
+        return {
+            ...session,
+            _questionCount: Array.isArray(questions) ? questions.length : 0,
+        };
     }
 
     async findByUserAndCourse(userId, courseId, { offset = 0, limit = 20 } = {}) {
@@ -126,11 +127,12 @@ export class SupabaseReinforcementRepository {
     // Alias for compatibility with LLMDomainService
     async saveHistory(userId, courseId, contentArray) {
         // contentArray from LLMDomainService is [response.content]
+        // NOTE: Full question saving with embeddings is handled by MCPService.saveReinforcementHistory().
+        // This lightweight path only creates a session record.
         const content = contentArray[0];
         if (!content) return;
 
         try {
-            // Try to parse if it's JSON
             let jsonStr = content;
             const startIndex = content.indexOf('[');
             const endIndex = content.lastIndexOf(']');
@@ -139,9 +141,11 @@ export class SupabaseReinforcementRepository {
             }
 
             const questions = JSON.parse(jsonStr);
-            return await this.upsertHistory(userId, courseId, questions);
+            // Only create session — questions require embeddings (handled by MCPService)
+            return await this.saveSession({ userId, courseId });
         } catch (e) {
-            console.warn('Failed to parse generated content as JSON questions, skipping structured save:', e.message);
+            // Not JSON content — this is normal for non-quiz LLM responses, skip silently
+            console.debug('[ReinforcementRepo] Content is not JSON quiz data, skipping save.');
         }
     }
 }
