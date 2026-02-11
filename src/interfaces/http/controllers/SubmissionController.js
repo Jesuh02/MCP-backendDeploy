@@ -68,13 +68,13 @@ export class SubmissionController {
                                 }
                             }
 
-                            const metadataJson = JSON.stringify({ taskId: value.taskId, type: "submission" });
+                            const metadataJson = JSON.stringify({ taskId: value.taskId, type: "task_submission" });
 
                             await this.notificationService.sendNotification({
                                 userId: creatorId,
                                 title: `Nueva entrega: ${task.title}`,
                                 message: `${value.username} ha enviado una entrega para la tarea '${task.title}'`,
-                                type: "submission",
+                                type: "task_submission",
                                 relatedId: value.taskId,
                                 senderUsername: value.username,
                                 senderAvatarUrl: senderAvatarUrl,
