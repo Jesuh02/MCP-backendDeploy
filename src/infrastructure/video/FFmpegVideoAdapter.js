@@ -63,17 +63,17 @@ export class FFmpegVideoAdapter extends EventEmitter {
                 if (code !== 0) return reject(new Error(`FFprobe falló con código ${code}`));
                 try {
                     const data = JSON.parse(output);
-                    const videoStream = data.streams ? .find((s) => s.codec_type === 'video');
-                    const fps = videoStream ? .r_frame_rate ?
+                    const videoStream = data.streams?.find((s) => s.codec_type === 'video');
+                    const fps = videoStream?.r_frame_rate ?
                         (() => { const [n, d] = videoStream.r_frame_rate.split('/'); return d ? n / d : parseFloat(n); })() :
                         0;
                     resolve({
-                        duration: parseFloat(data.format ? .duration || 0),
-                        width: videoStream ? .width || 0,
-                        height: videoStream ? .height || 0,
+                        duration: parseFloat(data.format?.duration || 0),
+                        width: videoStream?.width || 0,
+                        height: videoStream?.height || 0,
                         fps,
-                        bitrate: parseInt(data.format ? .bit_rate || 0, 10),
-                        needsCompression: (parseInt(data.format ? .size || 0, 10) / 1024 / 1024) > 100,
+                        bitrate: parseInt(data.format?.bit_rate || 0, 10),
+                        needsCompression: (parseInt(data.format?.size || 0, 10) / 1024 / 1024) > 100,
                     });
                 } catch (e) {
                     reject(new Error(`Error parseando output FFprobe: ${e.message}`));
