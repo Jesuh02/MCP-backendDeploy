@@ -130,6 +130,9 @@ export class CourseDomainService {
         const [courses, total] = await Promise.all([
             this.courseRepo.findPremium(pagination),
             this.courseRepo.count({ isFree: false, excludeCreatorId: pagination.excludeCreatorId })
+        ]);
+        await this._signUrls(courses);
+        return Result.ok({ courses, total });
     }
 
     async findPurchasedCourses(userId, pagination) {
