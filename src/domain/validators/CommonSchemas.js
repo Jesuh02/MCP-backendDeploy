@@ -75,8 +75,8 @@ export const createSubmissionSchema = Joi.object({
     taskId: Joi.number().integer().optional(),
     task_id: Joi.number().integer().optional(),
     student_id: Joi.any().strip().optional(), // Ignorar student_id (viene del token)
-    fileUri: Joi.string().uri().allow(null, '').optional(),
-    file_url: Joi.string().uri().allow(null, '').optional(),
+    fileUri: Joi.string().allow(null, '').optional(),
+    file_url: Joi.string().allow(null, '').optional(),
     fileName: Joi.string().max(255).allow(null, '').optional(),
     content: Joi.string().max(255).allow(null, '').optional(), // Android envía content como fileName
     textContent: Joi.string().max(50000).allow(null, '').optional(),
@@ -88,7 +88,7 @@ export const createSubmissionSchema = Joi.object({
     delete value.task_id;
     delete value.file_url;
     delete value.content;
-    
+
     if (!value.taskId) return helpers.error('any.required', { key: 'taskId' });
     return value;
 });
