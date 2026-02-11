@@ -62,7 +62,11 @@ export class UserController {
         try {
             const { error, value } = registerFCMTokenSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.userService.registerFCMToken(req.user.userId, value.token, value.deviceType);
+            
+            // Support both 'token' and 'fcmToken' fields
+            const tokenToRegister = value.token || value.fcmToken;
+            
+            const result = await this.userService.registerFCMToken(req.user.userId, tokenToRegister, value.deviceType);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
