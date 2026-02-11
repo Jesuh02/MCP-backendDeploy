@@ -81,7 +81,7 @@ export class TaskController {
             let senderAvatarUrl = null;
             if (currentUser && currentUser.userId && this.userService) {
                 const userResult = await this.userService.getById(currentUser.userId);
-                if (userResult.isSuccess()) {
+                if (userResult.isOk()) {
                     const u = userResult.getValue();
                     senderUsername = u.username || senderUsername;
                     senderAvatarUrl = u.avatar;
