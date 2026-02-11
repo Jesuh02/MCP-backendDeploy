@@ -46,7 +46,7 @@ export class CommentDomainService {
 
                 if (parentComment && parentUserId && parentUserId !== userId) {
                     await this.notificationService.send(parentUserId, {
-                        type: 'comment_reply',
+                        type: 'comment',
                         title: 'Nueva respuesta',
                         message: `${comment.username || 'Alguien'} respondió a tu comentario`,
                         data: { videoId: videoId, commentId: comment.id, type: 'comment_reply' },
@@ -54,7 +54,7 @@ export class CommentDomainService {
                         senderUsername: comment.username,
                         senderAvatarUrl: avatar,
                         thumbnailUrl: video.thumbnail_uri,
-                        metadata: { replyText: comment.comment || comment.content }
+                        metadata: JSON.stringify({ comment_id: comment.id, replyText: comment.comment || comment.content })
                     });
                 }
             }
@@ -62,7 +62,7 @@ export class CommentDomainService {
             else if (video.remote_id && video.remote_id !== userId) {
                 // Verificar si el dueño del video no es el mismo que comenta
                 await this.notificationService.send(video.remote_id, {
-                    type: 'video_comment',
+                    type: 'comment',
                     title: 'Nuevo comentario',
                     message: `${comment.username || 'Alguien'} comentó tu video`,
                     data: { videoId: videoId, commentId: comment.id, type: 'video_comment' },
@@ -70,7 +70,7 @@ export class CommentDomainService {
                     senderUsername: comment.username,
                     senderAvatarUrl: avatar,
                     thumbnailUrl: video.thumbnail_uri,
-                    metadata: { commentText: comment.comment || comment.content }
+                    metadata: JSON.stringify({ comment_id: comment.id, commentText: comment.comment || comment.content })
                 });
             }
         } catch (error) {
