@@ -168,7 +168,7 @@ export function createContainer() {
     const courseController = new CourseController({ courseService });
     const videoController = new VideoController({ videoService });
     const topicController = new TopicController({ topicService });
-    const taskController = new TaskController({ taskService });
+    const taskController = new TaskController({ taskService, notificationService, courseService, progressService, userService });
     const contentItemController = new ContentItemController({ contentItemService });
     const submissionController = new SubmissionController({ submissionService, storageService, storageAdapter, notificationService, userService: userService, taskService: taskService, courseService: courseService });
     const subscriptionController = new SubscriptionController({ subscriptionService });
