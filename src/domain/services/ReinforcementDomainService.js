@@ -7,7 +7,7 @@
  *   - question_sessions + questions_history + question_options tables
  */
 import { Result } from '../../shared/Result.js';
-import MCPService from './MCPService.js';
+import { MCPService } from './MCPService.js';
 
 export class ReinforcementDomainService {
     constructor({ reinforcementRepository }) {
