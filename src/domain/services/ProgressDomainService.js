@@ -28,7 +28,16 @@ export class ProgressDomainService {
     }
 
     async upsert(data) {
-        const progress = await this.progressRepo.upsert(data);
+        let progress = await this.progressRepo.upsert(data);
+
+        // Auto-issue certificate if passed (status 'Ganado' or grade >= 6) and not yet issued
+        // 'Ganado' logic is consistent with DB generated column
+        if ((progress.status === 'Ganado' || progress.averageGrade >= 6) && !progress.certificateIssuedAt) {
+            progress = await this.progressRepo.updateCertificate(data.userId, data.courseId, {
+                certificateIssuedAt: new Date().toISOString(),
+            });
+        }
+
         return Result.ok(progress);
     }
 

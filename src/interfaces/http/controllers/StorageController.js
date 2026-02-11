@@ -19,7 +19,7 @@ export class StorageController {
     upload = async(req, res, next) => {
         try {
             if (!req.file) return next(new ValidationError('Se requiere un archivo'));
-            const prefix = req.body.prefix || 'content';
+            const prefix = req.body.prefix || req.body.folder || 'content';
             const key = `${prefix}/${Date.now()}_${req.file.originalname}`;
             const result = await this.storageService.upload(req.file.buffer, key, req.file.mimetype);
             if (result.isFail()) return next(result.getError());
