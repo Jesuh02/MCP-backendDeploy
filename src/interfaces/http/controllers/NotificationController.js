@@ -37,19 +37,28 @@ export class NotificationController {
         try {
             const { error, value } = sendNotificationSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.notifService.send(value.userId, {
-                title: value.title,
-                message: value.message,
-                type: value.type,
-                data: value.data,
-                relatedId: value.relatedId,
-                senderUsername: value.senderUsername,
-                senderAvatarUrl: value.senderAvatarUrl,
-                thumbnailUrl: value.thumbnailUrl,
-                metadata: value.metadata,
-            });
-            if (result.isFail()) return next(result.getError());
-            res.status(201).json({ success: true, data: result.getValue() });
+            
+            try {
+                const result = await this.notifService.send(value.userId, {
+                    title: value.title,
+                    message: value.message,
+                    type: value.type,
+                    data: value.data,
+                    relatedId: value.relatedId,
+                    senderUsername: value.senderUsername,
+                    senderAvatarUrl: value.senderAvatarUrl,
+                    thumbnailUrl: value.thumbnailUrl,
+                    metadata: value.metadata,
+                });
+                if (result.isFail()) return next(result.getError());
+                res.status(201).json({ success: true, data: result.getValue() });
+            } catch (err) {
+                // Return 404 if user not found (from repository error)
+                if (err.message.includes('User with ID') && err.message.includes('does not exist')) {
+                     return res.status(404).json({ success: false, error: err.message });
+                }
+                throw err;
+            }
         } catch (err) { next(err); }
     };
 

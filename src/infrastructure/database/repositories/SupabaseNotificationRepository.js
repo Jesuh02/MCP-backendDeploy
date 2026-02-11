@@ -20,7 +20,13 @@ export class SupabaseNotificationRepository {
             is_read: false,
         };
         const { data, error } = await this.client.from('notifications').insert(payload).select().single();
-        if (error) throw new Error(error.message);
+        if (error) {
+            // Handle foreign key constraint violation (user_id not found)
+            if (error.code === '23503') {
+                throw new Error(`User with ID ${notifData.userId} does not exist.`);
+            }
+            throw new Error(error.message);
+        }
         return data;
     }
 
