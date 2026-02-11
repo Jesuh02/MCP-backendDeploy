@@ -85,6 +85,27 @@ export class CourseController {
         } catch (err) { next(err); }
     };
 
+    getPremiumCourses = async(req, res, next) => {
+        try {
+            const pg = parsePagination(req.query);
+            const result = await this.courseService.findPremiumCourses(pg);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getPurchasedCourses = async(req, res, next) => {
+        try {
+            const userId = req.user?.userId || req.query.userId;
+            if (!userId) return res.status(400).json({ success: false, error: 'User ID required' });
+
+            const pg = parsePagination(req.query);
+            const result = await this.courseService.findPurchasedCourses(userId, pg);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getByIds = async(req, res, next) => {
         try {
             const ids = (req.query.ids || '').split(',').map(Number).filter(n => !isNaN(n) && n > 0);
