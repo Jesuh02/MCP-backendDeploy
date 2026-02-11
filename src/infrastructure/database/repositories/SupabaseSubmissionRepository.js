@@ -49,7 +49,7 @@
         if (updateData.grade !== undefined) payload.grade = updateData.grade;
         if (updateData.feedback !== undefined) payload.feedback = updateData.feedback;
         if (updateData.fileUri !== undefined) payload.file_uri = updateData.fileUri;
-        
+
         const { data, error } = await this.client.from('task_submissions').update(payload).eq('id', id).select().single();
         if (error) throw new Error(error.message);
         return data;
