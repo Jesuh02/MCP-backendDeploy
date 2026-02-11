@@ -98,5 +98,38 @@ export class SupabaseReinforcementRepository {
         }
         return data || [];
     }
+
+    // Alias for compatibility with LLMDomainService
+    async getHistory(userId, courseId) {
+        const sessions = await this.findByUserAndCourse(userId, courseId, { limit: 5 });
+        // Extract plain text questions to feed back to LLM context
+        // Flatten all questions from all past sessions
+        const allQuestions = sessions.flatMap(s => 
+            (s.questions_history || []).map(q => q.question_text)
+        );
+        return allQuestions;
+    }
+
+    // Alias for compatibility with LLMDomainService
+    async saveHistory(userId, courseId, contentArray) {
+        // contentArray from LLMDomainService is [response.content]
+        const content = contentArray[0];
+        if (!content) return;
+
+        try {
+            // Try to parse if it's JSON
+            let jsonStr = content;
+            const startIndex = content.indexOf('[');
+            const endIndex = content.lastIndexOf(']');
+            if (startIndex !== -1 && endIndex !== -1) {
+                jsonStr = content.substring(startIndex, endIndex + 1);
+            }
+
+            const questions = JSON.parse(jsonStr);
+            return await this.upsertHistory(userId, courseId, questions);
+        } catch (e) {
+            console.warn('Failed to parse generated content as JSON questions, skipping structured save:', e.message);
+        }
+    }
 }
 export default SupabaseReinforcementRepository;

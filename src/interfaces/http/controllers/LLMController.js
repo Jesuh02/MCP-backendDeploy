@@ -33,7 +33,14 @@ export class LLMController {
             const result = await this.llmService.processPrompt(params);
             if (result.isFail()) return next(result.getError());
 
-            res.json({ success: true, data: result.getValue() });
+            const resultValue = result.getValue();
+            // Adapt to legacy Android client expectations (respuesta_texto)
+            const data = {
+                ...resultValue,
+                respuesta_texto: resultValue.response
+            };
+
+            res.json({ success: true, data });
         } catch (err) { next(err); }
     };
 
