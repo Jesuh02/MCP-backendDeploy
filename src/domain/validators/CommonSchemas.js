@@ -18,23 +18,38 @@ export const updateTopicSchema = Joi.object({
 }).min(1);
 
 // ─── Tasks ───────────────────────────────────────────────
+// Columnas reales en la tabla `tasks`: id, topic_id, title, description, due_date, created_at
+// Se aceptan ambas notaciones (camelCase y snake_case) para máxima compatibilidad.
 export const createTaskSchema = Joi.object({
     id: Joi.any().strip().optional(),
     title: Joi.string().min(1).max(300).required(),
     description: Joi.string().max(5000).allow('', null).optional(),
-    topicId: Joi.number().integer().required(),
-    courseId: Joi.number().integer().allow(null).optional(),
+    topicId: Joi.number().integer().optional(),
+    topic_id: Joi.number().integer().optional(),
     dueDate: Joi.date().iso().allow(null).optional(),
-    maxScore: Joi.number().min(0).max(1000).default(100),
+    due_date: Joi.date().iso().allow(null).optional(),
     orderIndex: Joi.number().integer().min(0).default(0),
+    order_index: Joi.number().integer().min(0).optional(),
+}).custom((value, helpers) => {
+    // Normalizar: preferir camelCase, fusionar snake_case si falta
+    if (!value.topicId && value.topic_id) value.topicId = value.topic_id;
+    if (!value.dueDate && value.due_date) value.dueDate = value.due_date;
+    delete value.topic_id;
+    delete value.due_date;
+    delete value.order_index;
+    if (!value.topicId) return helpers.error('any.required', { key: 'topicId' });
+    return value;
 });
 
 export const updateTaskSchema = Joi.object({
     title: Joi.string().min(1).max(300).optional(),
     description: Joi.string().max(5000).allow('', null).optional(),
     dueDate: Joi.date().iso().allow(null).optional(),
-    maxScore: Joi.number().min(0).max(1000).optional(),
-    isActive: Joi.boolean().optional(),
+    due_date: Joi.date().iso().allow(null).optional(),
+}).custom((value) => {
+    if (!value.dueDate && value.due_date) value.dueDate = value.due_date;
+    delete value.due_date;
+    return value;
 }).min(1);
 
 // ─── Content Items ───────────────────────────────────────
