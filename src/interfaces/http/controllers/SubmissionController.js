@@ -4,7 +4,7 @@ import { parsePagination } from '../../../shared/pagination.js';
 import path from 'path';
 
 export class SubmissionController {
-    constructor({ submissionService, storageService, storageAdapter, notificationService, userService, taskService, courseService }) {
+    constructor({ submissionService, storageService, storageAdapter, notificationService, userService, taskService, courseService, topicService }) {
         this.subService = submissionService;
         this.storageService = storageService;
         this.storageAdapter = storageAdapter;
@@ -12,6 +12,7 @@ export class SubmissionController {
         this.userService = userService;
         this.taskService = taskService;
         this.courseService = courseService;
+        this.topicService = topicService;
     }
 
     getById = async(req, res, next) => {
@@ -50,37 +51,57 @@ export class SubmissionController {
 
             // Notificar al creador del curso si es necesario
             try {
-                if (this.notificationService && this.taskService && this.courseService) {
+                if (this.notificationService && this.taskService && this.courseService && this.topicService) {
                     const taskResult = await this.taskService.getById(value.taskId);
                     if (taskResult.isSuccess()) {
                         const task = taskResult.getValue();
-                        const courseResult = await this.courseService.getById(task.courseId);
-                        if (courseResult.isSuccess()) {
-                            const course = courseResult.getValue();
-                            const creatorId = course.creatorUserId;
 
-                            // Obtener avatar del estudiante
-                            let senderAvatarUrl = null;
-                            if (this.userService) {
-                                const userResult = await this.userService.getById(value.userId);
-                                if (userResult.isSuccess()) {
-                                    senderAvatarUrl = userResult.getValue().avatar;
+                        // tasks no tiene courseId directo, hay que resolverlo via topics
+                        const topicId = task.topicId || task.topic_id;
+                        let courseId = null;
+                        if (topicId) {
+                            const topicResult = await this.topicService.getById(topicId);
+                            if (topicResult.isSuccess()) {
+                                const topic = topicResult.getValue();
+                                courseId = topic.course_id || topic.courseId;
+                            }
+                        }
+
+                        if (courseId) {
+                            const courseResult = await this.courseService.getById(courseId);
+                            if (courseResult.isSuccess()) {
+                                const course = courseResult.getValue();
+                                const creatorId = course.creator_user_id || course.creatorUserId;
+
+                                // No enviar notificación si el estudiante es el mismo creador
+                                if (creatorId && creatorId !== value.userId) {
+                                    // Obtener avatar del estudiante (ya viene con URL firmada)
+                                    let senderAvatarUrl = null;
+                                    if (this.userService) {
+                                        const userResult = await this.userService.getById(value.userId);
+                                        if (userResult.isSuccess()) {
+                                            senderAvatarUrl = userResult.getValue().avatar;
+                                        }
+                                    }
+
+                                    const metadataJson = JSON.stringify({ taskId: value.taskId, type: "task_submission" });
+
+                                    await this.notificationService.sendNotification({
+                                        userId: creatorId,
+                                        title: `Nueva entrega: ${task.title}`,
+                                        message: `${value.username} ha enviado una entrega para la tarea '${task.title}'`,
+                                        type: "task_submission",
+                                        relatedId: value.taskId,
+                                        senderUsername: value.username,
+                                        senderAvatarUrl: senderAvatarUrl,
+                                        thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnail_uri || senderAvatarUrl,
+                                        metadata: metadataJson
+                                    });
+                                    console.log(`✅ Notificación de entrega enviada al creador (userId=${creatorId}) para tarea '${task.title}'`);
                                 }
                             }
-
-                            const metadataJson = JSON.stringify({ taskId: value.taskId, type: "task_submission" });
-
-                            await this.notificationService.sendNotification({
-                                userId: creatorId,
-                                title: `Nueva entrega: ${task.title}`,
-                                message: `${value.username} ha enviado una entrega para la tarea '${task.title}'`,
-                                type: "task_submission",
-                                relatedId: value.taskId,
-                                senderUsername: value.username,
-                                senderAvatarUrl: senderAvatarUrl,
-                                thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl || senderAvatarUrl, // Usar thumbnail del curso
-                                metadata: metadataJson
-                            });
+                        } else {
+                            console.warn('⚠️ No se pudo resolver courseId para la tarea', value.taskId);
                         }
                     }
                 }
