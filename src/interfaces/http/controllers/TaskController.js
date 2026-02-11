@@ -3,12 +3,13 @@ import { ValidationError } from '../../../shared/errors/index.js';
 import { parsePagination, buildPaginatedResponse } from '../../../shared/pagination.js';
 
 export class TaskController {
-    constructor({ taskService, notificationService, courseService, progressService, userService }) {
+    constructor({ taskService, notificationService, courseService, progressService, userService, topicService }) {
         this.taskService = taskService;
         this.notificationService = notificationService;
         this.courseService = courseService;
         this.progressService = progressService;
         this.userService = userService;
+        this.topicService = topicService;
     }
 
     list = async(req, res, next) => {
@@ -62,15 +63,30 @@ export class TaskController {
 
     notifyNewTask = async(task, currentUser) => {
         try {
-            if (!this.notificationService || !this.courseService || !this.progressService) return;
+            if (!this.notificationService || !this.courseService || !this.progressService || !this.topicService) return;
+
+            // Resolver courseId via topics (tasks no tienen courseId directo)
+            const topicId = task.topicId || task.topic_id;
+            if (!topicId) {
+                console.warn('notifyNewTask: No topicId found for task', task.id);
+                return;
+            }
+            const topicResult = await this.topicService.getById(topicId);
+            if (topicResult.isFail()) return;
+            const topic = topicResult.getValue();
+            const courseId = topic.course_id || topic.courseId;
+            if (!courseId) {
+                console.warn('notifyNewTask: No courseId found for topic', topicId);
+                return;
+            }
 
             // Get Course
-            const courseResult = await this.courseService.getById(task.courseId);
+            const courseResult = await this.courseService.getById(courseId);
             if (courseResult.isFail()) return;
             const course = courseResult.getValue();
 
-            // Get Enrolled Students
-            const progressResult = await this.progressService.getAllByCourse(task.courseId);
+            // Get Enrolled Students (progreso_estudiante)
+            const progressResult = await this.progressService.getAllByCourse(courseId);
             if (progressResult.isFail()) return;
             const enrollments = progressResult.getValue();
 
@@ -100,10 +116,11 @@ export class TaskController {
                     senderUsername,
                     senderAvatarUrl,
                     thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl,
-                    metadata: JSON.stringify({ taskId: task.id, courseId: course.id, type: 'new_task' })
+                    metadata: JSON.stringify({ taskId: task.id, courseId: courseId, type: 'new_task' })
                 });
             });
             await Promise.all(promises);
+            console.log(`✅ Notificación de nueva tarea enviada a ${enrollments.length} estudiantes inscritos en curso ${courseId}`);
         } catch (e) {
             console.error('Failed to notify new task', e);
         }
