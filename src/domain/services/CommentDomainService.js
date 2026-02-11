@@ -36,6 +36,7 @@ export class CommentDomainService {
 
             const commenter = await this.userRepo.findById(userId);
             const avatar = commenter ? commenter.avatar : '';
+            const senderName = (commenter ? commenter.usuario : null) || comment.username || 'Alguien';
 
             // 1. Si es respuesta a otro comentario (reply)
             const parentId = comment.parentId || comment.parent_id;
@@ -46,12 +47,12 @@ export class CommentDomainService {
 
                 if (parentComment && parentUserId && parentUserId !== userId) {
                     await this.notificationService.send(parentUserId, {
-                        type: 'comment',
+                        type: 'comment_reply',
                         title: 'Nueva respuesta',
-                        message: `${comment.username || 'Alguien'} respondió a tu comentario`,
+                        message: `${senderName} respondió a tu comentario`,
                         data: { videoId: videoId, commentId: comment.id, type: 'comment_reply' },
                         relatedId: videoId,
-                        senderUsername: comment.username,
+                        senderUsername: senderName,
                         senderAvatarUrl: avatar,
                         thumbnailUrl: video.thumbnail_uri,
                         metadata: JSON.stringify({ comment_id: comment.id, replyText: comment.comment || comment.content })
@@ -62,12 +63,12 @@ export class CommentDomainService {
             else if (video.remote_id && video.remote_id !== userId) {
                 // Verificar si el dueño del video no es el mismo que comenta
                 await this.notificationService.send(video.remote_id, {
-                    type: 'comment',
+                    type: 'video_comment',
                     title: 'Nuevo comentario',
-                    message: `${comment.username || 'Alguien'} comentó tu video`,
+                    message: `${senderName} comentó tu video`,
                     data: { videoId: videoId, commentId: comment.id, type: 'video_comment' },
                     relatedId: videoId,
-                    senderUsername: comment.username,
+                    senderUsername: senderName,
                     senderAvatarUrl: avatar,
                     thumbnailUrl: video.thumbnail_uri,
                     metadata: JSON.stringify({ comment_id: comment.id, commentText: comment.comment || comment.content })
