@@ -33,10 +33,10 @@
             title: taskData.title,
             description: taskData.description || '',
             topic_id: taskData.topicId,
-            course_id: taskData.courseId || null,
+            // course_id removed as it doesn't exist in tasks table
             due_date: taskData.dueDate || null,
-            max_score: taskData.maxScore || 100,
-            is_active: taskData.isActive !== false,
+            // max_score removed as it doesn't exist in tasks table
+            // is_active removed as it doesn't exist in tasks table
         };
         const { data, error } = await this.client.from('tasks').insert(payload).select().single();
         if (error) throw new Error(error.message);
