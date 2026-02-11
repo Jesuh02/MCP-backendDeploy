@@ -20,12 +20,33 @@ const saveSessionSchema = Joi.object({
     ).required(),
 }).options({ allowUnknown: true });
 
+// Schema for saving questions with full uniqueness flow
+const saveQuestionsSchema = Joi.object({
+    userId: Joi.number().integer().optional(),
+    user_id: Joi.number().integer().optional(),
+    courseId: Joi.number().integer().optional(),
+    course_id: Joi.number().integer().optional(),
+    topicId: Joi.number().integer().allow(null).optional(),
+    topic_id: Joi.number().integer().allow(null).optional(),
+    taskId: Joi.number().integer().allow(null).optional(),
+    task_id: Joi.number().integer().allow(null).optional(),
+    questions: Joi.alternatives().try(
+        Joi.array().items(Joi.object({
+            question: Joi.string().required(),
+            options: Joi.array().items(Joi.string()).min(2).required(),
+            correctIndex: Joi.number().integer().min(0).required(),
+            explanation: Joi.string().allow('', null).optional(),
+        })),
+        Joi.string()
+    ).required(),
+}).options({ allowUnknown: true });
+
 export class ReinforcementController {
     constructor({ reinforcementService }) {
         this.reinforcementService = reinforcementService;
     }
 
-    saveSession = async(req, res, next) => {
+    saveSession = async (req, res, next) => {
         try {
             const { error, value } = saveSessionSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
@@ -52,7 +73,40 @@ export class ReinforcementController {
         } catch (err) { next(err); }
     };
 
-    getHistory = async(req, res, next) => {
+    /**
+     * POST /save-questions — Save questions with full uniqueness (hash + embedding + semantic)
+     * Called by Android after receiving questions from /procesar-prompt
+     * Uses MCPService flow: session → hash check → embedding → semantic check → save
+     */
+    saveQuestions = async (req, res, next) => {
+        try {
+            const { error, value } = saveQuestionsSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+
+            const normalized = {
+                userId: value.userId || value.user_id || req.user?.userId || req.user?.id || null,
+                courseId: value.courseId || value.course_id,
+                topicId: value.topicId || value.topic_id || null,
+                taskId: value.taskId || value.task_id || null,
+                questions: value.questions,
+            };
+
+            if (!normalized.userId) {
+                return next(new ValidationError('userId is required'));
+            }
+            if (!normalized.courseId) {
+                return next(new ValidationError('courseId is required'));
+            }
+
+            console.log(`📝 [ReinforcementController] saveQuestions: userId=${normalized.userId}, courseId=${normalized.courseId}, topicId=${normalized.topicId}, taskId=${normalized.taskId}, questions=${Array.isArray(normalized.questions) ? normalized.questions.length : 'string'}`);
+
+            const result = await this.reinforcementService.saveSession(normalized);
+            if (result.isFail()) return next(result.getError());
+            res.status(201).json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getHistory = async (req, res, next) => {
         try {
             const userId = parseInt(req.params.userId);
             const courseId = parseInt(req.params.courseId);
@@ -62,7 +116,7 @@ export class ReinforcementController {
         } catch (err) { next(err); }
     };
 
-    getMySessions = async(req, res, next) => {
+    getMySessions = async (req, res, next) => {
         try {
             const result = await this.reinforcementService.getUserSessions(req.user.userId, req.query);
             if (result.isFail()) return next(result.getError());

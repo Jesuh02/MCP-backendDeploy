@@ -884,16 +884,22 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
                             }
 
                             // 1. Ensure Session Exists (Paso 0)
+                            // Create session when user exists and we have at least topicId OR taskId
                             let sessionId = null;
-                            if (taskId && topicId && userExists) {
+                            if (userExists && (taskId || topicId)) {
                                 try {
                                     const { data: sessionData } = await supabase.client
                                         .from('question_sessions')
-                                        .insert({ user_id: userId, course_id: courseId, topic_id: topicId, task_id: taskId })
+                                        .insert({
+                                            user_id: userId,
+                                            course_id: courseId,
+                                            topic_id: topicId || null,
+                                            task_id: taskId || null
+                                        })
                                         .select('id')
                                         .single();
                                     if (sessionData) sessionId = sessionData.id;
-                                    console.log(`✅ Session created/logged: ${sessionId}`);
+                                    console.log(`✅ Session created: ${sessionId} (topic=${topicId}, task=${taskId})`);
                                 } catch(e) { 
                                      console.warn('Session creation warning (might exist):', e.message);
                                 }
