@@ -246,6 +246,33 @@ class R2StorageService {
     }
 
     /**
+     * Generate a signed PUT URL for uploading an object
+     * @param {string} objectKey - Destination key
+     * @param {string} contentType - MIME type of file
+     * @param {number} expiresSeconds - Expiration in seconds
+     */
+    async generatePresignedPutUrl(objectKey, contentType, expiresSeconds = 3600) {
+        if (!this.r2Client) {
+            throw new Error('R2 Client not configured');
+        }
+        try {
+            const presigner = await loadPresigner();
+            if (!presigner) throw new Error('Presigner package not available');
+
+            const command = new PutObjectCommand({
+                Bucket: this.bucketName,
+                Key: objectKey,
+                ContentType: contentType,
+            });
+            const url = await presigner(this.r2Client, command, { expiresIn: expiresSeconds });
+            return url;
+        } catch (e) {
+            console.error('R2 generatePresignedPutUrl failed:', e.message);
+            throw e;
+        }
+    }
+
+    /**
      * Upload a file to Cloudflare R2
      * @param {Buffer|string} content - File content
      * @param {string} objectKey - Destination path/key

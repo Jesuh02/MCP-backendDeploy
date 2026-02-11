@@ -585,6 +585,43 @@ router.get('/qualities', (req, res) => {
 // ============================================================
 
 /**
+ * POST /video/upload-url
+ * Generate a presigned URL for uploading a video file to R2
+ * Used by the mobile client to upload video files before creating the video record
+ */
+router.post('/upload-url', async (req, res) => {
+    try {
+        const { filename, contentType } = req.body;
+        if (!filename || !contentType) {
+            return res.status(400).json({ success: false, error: 'filename and contentType are required' });
+        }
+
+        const r2 = R2StorageService.getInstance();
+        if (!r2 || !r2.isAvailable()) {
+            return res.status(503).json({ success: false, error: 'Storage service not available' });
+        }
+
+        const cleanName = (filename || 'file').replace(/[^a-zA-Z0-9.\-]/g, '_');
+        const uniqueKey = `videos/${Date.now()}_${cleanName}`;
+
+        const uploadUrl = await r2.generatePresignedPutUrl(uniqueKey, contentType, 3600);
+        const publicUrl = r2.getPublicUrl(uniqueKey);
+
+        res.json({
+            success: true,
+            data: {
+                uploadUrl,
+                publicUrl,
+                key: uniqueKey
+            }
+        });
+    } catch (error) {
+        console.error('❌ [Backend] Upload URL generation error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * POST /video/insert
  * Insert a video record into Supabase (delegated from mobile client)
  * This endpoint centralizes database operations on the backend

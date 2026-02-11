@@ -115,5 +115,17 @@ export class VideoController {
             });
         } catch (err) { next(err); }
     };
+
+    getUploadUrl = async(req, res, next) => {
+        try {
+            const { filename, contentType } = req.body;
+            if (!filename || !contentType) {
+                return res.status(400).json({ success: false, error: 'filename and contentType are required' });
+            }
+            const result = await this.videoService.getUploadUrl(filename, contentType);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default VideoController;
