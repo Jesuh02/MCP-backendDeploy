@@ -76,7 +76,7 @@ export class PaymentDomainService {
 
     async hasPurchasedCourse(userId, courseId) {
         const purchased = await this.txRepo.hasSuccessfulPurchase(userId, courseId);
-        return Result.ok({ purchased });
+        return Result.ok(purchased);
     }
 
     async getCourseTransactions(courseId) {

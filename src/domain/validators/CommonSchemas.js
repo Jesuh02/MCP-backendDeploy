@@ -72,10 +72,16 @@ export const updateContentItemSchema = Joi.object({
 }).min(1);
 // ─── Submissions ─────────────────────────────────────────
 export const createSubmissionSchema = Joi.object({
-    taskId: Joi.number().integer().required(),
+    taskId: Joi.number().integer().optional(),
+    task_id: Joi.number().integer().optional(),
     fileUri: Joi.string().uri().allow(null, '').optional(),
     fileName: Joi.string().max(255).allow(null, '').optional(),
     textContent: Joi.string().max(50000).allow(null, '').optional(),
+}).custom((value, helpers) => {
+    if (!value.taskId && value.task_id) value.taskId = value.task_id;
+    delete value.task_id;
+    if (!value.taskId) return helpers.error('any.required', { key: 'taskId' });
+    return value;
 });
 
 export const gradeSubmissionSchema = Joi.object({
