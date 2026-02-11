@@ -28,6 +28,12 @@ export class SupabaseCourseRepository {
         return data || [];
     }
 
+    async findPremium({ offset = 0, limit = 20 } = {}) {
+        const { data, error } = await this.client.from('courses').select('*').eq('is_premium', true).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        if (error) throw new Error(error.message);
+        return data || [];
+    }
+
     async search(query, { offset = 0, limit = 20 } = {}) {
         const { data, error } = await this.client.from('courses').select('*').or(`title.ilike.%${query}%,description.ilike.%${query}%`).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);

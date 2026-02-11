@@ -66,5 +66,11 @@ export class SupabaseTransactionRepository {
         const { count, error } = await this.client.from('transactions').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('course_id', courseId).eq('status', 'approved');
         return !error && count > 0;
     }
+
+    async findPurchasedCourseIds(userId) {
+        const { data, error } = await this.client.from('transactions').select('course_id').eq('user_id', userId).eq('status', 'approved');
+        if (error) return [];
+        return data.map(t => t.course_id);
+    }
 }
 export default SupabaseTransactionRepository;
