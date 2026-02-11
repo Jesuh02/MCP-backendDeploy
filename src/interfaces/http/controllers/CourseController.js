@@ -38,7 +38,8 @@ export class CourseController {
             const pg = parsePagination(req.query);
             const result = await this.courseService.findByCreator(req.params.username, pg);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const { courses, total } = result.getValue();
+            res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
         } catch (err) { next(err); }
     };
     search = async(req, res, next) => {
@@ -46,7 +47,8 @@ export class CourseController {
             const pg = parsePagination(req.query);
             const result = await this.courseService.search(req.query.q || '', pg);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const { courses, total } = result.getValue();
+            res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
         } catch (err) { next(err); }
     };
 
@@ -81,7 +83,8 @@ export class CourseController {
             const pg = parsePagination(req.query);
             const result = await this.courseService.findFreeCourses(pg);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const { courses, total } = result.getValue();
+            res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
         } catch (err) { next(err); }
     };
 
@@ -90,7 +93,8 @@ export class CourseController {
             const pg = parsePagination(req.query);
             const result = await this.courseService.findPremiumCourses(pg);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const { courses, total } = result.getValue();
+            res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
         } catch (err) { next(err); }
     };
 
@@ -121,7 +125,8 @@ export class CourseController {
             const pg = parsePagination(req.query);
             const result = await this.courseService.findByCreatorUserId(parseInt(req.params.userId), pg);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const { courses, total } = result.getValue();
+            res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
         } catch (err) { next(err); }
     };
 }

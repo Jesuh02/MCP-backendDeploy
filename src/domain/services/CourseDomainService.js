@@ -58,15 +58,21 @@ export class CourseDomainService {
     }
 
     async findByCreator(username, pagination) {
-        const courses = await this.courseRepo.findByCreator(username, pagination);
+        const [courses, total] = await Promise.all([
+            this.courseRepo.findByCreator(username, pagination),
+            this.courseRepo.count({ creatorUsername: username })
+        ]);
         await this._signUrls(courses);
-        return Result.ok(courses);
+        return Result.ok({ courses, total });
     }
 
     async search(query, pagination) {
-        const courses = await this.courseRepo.search(query, pagination);
+        const [courses, total] = await Promise.all([
+            this.courseRepo.search(query, pagination),
+            this.courseRepo.count({ search: query })
+        ]);
         await this._signUrls(courses);
-        return Result.ok(courses);
+        return Result.ok({ courses, total });
     }
 
     async create(courseData, requesterId) {
@@ -96,9 +102,12 @@ export class CourseDomainService {
     }
 
     async findByCreatorUserId(userId, pagination) {
-        const courses = await this.courseRepo.findByCreatorUserId(userId, pagination);
+        const [courses, total] = await Promise.all([
+            this.courseRepo.findByCreatorUserId(userId, pagination),
+            this.courseRepo.count({ creatorUserId: userId })
+        ]);
         await this._signUrls(courses);
-        return Result.ok(courses);
+        return Result.ok({ courses, total });
     }
 
     async findByIds(ids) {
@@ -108,15 +117,21 @@ export class CourseDomainService {
     }
 
     async findFreeCourses(pagination) {
-        const courses = await this.courseRepo.findFree(pagination);
+        const [courses, total] = await Promise.all([
+             this.courseRepo.findFree(pagination),
+             this.courseRepo.count({ isFree: true })
+        ]);
         await this._signUrls(courses);
-        return Result.ok(courses);
+        return Result.ok({ courses, total });
     }
 
     async findPremiumCourses(pagination) {
-        const courses = await this.courseRepo.findPremium(pagination);
+        const [courses, total] = await Promise.all([
+            this.courseRepo.findPremium(pagination),
+            this.courseRepo.count({ isFree: false })
+        ]);
         await this._signUrls(courses);
-        return Result.ok(courses);
+        return Result.ok({ courses, total });
     }
 
     async findPurchasedCourses(userId, pagination) {
@@ -125,20 +140,22 @@ export class CourseDomainService {
             console.warn('TransactionRepository not injected in CourseDomainService');
             return Result.ok([]);
         }
-        const courseIds = await this.transactionRepo.findPurchasedCourseIds(userId);
+        
+        // Use findPurchasedCourseIdsPaginated instead of loading all
+        const courseIds = await this.transactionRepo.findPurchasedCourseIdsPaginated(userId, pagination);
+
         if (courseIds.length === 0) return Result.ok([]);
         
-        // Use findByIds but we might need to handle pagination manually if repo doesn't support it on findByIds
-        // or just return all since users unlikely have > 50 courses purchased yet.
-        // Assuming findByIds returns array.
+        // Fetch courses for the page IDs
         const courses = await this.courseRepo.findByIds(courseIds);
         
-        // Simple manual pagination for the list of purchased courses if needed, 
-        // essentially findByIds usually returns all. 
-        // If strict pagination needed, would filter identifiers.
-        
-        await this._signUrls(courses);
-        return Result.ok(courses);
+        // Retrieve order because findByIds might not preserve it
+        const sortedCourses = courseIds
+            .map(id => courses.find(c => c.id === id))
+            .filter(c => c);
+
+        await this._signUrls(sortedCourses);
+        return Result.ok(sortedCourses);
     }
 }
 export default CourseDomainService;
