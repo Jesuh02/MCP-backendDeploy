@@ -111,11 +111,13 @@ export class R2StorageAdapter {
 
   extractObjectKey(url) {
     if (!url) return null;
+    // Skip non-HTTP URLs (file://, content://, etc.) — these are local device paths
+    if (!url.startsWith('http://') && !url.startsWith('https://')) return null;
     var m1 = url.match(/https?:\/\/pub-[^/]+\.r2\.dev\/(.+)/);
     if (m1) return m1[1];
     var m2 = url.match(/https?:\/\/[^/]+\.r2\.cloudflarestorage\.com\/[^/]+\/(.+)/);
     if (m2) return m2[1];
-    return url.startsWith('http') ? null : url;
+    return null;
   }
 }
 

@@ -14,13 +14,13 @@ export class VideoDomainService {
     async _signUrls(videos) {
         if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return videos;
         const list = Array.isArray(videos) ? videos : [videos];
-        await Promise.all(list.map(async (v) => {
+        await Promise.all(list.map(async(v) => {
             if (!v) return;
             try {
-                // Sign video URL (skip if already signed — contains X-Amz-Signature)
+                // Sign video URL (skip if already signed or not an HTTP URL)
                 if (v.video_uri_string || v.videoUriString) {
                     const url = v.video_uri_string || v.videoUriString;
-                    if (url && !url.includes('X-Amz-Signature')) {
+                    if (url && url.startsWith('http') && !url.includes('X-Amz-Signature')) {
                         const key = this.storage.extractObjectKey(url);
                         if (key) {
                             const signed = await this.storage.generateDownloadUrl(key, 3600);
@@ -29,10 +29,10 @@ export class VideoDomainService {
                         }
                     }
                 }
-                // Sign thumbnail URL (skip if already signed)
+                // Sign thumbnail URL (skip if already signed or not an HTTP URL)
                 if (v.thumbnail_uri || v.thumbnailUri) {
                     const url = v.thumbnail_uri || v.thumbnailUri;
-                    if (url && !url.includes('X-Amz-Signature')) {
+                    if (url && url.startsWith('http') && !url.includes('X-Amz-Signature')) {
                         const key = this.storage.extractObjectKey(url);
                         if (key) {
                             const signed = await this.storage.generateDownloadUrl(key, 3600);
@@ -86,6 +86,24 @@ export class VideoDomainService {
         const videos = await this.videoRepo.search(query, pagination);
         await this._signUrls(videos);
         return Result.ok(videos);
+    }
+
+    async getUploadUrl(filename, contentType) {
+        try {
+            if (!this.storage) return Result.fail(new Error("Storage service not available"));
+            // Generate a unique key, sanitizing filename
+            const cleanName = (filename || 'file').replace(/[^a-zA-Z0-9.-]/g, '_');
+            const uniqueKey = `uploads/${Date.now()}_${cleanName}`;
+
+            const url = await this.storage.generateUploadUrl(uniqueKey, contentType, 3600);
+            return Result.ok({
+                uploadUrl: url,
+                publicUrl: this.storage.getPublicUrl(uniqueKey),
+                key: uniqueKey
+            });
+        } catch (error) {
+            return Result.fail(error);
+        }
     }
 
     async create(videoData) {
