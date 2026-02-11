@@ -673,9 +673,8 @@ CREATE TABLE public.videos (
                 description: description || null,
                 // Prefer uploaded public URL when available
                 video_uri_string: (uploaded && uploaded.publicUrl) ? uploaded.publicUrl : (videoUriString || null),
-                // store the object key in local_file_path for now (backend uses it as key)
+                // store the object key in local_file_path when uploaded to R2, otherwise use original
                 local_file_path: (uploaded && uploaded.key) ? uploaded.key : (localFilePath || null),
-                local_file_path: localFilePath || null,
                 timestamp: timestamp || Date.now(),
                 is_paid: isPaid || false,
                 thumbnail_uri: thumbnailUri || null,

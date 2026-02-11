@@ -17,13 +17,16 @@ export class SupabaseCourseRepository {
     }
 
     async findByCreator(username, { offset = 0, limit = 20 } = {}) {
-        const { data, error } = await this.client.from('courses').select('*').ilike('creator_username', username).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        // Resolve username to user ID first (courses table only has creator_user_id)
+        const { data: user } = await this.client.from('usuarios').select('id').ilike('username', username).single();
+        if (!user) return [];
+        const { data, error } = await this.client.from('courses').select('*').eq('creator_user_id', user.id).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }
 
     async findFree({ offset = 0, limit = 20 } = {}) {
-        const { data, error } = await this.client.from('courses').select('*').eq('is_free', true).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        const { data, error } = await this.client.from('courses').select('*').eq('is_premium', false).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }
@@ -88,8 +91,14 @@ export class SupabaseCourseRepository {
 
     async count(filters = {}) {
         let query = this.client.from('courses').select('id', { count: 'exact', head: true });
-        if (filters.creatorUsername) query = query.ilike('creator_username', filters.creatorUsername);
-        if (filters.isFree !== undefined) query = query.eq('is_free', filters.isFree);
+        if (filters.creatorUserId) query = query.eq('creator_user_id', filters.creatorUserId);
+        if (filters.creatorUsername) {
+            // Resolve username to user ID
+            const { data: user } = await this.client.from('usuarios').select('id').ilike('username', filters.creatorUsername).single();
+            if (user) query = query.eq('creator_user_id', user.id);
+            else return 0;
+        }
+        if (filters.isFree !== undefined) query = query.eq('is_premium', !filters.isFree);
         if (filters.search) query = query.or(`title.ilike.%${filters.search}%,description.ilike.%${filters.search}%`);
         const { count, error } = await query;
         return error ? 0 : count;
@@ -109,7 +118,7 @@ export class SupabaseCourseRepository {
     }
 
     async findFreeAll({ offset = 0, limit = 50 } = {}) {
-        const { data, error } = await this.client.from('courses').select('*').eq('is_free', true).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        const { data, error } = await this.client.from('courses').select('*').eq('is_premium', false).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) return [];
         return data || [];
     }
