@@ -7,14 +7,15 @@ export class SupabaseReinforcementRepository {
     }
 
     async saveSession(sessionData) {
+        // NOTE: Adjusted to match ddlpro.sql schema which only has:
+        // id, user_id, course_id, topic_id, task_id, created_at
         const payload = {
             user_id: sessionData.userId,
             course_id: sessionData.courseId,
             topic_id: sessionData.topicId || null,
             task_id: sessionData.taskId || null,
-            total_questions: sessionData.totalQuestions || 0,
-            correct_answers: sessionData.correctAnswers || 0,
-            score: sessionData.score || 0,
+            // Removed columns not present in question_sessions table:
+            // total_questions, correct_answers, score
         };
         const { data, error } = await this.client.from('question_sessions').insert(payload).select().single();
         if (error) throw new Error(`Error saving session: ${error.message}`);
@@ -23,6 +24,17 @@ export class SupabaseReinforcementRepository {
 
     async saveQuestions(sessionId, questions) {
         if (!questions || questions.length === 0) return [];
+        
+        // NOTE: The current questions_history table schema (as per ddlpro.sql) requires
+        // embeddings and has different columns (correct_index vs correct_answer).
+        // The current logic is incompatible with the distinct 'questions_history' table
+        // which seems designed for the Question Bank (RAG), not for session results.
+        // Disabling saveQuestions to prevent errors until a proper results table is defined.
+        console.warn('Skipping saveQuestions: schema mismatch with questions_history table.');
+        return [];
+
+        /* 
+        // Original logic preserved for reference but disabled
         const payloads = questions.map((q, idx) => ({
             session_id: sessionId,
             question_text: q.questionText || q.question || '',
@@ -35,6 +47,7 @@ export class SupabaseReinforcementRepository {
         const { data, error } = await this.client.from('questions_history').insert(payloads).select();
         if (error) throw new Error(`Error saving questions: ${error.message}`);
         return data || [];
+        */
     }
     async saveOptions(questionId, options) {
         if (!options || options.length === 0) return [];
