@@ -19,17 +19,19 @@ export const updateTopicSchema = Joi.object({
 
 // ─── Tasks ───────────────────────────────────────────────
 export const createTaskSchema = Joi.object({
+    id: Joi.any().strip().optional(),
     title: Joi.string().min(1).max(300).required(),
-    description: Joi.string().max(5000).allow('').optional(),
+    description: Joi.string().max(5000).allow('', null).optional(),
     topicId: Joi.number().integer().required(),
     courseId: Joi.number().integer().allow(null).optional(),
     dueDate: Joi.date().iso().allow(null).optional(),
     maxScore: Joi.number().min(0).max(1000).default(100),
+    orderIndex: Joi.number().integer().min(0).default(0),
 });
 
 export const updateTaskSchema = Joi.object({
     title: Joi.string().min(1).max(300).optional(),
-    description: Joi.string().max(5000).allow('').optional(),
+    description: Joi.string().max(5000).allow('', null).optional(),
     dueDate: Joi.date().iso().allow(null).optional(),
     maxScore: Joi.number().min(0).max(1000).optional(),
     isActive: Joi.boolean().optional(),
