@@ -74,12 +74,21 @@ export const updateContentItemSchema = Joi.object({
 export const createSubmissionSchema = Joi.object({
     taskId: Joi.number().integer().optional(),
     task_id: Joi.number().integer().optional(),
+    student_id: Joi.any().strip().optional(), // Ignorar student_id (viene del token)
     fileUri: Joi.string().uri().allow(null, '').optional(),
+    file_url: Joi.string().uri().allow(null, '').optional(),
     fileName: Joi.string().max(255).allow(null, '').optional(),
+    content: Joi.string().max(255).allow(null, '').optional(), // Android envía content como fileName
     textContent: Joi.string().max(50000).allow(null, '').optional(),
+    status: Joi.any().strip().optional(), // Ignorar status
 }).custom((value, helpers) => {
     if (!value.taskId && value.task_id) value.taskId = value.task_id;
+    if (!value.fileUri && value.file_url) value.fileUri = value.file_url;
+    if (!value.fileName && value.content) value.fileName = value.content;
     delete value.task_id;
+    delete value.file_url;
+    delete value.content;
+    
     if (!value.taskId) return helpers.error('any.required', { key: 'taskId' });
     return value;
 });
