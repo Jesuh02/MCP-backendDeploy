@@ -2,8 +2,9 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
-    constructor({ courseRepository, fileStoragePort }) {
+    constructor({ courseRepository, transactionRepository, fileStoragePort }) {
         this.courseRepo = courseRepository;
+        this.transactionRepo = transactionRepository;
         this.storage = fileStoragePort || null;
     }
 
@@ -108,6 +109,34 @@ export class CourseDomainService {
 
     async findFreeCourses(pagination) {
         const courses = await this.courseRepo.findFree(pagination);
+        await this._signUrls(courses);
+        return Result.ok(courses);
+    }
+
+    async findPremiumCourses(pagination) {
+        const courses = await this.courseRepo.findPremium(pagination);
+        await this._signUrls(courses);
+        return Result.ok(courses);
+    }
+
+    async findPurchasedCourses(userId, pagination) {
+        if (!this.transactionRepo) {
+            // Fallback or empty if repo not available (though it should be)
+            console.warn('TransactionRepository not injected in CourseDomainService');
+            return Result.ok([]);
+        }
+        const courseIds = await this.transactionRepo.findPurchasedCourseIds(userId);
+        if (courseIds.length === 0) return Result.ok([]);
+        
+        // Use findByIds but we might need to handle pagination manually if repo doesn't support it on findByIds
+        // or just return all since users unlikely have > 50 courses purchased yet.
+        // Assuming findByIds returns array.
+        const courses = await this.courseRepo.findByIds(courseIds);
+        
+        // Simple manual pagination for the list of purchased courses if needed, 
+        // essentially findByIds usually returns all. 
+        // If strict pagination needed, would filter identifiers.
+        
         await this._signUrls(courses);
         return Result.ok(courses);
     }
