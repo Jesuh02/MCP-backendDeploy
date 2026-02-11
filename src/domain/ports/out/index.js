@@ -1,3 +1,4 @@
+// ── Repositorios de dominio ──────────────────────────────────
 export { IUserRepository }
 from './IUserRepository.js';
 export { ICourseRepository }
@@ -24,6 +25,16 @@ export { INotificationRepository }
 from './INotificationRepository.js';
 export { ITransactionRepository }
 from './ITransactionRepository.js';
+export { IPersonaRepository }
+from './IPersonaRepository.js';
+export { IRolRepository }
+from './IRolRepository.js';
+export { IFileContextRepository }
+from './IFileContextRepository.js';
+export { IReinforcementRepository }
+from './IReinforcementRepository.js';
+
+// ── Puertos de servicios externos ───────────────────────────
 export { IFileStoragePort }
 from './IFileStoragePort.js';
 export { IPushNotificationPort }
@@ -32,3 +43,15 @@ export { IEmailPort }
 from './IEmailPort.js';
 export { IPaymentGatewayPort }
 from './IPaymentGatewayPort.js';
+export { ITTSPort }
+from './ITTSPort.js';
+export { IVideoProcessingPort }
+from './IVideoProcessingPort.js';
+export { ILLMPort }
+from './ILLMPort.js';
+export { IRAGPort }
+from './IRAGPort.js';
+export { IGitHubPort }
+from './IGitHubPort.js';
+export { ICachePort }
+from './ICachePort.js';

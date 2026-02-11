@@ -20,6 +20,13 @@ import { rolRoutes } from './rolRoutes.js';
 import { fileContextRoutes } from './fileContextRoutes.js';
 import { reinforcementRoutes } from './reinforcementRoutes.js';
 
+// Nuevas rutas hexagonales (transición completa)
+import { ttsRoutes } from './ttsRoutes.js';
+import { llmRoutes } from './llmRoutes.js';
+import { videoProcessingRoutes } from './videoProcessingRoutes.js';
+import { ragRoutes } from './ragRoutes.js';
+import { mcpRoutes } from './mcpRoutes.js';
+
 /**
  * Monta todas las rutas v1 en un router.
  * @param {Object} deps - Controllers + middleware inyectados desde el container
@@ -34,6 +41,9 @@ export function createV1Router(deps) {
 
     // Webhook de pagos (sin auth)
     router.post('/payment/webhook', deps.paymentController.webhook);
+
+    // MCP SSE (sin auth — los clientes VS Code se conectan directamente)
+    router.use('/mcp', mcpRoutes(deps));
 
     // Rutas protegidas (con auth)
     router.use(authMiddleware);
@@ -56,6 +66,12 @@ export function createV1Router(deps) {
     router.use('/roles', rolRoutes(deps));
     router.use('/file-contexts', fileContextRoutes(deps));
     router.use('/reinforcement', reinforcementRoutes(deps));
+
+    // Nuevas rutas hexagonales (antes legacy)
+    router.use('/tts', ttsRoutes(deps));
+    router.use('/llm', llmRoutes(deps));
+    router.use('/video-processing', videoProcessingRoutes(deps));
+    router.use('/rag', ragRoutes(deps));
 
     return router;
 }

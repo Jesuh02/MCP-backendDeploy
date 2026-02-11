@@ -41,6 +41,14 @@ import { FCMAdapter } from '../infrastructure/notifications/FCMAdapter.js';
 import { EmailAdapter } from '../infrastructure/notifications/EmailAdapter.js';
 import { WompiAdapter } from '../infrastructure/payment/WompiAdapter.js';
 
+// Nuevos adaptadores (transición hexagonal)
+import { OpenAITTSAdapter } from '../infrastructure/tts/OpenAITTSAdapter.js';
+import { FFmpegVideoAdapter } from '../infrastructure/video/FFmpegVideoAdapter.js';
+import { LLMAdapter } from '../infrastructure/ai/LLMAdapter.js';
+import { RAGAdapter } from '../infrastructure/ai/RAGAdapter.js';
+import { GitHubAdapter } from '../infrastructure/github/GitHubAdapter.js';
+import { CacheAdapter } from '../infrastructure/cache/CacheAdapter.js';
+
 // ── Dominio: Servicios (casos de uso) ───────────────────────
 import { AuthService } from '../domain/services/AuthService.js';
 import { UserDomainService } from '../domain/services/UserDomainService.js';
@@ -61,6 +69,13 @@ import { PersonaDomainService } from '../domain/services/PersonaDomainService.js
 import { RolDomainService } from '../domain/services/RolDomainService.js';
 import { FileContextDomainService } from '../domain/services/FileContextDomainService.js';
 import { ReinforcementDomainService } from '../domain/services/ReinforcementDomainService.js';
+
+// Nuevos servicios de dominio (transición hexagonal)
+import { TTSDomainService } from '../domain/services/TTSDomainService.js';
+import { VideoProcessingDomainService } from '../domain/services/VideoProcessingDomainService.js';
+import { LLMDomainService } from '../domain/services/LLMDomainService.js';
+import { RAGDomainService } from '../domain/services/RAGDomainService.js';
+import { MCPDomainService } from '../domain/services/MCPDomainService.js';
 
 // ── Interfaces: Controladores ───────────────────────────────
 import { AuthController } from '../interfaces/http/controllers/AuthController.js';
@@ -83,6 +98,13 @@ import { PersonaController } from '../interfaces/http/controllers/PersonaControl
 import { RolController } from '../interfaces/http/controllers/RolController.js';
 import { FileContextController } from '../interfaces/http/controllers/FileContextController.js';
 import { ReinforcementController } from '../interfaces/http/controllers/ReinforcementController.js';
+
+// Nuevos controladores (transición hexagonal)
+import { TTSController } from '../interfaces/http/controllers/TTSController.js';
+import { LLMController } from '../interfaces/http/controllers/LLMController.js';
+import { VideoProcessingController } from '../interfaces/http/controllers/VideoProcessingController.js';
+import { RAGController } from '../interfaces/http/controllers/RAGController.js';
+import { MCPController } from '../interfaces/http/controllers/MCPController.js';
 
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los
@@ -109,6 +131,14 @@ export function createContainer() {
     const fcmAdapter = new FCMAdapter();
     const emailAdapter = new EmailAdapter();
     const paymentGateway = new WompiAdapter();
+
+    // Nuevos adaptadores (transición hexagonal)
+    const ttsAdapter = new OpenAITTSAdapter();
+    const videoProcessingAdapter = new FFmpegVideoAdapter();
+    const llmAdapter = new LLMAdapter();
+    const ragAdapter = new RAGAdapter();
+    const githubAdapter = new GitHubAdapter();
+    const cacheAdapter = new CacheAdapter();
 
     // ═══════════════════════════════════════════════════════════
     // 2. REPOSITORIOS — Inyectar cliente Supabase
@@ -159,6 +189,29 @@ export function createContainer() {
     const fileContextService = new FileContextDomainService({ fileContextRepository: fileContextRepo });
     const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo });
 
+    // ── Nuevos servicios de dominio (transición hexagonal) ───
+    const ttsService = new TTSDomainService({ ttsPort: ttsAdapter });
+    const videoProcessingService = new VideoProcessingDomainService({ videoProcessingPort: videoProcessingAdapter, fileStoragePort: storageAdapter });
+    const llmDomainService = new LLMDomainService({
+        llmPort: llmAdapter,
+        ragPort: ragAdapter,
+        cachePort: cacheAdapter,
+        githubPort: githubAdapter,
+        fileStoragePort: storageAdapter,
+        submissionRepository: submissionRepo,
+        fileContextRepository: fileContextRepo,
+        reinforcementRepository: reinforcementRepo,
+    });
+    const ragDomainService = new RAGDomainService({ ragPort: ragAdapter, llmPort: llmAdapter });
+    const mcpDomainService = new MCPDomainService({
+        userRepository: userRepo,
+        courseRepository: courseRepo,
+        taskRepository: taskRepo,
+        submissionRepository: submissionRepo,
+        notificationService,
+        llmPort: llmAdapter,
+    });
+
     // ═══════════════════════════════════════════════════════════
     // 4. CONTROLADORES — Inyectar servicios de dominio
     // ═══════════════════════════════════════════════════════════
@@ -183,6 +236,13 @@ export function createContainer() {
     const rolController = new RolController({ rolService });
     const fileContextController = new FileContextController({ fileContextService });
     const reinforcementController = new ReinforcementController({ reinforcementService });
+
+    // Nuevos controladores (transición hexagonal)
+    const ttsController = new TTSController({ ttsService });
+    const llmController = new LLMController({ llmService: llmDomainService });
+    const videoProcessingController = new VideoProcessingController({ videoProcessingService });
+    const ragController = new RAGController({ ragService: ragDomainService });
+    const mcpController = new MCPController({ mcpService: mcpDomainService });
 
     return {
         // Middleware
@@ -210,7 +270,14 @@ export function createContainer() {
         fileContextController,
         reinforcementController,
 
-        // Servicios (por si se necesitan en rutas legacy)
+        // Nuevos controladores (transición hexagonal)
+        ttsController,
+        llmController,
+        videoProcessingController,
+        ragController,
+        mcpController,
+
+        // Servicios de dominio
         authService,
         userService,
         courseService,
@@ -230,12 +297,23 @@ export function createContainer() {
         rolService,
         fileContextService,
         reinforcementService,
+        ttsService,
+        videoProcessingService,
+        llmDomainService,
+        ragDomainService,
+        mcpDomainService,
 
-        // Adaptadores (por si se necesitan directamente)
+        // Adaptadores
         storageAdapter,
         fcmAdapter,
         emailAdapter,
         paymentGateway,
+        ttsAdapter,
+        videoProcessingAdapter,
+        llmAdapter,
+        ragAdapter,
+        githubAdapter,
+        cacheAdapter,
     };
 }
 
