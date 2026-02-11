@@ -170,7 +170,7 @@ export function createContainer() {
     const topicController = new TopicController({ topicService });
     const taskController = new TaskController({ taskService, notificationService, courseService, progressService, userService });
     const contentItemController = new ContentItemController({ contentItemService });
-    const submissionController = new SubmissionController({ submissionService, storageService, storageAdapter, notificationService, userService: userService, taskService: taskService, courseService: courseService });
+    const submissionController = new SubmissionController({ submissionService, storageService, storageAdapter, notificationService, userService, taskService, courseService, topicService });
     const subscriptionController = new SubscriptionController({ subscriptionService });
     const progressController = new ProgressController({ progressService });
     const likeController = new LikeController({ likeService });
