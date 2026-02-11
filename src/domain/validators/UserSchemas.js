@@ -12,9 +12,10 @@ export const updateProfileSchema = Joi.object({
 });
 
 export const registerFCMTokenSchema = Joi.object({
-    token: Joi.string().required(),
+    token: Joi.string().optional(),
+    fcmToken: Joi.string().optional(),
     deviceType: Joi.string().valid('android', 'ios', 'web').default('android'),
-});
+}).or('token', 'fcmToken');
 
 export const assignRoleSchema = Joi.object({
     roleId: Joi.number().integer().min(1).max(10).required(),
