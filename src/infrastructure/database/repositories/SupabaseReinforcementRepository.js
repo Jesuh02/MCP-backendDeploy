@@ -24,7 +24,7 @@ export class SupabaseReinforcementRepository {
 
     async saveQuestions(sessionId, questions) {
         if (!questions || questions.length === 0) return [];
-        
+
         // NOTE: The current questions_history table schema (as per ddlpro.sql) requires
         // embeddings and has different columns (correct_index vs correct_answer).
         // The current logic is incompatible with the distinct 'questions_history' table
@@ -118,7 +118,7 @@ export class SupabaseReinforcementRepository {
         const sessions = await this.findByUserAndCourse(userId, courseId, { limit: 5 });
         // Extract plain text questions to feed back to LLM context
         // Flatten all questions from all past sessions
-        const allQuestions = sessions.flatMap(s => 
+        const allQuestions = sessions.flatMap(s =>
             (s.questions_history || []).map(q => q.question_text)
         );
         return allQuestions;
