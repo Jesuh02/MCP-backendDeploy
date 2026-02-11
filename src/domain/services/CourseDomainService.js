@@ -138,13 +138,16 @@ export class CourseDomainService {
         if (!this.transactionRepo) {
             // Fallback or empty if repo not available (though it should be)
             console.warn('TransactionRepository not injected in CourseDomainService');
-            return Result.ok([]);
+            return Result.ok({ courses: [], total: 0 });
         }
         
-        // Use findPurchasedCourseIdsPaginated instead of loading all
-        const courseIds = await this.transactionRepo.findPurchasedCourseIdsPaginated(userId, pagination);
+        // Parallel fetch: IDs for the page, and total count
+        const [courseIds, total] = await Promise.all([
+            this.transactionRepo.findPurchasedCourseIdsPaginated(userId, pagination),
+            this.transactionRepo.countPurchased(userId)
+        ]);
 
-        if (courseIds.length === 0) return Result.ok([]);
+        if (courseIds.length === 0) return Result.ok({ courses: [], total });
         
         // Fetch courses for the page IDs
         const courses = await this.courseRepo.findByIds(courseIds);
@@ -155,7 +158,7 @@ export class CourseDomainService {
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
-        return Result.ok(sortedCourses);
+        return Result.ok({ courses: sortedCourses, total });
     }
 }
 export default CourseDomainService;
