@@ -344,7 +344,7 @@ class NotificationService {
             console.log(`✅ Email sent to ${email} via Resend: ${response.data.id}`);
             return true;
         } catch (error) {
-            console.error('❌ Error with Resend:', error.response?.data || error.message);
+            console.error('❌ Error with Resend:', error.response ? .data || error.message);
 
             // Retry with fallback
             console.log('🔄 Retrying email send...');
@@ -363,7 +363,7 @@ class NotificationService {
                 console.log(`✅ Email sent to ${email} via fallback: ${fallbackResponse.data.id}`);
                 return true;
             } catch (fallbackError) {
-                console.error('❌ Fallback also failed:', fallbackError.response?.data || fallbackError.message);
+                console.error('❌ Fallback also failed:', fallbackError.response ? .data || fallbackError.message);
             }
         }
 
@@ -408,7 +408,7 @@ class NotificationService {
             console.log(`✅ Email sent to ${email} via SendGrid: ${response.status}`);
             return true;
         } catch (error) {
-            console.error('❌ Error with SendGrid:', error.response?.data || error.message);
+            console.error('❌ Error with SendGrid:', error.response ? .data || error.message);
             return false;
         }
     }
@@ -664,7 +664,7 @@ class NotificationService {
                     .select('avatar')
                     .eq('id', creatorUserId)
                     .single();
-                creatorAvatar = creatorData?.avatar || null;
+                creatorAvatar = creatorData ? .avatar || null;
             } catch (e) {
                 console.warn('⚠️ Could not fetch creator avatar:', e.message);
             }
@@ -753,7 +753,7 @@ class NotificationService {
                 user_id: videoOwnerId,
                 sender_username: commentAuthor,
                 sender_avatar_url: commentAuthorAvatar,
-                type: 'comment', // Must match Android Notification.TYPE_COMMENT
+                type: 'video_comment', // Must match Android Notification.TYPE_VIDEO_COMMENT
                 title: 'Nuevo comentario',
                 message: `${commentAuthor} comentó en tu video${commentText ? ': ' + commentText.substring(0, 50) : ''}`,
                 thumbnail_url: videoThumbnail,
@@ -825,7 +825,7 @@ class NotificationService {
                 user_id: commentOwnerId,
                 sender_username: likerUsername,
                 sender_avatar_url: likerAvatar,
-                type: 'like', // Must match Android Notification.TYPE_LIKE
+                type: 'comment_like', // Must match Android Notification.TYPE_COMMENT_LIKE
                 title: 'Le gusta tu comentario',
                 message: `A ${likerUsername} le gustó tu comentario`,
                 thumbnail_url: videoThumbnail,
@@ -899,7 +899,7 @@ class NotificationService {
                 user_id: parentCommentOwnerId,
                 sender_username: replyAuthor,
                 sender_avatar_url: replyAuthorAvatar,
-                type: 'comment', // Use 'comment' type for replies as well
+                type: 'comment_reply', // Use 'comment_reply' type for replies
                 title: 'Respuesta a tu comentario',
                 message: `${replyAuthor} respondió a tu comentario${replyText ? ': ' + replyText.substring(0, 50) : ''}`,
                 thumbnail_url: videoThumbnail,

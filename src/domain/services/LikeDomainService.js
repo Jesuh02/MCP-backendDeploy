@@ -39,7 +39,7 @@ export class LikeDomainService {
                 // No notificar si se da like a sí mismo prop video
                 if (video && video.remote_id && video.remote_id !== userId) {
                     await this.notificationService.send(video.remote_id, {
-                        type: 'like',
+                        type: 'video_like',
                         title: 'Nuevo like',
                         message: `${senderUsername} le gustó tu video`,
                         data: { videoId: entityId, type: 'video_like' },
@@ -52,12 +52,12 @@ export class LikeDomainService {
             } else if (entityType === 'comment' || entityType === 'video_comment') {
                 if (!this.commentRepo || !this.videoRepo) return;
                 const comment = await this.commentRepo.findById(entityId);
-                
+
                 // Ensure target user exists and is not the same as the liker
                 if (comment && comment.usuario_id && comment.usuario_id !== userId) {
                     const video = await this.videoRepo.findById(comment.video_id);
                     await this.notificationService.send(comment.usuario_id, {
-                        type: 'like',
+                        type: 'comment_like',
                         title: 'Like en tu comentario',
                         message: `${senderUsername} le gustó tu comentario`,
                         data: { videoId: comment.video_id, commentId: entityId, type: 'comment_like' },
