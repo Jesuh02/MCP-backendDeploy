@@ -24,6 +24,10 @@ export class NotificationDomainService {
         return Result.ok({ message: 'Todas las notificaciones leídas' });
     }
 
+    async sendNotification({ userId, title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
+        return this.send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata });
+    }
+
     async send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
         // 1. Guardar en BD
         const notif = await this.notifRepo.create({
