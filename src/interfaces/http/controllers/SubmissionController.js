@@ -53,7 +53,7 @@ export class SubmissionController {
             try {
                 if (this.notificationService && this.taskService && this.courseService && this.topicService) {
                     const taskResult = await this.taskService.getById(value.taskId);
-                    if (taskResult.isSuccess()) {
+                    if (taskResult.isOk()) {
                         const task = taskResult.getValue();
 
                         // tasks no tiene courseId directo, hay que resolverlo via topics
@@ -61,7 +61,7 @@ export class SubmissionController {
                         let courseId = null;
                         if (topicId) {
                             const topicResult = await this.topicService.getById(topicId);
-                            if (topicResult.isSuccess()) {
+                            if (topicResult.isOk()) {
                                 const topic = topicResult.getValue();
                                 courseId = topic.course_id || topic.courseId;
                             }
@@ -69,7 +69,7 @@ export class SubmissionController {
 
                         if (courseId) {
                             const courseResult = await this.courseService.getById(courseId);
-                            if (courseResult.isSuccess()) {
+                            if (courseResult.isOk()) {
                                 const course = courseResult.getValue();
                                 const creatorId = course.creator_user_id || course.creatorUserId;
 
@@ -79,7 +79,7 @@ export class SubmissionController {
                                     let senderAvatarUrl = null;
                                     if (this.userService) {
                                         const userResult = await this.userService.getById(value.userId);
-                                        if (userResult.isSuccess()) {
+                                        if (userResult.isOk()) {
                                             senderAvatarUrl = userResult.getValue().avatar;
                                         }
                                     }
