@@ -220,23 +220,26 @@ router.post('/procesar-prompt', async(req, res) => {
                     }
                 }
 
-                // Check if session exists to see if we can skip ingestion (User Rule: omit creation of new embeddings if session exists)
+                // Check if RAG documents already exist for this context to avoid duplicate ingestion
+                // We check rag_documents directly instead of question_sessions because
+                // sessions can exist without any RAG content being stored
                 let skipIngestion = false;
-                if (userId && taskId && topicId) {
+                if (taskId && topicId) {
                     try {
-                        const { data } = await SupabaseService.getInstance().client
-                            .from('question_sessions')
-                            .select('id')
-                            .eq('user_id', userId)
-                            .eq('task_id', taskId)
-                            .eq('topic_id', topicId)
-                            .maybeSingle();
-                        if (data) {
+                        const ragService = new RAGService();
+                        const ragExists = await ragService.vectorStore.exists({
+                            taskId: taskId,
+                            topicId: topicId,
+                            ...(courseId ? { courseId } : {})
+                        });
+                        if (ragExists) {
                             skipIngestion = true;
-                            console.log(`ℹ️ Session ${data.id} exists for this task. Will skip new embedding ingestion.`);
+                            console.log(`ℹ️ RAG documents already exist for task=${taskId}, topic=${topicId}. Skipping ingestion.`);
+                        } else {
+                            console.log(`📝 No RAG documents found for task=${taskId}, topic=${topicId}. Will ingest content.`);
                         }
                     } catch (e) {
-                        console.warn('⚠️ Failed to check question_sessions:', e.message);
+                        console.warn('⚠️ Failed to check rag_documents existence:', e.message);
                     }
                 }
 
@@ -252,6 +255,27 @@ router.post('/procesar-prompt', async(req, res) => {
                     if (taskDescription) augmentedPrompt += `DESCRIPCIÓN DE LA TAREA:\n${taskDescription}\n\n`;
                     if (fileContent) augmentedPrompt += `CONTENIDO DEL ARCHIVO DEL ESTUDIANTE:\n${fileContent}\n\n`;
                     augmentedPrompt += "--- FIN DEL CONTEXTO ---\n";
+                }
+
+                // 💾 RAG INGESTION: Ingest fileContent from strategies 1/2/3 into rag_documents
+                // This is critical - content fetched from submissions was only added to the prompt
+                // but never saved to rag_documents for future retrieval
+                if (fileContent && fileContent.length > 100 && !skipIngestion && (taskId || topicId)) {
+                    try {
+                        const ragServiceForFile = new RAGService();
+                        console.log(`💾 Ingesting fileContent (${fileContent.length} chars) into RAG for task=${taskId}, topic=${topicId}...`);
+                        await ragServiceForFile.ingestDocument(fileContent, {
+                            courseId: courseId,
+                            taskId: taskId,
+                            topicId: topicId,
+                            contentItemId: contentItemId,
+                            fileName: 'student_submission_content',
+                            fileType: 'txt'
+                        });
+                        console.log('✅ fileContent RAG ingestion complete.');
+                    } catch (ragFileErr) {
+                        console.warn('⚠️ fileContent RAG ingestion failed (non-blocking):', ragFileErr.message);
+                    }
                 }
 
                 let contextFromRAG = false;
@@ -297,14 +321,11 @@ router.post('/procesar-prompt', async(req, res) => {
                     }
                 }
 
-                // Process jsonContent to fetch files from R2 (ONLY if NOT retrieved from RAG or explicitly requested)
-                // Note: If contextFromRAG is true, we might SKIP downloading files to save time/bandwidth
-                // However, user said "el LLM no haga el proceso de crear embeddings", implying we skip the *ingestion*, 
-                // but we should still possibly put text in prompt if RAG failed?
-                // Strategy: If RAG found content, we assume it's good and skip file download.
-                // If not found, we download, extract, AND INGEST.
+                // Process jsonContent to fetch files from R2
+                // Always process files to ensure they are ingested into RAG even if RAG had some prior context
+                // The RAGService.ingestDocument() handles deduplication internally
 
-                if (jsonContent && !contextFromRAG) {
+                if (jsonContent) {
                     try {
                         const files = JSON.parse(jsonContent);
                         if (Array.isArray(files) && files.length > 0) {
@@ -452,6 +473,45 @@ router.post('/procesar-prompt', async(req, res) => {
                         }
                     } catch (e) {
                         console.warn("⚠️ Error parsing jsonContent for files:", e.message);
+                    }
+                }
+
+                // 📝 FALLBACK RAG INGESTION: If no files were processed but we have task/topic context
+                // in the prompt, ingest the prompt context itself so rag_documents has at least
+                // the topic/task description for future RAG retrieval
+                if (!skipIngestion && (taskId || topicId) && courseId) {
+                    try {
+                        const ragServiceCtx = new RAGService();
+                        // Check if any rag_documents were created by the jsonContent block above
+                        const ragNowExists = await ragServiceCtx.vectorStore.exists({
+                            ...(taskId ? { taskId } : {}),
+                            ...(topicId ? { topicId } : {}),
+                            ...(courseId ? { courseId } : {})
+                        });
+
+                        if (!ragNowExists) {
+                            // Build minimal context text from the prompt for ingestion
+                            // Extract meaningful context from the augmented prompt (task descriptions, topic info)
+                            const contextText = [
+                                taskDescription ? `Tarea: ${taskDescription}` : null,
+                                prompt ? prompt.substring(0, 5000) : null
+                            ].filter(Boolean).join('\n\n');
+
+                            if (contextText.length > 100) {
+                                console.log(`📝 No files were ingested. Ingesting prompt context (${contextText.length} chars) into RAG...`);
+                                await ragServiceCtx.ingestDocument(contextText, {
+                                    courseId: courseId,
+                                    taskId: taskId,
+                                    topicId: topicId,
+                                    contentItemId: contentItemId,
+                                    fileName: `context_task_${taskId || 'none'}_topic_${topicId || 'none'}`,
+                                    fileType: 'txt'
+                                });
+                                console.log('✅ Prompt context RAG ingestion complete.');
+                            }
+                        }
+                    } catch (ctxErr) {
+                        console.warn('⚠️ Context RAG ingestion failed (non-blocking):', ctxErr.message);
                     }
                 }
 
@@ -865,49 +925,18 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
 
                     let filtered = [];
 
+                    // ═══════════════════════════════════════════════════════════════
+                    // VALIDATION ONLY — NO DB SAVE HERE
+                    // The Android ViewModel saves via /reinforcement/save-questions
+                    // which uses MCPService with full uniqueness flow (hash + embedding).
+                    // Saving here AND in /save-questions caused DUPLICATE question_sessions.
+                    // ═══════════════════════════════════════════════════════════════
+
                     if (userId && courseId) {
                         try {
-                            const supabase = SupabaseService.getInstance();
-
-                            // 0. Verify User Exists (Fix foreign key constraint errors)
-                            let userExists = false;
-                            const { data: uCheck } = await supabase.client
-                                .from('usuarios')
-                                .select('id')
-                                .eq('id', userId)
-                                .maybeSingle();
-                            
-                            if (uCheck) {
-                                userExists = true;
-                            } else {
-                                console.warn(`⚠️ User ID ${userId} not found in DB. Skipping history save to prevent FK errors.`);
-                            }
-
-                            // 1. Ensure Session Exists (Paso 0)
-                            // Create session when user exists and we have at least topicId OR taskId
-                            let sessionId = null;
-                            if (userExists && (taskId || topicId)) {
-                                try {
-                                    const { data: sessionData } = await supabase.client
-                                        .from('question_sessions')
-                                        .insert({
-                                            user_id: userId,
-                                            course_id: courseId,
-                                            topic_id: topicId || null,
-                                            task_id: taskId || null
-                                        })
-                                        .select('id')
-                                        .single();
-                                    if (sessionData) sessionId = sessionData.id;
-                                    console.log(`✅ Session created: ${sessionId} (topic=${topicId}, task=${taskId})`);
-                                } catch(e) { 
-                                     console.warn('Session creation warning (might exist):', e.message);
-                                }
-                            }
-
                             console.log(`🔍 Validating ${transformed.length} questions (User: ${userId})...`);
 
-                            // 2. Validate & Filter (Simpler Blacklist Only for Speed/Stability)
+                            // Validate & Filter (Blacklist Only — no DB save)
                             const validQuestions = [];
                             for (const q of transformed) {
                                 if (!q.question || !Array.isArray(q.options)) continue;
@@ -946,36 +975,13 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
                                 validQuestions.push(q);
                             }
 
-                            // 3. Save to Supabase (Robust Method)
-                            if (validQuestions.length > 0) {
-                                if (userExists) {
-                                    console.log(`💾 Saving ${validQuestions.length} validated questions to Supabase...`);
-                                    // Call MCPService saver with Strict Uniqueness
-                                    const mcpSaver = new MCPService();
-                                    const savedResult = await mcpSaver.saveReinforcementHistory(userId, courseId, validQuestions, topicId, taskId, sessionId);
-                                    
-                                    // UPDATE: Use ONLY the questions that were actually saved (unique)
-                                    if (savedResult && savedResult.savedQuestions && savedResult.savedQuestions.length > 0) {
-                                         filtered = savedResult.savedQuestions;
-                                         console.log(`✅ Accepted ${filtered.length} unique questions (Refined from ${validQuestions.length}).`);
-                                    } else {
-                                         // FALLBACK: If save failed (e.g. invalid permissions, foreign key error, or all duplicates),
-                                         // but we have valid generated questions, return them anyway to the user so the app doesn't break.
-                                         console.warn(`⚠️ Save failed or returned 0 questions (Constraint/Duplication). Returning original ${validQuestions.length} questions to user without saving history.`);
-                                         filtered = validQuestions; 
-                                    }
-                                } else {
-                                    console.log(`⚠️ Invalid User ID ${userId}. Skipping save/deduplication and returning derived questions directly.`);
-                                    filtered = validQuestions;
-                                }
-                            } else {
-                                filtered = [];
-                            }
+                            // Return validated questions (saving is done by /save-questions endpoint)
+                            filtered = validQuestions.length > 0 ? validQuestions : [];
+                            console.log(`✅ Validated ${filtered.length} questions (from ${transformed.length}). Saving deferred to /save-questions.`);
 
                         } catch (e) {
-                            console.warn('⚠️ Failed to consult/save reinforcement history (DB check):', e?.message || e);
-                            // Fallback to transformed (processed but not filtered by DB)
-                            filtered = validQuestions.length > 0 ? validQuestions : transformed;
+                            console.warn('⚠️ Failed to validate questions:', e?.message || e);
+                            filtered = transformed;
                         }
                     } else {
                         filtered = transformed;
@@ -1089,26 +1095,10 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
                                                         });
 
                                                         if (newlyFiltered.length > 0) {
-                                                            try {
-                                                                if (userExists) {
-                                                                    // Save using MCPService with Strict Uniqueness
-                                                                    const mcpSaver = new MCPService();
-                                                                    const retrySaveResult = await mcpSaver.saveReinforcementHistory(userId, courseId, newlyFiltered, topicId, taskId, sessionId);
-                                                                    
-                                                                    if (retrySaveResult && retrySaveResult.savedQuestions && retrySaveResult.savedQuestions.length > 0) {
-                                                                        filtered = retrySaveResult.savedQuestions;
-                                                                        console.log(`✅ Retry accepted ${filtered.length} unique questions.`);
-                                                                        break; // Success!
-                                                                    } else {
-                                                                        console.warn('⚠️ Retry questions were all duplicates (rejected by DB).');
-                                                                        filtered = []; // Continue loop
-                                                                    }
-                                                                } else {
-                                                                     filtered = newlyFiltered;
-                                                                     console.log(`✅ Retry accepted ${filtered.length} questions (User invalid/skip).`);
-                                                                     break; 
-                                                                }
-                                                            } catch (upErr) { console.warn('⚠️ Failed to save retry results:', upErr?.message || upErr); }
+                                                            // Return validated retry questions (saving deferred to /save-questions)
+                                                            filtered = newlyFiltered;
+                                                            console.log(`✅ Retry accepted ${filtered.length} questions (saving deferred to /save-questions).`);
+                                                            break;
                                                         }
                                                     }
                                                 } catch (parseErr) {

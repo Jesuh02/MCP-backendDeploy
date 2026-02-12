@@ -181,9 +181,11 @@ export class SupabaseVectorStore extends IVectorStore {
                 task_id: validatedFKs.task_id,
                 content_item_id: validatedFKs.content_item_id,
                 file_name: metadata.fileName || null,
-                file_type: metadata.fileType || null,
-                chunk_index: metadata.chunkIndex || 0,
-                created_at: new Date().toISOString()
+                file_type: metadata.fileType || metadata.originalFileType || null,
+                chunk_index: metadata.chunkIndex != null ? metadata.chunkIndex : 0,
+                total_chunks: metadata.totalChunks != null ? metadata.totalChunks : 1,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
             };
 
             const { data, error } = await this.supabase.client
@@ -343,7 +345,12 @@ export class SupabaseVectorStore extends IVectorStore {
                     content,
                     embedding: embedding ? `[${embedding.join(',')}]` : null,
                     metadata,
+                    file_name: metadata.fileName || null,
+                    file_type: metadata.fileType || metadata.originalFileType || null,
+                    chunk_index: metadata.chunkIndex != null ? metadata.chunkIndex : 0,
+                    total_chunks: metadata.totalChunks != null ? metadata.totalChunks : 1,
                     created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
                     course_id: null,
                     topic_id: null,
                     task_id: null,
