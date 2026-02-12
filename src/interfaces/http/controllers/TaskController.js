@@ -10,15 +10,17 @@ export class TaskController extends BaseController {
     }
 
     list = async(req, res, next) => {
-        this.handleResult(res, next, (async() => {
+        try {
             const pg = parsePagination(req.query);
             const result = await this.taskService.list(pg);
-            if (result.isFail()) return result;
+            if (result.isFail()) return next(result.getError());
             const { tasks, total } = result.getValue();
             const paginated = buildPaginatedResponse(tasks, total, pg.page, pg.pageSize);
             // Return raw paginated response (already structured)
             return res.json(paginated);
-        })());
+        } catch (err) {
+            next(err);
+        }
     };
 
     getById = async(req, res, next) => {
