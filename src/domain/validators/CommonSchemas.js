@@ -214,7 +214,8 @@ export const sendNotificationSchema = Joi.object({
 // ─── Payment ─────────────────────────────────────────────
 export const initiatePaymentSchema = Joi.object({
     courseId: Joi.number().integer().required(),
-    redirectUrl: Joi.string().uri().required(),
+    redirectUrl: Joi.string().uri().optional(),
+    userId: Joi.number().integer().optional(), // Ignored — userId comes from JWT
 });
 
 // ─── Storage ─────────────────────────────────────────────

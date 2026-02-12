@@ -47,7 +47,7 @@ export class SupabaseTransactionRepository {
         const payload = {};
         if (data.status !== undefined) payload.status = data.status;
         if (data.transactionId !== undefined) payload.transaction_id = data.transactionId;
-        if (data.gatewayResponse !== undefined) payload.gateway_response = data.gatewayResponse;
+        if (data.gatewayResponse !== undefined) payload.provider_response = data.gatewayResponse;
         payload.updated_at = new Date().toISOString();
         const { data: u, error } = await this.client.from('transactions').update(payload).eq('id', id).select().single();
         if (error) throw new Error(error.message);
@@ -57,7 +57,8 @@ export class SupabaseTransactionRepository {
     async updateByTransactionId(transactionId, data) {
         const payload = {};
         if (data.status !== undefined) payload.status = data.status;
-        if (data.gatewayResponse !== undefined) payload.gateway_response = data.gatewayResponse;
+        if (data.gatewayResponse !== undefined) payload.provider_response = data.gatewayResponse;
+        if (data.wompiTransactionId !== undefined) payload.wompi_transaction_id = data.wompiTransactionId;
         payload.updated_at = new Date().toISOString();
         const { error } = await this.client.from('transactions').update(payload).eq('transaction_id', transactionId);
         if (error) throw new Error(error.message);
@@ -109,6 +110,64 @@ export class SupabaseTransactionRepository {
             .ilike('status', 'approved');
         if (error) return [];
         return data.map(t => t.course_id);
+    }
+
+    async findPendingByAmount(amountInPesos) {
+        const { data, error } = await this.client.from('transactions')
+            .select('*')
+            .ilike('status', 'pending')
+            .eq('amount', amountInPesos)
+            .order('transaction_date', { ascending: false })
+            .limit(5);
+        return error ? [] : data || [];
+    }
+
+    async findByExternalReference(reference) {
+        const { data, error } = await this.client.from('transactions')
+            .select('*')
+            .eq('external_reference', reference)
+            .maybeSingle();
+        return error ? null : data;
+    }
+
+    async updateByExternalReference(reference, data) {
+        const payload = {};
+        if (data.status !== undefined) payload.status = data.status;
+        if (data.gatewayResponse !== undefined) payload.provider_response = data.gatewayResponse;
+        if (data.wompiTransactionId !== undefined) payload.wompi_transaction_id = data.wompiTransactionId;
+        payload.updated_at = new Date().toISOString();
+        const { error } = await this.client.from('transactions').update(payload).eq('external_reference', reference);
+        if (error) throw new Error(error.message);
+        return true;
+    }
+
+    /**
+     * Find transaction by reference in either column (transaction_id or external_reference)
+     */
+    async findByReference(reference) {
+        // Try transaction_id first
+        let result = await this.findByTransactionId(reference);
+        if (result) return result;
+        // Fallback to external_reference
+        return await this.findByExternalReference(reference);
+    }
+
+    /**
+     * Update transaction by reference in either column (transaction_id or external_reference)
+     */
+    async updateByReference(reference, data) {
+        // Try transaction_id first
+        const tx = await this.findByTransactionId(reference);
+        if (tx) {
+            return await this.updateByTransactionId(reference, data);
+        }
+        // Fallback to external_reference
+        const txByRef = await this.findByExternalReference(reference);
+        if (txByRef) {
+            return await this.updateByExternalReference(reference, data);
+        }
+        console.warn(`⚠️ Transaction not found by reference: ${reference}`);
+        return false;
     }
 }
 export default SupabaseTransactionRepository;

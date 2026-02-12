@@ -160,8 +160,8 @@ class PaymentService {
             .eq('id', paymentData.courseId)
             .single();
 
-        const courseName = courseDetails ?.title || 'Curso';
-        const courseDescription = courseDetails ?.description || 'Acceso al curso';
+        const courseName = courseDetails?.title || 'Curso';
+        const courseDescription = courseDetails?.description || 'Acceso al curso';
 
         // 3. Create Transaction in DB (Pending) with DB-fetched price
         await this._recordTransactionStart({
@@ -183,8 +183,8 @@ class PaymentService {
 
         // Determine redirect URL based on environment
         const redirectUrl = this.isTest ?
-            'https://mcp-backenddeploy-production.up.railway.app/api/payment/redirect' :
-            'https://mcp-backenddeploy-production.up.railway.app/api/payment/redirect';
+            'https://mcp-backenddeploy-production-4ed0.up.railway.app/api/payment/redirect' :
+            'https://mcp-backenddeploy-production-4ed0.up.railway.app/api/payment/redirect';
 
         // Build the Wompi Checkout URL with query parameters
         const checkoutParams = new URLSearchParams({
@@ -256,7 +256,7 @@ class PaymentService {
         const status = event.data.transaction.status;
         const amount = event.data.transaction.amount_in_cents;
         const timestamp = event.timestamp;
-        const checksum = event.signature ?.checksum;
+        const checksum = event.signature?.checksum;
 
         if (!checksum) return false;
 
@@ -284,19 +284,19 @@ class PaymentService {
             let amountInCents = null;
 
             // Format 1: { event: { data: { transaction: {...} } } }
-            if (data ?.event ?.data ?.transaction) {
+            if (data?.event?.data?.transaction) {
                 transaction = data.event.data.transaction;
             }
             // Format 2: { data: { transaction: {...} } } - THIS IS THE WOMPI FORMAT
-            else if (data ?.data ?.transaction) {
+            else if (data?.data?.transaction) {
                 transaction = data.data.transaction;
             }
             // Format 3: Direct transaction object { transaction: {...} }
-            else if (data ?.transaction) {
+            else if (data?.transaction) {
                 transaction = data.transaction;
             }
             // Format 4: The data itself is the transaction
-            else if (data ?.id && data ?.status) {
+            else if (data?.id && data?.status) {
                 transaction = data;
             }
 
@@ -345,7 +345,7 @@ class PaymentService {
                     const { data: pendingTxs } = await this.supabase.client
                         .from('transactions')
                         .select('*')
-                        .eq('status', 'pending')
+                        .ilike('status', 'pending')
                         .eq('amount', amountInPesos)
                         .order('created_at', { ascending: false })
                         .limit(5); // Check last 5 pending transactions with this amount
@@ -364,7 +364,7 @@ class PaymentService {
                                 // Claim this transaction
                                 await this._updateTransactionStatusWithWompiId(
                                     pendingTx.external_reference,
-                                    'successful',
+                                    'APPROVED',
                                     transactionId
                                 );
 
@@ -407,17 +407,17 @@ class PaymentService {
             }
 
             // 3. Map status to our DB status
-            let dbStatus = 'pending';
-            if (status === 'APPROVED') dbStatus = 'successful';
-            else if (status === 'DECLINED') dbStatus = 'failed';
-            else if (status === 'ERROR') dbStatus = 'failed';
-            else if (status === 'VOIDED') dbStatus = 'failed';
+            let dbStatus = 'PENDING';
+            if (status === 'APPROVED') dbStatus = 'APPROVED';
+            else if (status === 'DECLINED') dbStatus = 'DECLINED';
+            else if (status === 'ERROR') dbStatus = 'FAILED';
+            else if (status === 'VOIDED') dbStatus = 'VOIDED';
 
             // 4. Update Supabase
             await this._updateTransactionStatusWithWompiId(reference, dbStatus, transactionId);
 
             // 5. If Approved, Grant Access
-            if (dbStatus === 'successful') {
+            if (dbStatus === 'APPROVED') {
                 const parts = reference.split('_');
                 // Format: ORDER_{timestamp}_{userId}_{courseId}
                 if (parts.length >= 4) {
@@ -587,7 +587,7 @@ class PaymentService {
             .select('amount')
             .eq('user_id', userId)
             .eq('course_id', courseId)
-            .eq('status', 'APPROVED');
+            .ilike('status', 'approved');
 
         if (tErr) return { isComplete: false, error: 'DB Error', paid: 0, required: 0, remaining: 0 };
 

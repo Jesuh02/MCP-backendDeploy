@@ -9,9 +9,33 @@ export class PaymentController extends BaseController {
     }
 
     initiate = async(req, res, next) => {
-        const { error, value } = initiatePaymentSchema.validate(req.body);
-        if (error) return next(ValidationError.fromJoi(error));
-        this.store(req, res, next, () => this.paymentService.initiate({...value, userId: req.user.userId }));
+        try {
+            const { error, value } = initiatePaymentSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+
+            const result = await this.paymentService.initiate({
+                ...value,
+                userId: req.user.userId,
+            });
+
+            if (result.isFail()) return next(result.getError());
+
+            const data = result.getValue();
+            // Map response to match Android PaymentInitiationResponse DTO
+            // Android expects: { success, urlBankPayment, transactionId, message, courseName, amount }
+            return res.json({
+                success: true,
+                data,
+                // Flat fields for Android compatibility
+                urlBankPayment: data.checkoutUrl,
+                transactionId: data.reference,
+                courseName: data.courseName || 'Curso',
+                amount: data.amount || 0,
+                message: `Pagar por ${data.courseName || 'Curso'}`,
+            });
+        } catch (err) {
+            next(err);
+        }
     };
 
     checkStatus = async(req, res, next) => {
@@ -19,7 +43,19 @@ export class PaymentController extends BaseController {
     };
 
     webhook = async(req, res, next) => {
-        this.store(req, res, next, () => this.paymentService.handleWebhook(req.body));
+        try {
+            console.log('📥 [PaymentController] Webhook hit');
+            const result = await this.paymentService.handleWebhook(req.body);
+            // Always return 200 to Wompi even on errors — they retry on non-200
+            if (result.isFail()) {
+                console.error('❌ Webhook processing failed:', result.getError());
+                return res.status(200).json({ success: false, message: result.getError().message });
+            }
+            return res.status(200).json({ success: true, data: result.getValue() });
+        } catch (err) {
+            console.error('❌ Webhook exception:', err);
+            return res.status(200).json({ success: false, message: err.message });
+        }
     };
 
     getMyTransactions = async(req, res, next) => {
