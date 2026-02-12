@@ -26,6 +26,7 @@ import { llmRoutes } from './llmRoutes.js';
 import { videoProcessingRoutes } from './videoProcessingRoutes.js';
 import { ragRoutes } from './ragRoutes.js';
 import { mcpRoutes } from './mcpRoutes.js';
+import { appDistributionRoutes } from './appDistributionRoutes.js';
 
 /**
  * Monta todas las rutas v1 en un router.
@@ -44,6 +45,7 @@ export function createV1Router(deps) {
 
     // MCP SSE (sin auth — los clientes VS Code se conectan directamente)
     router.use('/mcp', mcpRoutes(deps));
+    router.use('/app', appDistributionRoutes(deps));
 
     // Rutas protegidas (con auth)
     router.use(authMiddleware);

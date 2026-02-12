@@ -44,12 +44,18 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
 
         try {
+            // 0. Auto-fetch file content from R2 when not provided by the client
+            let resolvedFileContent = fileContent || '';
+            if (!resolvedFileContent) {
+                resolvedFileContent = await this._resolveFileContent({ fileUri, submissionId, taskId, studentId });
+            }
+
             // 1. Build RAG context if available
             let ragContext = '';
             if (this.rag && courseId) {
@@ -71,8 +77,8 @@ export class LLMDomainService {
 
             // 3. Build user prompt with file content if available
             let fullPrompt = prompt;
-            if (fileContent) {
-                fullPrompt = `Contenido del archivo:\n${fileContent}\n\nPregunta/Instrucción: ${prompt}`;
+            if (resolvedFileContent) {
+                fullPrompt = `Contenido del archivo:\n${resolvedFileContent}\n\nPregunta/Instrucción: ${prompt}`;
             }
 
             // 4. Check reinforcement history to avoid repetitions
@@ -224,6 +230,92 @@ Responde de forma clara y constructiva.`;
             });
         } catch (err) {
             return Result.fail(new ValidationError(`Feedback falló: ${err.message}`));
+        }
+    }
+
+    /**
+     * Resolves file content from R2/Supabase when the client did not send it.
+     * Tries in order: fileUri direct download, submissionId lookup, taskId+studentId lookup.
+     * @private
+     */
+    async _resolveFileContent({ fileUri, submissionId, taskId, studentId }) {
+        // Strategy 1: Download directly from R2 using fileUri
+        if (fileUri && this.storage && this.storage.isAvailable()) {
+            try {
+                const objectKey = this._extractR2ObjectKey(fileUri);
+                if (objectKey) {
+                    console.log(`[LLMDomainService] Fetching file from R2: ${objectKey}`);
+                    const file = await this.storage.fetchFile(objectKey);
+                    const content = file.buffer.toString('utf-8');
+                    if (content && content.trim().length > 0) {
+                        console.log(`[LLMDomainService] File content resolved from R2 (${content.length} chars)`);
+                        return content;
+                    }
+                }
+            } catch (err) {
+                console.warn('[LLMDomainService] R2 direct download failed:', err.message);
+            }
+        }
+
+        // Strategy 2: Lookup submission by submissionId and fetch its file from R2
+        if (submissionId && this.submissionRepo) {
+            try {
+                const submission = await this.submissionRepo.findById(submissionId);
+                if (submission && submission.file_uri) {
+                    console.log(`[LLMDomainService] Found submission ${submissionId}, file_uri: ${submission.file_uri}`);
+                    return await this._fetchContentFromUri(submission.file_uri);
+                }
+            } catch (err) {
+                console.warn('[LLMDomainService] Submission lookup failed:', err.message);
+            }
+        }
+
+        // Strategy 3: Lookup submission by taskId + studentId
+        if (taskId && studentId && this.submissionRepo) {
+            try {
+                const submission = await this.submissionRepo.findByUserAndTask(studentId, taskId);
+                if (submission && submission.file_uri) {
+                    console.log(`[LLMDomainService] Found submission for task=${taskId} student=${studentId}, file_uri: ${submission.file_uri}`);
+                    return await this._fetchContentFromUri(submission.file_uri);
+                }
+            } catch (err) {
+                console.warn('[LLMDomainService] Task+Student submission lookup failed:', err.message);
+            }
+        }
+
+        // Strategy 4: Check file_contexts table
+        if (submissionId && this.fileContextRepo) {
+            try {
+                const ctx = await this.fileContextRepo.findBySubmissionId(submissionId);
+                if (ctx && ctx.content) {
+                    console.log(`[LLMDomainService] File content resolved from file_contexts (${ctx.content.length} chars)`);
+                    return ctx.content;
+                }
+            } catch (_) { /* ignore */ }
+        }
+
+        return '';
+    }
+
+    /**
+     * Fetches text content from an R2 file URI.
+     * @private
+     */
+    async _fetchContentFromUri(uri) {
+        if (!uri || !this.storage || !this.storage.isAvailable()) return '';
+        // Skip local device paths
+        if (!uri.startsWith('http://') && !uri.startsWith('https://')) return '';
+        try {
+            const objectKey = this._extractR2ObjectKey(uri);
+            if (!objectKey) return '';
+            console.log(`[LLMDomainService] Downloading from R2: ${objectKey}`);
+            const file = await this.storage.fetchFile(objectKey);
+            const content = file.buffer.toString('utf-8');
+            console.log(`[LLMDomainService] Downloaded ${content.length} chars from R2`);
+            return content;
+        } catch (err) {
+            console.warn('[LLMDomainService] Failed to fetch file from R2:', err.message);
+            return '';
         }
     }
 

@@ -19,6 +19,7 @@ import { createAuthMiddleware, requireRoles } from '../infrastructure/middleware
 import { errorHandler } from '../infrastructure/middleware/ErrorHandler.js';
 import { MCPService } from '../domain/services/MCPService.js';
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
+import excelRoutes from '../interfaces/routes/excelRoutes.js';
 
 /**
  * Crea y configura la aplicación Express con toda la arquitectura hexagonal.
@@ -69,9 +70,15 @@ export function createApp() {
         requireRoles,
     });
 
+    // Mount Excel routes on v1 as well
+    v1Router.use('/excel', excelRoutes);
+
     // Montar todas las rutas bajo /api/v1
     app.use('/api/v1', v1Router);
     app.use('/api/v1', errorHandler);
+
+    // Rutas Legacy (directas, no v1)
+    app.use('/excel', excelRoutes);
 
     // ═══════════════════════════════════════════════════════════
     // 3. RUTAS DE COMPATIBILIDAD (Legacy → /api/v1)
@@ -357,6 +364,222 @@ export function createApp() {
         } catch (error) {
             console.error('❌ send-push-notification error:', error.message);
             res.json({ success: false, error: error.message });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // 3.6. LEGACY REDIRECTS — Android backward compatibility
+    //
+    // Estos endpoints legacy se redirigen a la arquitectura
+    // hexagonal /api/v1 para mantener compatibilidad con la app.
+    // ═══════════════════════════════════════════════════════════
+
+    // App Distribution — Smart link y APK download
+    app.get('/app-link', (req, res, next) => {
+        req.url = `/api/v1/app/app-link?${new URLSearchParams(req.query).toString()}`;
+        app.handle(req, res, next);
+    });
+
+    app.get('/download-apk', (req, res, next) => {
+        req.url = '/api/v1/app/download-apk';
+        app.handle(req, res, next);
+    });
+
+    // Submissions — obtener contenido de archivo de entrega
+    app.post('/obtener-contenido-submission', (req, res, next) => {
+        req.url = '/api/v1/submissions/content';
+        app.handle(req, res, next);
+    });
+
+    // Submissions — listar entregas de una tarea
+    app.get('/listar-submissions/:taskId', (req, res, next) => {
+        req.url = `/api/v1/submissions/task/${req.params.taskId}`;
+        app.handle(req, res, next);
+    });
+
+    // FCM token registration
+    app.post('/register-fcm-token', async (req, res) => {
+        try {
+            const { userId, token, deviceType } = req.body;
+            if (!userId || !token) {
+                return res.status(400).json({ error: 'userId and token are required' });
+            }
+            await container.userService.registerFCMToken(parseInt(userId), token, deviceType || 'android');
+            res.json({ success: true, message: 'Token registered successfully' });
+        } catch (error) {
+            console.error('❌ Error registering FCM token:', error.message);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // Notify grade — Android sends grade notification to student
+    app.post('/notify-grade', async (req, res) => {
+        try {
+            const { userId, taskName, grade, feedback, gradedByUsername, submissionId } = req.body;
+            if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+
+            const notifService = container.notificationService;
+            if (notifService) {
+                await notifService.sendNotification({
+                    userId: parseInt(userId),
+                    title: `📊 Tu tarea "${taskName || 'Tarea'}" ha sido calificada`,
+                    message: `Nota: ${grade}/10${feedback ? ` — ${feedback.substring(0, 100)}` : ''}`,
+                    type: 'task_graded',
+                    relatedId: submissionId,
+                    senderUsername: gradedByUsername,
+                });
+            }
+
+            res.json({ success: true });
+        } catch (error) {
+            console.error('❌ notify-grade error:', error.message);
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // Notify video upload — notifica suscriptores de nuevo video
+    app.post('/notify-video-upload', async (req, res) => {
+        try {
+            const { creatorUserId, creatorUsername, videoTitle, courseId, courseTitle, thumbnailUrl } = req.body;
+            if (!creatorUserId) return res.status(400).json({ success: false, error: 'creatorUserId required' });
+
+            const notifService = container.notificationService;
+            const subService = container.subscriptionService;
+
+            if (notifService && subService) {
+                const subsResult = await subService.getSubscribers(parseInt(creatorUserId));
+                const subscribers = subsResult.isOk() ? subsResult.getValue() : [];
+
+                let sent = 0;
+                for (const sub of subscribers) {
+                    try {
+                        await notifService.sendNotification({
+                            userId: sub.subscriber_id || sub.subscriberId,
+                            title: `🎬 ${creatorUsername || 'Un creador'} subió un nuevo video`,
+                            message: videoTitle || courseTitle || 'Nuevo video disponible',
+                            type: 'new_video',
+                            relatedId: courseId,
+                            senderUsername: creatorUsername,
+                            thumbnailUrl,
+                        });
+                        sent++;
+                    } catch (e) {
+                        console.warn(`⚠️ Failed to notify subscriber ${sub.subscriber_id}:`, e.message);
+                    }
+                }
+                res.json({ success: true, notificationsSent: sent });
+            } else {
+                res.json({ success: false, error: 'NotificationService not available' });
+            }
+        } catch (error) {
+            console.error('❌ notify-video-upload error:', error.message);
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // Notify course creation — notifica suscriptores de nuevo curso
+    app.post('/notify-course-creation', async (req, res) => {
+        try {
+            const { creatorUserId, creatorUsername, courseId, courseTitle, courseThumbnailUrl } = req.body;
+            if (!creatorUserId || !courseId) {
+                return res.status(400).json({ error: 'Missing required fields: creatorUserId, courseId' });
+            }
+
+            const notifService = container.notificationService;
+            const subService = container.subscriptionService;
+
+            if (notifService && subService) {
+                const subsResult = await subService.getSubscribers(parseInt(creatorUserId));
+                const subscribers = subsResult.isOk() ? subsResult.getValue() : [];
+
+                let sent = 0;
+                for (const sub of subscribers) {
+                    try {
+                        await notifService.sendNotification({
+                            userId: sub.subscriber_id || sub.subscriberId,
+                            title: `📚 ${creatorUsername || 'Un creador'} publicó un nuevo curso`,
+                            message: courseTitle || 'Nuevo curso disponible',
+                            type: 'new_course',
+                            relatedId: courseId,
+                            senderUsername: creatorUsername,
+                            thumbnailUrl: courseThumbnailUrl,
+                        });
+                        sent++;
+                    } catch (e) {
+                        console.warn(`⚠️ Failed to notify subscriber ${sub.subscriber_id}:`, e.message);
+                    }
+                }
+                res.json({ success: true, notificationsSent: sent });
+            } else {
+                res.json({ success: false, error: 'NotificationService not available' });
+            }
+        } catch (error) {
+            console.error('❌ notify-course-creation error:', error.message);
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // Generic send-notification combo (push + email)
+    app.post('/send-notification', async (req, res) => {
+        try {
+            const { userId, title, message, type, relatedId, senderUsername } = req.body;
+            if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+            const notifService = container.notificationService;
+            if (notifService) {
+                await notifService.sendNotification({
+                    userId: parseInt(userId),
+                    title: title || 'Nueva notificación',
+                    message: message || '',
+                    type: type || 'generic',
+                    relatedId,
+                    senderUsername,
+                });
+                res.json({ success: true });
+            } else {
+                res.json({ success: false, error: 'NotificationService not available' });
+            }
+        } catch (error) {
+            console.error('❌ send-notification error:', error.message);
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // Reinforcement history — save and fetch
+    app.post('/reinforcement-history', async (req, res) => {
+        try {
+            const { userId, courseId, questions } = req.body;
+            if (!userId || !courseId || !questions) {
+                return res.status(400).json({ success: false, error: 'Missing userId, courseId or questions' });
+            }
+            const reinforcementRepo = container.reinforcementService?.reinforcementRepo;
+            if (reinforcementRepo) {
+                await reinforcementRepo.saveHistory(parseInt(userId), parseInt(courseId), questions);
+                return res.json({ success: true, message: 'Reinforcement history saved' });
+            }
+            res.json({ success: false, error: 'ReinforcementService not available' });
+        } catch (err) {
+            console.error('Error saving reinforcement history:', err.message);
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.get('/reinforcement-history/:userId/:courseId', async (req, res) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const courseId = parseInt(req.params.courseId);
+            if (!userId || !courseId) {
+                return res.status(400).json({ success: false, error: 'Missing userId or courseId' });
+            }
+            const reinforcementRepo = container.reinforcementService?.reinforcementRepo;
+            if (reinforcementRepo) {
+                const history = await reinforcementRepo.getHistory(userId, courseId);
+                return res.json({ success: true, data: history || [] });
+            }
+            res.json({ success: false, data: [] });
+        } catch (err) {
+            console.error('Error fetching reinforcement history:', err.message);
+            res.status(500).json({ success: false, error: err.message });
         }
     });
 

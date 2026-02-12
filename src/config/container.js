@@ -74,6 +74,7 @@ import { VideoProcessingDomainService } from '../domain/services/VideoProcessing
 import { LLMDomainService } from '../domain/services/LLMDomainService.js';
 import { RAGDomainService } from '../domain/services/RAGDomainService.js';
 import { MCPDomainService } from '../domain/services/MCPDomainService.js';
+import { AppDistributionDomainService } from '../domain/services/AppDistributionDomainService.js';
 
 // ── Interfaces: Controladores ───────────────────────────────
 import { AuthController } from '../interfaces/http/controllers/AuthController.js';
@@ -102,6 +103,7 @@ import { LLMController } from '../interfaces/http/controllers/LLMController.js';
 import { VideoProcessingController } from '../interfaces/http/controllers/VideoProcessingController.js';
 import { RAGController } from '../interfaces/http/controllers/RAGController.js';
 import { MCPController } from '../interfaces/http/controllers/MCPController.js';
+import { AppDistributionController } from '../interfaces/http/controllers/AppDistributionController.js';
 
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los
@@ -182,7 +184,7 @@ export function createContainer() {
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios
     const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo, notificationService, courseService, progressService, userService });
-    const submissionService = new SubmissionDomainService({ submissionRepository: submissionRepo, taskRepository: taskRepo, progressRepository: progressRepo, notificationService, courseService, topicService, userService });
+    const submissionService = new SubmissionDomainService({ submissionRepository: submissionRepo, taskRepository: taskRepo, progressRepository: progressRepo, notificationService, courseService, topicService, userService, fileStoragePort: storageAdapter });
     const likeService = new LikeDomainService({ likeRepository: likeRepo, notificationService, commentRepository: commentRepo, videoRepository: videoRepo, userRepository: userRepo });
     const commentService = new CommentDomainService({ commentRepository: commentRepo, videoRepository: videoRepo, notificationService, userRepository: userRepo });
 
@@ -240,6 +242,10 @@ export function createContainer() {
     const ragController = new RAGController({ ragService: ragDomainService });
     const mcpController = new MCPController({ mcpService: mcpDomainService });
 
+    // Nivel 3: Distribución de app (sin dependencias de dominio pesadas)
+    const appDistributionService = new AppDistributionDomainService();
+    const appDistributionController = new AppDistributionController({ appDistributionService });
+
     return {
         // Middleware
         jwtAdapter,
@@ -271,6 +277,7 @@ export function createContainer() {
         videoProcessingController,
         ragController,
         mcpController,
+        appDistributionController,
 
         // Servicios de dominio
         authService,
@@ -297,6 +304,7 @@ export function createContainer() {
         llmDomainService,
         ragDomainService,
         mcpDomainService,
+        appDistributionService,
 
         // Adaptadores
         storageAdapter,

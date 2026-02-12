@@ -2,7 +2,7 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class SubmissionDomainService {
-    constructor({ submissionRepository, taskRepository, progressRepository, notificationService, courseService, topicService, userService }) {
+    constructor({ submissionRepository, taskRepository, progressRepository, notificationService, courseService, topicService, userService, fileStoragePort }) {
         this.subRepo = submissionRepository;
         this.taskRepo = taskRepository;
         this.progressRepo = progressRepository;
@@ -10,6 +10,7 @@ export class SubmissionDomainService {
         this.courseService = courseService || null;
         this.topicService = topicService || null;
         this.userService = userService || null;
+        this.storage = fileStoragePort || null;
     }
 
     async getById(id) {
@@ -174,6 +175,132 @@ export class SubmissionDomainService {
     async getByCourse(courseId, pagination) {
         const subs = await this.subRepo.findByCourse(courseId, pagination);
         return Result.ok(subs);
+    }
+
+    /**
+     * Obtiene el contenido de un archivo de entrega desde R2/HTTP.
+     * Migrado desde index.legacy.js: POST /obtener-contenido-submission
+     *
+     * @param {{ submissionId?: number, taskId?: number, studentId?: number }} params
+     * @returns {Result<Object>}
+     */
+    async getSubmissionContent({ submissionId, taskId, studentId }) {
+        try {
+            let submission = null;
+
+            // Estrategia 1: Buscar por submissionId
+            if (submissionId) {
+                submission = await this.subRepo.findById(submissionId);
+            }
+
+            // Estrategia 2: Buscar por taskId + studentId
+            if (!submission && taskId && studentId) {
+                submission = await this.subRepo.findByUserAndTask(studentId, taskId);
+            }
+
+            if (!submission) {
+                return Result.fail(new NotFoundError('Submission', submissionId || `task:${taskId}/student:${studentId}`));
+            }
+
+            const fileUri = submission.file_uri || submission.fileUri;
+            const fileName = submission.file_name || submission.fileName || 'archivo';
+
+            if (!fileUri) {
+                return Result.fail(new NotFoundError('Archivo', 'No hay archivo asociado a esta entrega'));
+            }
+
+            // Obtener contenido del archivo
+            const fileData = await this._fetchFileContent(fileUri, fileName);
+
+            return Result.ok({
+                submissionId: submission.id,
+                taskId: submission.task_id,
+                studentId: submission.student_id || submission.user_id,
+                fileName,
+                fileUri,
+                submissionDate: submission.submission_date,
+                grade: submission.grade,
+                feedback: submission.feedback,
+                content: fileData.content,
+                contentType: fileData.contentType,
+                fileType: this._getFileType(fileName),
+                source: fileData.source,
+            });
+        } catch (err) {
+            return Result.fail(new NotFoundError('Contenido', err.message));
+        }
+    }
+
+    /**
+     * Descarga contenido de archivo desde R2 o HTTP directo.
+     * @private
+     */
+    async _fetchFileContent(fileUri, fileName) {
+        // Intentar R2 autenticado
+        if (this.storage && this.storage.isAvailable()) {
+            try {
+                const objectKey = this.storage.extractObjectKey(fileUri);
+                if (objectKey) {
+                    const { buffer, contentType } = await this.storage.fetchFile(objectKey);
+                    const isText = this._isTextFile(fileName) || (contentType && contentType.includes('text'));
+                    return {
+                        content: isText ? buffer.toString('utf-8') : buffer.toString('base64'),
+                        contentType,
+                        source: 'r2_authenticated',
+                    };
+                }
+            } catch (err) {
+                console.warn('[SubmissionDomainService] R2 fetch failed:', err.message);
+            }
+        }
+
+        // Fallback: HTTP directo
+        if (fileUri.startsWith('http://') || fileUri.startsWith('https://')) {
+            const { default: axios } = await import('axios');
+            const response = await axios.get(fileUri, {
+                responseType: 'arraybuffer',
+                timeout: 60000,
+                headers: { 'User-Agent': 'YisusCompany-MCP-Server/3.0' },
+            });
+            const buffer = Buffer.from(response.data);
+            const contentType = response.headers['content-type'] || 'application/octet-stream';
+            const isText = this._isTextFile(fileName) || contentType.includes('text');
+
+            return {
+                content: isText ? buffer.toString('utf-8') : buffer.toString('base64'),
+                contentType,
+                source: 'http_direct',
+            };
+        }
+
+        throw new Error(`No se pudo obtener el contenido del archivo: ${fileUri}`);
+    }
+
+    /** @private */
+    _isTextFile(fileName) {
+        const textExts = [
+            '.txt', '.sql', '.py', '.js', '.ts', '.java', '.kt', '.swift',
+            '.html', '.css', '.json', '.xml', '.md', '.csv', '.yaml', '.yml',
+            '.sh', '.bat', '.c', '.cpp', '.h', '.cs', '.php', '.rb', '.go', '.rs',
+        ];
+        return textExts.some(ext => (fileName || '').toLowerCase().endsWith(ext));
+    }
+
+    /** @private */
+    _getFileType(fileName) {
+        const lower = (fileName || '').toLowerCase();
+        const map = {
+            '.pdf': 'pdf', '.docx': 'docx', '.doc': 'docx',
+            '.xlsx': 'excel', '.xls': 'excel', '.pptx': 'powerpoint',
+            '.txt': 'text', '.sql': 'sql', '.py': 'python',
+            '.js': 'javascript', '.ts': 'javascript', '.java': 'java',
+            '.kt': 'kotlin', '.html': 'html', '.css': 'css',
+            '.json': 'json', '.xml': 'xml', '.md': 'markdown', '.csv': 'csv',
+        };
+        for (const [ext, type] of Object.entries(map)) {
+            if (lower.endsWith(ext)) return type;
+        }
+        return 'unknown';
     }
 }
 

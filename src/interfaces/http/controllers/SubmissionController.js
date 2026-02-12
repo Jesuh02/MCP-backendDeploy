@@ -119,5 +119,35 @@ export class SubmissionController extends BaseController {
             next(err);
         }
     };
+
+    /**
+     * POST /obtener-contenido-submission
+     * Obtiene el contenido de un archivo de entrega.
+     * Migrado desde index.legacy.js para compatibilidad con Android.
+     */
+    getSubmissionContent = async (req, res, next) => {
+        try {
+            const { submissionId, taskId, studentId } = req.body;
+
+            if (!submissionId && !(taskId && studentId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Se requiere submissionId o (taskId + studentId)',
+                });
+            }
+
+            const result = await this.subService.getSubmissionContent({
+                submissionId: submissionId ? parseInt(submissionId) : undefined,
+                taskId: taskId ? parseInt(taskId) : undefined,
+                studentId: studentId ? parseInt(studentId) : undefined,
+            });
+
+            if (result.isFail()) return next(result.getError());
+
+            res.json({ success: true, ...result.getValue() });
+        } catch (err) {
+            next(err);
+        }
+    };
 }
 export default SubmissionController;
