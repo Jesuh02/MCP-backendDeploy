@@ -5,6 +5,7 @@ export function reinforcementRoutes({ reinforcementController }) {
 
     router.post('/session', reinforcementController.saveSession);
     router.post('/save-questions', reinforcementController.saveQuestions);
+    router.post('/ingest-context', reinforcementController.ingestContext);
     router.get('/history/user/:userId/course/:courseId', reinforcementController.getHistory);
     router.get('/history', reinforcementController.getMySessions);
 

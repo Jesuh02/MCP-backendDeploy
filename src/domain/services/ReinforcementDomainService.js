@@ -8,10 +8,83 @@
  */
 import { Result } from '../../shared/Result.js';
 import { MCPService } from './MCPService.js';
+import { RAGService } from './RAGService.js';
+import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 
 export class ReinforcementDomainService {
     constructor({ reinforcementRepository }) {
         this.reinforcementRepo = reinforcementRepository;
+    }
+
+    /**
+     * Ensure content for a task/topic is ingested into RAG (rag_documents).
+     * If missing, fetches from content_items and ingests.
+     */
+    async ensureContentIngested(courseId, taskId, topicId = null) {
+        try {
+            const ragService = new RAGService();
+            const supabase = SupabaseService.getInstance();
+            
+            // 1. Check if RAG documents exist for this task
+            const ragExists = await ragService.vectorStore.exists({
+                taskId: taskId,
+                courseId: courseId,
+                ...(topicId ? { topicId } : {})
+            });
+
+            if (ragExists) {
+                return Result.ok({ message: 'RAG content already exists', ingested: false });
+            }
+
+            console.log(`📝 [ReinforcementService] No RAG docs for Task ${taskId}. Fetching content_items...`);
+
+            // 2. Fetch source content from content_items
+            // We select items linked to this task
+            const { data: items, error } = await supabase.client
+                .from('content_items')
+                .select('*')
+                .eq('task_id', taskId);
+
+            if (error) throw error;
+
+            if (!items || items.length === 0) {
+                return Result.ok({ message: 'No content_items found for this task', ingested: false });
+            }
+
+            let ingestedCount = 0;
+
+            // 3. Ingest each item
+            for (const item of items) {
+                if (item.body && item.body.length > 50) {
+                    console.log(`💾 Ingesting content_item ${item.id} into RAG...`);
+                    
+                    // Use item.topic_id as fallback if not passed
+                    const effectiveTopicId = topicId || item.topic_id;
+
+                    await ragService.ingestDocument(item.body, {
+                        courseId: courseId,
+                        taskId: taskId,
+                        topicId: effectiveTopicId,
+                        contentItemId: item.id,
+                        fileName: item.title || `content_${item.id}`,
+                        fileType: 'txt' // Assuming text body
+                    });
+                    ingestedCount++;
+                }
+            }
+
+            return Result.ok({ 
+                success: true, 
+                message: `Ingested ${ingestedCount} content items into RAG`, 
+                ingested: true,
+                count: ingestedCount 
+            });
+
+        } catch (error) {
+            console.error('[ReinforcementService] Ingestion error:', error);
+            // Non-blocking failure, return fail result but don't crash
+            return Result.fail(error);
+        }
     }
 
     /**
