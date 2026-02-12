@@ -6,7 +6,7 @@ import Joi from 'joi';
 
 export const processPromptSchema = Joi.object({
     prompt: Joi.string().min(1).required(),
-    model: Joi.string().optional(),
+    model: Joi.string().allow('', null).optional(),
     courseId: Joi.number().integer().optional(),
     taskDescription: Joi.string().optional(),
     fileContent: Joi.string().optional(),

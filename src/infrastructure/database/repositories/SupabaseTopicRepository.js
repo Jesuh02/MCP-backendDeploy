@@ -39,7 +39,7 @@
         if (data.title !== undefined) payload.name = data.title;
         if (data.description !== undefined) payload.description = data.description;
         if (data.orderIndex !== undefined) payload.order_index = data.orderIndex;
-        // payload.updated_at = new Date().toISOString(); // Removed: column does not exist in schema
+        payload.updated_at = new Date().toISOString(); 
         const { data: updated, error } = await this.client.from('topics').update(payload).eq('id', id).select().single();
         if (error) throw new Error(error.message);
         return updated;

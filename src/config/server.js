@@ -17,6 +17,8 @@ import { createContainer } from './container.js';
 import { createV1Router } from '../interfaces/http/routes/v1/index.js';
 import { createAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
 import { errorHandler } from '../infrastructure/middleware/ErrorHandler.js';
+import { MCPService } from '../domain/services/MCPService.js';
+import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
 
 /**
  * Crea y configura la aplicación Express con toda la arquitectura hexagonal.
@@ -144,6 +146,218 @@ export function createApp() {
     app.post('/mcp', (req, res, next) => {
         req.url = '/api/v1/mcp/message';
         app.handle(req, res, next);
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // 3.5. MCP HTTP TOOL ENDPOINTS (Android MCPHttpClient compat)
+    //
+    // The Android app's MCPHttpClient sends direct HTTP requests to
+    // /initialize, /tools/list, /tools/call using JSON-RPC format.
+    // These endpoints replicate the standalone mcp-http.js server
+    // so the deployed Railway backend handles them.
+    // ═══════════════════════════════════════════════════════════
+
+    let _mcpHttpService = null;
+    function getMCPHttpService() {
+        if (!_mcpHttpService) {
+            try {
+                _mcpHttpService = new MCPService();
+            } catch (e) {
+                console.error('❌ Failed to init MCPService for HTTP tools:', e.message);
+            }
+        }
+        return _mcpHttpService;
+    }
+
+    // MCP Initialize — Android client calls this to handshake
+    app.post('/initialize', async (req, res) => {
+        console.log('🔧 MCP Initialize request (Android compat)');
+        try {
+            const supabase = SupabaseService.getInstance();
+            await supabase.testConnection();
+
+            res.json({
+                jsonrpc: '2.0',
+                id: req.body?.id || 1,
+                result: {
+                    protocolVersion: '2024-11-05',
+                    capabilities: {
+                        tools: { listChanged: true },
+                        resources: { subscribe: true, listChanged: true },
+                    },
+                    serverInfo: {
+                        name: 'YisusCompany by YisusFactory MCP Server',
+                        version: '3.0.0',
+                    },
+                },
+            });
+        } catch (error) {
+            console.error('❌ Initialize error:', error);
+            res.status(500).json({
+                jsonrpc: '2.0',
+                id: req.body?.id || 1,
+                error: { code: -32603, message: 'Internal error', data: error.message },
+            });
+        }
+    });
+
+    // MCP Tools List — Android client discovers available tools
+    app.post('/tools/list', (req, res) => {
+        console.log('🔧 Tools list request (Android compat)');
+        res.json({
+            jsonrpc: '2.0',
+            id: req.body?.id || 1,
+            result: {
+                tools: [
+                    {
+                        name: 'query_database',
+                        description: 'Execute queries on the YisusCompany Supabase database. Accepts raw SQL or natural language.',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                query: { type: 'string', description: 'SQL or natural language query' },
+                            },
+                            required: ['query'],
+                        },
+                    },
+                    {
+                        name: 'get_database_schema',
+                        description: 'Get the complete database schema with all tables and columns.',
+                        inputSchema: { type: 'object', properties: {} },
+                    },
+                    {
+                        name: 'analyze_github_repo',
+                        description: 'Analyze and grade a GitHub repository.',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                repoUrl: { type: 'string', description: 'GitHub repository URL' },
+                                criteria: { type: 'string', description: 'Evaluation criteria' },
+                                taskDescription: { type: 'string', description: 'Task description' },
+                            },
+                            required: ['repoUrl'],
+                        },
+                    },
+                ],
+            },
+        });
+    });
+
+    // MCP Tools Call — Android client executes tools (query_database, etc.)
+    app.post('/tools/call', async (req, res) => {
+        const { params } = req.body;
+        console.log('🔧 Tool call (Android compat):', params?.name);
+
+        try {
+            const mcpSvc = getMCPHttpService();
+            if (!mcpSvc) throw new Error('MCPService not initialized');
+
+            const { name, arguments: args } = params;
+
+            if (name === 'query_database') {
+                let result;
+                const isSQL = /^\s*(select|insert|update|delete|with)\s/i.test(args.query);
+
+                if (isSQL) {
+                    console.log('📊 Executing raw SQL (Android)...');
+                    result = await mcpSvc.processQuery(args.query, { includeSchema: true });
+                } else {
+                    console.log('🤖 NL query via Agent (Android)...');
+                    try {
+                        const agentResponse = await mcpSvc.processQueryWithAgent(args.query);
+                        result = { data: agentResponse, sqlScript: '-- Executed via LLM Agent' };
+                    } catch (agentErr) {
+                        console.error('❌ Agent error:', agentErr);
+                        result = { error: true, message: `Error del agente LLM: ${agentErr.message}` };
+                    }
+                }
+
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
+                });
+            } else if (name === 'get_database_schema') {
+                const schema = await mcpSvc.getDatabaseSchema();
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: { content: [{ type: 'text', text: JSON.stringify(schema, null, 2) }] },
+                });
+            } else if (name === 'analyze_github_repo') {
+                console.log('🐙 Analyzing GitHub repo (Android):', args.repoUrl);
+                const ghResult = await mcpSvc.analyzeGitHubRepo(args.repoUrl, {
+                    taskDescription: args.taskDescription,
+                    gradingCriteria: args.gradingCriteria,
+                });
+                res.json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    result: { content: [{ type: 'text', text: JSON.stringify(ghResult, null, 2) }] },
+                });
+            } else {
+                res.status(404).json({
+                    jsonrpc: '2.0',
+                    id: req.body.id,
+                    error: { code: -32601, message: `Tool not found: ${name}` },
+                });
+            }
+        } catch (error) {
+            console.error('❌ Tool call error:', error);
+            res.json({
+                jsonrpc: '2.0',
+                id: req.body.id,
+                result: {
+                    content: [{ type: 'text', text: `❌ Error: ${error.message}` }],
+                },
+            });
+        }
+    });
+
+    // Notification endpoint — Android sends email/push notifications after chat
+    app.post('/notify-chat-response', async (req, res) => {
+        try {
+            const { userId } = req.body;
+            if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+
+            // Use the notification service from the container
+            const notifService = container.notificationService;
+            if (notifService) {
+                await notifService.create({
+                    userId,
+                    title: '🤖 Nueva respuesta del chat',
+                    message: 'Tu consulta ha sido procesada. Abre la app para ver la respuesta.',
+                    type: 'chat_response',
+                });
+            }
+
+            res.json({ success: true });
+        } catch (error) {
+            console.error('❌ notify-chat-response error:', error.message);
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // Push notification endpoint — Android sends push when app is in background
+    app.post('/send-push-notification', async (req, res) => {
+        try {
+            const { userId, title, body: notifBody, data } = req.body;
+            if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+
+            const fcm = container.fcmAdapter;
+            if (fcm) {
+                await fcm.sendToUser(userId, {
+                    title: title || '🤖 Nueva respuesta',
+                    body: notifBody || 'Tu consulta ha sido procesada.',
+                    data: data || {},
+                });
+            }
+
+            res.json({ success: true });
+        } catch (error) {
+            console.error('❌ send-push-notification error:', error.message);
+            res.json({ success: false, error: error.message });
+        }
     });
 
     // ═══════════════════════════════════════════════════════════
