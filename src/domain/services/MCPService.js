@@ -491,24 +491,55 @@ export class MCPService {
             }
 
             // A. Create Session (if not provided) [Step 0]
+            // Check for existing recent session to prevent duplicates
             if (!sessionId) {
-                const { data: sessionData, error: sessionError } = await supabase
+                // Look for an existing session created in the last 2 minutes for the same context
+                const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+                let existingQuery = supabase
                     .from('question_sessions')
-                    .insert({
-                        user_id: userId,
-                        course_id: courseId,
-                        topic_id: topicId,
-                        task_id: taskId
-                    })
                     .select('id')
-                    .single();
+                    .eq('user_id', userId)
+                    .eq('course_id', courseId)
+                    .gte('created_at', twoMinutesAgo)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
 
-                if (sessionError) {
-                    logger.error(`Error creating session during save: ${sessionError.message}`);
-                    // Fallback: try to fetch latest session or create without returning
-                    sessionId = null;
+                // Match on topic_id and task_id (use is(null) for null values)
+                if (topicId) {
+                    existingQuery = existingQuery.eq('topic_id', topicId);
                 } else {
-                    sessionId = sessionData.id;
+                    existingQuery = existingQuery.is('topic_id', null);
+                }
+                if (taskId) {
+                    existingQuery = existingQuery.eq('task_id', taskId);
+                } else {
+                    existingQuery = existingQuery.is('task_id', null);
+                }
+
+                const { data: existingSession } = await existingQuery.maybeSingle();
+
+                if (existingSession) {
+                    sessionId = existingSession.id;
+                    logger.info(`♻️ Reusing existing session ${sessionId} (dedup within 2min window)`);
+                } else {
+                    const { data: sessionData, error: sessionError } = await supabase
+                        .from('question_sessions')
+                        .insert({
+                            user_id: userId,
+                            course_id: courseId,
+                            topic_id: topicId || null,
+                            task_id: taskId || null
+                        })
+                        .select('id')
+                        .single();
+
+                    if (sessionError) {
+                        logger.error(`Error creating session during save: ${sessionError.message}`);
+                        sessionId = null;
+                    } else {
+                        sessionId = sessionData.id;
+                        logger.info(`✅ New session created: ${sessionId} (topic=${topicId}, task=${taskId})`);
+                    }
                 }
             }
 

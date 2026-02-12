@@ -90,14 +90,9 @@ export class LLMDomainService {
             // 5. Call LLM
             const response = await this.llm.chat(systemPrompt, fullPrompt, { model });
 
-            // 6. Save reinforcement history if applicable
-            if (userId && courseId && this._isReinforcementRequest(prompt) && response.content) {
-                try {
-                    await this.reinforcementRepo.saveHistory(userId, courseId, [response.content]);
-                } catch (saveErr) {
-                    console.warn('[LLMDomainService] Save reinforcement failed:', saveErr.message);
-                }
-            }
+            // 6. Reinforcement history save is handled by the client via /reinforcement/save-questions
+            // which uses MCPService with full uniqueness flow (hash + embedding + semantic dedup)
+            // and correctly passes topicId/taskId. Do NOT save here to avoid duplicates.
 
             return Result.ok({
                 response: response.content,
