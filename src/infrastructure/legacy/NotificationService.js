@@ -8,14 +8,14 @@
 
 import axios from 'axios';
 import { createRequire } from 'module';
-import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
+import { SupabaseService } from '../database/SupabaseService.js';
 import {
     generateGradeEmailHTML,
     generateGradeModifiedEmailHTML,
     generateNewCourseEmailHTML,
     generateGenericEmailHTML,
     generateChatResponseEmailHTML
-} from '../templates/emailTemplates.js';
+} from '../../templates/emailTemplates.js';
 
 const require = createRequire(
     import.meta.url);

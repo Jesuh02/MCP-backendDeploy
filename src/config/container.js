@@ -41,7 +41,6 @@ import { FCMAdapter } from '../infrastructure/notifications/FCMAdapter.js';
 import { EmailAdapter } from '../infrastructure/notifications/EmailAdapter.js';
 import { WompiAdapter } from '../infrastructure/payment/WompiAdapter.js';
 
-// Nuevos adaptadores (transición hexagonal)
 import { OpenAITTSAdapter } from '../infrastructure/tts/OpenAITTSAdapter.js';
 import { FFmpegVideoAdapter } from '../infrastructure/video/FFmpegVideoAdapter.js';
 import { LLMAdapter } from '../infrastructure/ai/LLMAdapter.js';
@@ -70,7 +69,6 @@ import { RolDomainService } from '../domain/services/RolDomainService.js';
 import { FileContextDomainService } from '../domain/services/FileContextDomainService.js';
 import { ReinforcementDomainService } from '../domain/services/ReinforcementDomainService.js';
 
-// Nuevos servicios de dominio (transición hexagonal)
 import { TTSDomainService } from '../domain/services/TTSDomainService.js';
 import { VideoProcessingDomainService } from '../domain/services/VideoProcessingDomainService.js';
 import { LLMDomainService } from '../domain/services/LLMDomainService.js';
@@ -99,7 +97,6 @@ import { RolController } from '../interfaces/http/controllers/RolController.js';
 import { FileContextController } from '../interfaces/http/controllers/FileContextController.js';
 import { ReinforcementController } from '../interfaces/http/controllers/ReinforcementController.js';
 
-// Nuevos controladores (transición hexagonal)
 import { TTSController } from '../interfaces/http/controllers/TTSController.js';
 import { LLMController } from '../interfaces/http/controllers/LLMController.js';
 import { VideoProcessingController } from '../interfaces/http/controllers/VideoProcessingController.js';
@@ -132,7 +129,6 @@ export function createContainer() {
     const emailAdapter = new EmailAdapter();
     const paymentGateway = new WompiAdapter();
 
-    // Nuevos adaptadores (transición hexagonal)
     const ttsAdapter = new OpenAITTSAdapter();
     const videoProcessingAdapter = new FFmpegVideoAdapter();
     const llmAdapter = new LLMAdapter();
@@ -164,32 +160,33 @@ export function createContainer() {
 
     // ═══════════════════════════════════════════════════════════
     // 3. SERVICIOS DE DOMINIO — Inyectar repositorios y adaptadores
+    //    Orden determinado por el grafo de dependencias.
     // ═══════════════════════════════════════════════════════════
 
+    // Nivel 0: servicios sin dependencias inter-servicio
     const authService = new AuthService({ userRepository: userRepo, jwtAdapter });
     const userService = new UserDomainService({ userRepository: userRepo, fileStoragePort: storageAdapter });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
     const courseService = new CourseDomainService({ courseRepository: courseRepo, transactionRepository: transactionRepo, progressRepository: progressRepo, fileStoragePort: storageAdapter });
     const videoService = new VideoDomainService({ videoRepository: videoRepo, fileStoragePort: storageAdapter });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
-    const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
-    const submissionService = new SubmissionDomainService({ submissionRepository: submissionRepo, taskRepository: taskRepo, progressRepository: progressRepo });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo });
     const progressService = new ProgressDomainService({ progressRepository: progressRepo });
-    // NotificationService moved up to be available for dependency injection
     const notificationService = new NotificationDomainService({ notificationRepository: notificationRepo, userRepository: userRepo, pushNotificationPort: fcmAdapter, emailPort: emailAdapter });
-
-    // Services depending on NotificationService
-    const likeService = new LikeDomainService({ likeRepository: likeRepo, notificationService, commentRepository: commentRepo, videoRepository: videoRepo, userRepository: userRepo });
-    const commentService = new CommentDomainService({ commentRepository: commentRepo, videoRepository: videoRepo, notificationService, userRepository: userRepo });
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo });
     const fileContextService = new FileContextDomainService({ fileContextRepository: fileContextRepo });
     const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo });
 
-    // ── Nuevos servicios de dominio (transición hexagonal) ───
+    // Nivel 1: servicios que dependen de notificationService u otros servicios
+    const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo, notificationService, courseService, progressService, userService });
+    const submissionService = new SubmissionDomainService({ submissionRepository: submissionRepo, taskRepository: taskRepo, progressRepository: progressRepo, notificationService, courseService, topicService, userService });
+    const likeService = new LikeDomainService({ likeRepository: likeRepo, notificationService, commentRepository: commentRepo, videoRepository: videoRepo, userRepository: userRepo });
+    const commentService = new CommentDomainService({ commentRepository: commentRepo, videoRepository: videoRepo, notificationService, userRepository: userRepo });
+
+    // Nivel 2: servicios de IA y procesamiento
     const ttsService = new TTSDomainService({ ttsPort: ttsAdapter });
     const videoProcessingService = new VideoProcessingDomainService({ videoProcessingPort: videoProcessingAdapter, fileStoragePort: storageAdapter });
     const llmDomainService = new LLMDomainService({
@@ -221,9 +218,9 @@ export function createContainer() {
     const courseController = new CourseController({ courseService });
     const videoController = new VideoController({ videoService });
     const topicController = new TopicController({ topicService });
-    const taskController = new TaskController({ taskService, notificationService, courseService, progressService, userService, topicService });
+    const taskController = new TaskController({ taskService });
     const contentItemController = new ContentItemController({ contentItemService });
-    const submissionController = new SubmissionController({ submissionService, storageService, storageAdapter, notificationService, userService, taskService, courseService, topicService });
+    const submissionController = new SubmissionController({ submissionService, storageService, storageAdapter });
     const subscriptionController = new SubscriptionController({ subscriptionService });
     const progressController = new ProgressController({ progressService });
     const likeController = new LikeController({ likeService });
@@ -237,7 +234,6 @@ export function createContainer() {
     const fileContextController = new FileContextController({ fileContextService });
     const reinforcementController = new ReinforcementController({ reinforcementService });
 
-    // Nuevos controladores (transición hexagonal)
     const ttsController = new TTSController({ ttsService });
     const llmController = new LLMController({ llmService: llmDomainService });
     const videoProcessingController = new VideoProcessingController({ videoProcessingService });
@@ -270,7 +266,6 @@ export function createContainer() {
         fileContextController,
         reinforcementController,
 
-        // Nuevos controladores (transición hexagonal)
         ttsController,
         llmController,
         videoProcessingController,
