@@ -12,7 +12,13 @@ const createFileContextSchema = Joi.object({
     fileUri: Joi.string().max(2000).allow(null, '').optional(),
     extractedText: Joi.string().max(100000).allow(null, '').optional(),
     summary: Joi.string().max(10000).allow(null, '').optional(),
-});
+    content: Joi.string().max(100000).allow(null, '').optional(),
+    fileContent: Joi.string().max(100000).allow(null, '').optional(),
+    file_content: Joi.string().max(100000).allow(null, '').optional(),
+    contentSummary: Joi.string().max(10000).allow(null, '').optional(),
+    content_summary: Joi.string().max(10000).allow(null, '').optional(),
+    metadata: Joi.string().max(10000).allow(null, '').optional(),
+}).options({ allowUnknown: true });
 
 export class FileContextController {
     constructor({ fileContextService }) {
