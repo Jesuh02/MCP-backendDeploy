@@ -47,7 +47,7 @@
             .in('task_id', taskIds)
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
-        
+
         if (error) {
             console.error('Error in findByCourse:', error);
             return [];

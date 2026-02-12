@@ -151,9 +151,11 @@ router.post('/generate-excel', async(req, res) => {
         // 4. Return URL
         res.json({
             success: true,
-            url: publicUrl,
-            rows: dataToExport.length,
-            filename: filename
+            data: {
+                url: publicUrl,
+                rows: dataToExport.length,
+                filename: filename
+            }
         });
 
     } catch (error) {

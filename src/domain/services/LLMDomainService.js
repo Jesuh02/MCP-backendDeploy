@@ -68,7 +68,7 @@ export class LLMDomainService {
 
             // 2. Build system prompt with context
             let systemPrompt = 'Eres un asistente educativo experto. Responde de manera clara, precisa y útil.';
-            
+
             // INSTRUCCIÓN SEMÁNTICA: Detección de intención de calificación (Requerimiento estricto: NO usar regex en input usuario)
             // El LLM es responsable de señalizar si es una solicitud de nota válida.
             systemPrompt += `\n\nIMPORTANTE: Tu eres capaz de detectar la intención del usuario. Si el usuario te pide explícitamente CALIFICAR, EVALUAR o dar una NOTA a la entrega/tarea adjunta, debes iniciar tu respuesta con la etiqueta exacta: [GRADING_REQUEST].
