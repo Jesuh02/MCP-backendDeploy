@@ -26,6 +26,15 @@ export class CourseController {
         } catch (err) { next(err); }
     };
 
+    getFilterCounts = async(req, res, next) => {
+        try {
+            const userId = req.query.userId ? parseInt(req.query.userId) : (req.user?.userId || null);
+            const result = await this.courseService.getFilterCounts(userId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getById = async(req, res, next) => {
         try {
             const result = await this.courseService.getById(parseInt(req.params.id));

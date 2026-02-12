@@ -5,6 +5,7 @@ export function courseRoutes({ courseController }) {
 
     router.get('/', courseController.list);
     router.get('/stats', courseController.getStats);
+    router.get('/counts', courseController.getFilterCounts);
     router.get('/search', courseController.search);
     router.get('/free', courseController.getFreeCourses);
     router.get('/premium', courseController.getPremiumCourses);
