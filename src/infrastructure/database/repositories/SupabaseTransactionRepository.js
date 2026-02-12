@@ -12,12 +12,20 @@ export class SupabaseTransactionRepository {
     }
 
     async findByUser(userId) {
-        const { data, error } = await this.client.from('transactions').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+        const { data, error } = await this.client.from('transactions').select('*').eq('user_id', userId).order('transaction_date', { ascending: false });
         return error ? [] : data || [];
     }
 
     async findPending(userId, courseId) {
-        const { data, error } = await this.client.from('transactions').select('*').eq('user_id', userId).eq('course_id', courseId).eq('status', 'pending').order('created_at', { ascending: false }).limit(1).single();
+        // Check for 'pending' or 'PENDING'
+        const { data, error } = await this.client.from('transactions')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .ilike('status', 'pending')
+            .order('transaction_date', { ascending: false })
+            .limit(1)
+            .single();
         return error ? null : data;
     }
 
@@ -57,29 +65,48 @@ export class SupabaseTransactionRepository {
     }
 
     async findByUserAndCourse(userId, courseId) {
-        const { data, error } = await this.client.from('transactions').select('*').eq('user_id', userId).eq('course_id', courseId).order('created_at', { ascending: false });
+        const { data, error } = await this.client.from('transactions').select('*').eq('user_id', userId).eq('course_id', courseId).order('transaction_date', { ascending: false });
         if (error) return [];
         return data || [];
     }
 
     async hasSuccessfulPurchase(userId, courseId) {
-        const { count, error } = await this.client.from('transactions').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('course_id', courseId).eq('status', 'approved');
+        // Check for 'approved' or 'APPROVED'
+        const { count, error } = await this.client.from('transactions')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .ilike('status', 'approved');
         return !error && count > 0;
     }
 
     async countPurchased(userId) {
-        const { count, error } = await this.client.from('transactions').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('status', 'approved');
+        // Check for 'approved' or 'APPROVED'
+        const { count, error } = await this.client.from('transactions')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .ilike('status', 'approved');
         return error ? 0 : count;
     }
 
     async findPurchasedCourseIdsPaginated(userId, { offset = 0, limit = 20 } = {}) {
-        const { data, error } = await this.client.from('transactions').select('course_id').eq('user_id', userId).eq('status', 'approved').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        // Check for 'approved' or 'APPROVED'
+        const { data, error } = await this.client.from('transactions')
+            .select('course_id')
+            .eq('user_id', userId)
+            .ilike('status', 'approved')
+            .order('transaction_date', { ascending: false })
+            .range(offset, offset + limit - 1);
         if (error) return [];
         return data.map(t => t.course_id);
     }
 
     async findPurchasedCourseIds(userId) {
-        const { data, error } = await this.client.from('transactions').select('course_id').eq('user_id', userId).eq('status', 'approved');
+        // Check for 'approved' or 'APPROVED'
+        const { data, error } = await this.client.from('transactions')
+            .select('course_id')
+            .eq('user_id', userId)
+            .ilike('status', 'approved');
         if (error) return [];
         return data.map(t => t.course_id);
     }

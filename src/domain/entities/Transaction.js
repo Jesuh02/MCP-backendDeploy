@@ -16,7 +16,7 @@ export class Transaction {
             status: row.status || 'pending',
             paymentMethod: row.payment_method || null,
             gatewayResponse: row.gateway_response || null,
-            createdAt: row.created_at,
+            createdAt: row.transaction_date || row.created_at,
             updatedAt: row.updated_at,
         });
     }
