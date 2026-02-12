@@ -12,10 +12,10 @@ import fetch from 'node-fetch'; // Ensure node-fetch is available
 class PaymentService {
     constructor() {
         this.supabase = SupabaseService.getInstance();
-        
+
         // Load credentials securely from environment
         const ENV_privateKey = process.env.PAYU_API_KEY;
-        
+
         // Detect environment based on key prefix
         // If key starts with 'prv_test_', we MUST use Sandbox URL
         // If key starts with 'prv_prod_', we MUST use Production URL
@@ -26,7 +26,7 @@ class PaymentService {
             this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY;
             this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET;
             this.wompiEventSecret = process.env.PAYU_EVENT_SECRET;
-            
+
             this.isTest = true;
             this.wompiUrl = 'https://sandbox.wompi.co/v1';
             console.log(`💳 Payment Service Initialized: Mode=SANDBOX (Test Key Detected), URL=${this.wompiUrl}`);
@@ -36,12 +36,12 @@ class PaymentService {
             this.wompiPublicKey = process.env.PAYU_PUBLIC_KEY;
             this.wompiIntegritySecret = process.env.PAYU_INTEGRITY_SECRET;
             this.wompiEventSecret = process.env.PAYU_EVENT_SECRET;
-            
+
             this.isTest = false;
-            this.wompiUrl = 'https://production.wompi.co/v1'; 
+            this.wompiUrl = 'https://production.wompi.co/v1';
             console.log(`💳 Payment Service Initialized: Mode=PRODUCTION, URL=${this.wompiUrl}`);
         }
-        
+
         // Validate that all required credentials are present
         if (!this.wompiprivateKey) {
             throw new Error('❌ CRITICAL: PAYU_API_KEY environment variable is not set. Payment service cannot start.');
@@ -55,9 +55,9 @@ class PaymentService {
         if (!this.wompiEventSecret) {
             throw new Error('❌ CRITICAL: PAYU_EVENT_SECRET environment variable is not set. Payment service cannot start.');
         }
-        
+
         console.log('✅ All payment credentials validated successfully');
-        
+
         // Cache for acceptance token
         this._cachedAcceptanceToken = null;
         this._acceptanceTokenExpiry = null;
@@ -73,32 +73,32 @@ class PaymentService {
         if (!this.wompiPublicKey) {
             throw new Error('Internal Error: WOMPI Public Key is not configured (PAYU_PUBLIC_KEY env var)');
         }
-        
+
         try {
             const url = `${this.wompiUrl}/merchants/${this.wompiPublicKey}`;
             console.log(`🔑 Fetching acceptance token from Wompi: ${url}`);
-            
+
             const response = await fetch(url, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json'
                 }
             });
-            
+
             const result = await response.json();
             // Log full response to debug "No está presente" issues
             console.log('PaymentService: Merchant/Token Response:', JSON.stringify(result, null, 2));
-            
+
             if (result.data && result.data.presigned_acceptance) {
                 const { acceptance_token, permalink } = result.data.presigned_acceptance;
-                
+
                 if (!acceptance_token) {
-                     console.error('❌ Acceptance token field is missing in response data:', result.data);
-                     throw new Error('Wompi returned success but acceptance_token is missing');
+                    console.error('❌ Acceptance token field is missing in response data:', result.data);
+                    throw new Error('Wompi returned success but acceptance_token is missing');
                 }
 
                 console.log('✅ Acceptance token obtained. Terms URL:', permalink);
-                
+
                 return acceptance_token;
             } else {
                 console.error('❌ Failed to get acceptance token. Result:', JSON.stringify(result));
@@ -118,11 +118,11 @@ class PaymentService {
     async initiatePayment(paymentData) {
         // 1. Validation
         console.log('📥 Received payment data:', JSON.stringify(paymentData, null, 2));
-        
+
         if (!paymentData.userId || !paymentData.courseId) {
             throw new Error(`Invalid payment data: Missing required fields. userId: ${paymentData.userId}, courseId: ${paymentData.courseId}`);
         }
-        
+
         // If amount is not provided or is 0, try to fetch it from the course
         let amount = paymentData.amount;
         if (!amount || amount <= 0) {
@@ -132,37 +132,37 @@ class PaymentService {
                 .select('price')
                 .eq('id', paymentData.courseId)
                 .single();
-                
+
             if (error || !course) {
                 throw new Error('Course not found or database error');
             }
-            
+
             amount = parseFloat(course.price || 0);
             paymentData.amount = amount; // Update the amount in paymentData
         }
-        
+
         // Wompi minimum amount validation: $1,500 COP
         const WOMPI_MIN_AMOUNT_COP = 1500;
         if (amount < WOMPI_MIN_AMOUNT_COP) {
             throw new Error(`Amount must be at least ${WOMPI_MIN_AMOUNT_COP} COP. Course price: ${amount} COP`);
         }
-        
+
         console.log('📥 Initiating Wompi Checkout for:', JSON.stringify({ userId: paymentData.userId, courseId: paymentData.courseId, amount: amount }));
 
         const referenceCode = `ORDER_${Date.now()}_${paymentData.userId}_${paymentData.courseId}`;
         const currency = 'COP';
-        const amountInCents = Math.round(amount * 100); 
-        
+        const amountInCents = Math.round(amount * 100);
+
         // Get course details for the checkout page
         const { data: courseDetails } = await this.supabase.client
             .from('courses')
             .select('title, description, thumbnail_url')
             .eq('id', paymentData.courseId)
             .single();
-        
-        const courseName = courseDetails?.title || 'Curso';
-        const courseDescription = courseDetails?.description || 'Acceso al curso';
-        
+
+        const courseName = courseDetails ? .title || 'Curso';
+        const courseDescription = courseDetails ? .description || 'Acceso al curso';
+
         // 3. Create Transaction in DB (Pending) with DB-fetched price
         await this._recordTransactionStart({
             user_id: paymentData.userId,
@@ -180,12 +180,12 @@ class PaymentService {
         // 5. Construct Wompi Checkout Standard URL with all parameters
         // This creates a custom checkout link with embedded price, reference, and course data
         // Documentation: https://docs.wompi.co/docs/colombia/widget-checkout-web
-        
+
         // Determine redirect URL based on environment
-        const redirectUrl = this.isTest 
-            ? 'https://mcp-backenddeploy-production.up.railway.app/api/payment/redirect'
-            : 'https://mcp-backenddeploy-production.up.railway.app/api/payment/redirect';
-        
+        const redirectUrl = this.isTest ?
+            'https://mcp-backenddeploy-production.up.railway.app/api/payment/redirect' :
+            'https://mcp-backenddeploy-production.up.railway.app/api/payment/redirect';
+
         // Build the Wompi Checkout URL with query parameters
         const checkoutParams = new URLSearchParams({
             'public-key': this.wompiPublicKey,
@@ -198,16 +198,16 @@ class PaymentService {
             'customer-data:email': paymentData.email || 'user@example.com',
             'customer-data:full-name': paymentData.fullName || 'Usuario'
         });
-        
+
         // Use Wompi Checkout Standard URL
         const checkoutUrl = `https://checkout.wompi.co/p/?${checkoutParams.toString()}`;
-        
+
         console.log('💳 Generated Wompi Checkout URL:', checkoutUrl);
         console.log('📝 Reference:', referenceCode);
         console.log('💰 Amount:', amount, 'COP (', amountInCents, 'cents)');
 
         // Return the URL for the frontend to open
-        return { 
+        return {
             payment_url: checkoutUrl,
             reference: referenceCode,
             signature: signature,
@@ -223,7 +223,7 @@ class PaymentService {
         // Wompi expects public key for getting banks (GET /v1/pse/financial_institutions)
         try {
             const response = await fetch(`${this.wompiUrl}/pse/financial_institutions`, {
-                 headers: { 'Authorization': `Bearer ${this.wompiPublicKey}` }
+                headers: { 'Authorization': `Bearer ${this.wompiPublicKey}` }
             });
             const result = await response.json();
             if (result.data) return result.data;
@@ -251,18 +251,18 @@ class PaymentService {
         if (!event || !event.data || !event.data.transaction) {
             return false;
         }
-        
+
         const txId = event.data.transaction.id;
         const status = event.data.transaction.status;
         const amount = event.data.transaction.amount_in_cents;
         const timestamp = event.timestamp;
-        const checksum = event.signature?.checksum;
-        
+        const checksum = event.signature ? .checksum;
+
         if (!checksum) return false;
-        
+
         const signatureString = `${txId}${status}${amount}${timestamp}${this.wompiEventSecret}`;
         const calculated = crypto.createHash('sha256').update(signatureString).digest('hex');
-        
+
         return calculated === checksum; // Verify in production. For dev, you may want to log this.
     }
 
@@ -275,37 +275,37 @@ class PaymentService {
     async handleWebhook(data) {
         try {
             console.log('📥 Webhook received:', JSON.stringify(data, null, 2));
-            
+
             // Extract transaction from various possible payload structures
             let transaction = null;
             let reference = null;
             let transactionId = null;
             let status = null;
             let amountInCents = null;
-            
+
             // Format 1: { event: { data: { transaction: {...} } } }
-            if (data?.event?.data?.transaction) {
+            if (data ? .event ? .data ? .transaction) {
                 transaction = data.event.data.transaction;
             }
             // Format 2: { data: { transaction: {...} } } - THIS IS THE WOMPI FORMAT
-            else if (data?.data?.transaction) {
+            else if (data ? .data ? .transaction) {
                 transaction = data.data.transaction;
             }
             // Format 3: Direct transaction object { transaction: {...} }
-            else if (data?.transaction) {
+            else if (data ? .transaction) {
                 transaction = data.transaction;
             }
             // Format 4: The data itself is the transaction
-            else if (data?.id && data?.status) {
+            else if (data ? .id && data ? .status) {
                 transaction = data;
             }
-            
+
             if (!transaction) {
                 console.error('❌ Webhook: Could not extract transaction from payload');
                 console.log('Payload structure:', Object.keys(data || {}));
                 return { success: false, message: 'Invalid transaction data' }; // Return proper response
             }
-            
+
             reference = transaction.reference || null;
             transactionId = transaction.id;
             status = transaction.status;
@@ -316,7 +316,7 @@ class PaymentService {
             // Since this is the VPOS link without ORDER_ reference, try amount-based matching
             if (!reference || !reference.startsWith('ORDER_')) {
                 console.log('⚠️ VPOS transaction detected. Attempting amount-based matching...');
-                
+
                 // SECURITY: Only process APPROVED payments from Wompi webhook
                 // This prevents premature approval before user completes payment
                 if (status === 'APPROVED' && amountInCents) {
@@ -327,21 +327,21 @@ class PaymentService {
                             headers: { 'Authorization': `Bearer ${this.wompiprivateKey}` }
                         });
                         const verifyResult = await verifyResponse.json();
-                        
+
                         if (!verifyResult.data || verifyResult.data.status !== 'APPROVED') {
                             console.log(`❌ Wompi API verification failed. Status: ${verifyResult.data?.status}`);
                             return { success: false, message: 'Transaction not approved by Wompi' };
                         }
-                        
+
                         console.log('✅ Wompi API confirmed APPROVED status');
                     } catch (e) {
                         console.error('❌ Error verifying with Wompi API:', e);
                         return { success: false, message: 'Failed to verify with Wompi' };
                     }
-                    
+
                     // Try to match with pending transactions by amount
                     const amountInPesos = amountInCents / 100;
-                    
+
                     const { data: pendingTxs } = await this.supabase.client
                         .from('transactions')
                         .select('*')
@@ -349,7 +349,7 @@ class PaymentService {
                         .eq('amount', amountInPesos)
                         .order('created_at', { ascending: false })
                         .limit(5); // Check last 5 pending transactions with this amount
-                    
+
                     if (pendingTxs && pendingTxs.length > 0) {
                         // Find the most recent unclaimed transaction
                         for (const pendingTx of pendingTxs) {
@@ -359,7 +359,7 @@ class PaymentService {
                                 .select('id')
                                 .eq('wompi_transaction_id', transactionId)
                                 .maybeSingle();
-                            
+
                             if (!existingClaim) {
                                 // Claim this transaction
                                 await this._updateTransactionStatusWithWompiId(
@@ -367,7 +367,7 @@ class PaymentService {
                                     'successful',
                                     transactionId
                                 );
-                                
+
                                 // Extract user and course from reference
                                 const parts = pendingTx.external_reference.split('_');
                                 if (parts.length >= 4) {
@@ -376,17 +376,17 @@ class PaymentService {
                                     await this._grantCourseAccess(userId, courseId);
                                     console.log(`✅ VPOS payment claimed: User ${userId}, Course ${courseId}`);
                                 }
-                                
+
                                 return { success: true, message: 'VPOS payment processed' };
                             }
                         }
-                        
+
                         console.log(`⚠️ VPOS transaction ${transactionId} already claimed or no pending match found`);
                     } else {
                         console.log(`⚠️ No pending transactions found for amount ${amountInPesos} COP`);
                     }
                 }
-                
+
                 return { success: true, message: 'VPOS transaction logged' };
             }
 
@@ -394,10 +394,10 @@ class PaymentService {
             // 2. SEGURIDAD EXTRA: Validar con API de Wompi directamente
             try {
                 const response = await fetch(`${this.wompiUrl}/transactions/${transactionId}`, {
-                     headers: { 'Authorization': `Bearer ${this.wompiprivateKey}` }
+                    headers: { 'Authorization': `Bearer ${this.wompiprivateKey}` }
                 });
                 const result = await response.json();
-                
+
                 if (result.data) {
                     status = result.data.status; // Use confirmed status from API
                     console.log(`✅ Wompi API confirmed status: ${status}`);
@@ -419,7 +419,7 @@ class PaymentService {
             // 5. If Approved, Grant Access
             if (dbStatus === 'successful') {
                 const parts = reference.split('_');
-                 // Format: ORDER_{timestamp}_{userId}_{courseId}
+                // Format: ORDER_{timestamp}_{userId}_{courseId}
                 if (parts.length >= 4) {
                     const userId = parts[2];
                     const courseId = parts[3];
@@ -429,9 +429,9 @@ class PaymentService {
                     console.error('Invalid reference format in webhook:', reference);
                 }
             }
-            
+
             return { success: true, message: 'Webhook processed successfully' };
-            
+
         } catch (error) {
             console.error('❌ Webhook processing error:', error);
             return { success: false, message: `Error: ${error.message}` };
@@ -452,13 +452,13 @@ class PaymentService {
             .select('*')
             .eq('external_reference', transactionReference)
             .maybeSingle();
-            
+
         if (error || !tx) {
-             throw new Error("Transaction not found in database");
+            throw new Error("Transaction not found in database");
         }
 
         console.log(`📊 Transaction ${transactionReference} current status: ${tx.status}`);
-        
+
         // Return local status WITHOUT modifying anything
         // The webhook will update the status when Wompi confirms the payment
         return {
@@ -479,14 +479,14 @@ class PaymentService {
             // Wompi API V1 transactions endpoint expects ISO-8601 strings for dates
             const now = new Date();
             const untilDate = now.toISOString();
-            
+
             const fromDateObj = new Date();
             fromDateObj.setDate(fromDateObj.getDate() - 15);
             const fromDate = fromDateObj.toISOString();
 
             // Prepare Query Params
             const queryParams = new URLSearchParams();
-            
+
             // REQUIRED: Wompi requires 'from_date' and 'until_date' params 
             // along with pagination info 'page' and 'page_size'
             queryParams.append('page', '1');
@@ -515,21 +515,21 @@ class PaymentService {
             const results = [];
 
             console.log(`🔄 Found ${transactions ? transactions.length : 0} recent transactions to check.`);
-            
+
             if (!transactions) return { success: true, processed: 0, message: "No transactions found" };
 
             for (const tx of transactions) {
                 // We only care about transactions that match our reference pattern
                 // Our reference format: ORDER_{timestamp}_{userId}_{courseId}
                 const reference = tx.reference;
-                
+
                 // Flexible check for ORDER_ prefix
                 if (!reference || !reference.startsWith('ORDER_')) {
-                    continue; 
+                    continue;
                 }
 
                 const status = tx.status;
-                
+
                 // Parse Reference (Split by underscore)
                 const parts = reference.split('_');
                 // Expected: ["ORDER", "1234567890", "5", "107"] -> length 4
@@ -575,7 +575,7 @@ class PaymentService {
             .select('price')
             .eq('id', courseId)
             .single();
-        
+
         if (cErr || !course) return { isComplete: false, error: 'Course not found', paid: 0, required: 0, remaining: 0 };
 
         const price = parseFloat(course.price || 0);
@@ -588,40 +588,40 @@ class PaymentService {
             .eq('user_id', userId)
             .eq('course_id', courseId)
             .eq('status', 'APPROVED');
-        
+
         if (tErr) return { isComplete: false, error: 'DB Error', paid: 0, required: 0, remaining: 0 };
 
         const totalPaid = txs.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
         const remaining = Math.max(0, price - totalPaid);
-        
-        // Allow small margin of error (e.g. 100 COP)
-        const isComplete = remaining < 100; 
 
-        return { 
-            isComplete, 
-            paid: totalPaid, 
-            required: price, 
-            remaining 
+        // Allow small margin of error (e.g. 100 COP)
+        const isComplete = remaining < 100;
+
+        return {
+            isComplete,
+            paid: totalPaid,
+            required: price,
+            remaining
         };
     }
 
     _getRedirectUrl() {
         let baseUrl = process.env.PUBLIC_URL || process.env.RAILWAY_STATIC_URL;
-        
+
         if (!baseUrl) {
             throw new Error('❌ CRITICAL: PUBLIC_URL or RAILWAY_STATIC_URL environment variable must be set');
         }
-        
+
         // Ensure https:// prefix if missing
         if (!baseUrl.startsWith('http')) {
             baseUrl = `https://${baseUrl}`;
         }
-        
+
         // Remove trailing slash if present to avoid double slashes
         if (baseUrl.endsWith('/')) {
             baseUrl = baseUrl.slice(0, -1);
         }
-        
+
         return `${baseUrl}/payment/confirm`;
     }
 
@@ -631,7 +631,7 @@ class PaymentService {
         const { error } = await this.supabase.client
             .from('transactions')
             .insert([txData]);
-            
+
         if (error) {
             console.error("DB Error inserting transaction", error);
             throw error;
@@ -641,12 +641,12 @@ class PaymentService {
     async _updateTransactionStatus(reference, status, transactionId) {
         const { error } = await this.supabase.client
             .from('transactions')
-            .update({ 
-                status: status, 
-                updated_at: new Date() 
+            .update({
+                status: status,
+                updated_at: new Date()
             })
             .eq('external_reference', reference);
-            
+
         if (error) console.error("DB Error updating transaction", error);
     }
 
@@ -656,13 +656,13 @@ class PaymentService {
     async _updateTransactionStatusWithWompiId(reference, status, wompiTransactionId) {
         const { error } = await this.supabase.client
             .from('transactions')
-            .update({ 
-                status: status, 
+            .update({
+                status: status,
                 wompi_transaction_id: wompiTransactionId,
-                updated_at: new Date() 
+                updated_at: new Date()
             })
             .eq('external_reference', reference);
-            
+
         if (error) console.error("DB Error updating transaction with Wompi ID", error);
         else console.log(`✅ Transaction ${reference} updated: status=${status}, wompi_id=${wompiTransactionId}`);
     }
@@ -671,9 +671,9 @@ class PaymentService {
         // Strategy: Insert into progreso_estudiante to unlock course enrollment
         const { error } = await this.supabase.client
             .from('progreso_estudiante')
-            .upsert({ 
-                usuario_estudiante: userId, 
-                curso_id: courseId, 
+            .upsert({
+                usuario_estudiante: userId,
+                curso_id: courseId,
                 creado_en: new Date()
             }, { onConflict: ['usuario_estudiante', 'curso_id'] });
 

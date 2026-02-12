@@ -39,7 +39,7 @@ const server = startServer(app, PORT);
 // GRACEFUL SHUTDOWN — Compatible con Railway/Docker
 // ═══════════════════════════════════════════════════════════
 
-const SHUTDOWN_TIMEOUT_MS = 10_000;
+const SHUTDOWN_TIMEOUT_MS = 10000;
 
 process.on('SIGTERM', () => {
     console.log('SIGTERM received — shutting down gracefully...');

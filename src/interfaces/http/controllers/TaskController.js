@@ -9,8 +9,8 @@ export class TaskController extends BaseController {
         this.taskService = taskService;
     }
 
-    list = async (req, res, next) => {
-        this.handleResult(res, next, (async () => {
+    list = async(req, res, next) => {
+        this.handleResult(res, next, (async() => {
             const pg = parsePagination(req.query);
             const result = await this.taskService.list(pg);
             if (result.isFail()) return result;
@@ -21,22 +21,22 @@ export class TaskController extends BaseController {
         })());
     };
 
-    getById = async (req, res, next) => {
+    getById = async(req, res, next) => {
         this.store(req, res, next, () => this.taskService.getById(parseInt(req.params.id)));
     };
 
-    getByTopic = async (req, res, next) => {
+    getByTopic = async(req, res, next) => {
         this.store(req, res, next, () => this.taskService.getByTopic(parseInt(req.params.topicId)));
     };
 
-    getByCourse = async (req, res, next) => {
+    getByCourse = async(req, res, next) => {
         this.store(req, res, next, () => this.taskService.getByCourse(parseInt(req.params.courseId)));
     };
 
-    create = async (req, res, next) => {
+    create = async(req, res, next) => {
         const { error, value } = createTaskSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
-        this.handleResult(res, next, (async () => {
+        this.handleResult(res, next, (async() => {
             const result = await this.taskService.createAndNotify(value, req.user);
             if (result.isFail()) return result;
             res.status(201);
@@ -44,13 +44,13 @@ export class TaskController extends BaseController {
         })());
     };
 
-    update = async (req, res, next) => {
+    update = async(req, res, next) => {
         const { error, value } = updateTaskSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
         this.store(req, res, next, () => this.taskService.update(parseInt(req.params.id), value));
     };
 
-    delete = async (req, res, next) => {
+    delete = async(req, res, next) => {
         this.store(req, res, next, () => this.taskService.delete(parseInt(req.params.id)));
     };
 }
