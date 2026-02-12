@@ -181,7 +181,7 @@ export function createApp() {
         return _mcpHttpService;
     }
 
-    // MCP Initialize — Android client calls this to handshake
+    // MCP Initialize — Android client calls this to handshak
     app.post('/initialize', async(req, res) => {
         console.log('🔧 MCP Initialize request (Android compat)');
         try {
@@ -190,7 +190,7 @@ export function createApp() {
 
             res.json({
                 jsonrpc: '2.0',
-                id: req.body ? .id || 1,
+                id: req.body?.id || 1,
                 result: {
                     protocolVersion: '2024-11-05',
                     capabilities: {
@@ -207,7 +207,7 @@ export function createApp() {
             console.error('❌ Initialize error:', error);
             res.status(500).json({
                 jsonrpc: '2.0',
-                id: req.body ? .id || 1,
+                id: req.body?.id || 1,
                 error: { code: -32603, message: 'Internal error', data: error.message },
             });
         }
@@ -218,7 +218,7 @@ export function createApp() {
         console.log('🔧 Tools list request (Android compat)');
         res.json({
             jsonrpc: '2.0',
-            id: req.body ? .id || 1,
+            id: req.body?.id || 1,
             result: {
                 tools: [{
                         name: 'query_database',
@@ -257,7 +257,7 @@ export function createApp() {
     // MCP Tools Call — Android client executes tools (query_database, etc.)
     app.post('/tools/call', async(req, res) => {
         const { params } = req.body;
-        console.log('🔧 Tool call (Android compat):', params ? .name);
+        console.log('🔧 Tool call (Android compat):', params?.name);
 
         try {
             const mcpSvc = getMCPHttpService();
