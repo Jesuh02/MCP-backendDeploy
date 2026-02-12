@@ -549,7 +549,9 @@ router.post('/procesar-prompt', async(req, res) => {
 
                                                         if (((taskId && topicId) || activeContentItemId) && !skipIngestion) {
                                                             await ragService.ingestDocument(downloaded, {
-                                                                courseId, taskId, topicId,
+                                                                courseId,
+                                                                taskId,
+                                                                topicId,
                                                                 contentItemId: activeContentItemId,
                                                                 fileName: rawName,
                                                                 fileType: 'txt'
@@ -568,7 +570,9 @@ router.post('/procesar-prompt', async(req, res) => {
                                                 if (((taskId && topicId) || activeContentItemId) && !skipIngestion) {
                                                     try {
                                                         await ragService.ingestDocument(bodyText, {
-                                                            courseId, taskId, topicId,
+                                                            courseId,
+                                                            taskId,
+                                                            topicId,
                                                             contentItemId: activeContentItemId,
                                                             fileName: rawName,
                                                             fileType: 'txt'

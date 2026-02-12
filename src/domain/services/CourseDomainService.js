@@ -65,16 +65,16 @@ export class CourseDomainService {
      */
     async getFilterCounts(userId) {
         const countPromises = [
-            this.courseRepo.count({}),                                           // total
-            this.courseRepo.count({ isFree: true }),                             // free
-            this.courseRepo.count({ isFree: false }),                            // premium (is_premium = true)
+            this.courseRepo.count({}), // total
+            this.courseRepo.count({ isFree: true }), // free
+            this.courseRepo.count({ isFree: false }), // premium (is_premium = true)
         ];
 
         // User-specific counts
         if (userId) {
             countPromises.push(
-                this.courseRepo.count({ creatorUserId: userId }),                // myCreated
-                this.courseRepo.count({ excludeCreatorId: userId }),             // otherCreators
+                this.courseRepo.count({ creatorUserId: userId }), // myCreated
+                this.courseRepo.count({ excludeCreatorId: userId }), // otherCreators
             );
         } else {
             countPromises.push(Promise.resolve(0), Promise.resolve(0));
@@ -82,13 +82,13 @@ export class CourseDomainService {
 
         // Enrolled & Purchased counts (require user)
         if (userId && this.progressRepo) {
-            countPromises.push(this.progressRepo.countEnrolled(userId));         // enrolled
+            countPromises.push(this.progressRepo.countEnrolled(userId)); // enrolled
         } else {
             countPromises.push(Promise.resolve(0));
         }
 
         if (userId && this.transactionRepo) {
-            countPromises.push(this.transactionRepo.countPurchased(userId));     // purchased
+            countPromises.push(this.transactionRepo.countPurchased(userId)); // purchased
         } else {
             countPromises.push(Promise.resolve(0));
         }
