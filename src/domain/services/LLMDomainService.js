@@ -68,6 +68,13 @@ export class LLMDomainService {
 
             // 2. Build system prompt with context
             let systemPrompt = 'Eres un asistente educativo experto. Responde de manera clara, precisa y útil.';
+            
+            // INSTRUCCIÓN SEMÁNTICA: Detección de intención de calificación (Requerimiento estricto: NO usar regex en input usuario)
+            // El LLM es responsable de señalizar si es una solicitud de nota válida.
+            systemPrompt += `\n\nIMPORTANTE: Tu eres capaz de detectar la intención del usuario. Si el usuario te pide explícitamente CALIFICAR, EVALUAR o dar una NOTA a la entrega/tarea adjunta, debes iniciar tu respuesta con la etiqueta exacta: [GRADING_REQUEST].
+Si además determinas una nota numérica (0-100), usa el formato: [GRADING_REQUEST: <monto>] (Ejemplo: "[GRADING_REQUEST: 85]").
+Si la solicitud es una pregunta general o no implica calificación formal (ej: "¿Qué nota tiene la escala musical?"), NO incluyas esta etiqueta.`;
+
             if (taskDescription) {
                 systemPrompt += `\n\nContexto de la tarea: ${taskDescription}`;
             }
@@ -96,14 +103,32 @@ export class LLMDomainService {
             // 5. Call LLM
             const response = await this.llm.chat(systemPrompt, fullPrompt, { model });
 
-            // 6. Reinforcement history save is handled by the client via /reinforcement/save-questions
+            // 6. Post-process response to detect Grading Signal
+            let content = response.content;
+            let esCalificacion = false;
+            let nota = null;
+
+            // Extract signal from LLM response (Semantic Detection)
+            const gradingSignal = content.match(/^\[GRADING_REQUEST(?::\s*(\d+(?:\.\d+)?))?\]\s*/i);
+            if (gradingSignal) {
+                esCalificacion = true;
+                if (gradingSignal[1]) {
+                    nota = parseFloat(gradingSignal[1]);
+                }
+                // Cleanup the tag so user doesn't see it
+                content = content.replace(gradingSignal[0], '');
+            }
+
+            // 7. Reinforcement history save is handled by the client via /reinforcement/save-questions
             // which uses MCPService with full uniqueness flow (hash + embedding + semantic dedup)
             // and correctly passes topicId/taskId. Do NOT save here to avoid duplicates.
 
             return Result.ok({
-                response: response.content,
+                response: content,
                 model: response.model,
                 usage: response.usage,
+                esCalificacion,
+                nota
             });
         } catch (err) {
             return Result.fail(new ValidationError(`Procesamiento LLM falló: ${err.message}`));
