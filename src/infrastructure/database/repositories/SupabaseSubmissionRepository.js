@@ -25,9 +25,18 @@
         return data;
     }
 
-    async findByCourse(courseId) {
-        const { data, error } = await this.client.from('task_submissions').select('*, tasks!inner(course_id)').eq('tasks.course_id', courseId).order('created_at', { ascending: false });
-        if (error) return [];
+    async findByCourse(courseId, { offset = 0, limit = 50 } = {}) {
+        const { data, error } = await this.client
+            .from('task_submissions')
+            .select('*, tasks!inner(topics!inner(course_id))')
+            .eq('tasks.topics.course_id', courseId)
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+        
+        if (error) {
+            console.error('Error in findByCourse:', error);
+            return [];
+        }
         return data || [];
     }
 
@@ -64,13 +73,22 @@
     }
 
     async countByUserAndCourse(userId, courseId) {
-        const { data, error } = await this.client.from('task_submissions').select('id, tasks!inner(course_id)').eq('student_id', userId).eq('tasks.course_id', courseId);
+        const { data, error } = await this.client
+            .from('task_submissions')
+            .select('id, tasks!inner(topics!inner(course_id))')
+            .eq('student_id', userId)
+            .eq('tasks.topics.course_id', courseId);
         if (error) return 0;
         return (data || []).length;
     }
 
     async getGradedByUserAndCourse(userId, courseId) {
-        const { data, error } = await this.client.from('task_submissions').select('*, tasks!inner(course_id)').eq('student_id', userId).eq('tasks.course_id', courseId).not('grade', 'is', null);
+        const { data, error } = await this.client
+            .from('task_submissions')
+            .select('*, tasks!inner(topics!inner(course_id))')
+            .eq('student_id', userId)
+            .eq('tasks.topics.course_id', courseId)
+            .not('grade', 'is', null);
         if (error) return [];
         return data || [];
     }

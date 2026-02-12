@@ -27,7 +27,9 @@ export class LLMController {
                 fileContent: value.fileContent,
                 fileUri: value.fileUri || value.file_uri,
                 studentId: value.studentId || value.student_id,
-                userId: req.user?.userId || value.userId,
+                userId: req.user ? .userId || value.userId,
+                submissionId: value.submissionId,
+                taskId: value.taskId,
             };
 
             const result = await this.llmService.processPrompt(params);

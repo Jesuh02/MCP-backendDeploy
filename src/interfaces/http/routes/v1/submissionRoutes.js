@@ -13,6 +13,7 @@ export function submissionRoutes({ submissionController }) {
     router.get('/:id', submissionController.getById);
     router.get('/:id/file', submissionController.getFile);
     router.post('/upload', upload.single('file'), submissionController.uploadFile);
+    router.post('/content', submissionController.getSubmissionContent);
     router.post('/', submissionController.submit);
     router.put('/:id/grade', submissionController.grade);
     router.delete('/:id', submissionController.delete);

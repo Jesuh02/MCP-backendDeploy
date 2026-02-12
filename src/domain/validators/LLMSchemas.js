@@ -17,6 +17,8 @@ export const processPromptSchema = Joi.object({
     userId: Joi.number().integer().optional(),
     ollamaUrl: Joi.string().allow('', null).optional(),
     jsonContent: Joi.any().optional(),
+    submissionId: Joi.number().integer().optional(),
+    taskId: Joi.number().integer().optional(),
 }).options({ allowUnknown: true });
 
 export const analyzeSubmissionSchema = Joi.object({

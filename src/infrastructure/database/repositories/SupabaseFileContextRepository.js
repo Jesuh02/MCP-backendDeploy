@@ -27,10 +27,10 @@ export class SupabaseFileContextRepository {
             submission_id: fileContextData.submissionId,
             file_name: fileContextData.fileName || null,
             file_type: fileContextData.fileType || null,
-            file_size: fileContextData.fileSize || null,
-            file_uri: fileContextData.fileUri || null,
+            file_content: fileContextData.fileContent || null,
             extracted_text: fileContextData.extractedText || null,
-            summary: fileContextData.summary || null,
+            content_summary: fileContextData.summary || null,
+            metadata: fileContextData.metadata || null,
         };
         const { data, error } = await this.client.from('file_contexts').insert(payload).select().single();
         if (error) throw new Error(`Error creando file context: ${error.message}`);
