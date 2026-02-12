@@ -75,6 +75,8 @@ import { LLMDomainService } from '../domain/services/LLMDomainService.js';
 import { RAGDomainService } from '../domain/services/RAGDomainService.js';
 import { MCPDomainService } from '../domain/services/MCPDomainService.js';
 import { AppDistributionDomainService } from '../domain/services/AppDistributionDomainService.js';
+import { ExcelDomainService } from '../domain/services/ExcelDomainService.js';
+import { MCPService } from '../domain/services/MCPService.js';
 
 // ── Interfaces: Controladores ───────────────────────────────
 import { AuthController } from '../interfaces/http/controllers/AuthController.js';
@@ -104,6 +106,7 @@ import { VideoProcessingController } from '../interfaces/http/controllers/VideoP
 import { RAGController } from '../interfaces/http/controllers/RAGController.js';
 import { MCPController } from '../interfaces/http/controllers/MCPController.js';
 import { AppDistributionController } from '../interfaces/http/controllers/AppDistributionController.js';
+import { ExcelController } from '../interfaces/http/controllers/ExcelController.js';
 
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los
@@ -211,6 +214,10 @@ export function createContainer() {
         llmPort: llmAdapter,
     });
 
+    // MCPService legacy (singleton interno) — se inyecta en ExcelDomainService
+    const mcpServiceLegacy = new MCPService();
+    const excelService = new ExcelDomainService({ mcpService: mcpServiceLegacy, fileStoragePort: storageAdapter });
+
     // ═══════════════════════════════════════════════════════════
     // 4. CONTROLADORES — Inyectar servicios de dominio
     // ═══════════════════════════════════════════════════════════
@@ -246,6 +253,9 @@ export function createContainer() {
     const appDistributionService = new AppDistributionDomainService();
     const appDistributionController = new AppDistributionController({ appDistributionService });
 
+    // Excel
+    const excelController = new ExcelController({ excelService });
+
     return {
         // Middleware
         jwtAdapter,
@@ -278,6 +288,7 @@ export function createContainer() {
         ragController,
         mcpController,
         appDistributionController,
+        excelController,
 
         // Servicios de dominio
         authService,
@@ -305,6 +316,7 @@ export function createContainer() {
         ragDomainService,
         mcpDomainService,
         appDistributionService,
+        excelService,
 
         // Adaptadores
         storageAdapter,

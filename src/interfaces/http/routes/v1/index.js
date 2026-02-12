@@ -27,6 +27,7 @@ import { videoProcessingRoutes } from './videoProcessingRoutes.js';
 import { ragRoutes } from './ragRoutes.js';
 import { mcpRoutes } from './mcpRoutes.js';
 import { appDistributionRoutes } from './appDistributionRoutes.js';
+import { excelRoutes } from './excelRoutes.js';
 
 /**
  * Monta todas las rutas v1 en un router.
@@ -74,6 +75,7 @@ export function createV1Router(deps) {
     router.use('/llm', llmRoutes(deps));
     router.use('/video-processing', videoProcessingRoutes(deps));
     router.use('/rag', ragRoutes(deps));
+    router.use('/excel', excelRoutes(deps));
 
     return router;
 }

@@ -17,9 +17,7 @@ import { createContainer } from './container.js';
 import { createV1Router } from '../interfaces/http/routes/v1/index.js';
 import { createAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
 import { errorHandler } from '../infrastructure/middleware/ErrorHandler.js';
-import { MCPService } from '../domain/services/MCPService.js';
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
-import excelRoutes from '../interfaces/routes/excelRoutes.js';
 
 /**
  * Crea y configura la aplicación Express con toda la arquitectura hexagonal.
@@ -70,15 +68,16 @@ export function createApp() {
         requireRoles,
     });
 
-    // Mount Excel routes on v1 as well
-    v1Router.use('/excel', excelRoutes);
-
     // Montar todas las rutas bajo /api/v1
     app.use('/api/v1', v1Router);
     app.use('/api/v1', errorHandler);
 
-    // Rutas Legacy (directas, no v1)
-    app.use('/excel', excelRoutes);
+    // Rutas Legacy — redirigen a /api/v1 (backward compatibility)
+    // Excel legacy → /api/v1/excel
+    app.use('/excel', (req, res, next) => {
+        req.url = `/api/v1/excel${req.url}`;
+        app.handle(req, res, next);
+    });
 
     // ═══════════════════════════════════════════════════════════
     // 3. RUTAS DE COMPATIBILIDAD (Legacy → /api/v1)
