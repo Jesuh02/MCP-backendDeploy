@@ -5,16 +5,38 @@ import Joi from 'joi';
 
 // ─── Topics ──────────────────────────────────────────────
 export const createTopicSchema = Joi.object({
-    title: Joi.string().min(1).max(200).required(),
+    title: Joi.string().min(1).max(200).optional(),
+    name: Joi.string().min(1).max(200).optional(),
     description: Joi.string().max(2000).allow('').optional(),
-    courseId: Joi.number().integer().required(),
+    courseId: Joi.number().integer().optional(),
+    course_id: Joi.number().integer().optional(),
     orderIndex: Joi.number().integer().min(0).default(0),
+    order_index: Joi.number().integer().min(0).optional(),
+}).custom((value, helpers) => {
+    // Normalizar: aceptar 'name' como alias de 'title'
+    if (!value.title && value.name) value.title = value.name;
+    if (!value.courseId && value.course_id) value.courseId = value.course_id;
+    delete value.name;
+    delete value.course_id;
+    delete value.order_index;
+    if (!value.title) return helpers.error('any.required', { key: 'title' });
+    if (!value.courseId) return helpers.error('any.required', { key: 'courseId' });
+    return value;
 });
 
 export const updateTopicSchema = Joi.object({
     title: Joi.string().min(1).max(200).optional(),
+    name: Joi.string().min(1).max(200).optional(),
     description: Joi.string().max(2000).allow('').optional(),
     orderIndex: Joi.number().integer().min(0).optional(),
+    order_index: Joi.number().integer().min(0).optional(),
+}).custom((value) => {
+    // Normalizar: aceptar 'name' como alias de 'title'
+    if (!value.title && value.name) value.title = value.name;
+    delete value.name;
+    if (value.order_index !== undefined && value.orderIndex === undefined) value.orderIndex = value.order_index;
+    delete value.order_index;
+    return value;
 }).min(1);
 
 // ─── Tasks ───────────────────────────────────────────────
@@ -53,22 +75,82 @@ export const updateTaskSchema = Joi.object({
 }).min(1);
 
 // ─── Content Items ───────────────────────────────────────
+// Columnas reales en la tabla: id, topic_id, title, body, content_type, created_at,
+//   creator_usuario_id, creator_username, order_index, task_id
+// Android envía: topic_id, task_id, title (name), body (uriString), content_type, order_index
 export const createContentItemSchema = Joi.object({
-    taskId: Joi.number().integer().required(),
+    taskId: Joi.number().integer().allow(null).optional(),
+    task_id: Joi.number().integer().allow(null).optional(),
     topicId: Joi.number().integer().allow(null).optional(),
-    contentType: Joi.string().valid('text', 'file', 'link', 'image', 'video').default('text'),
-    content: Joi.string().max(50000).allow('').optional(),
-    fileUri: Joi.string().uri().allow(null, '').optional(),
+    topic_id: Joi.number().integer().allow(null).optional(),
+    contentType: Joi.string().valid('text', 'file', 'link', 'image', 'video', 'document').default('text'),
+    content_type: Joi.string().valid('text', 'file', 'link', 'image', 'video', 'document').optional(),
+    title: Joi.string().max(500).allow('', null).optional(),
+    body: Joi.string().max(50000).allow('', null).optional(),
+    content: Joi.string().max(50000).allow('', null).optional(),
+    fileUri: Joi.string().allow(null, '').optional(),
     fileName: Joi.string().max(255).allow(null, '').optional(),
+    name: Joi.string().max(500).allow('', null).optional(),
+    uriString: Joi.string().allow(null, '').optional(),
     orderIndex: Joi.number().integer().min(0).default(0),
+    order_index: Joi.number().integer().min(0).optional(),
+    creatorUsuarioId: Joi.number().integer().allow(null).optional(),
+    creator_usuario_id: Joi.number().integer().allow(null).optional(),
+    creatorUsername: Joi.string().max(100).allow(null, '').optional(),
+    creator_username: Joi.string().max(100).allow(null, '').optional(),
+    id: Joi.any().strip().optional(),
+    created_at: Joi.any().strip().optional(),
+}).custom((value, helpers) => {
+    // Normalizar snake_case a camelCase
+    if (!value.taskId && value.task_id) value.taskId = value.task_id;
+    if (!value.topicId && value.topic_id) value.topicId = value.topic_id;
+    if (!value.contentType && value.content_type) value.contentType = value.content_type;
+    // Mapear campos Android: name→title, uriString→body
+    if (!value.title && value.name) value.title = value.name;
+    if (!value.title && value.fileName) value.title = value.fileName;
+    if (!value.body && value.uriString) value.body = value.uriString;
+    if (!value.body && value.fileUri) value.body = value.fileUri;
+    if (!value.body && value.content) value.body = value.content;
+    if (value.order_index !== undefined && value.orderIndex === undefined) value.orderIndex = value.order_index;
+    if (!value.creatorUsuarioId && value.creator_usuario_id) value.creatorUsuarioId = value.creator_usuario_id;
+    if (!value.creatorUsername && value.creator_username) value.creatorUsername = value.creator_username;
+    // Limpiar campos duplicados
+    delete value.task_id;
+    delete value.topic_id;
+    delete value.content_type;
+    delete value.name;
+    delete value.uriString;
+    delete value.fileUri;
+    delete value.fileName;
+    delete value.content;
+    delete value.order_index;
+    delete value.creator_usuario_id;
+    delete value.creator_username;
+    // Al menos topicId o taskId debe estar presente
+    if (!value.taskId && !value.topicId) {
+        return helpers.error('any.required', { key: 'topicId or taskId' });
+    }
+    return value;
 });
 
 export const updateContentItemSchema = Joi.object({
+    title: Joi.string().max(500).allow('', null).optional(),
+    body: Joi.string().max(50000).allow('', null).optional(),
     content: Joi.string().max(50000).allow('').optional(),
-    contentType: Joi.string().valid('text', 'file', 'link', 'image', 'video').optional(),
-    fileUri: Joi.string().uri().allow(null, '').optional(),
+    contentType: Joi.string().valid('text', 'file', 'link', 'image', 'video', 'document').optional(),
+    content_type: Joi.string().valid('text', 'file', 'link', 'image', 'video', 'document').optional(),
+    fileUri: Joi.string().allow(null, '').optional(),
     fileName: Joi.string().max(255).allow(null, '').optional(),
     orderIndex: Joi.number().integer().min(0).optional(),
+    order_index: Joi.number().integer().min(0).optional(),
+}).custom((value) => {
+    if (!value.contentType && value.content_type) value.contentType = value.content_type;
+    if (!value.body && value.content) value.body = value.content;
+    if (value.order_index !== undefined && value.orderIndex === undefined) value.orderIndex = value.order_index;
+    delete value.content_type;
+    delete value.content;
+    delete value.order_index;
+    return value;
 }).min(1);
 // ─── Submissions ─────────────────────────────────────────
 export const createSubmissionSchema = Joi.object({

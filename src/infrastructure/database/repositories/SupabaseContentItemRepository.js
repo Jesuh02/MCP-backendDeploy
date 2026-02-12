@@ -13,15 +13,22 @@
         return data || [];
     }
 
+    async findByTopic(topicId) {
+        const { data, error } = await this.client.from('content_items').select('*').eq('topic_id', topicId).order('order_index', { ascending: true });
+        if (error) throw new Error(error.message);
+        return data || [];
+    }
+
     async create(itemData) {
         const payload = {
-            task_id: itemData.taskId,
             topic_id: itemData.topicId || null,
+            task_id: itemData.taskId || null,
+            title: itemData.title || itemData.fileName || '',
+            body: itemData.body || itemData.fileUri || itemData.content || '',
             content_type: itemData.contentType || 'text',
-            content: itemData.content || '',
-            file_uri: itemData.fileUri || null,
-            file_name: itemData.fileName || null,
             order_index: itemData.orderIndex || 0,
+            creator_usuario_id: itemData.creatorUsuarioId || null,
+            creator_username: itemData.creatorUsername || null,
         };
         const { data, error } = await this.client.from('content_items').insert(payload).select().single();
         if (error) throw new Error(error.message);
@@ -30,12 +37,10 @@
 
     async update(id, updateData) {
         const payload = {};
+        if (updateData.title !== undefined) payload.title = updateData.title;
+        if (updateData.body !== undefined) payload.body = updateData.body;
         if (updateData.contentType !== undefined) payload.content_type = updateData.contentType;
-        if (updateData.content !== undefined) payload.content = updateData.content;
-        if (updateData.fileUri !== undefined) payload.file_uri = updateData.fileUri;
-        if (updateData.fileName !== undefined) payload.file_name = updateData.fileName;
         if (updateData.orderIndex !== undefined) payload.order_index = updateData.orderIndex;
-        payload.updated_at = new Date().toISOString();
         const { data, error } = await this.client.from('content_items').update(payload).eq('id', id).select().single();
         if (error) throw new Error(error.message);
         return data;

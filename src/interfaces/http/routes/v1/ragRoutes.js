@@ -9,6 +9,7 @@ export function ragRoutes({ ragController }) {
 
     router.get('/status', ragController.getStatus);
     router.post('/ingest', ragController.ingest);
+    router.post('/ingest-task-content', ragController.ingestTaskContent);
     router.post('/search', ragController.search);
     router.post('/context', ragController.buildContext);
 

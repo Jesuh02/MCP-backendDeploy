@@ -22,6 +22,14 @@ export class ContentItemController {
         } catch (err) { next(err); }
     };
 
+    getByTopic = async(req, res, next) => {
+        try {
+            const result = await this.contentService.getByTopic(parseInt(req.params.topicId));
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     create = async(req, res, next) => {
         try {
             const { error, value } = createContentItemSchema.validate(req.body);
