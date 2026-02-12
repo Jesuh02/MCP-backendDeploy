@@ -334,7 +334,13 @@ router.post('/procesar-prompt', async(req, res) => {
                             const ragService = new RAGService(); // Warning: Multiple instances lightweight
 
                             for (const file of files) {
-                                if (file.uri && (r2Service.isR2Url(file.uri) || file.uri.startsWith('http'))) {
+                                const isUrl = file.uri && (r2Service.isR2Url(file.uri) || file.uri.startsWith('http'));
+                                // 🔥 FIX: Detect inline text content from content_items.body
+                                // Android sends content_items.body as file.uri — when it's NOT a URL,
+                                // it contains the actual document text that must be ingested into rag_documents.
+                                const isInlineText = file.uri && !isUrl && file.uri.length > 50;
+
+                                if (isUrl) {
                                     console.log(`📥 Descargando contenido de ${file.name}...`);
                                     try {
                                         // Use getSubmissionFileContent which handles various sources (R2, HTTP)
@@ -468,6 +474,119 @@ router.post('/procesar-prompt', async(req, res) => {
                                     } catch (e) {
                                         console.warn(`⚠️ Fallo al descargar archivo ${file.name}: ${e.message}`);
                                     }
+                                }
+                                // 🔥 NEW: Handle inline text content from content_items.body
+                                // Android maps content_items.body → uriString → file.uri in jsonContent.
+                                // When body contains actual document text (not a URL), process it directly.
+                                else if (isInlineText) {
+                                    const rawName = file.name || `content_item_${file.id || 'unknown'}`;
+                                    const extractedText = file.uri; // file.uri IS the body text
+                                    const fileSpecificId = parseId(file.id);
+                                    const activeContentItemId = fileSpecificId || contentItemId;
+
+                                    console.log(`📄 Contenido inline detectado para '${rawName}' (${extractedText.length} chars) desde content_items.body`);
+                                    console.log(`📝 CONTENIDO INLINE (${rawName} - primeros 1000 chars):\n${extractedText.substring(0, 1000)}...`);
+
+                                    // Add to prompt context
+                                    const MAX_TOTAL_CONTEXT_CHARS = 160000;
+                                    const currentLength = augmentedPrompt.length;
+                                    const remainingChars = MAX_TOTAL_CONTEXT_CHARS - currentLength;
+
+                                    if (remainingChars <= 200) {
+                                        console.warn(`⚠️ Max context length reached. Skipping inline content of ${rawName}`);
+                                    } else {
+                                        let contentSnippet = extractedText;
+                                        if (contentSnippet.length > remainingChars) {
+                                            contentSnippet = contentSnippet.substring(0, remainingChars) + "\n\n[...Contenido truncado por límite de longitud...]";
+                                        }
+                                        augmentedPrompt += `\n\n--- Contenido del documento: ${rawName} (content_items.body) ---\n${contentSnippet}`;
+                                    }
+
+                                    // INGEST INTO RAG
+                                    if (((taskId && topicId) || activeContentItemId) && !skipIngestion) {
+                                        try {
+                                            console.log(`💾 Ingesting inline content '${rawName}' into RAG (ContentItemID: ${activeContentItemId})...`);
+                                            await ragService.ingestDocument(extractedText, {
+                                                courseId: courseId,
+                                                taskId: taskId,
+                                                topicId: topicId,
+                                                contentItemId: activeContentItemId,
+                                                fileName: rawName,
+                                                fileType: 'txt'
+                                            });
+                                            console.log('✅ RAG Ingestion (inline content) complete.');
+                                        } catch (err) {
+                                            console.warn('⚠️ RAG Ingestion (inline) failed:', err.message);
+                                        }
+                                    }
+                                }
+                                // 🔥 FALLBACK: No URL and no inline text — fetch body from content_items table by ID
+                                else if (file.id) {
+                                    const rawName = file.name || `content_item_${file.id}`;
+                                    const fileSpecificId = parseId(file.id);
+                                    const activeContentItemId = fileSpecificId || contentItemId;
+
+                                    console.log(`🔍 No URL/inline content for '${rawName}'. Fetching from content_items table (ID: ${file.id})...`);
+                                    try {
+                                        const { data: contentItem } = await SupabaseService.getInstance().client
+                                            .from('content_items')
+                                            .select('body, title, content_type')
+                                            .eq('id', file.id)
+                                            .maybeSingle();
+
+                                        if (contentItem && contentItem.body && contentItem.body.length > 20) {
+                                            const bodyText = contentItem.body;
+                                            const bodyIsUrl = bodyText.trim().startsWith('http');
+
+                                            if (bodyIsUrl) {
+                                                // Body is a URL — download it
+                                                console.log(`🌐 content_items.body is a URL, downloading: ${bodyText.substring(0, 80)}...`);
+                                                try {
+                                                    const resp = await axios.get(bodyText.trim(), { responseType: 'text', timeout: 15000 });
+                                                    if (resp.data && String(resp.data).length > 20) {
+                                                        const downloaded = typeof resp.data === 'object' ? JSON.stringify(resp.data) : String(resp.data);
+                                                        augmentedPrompt += `\n\n--- Contenido del documento: ${rawName} ---\n${downloaded.substring(0, 50000)}`;
+
+                                                        if (((taskId && topicId) || activeContentItemId) && !skipIngestion) {
+                                                            await ragService.ingestDocument(downloaded, {
+                                                                courseId, taskId, topicId,
+                                                                contentItemId: activeContentItemId,
+                                                                fileName: rawName,
+                                                                fileType: 'txt'
+                                                            });
+                                                            console.log('✅ RAG Ingestion (content_items URL download) complete.');
+                                                        }
+                                                    }
+                                                } catch (dlErr) {
+                                                    console.warn(`⚠️ Download from content_items.body URL failed: ${dlErr.message}`);
+                                                }
+                                            } else {
+                                                // Body is inline text content
+                                                console.log(`📄 content_items.body contains inline text (${bodyText.length} chars)`);
+                                                augmentedPrompt += `\n\n--- Contenido del documento: ${rawName} ---\n${bodyText.substring(0, 50000)}`;
+
+                                                if (((taskId && topicId) || activeContentItemId) && !skipIngestion) {
+                                                    try {
+                                                        await ragService.ingestDocument(bodyText, {
+                                                            courseId, taskId, topicId,
+                                                            contentItemId: activeContentItemId,
+                                                            fileName: rawName,
+                                                            fileType: 'txt'
+                                                        });
+                                                        console.log('✅ RAG Ingestion (content_items DB body) complete.');
+                                                    } catch (err) {
+                                                        console.warn('⚠️ RAG Ingestion (content_items DB) failed:', err.message);
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            console.log(`ℹ️ content_items ID=${file.id} has no body content or body too short.`);
+                                        }
+                                    } catch (dbErr) {
+                                        console.warn(`⚠️ Failed to fetch content_items by ID ${file.id}: ${dbErr.message}`);
+                                    }
+                                } else {
+                                    console.log(`ℹ️ Skipping file '${file.name}' — no URI, no inline content, no ID.`);
                                 }
                             }
                         }

@@ -58,6 +58,46 @@ export class CourseDomainService {
         return Result.ok({ total });
     }
 
+    /**
+     * Get counts for all filter types in a single call.
+     * Returns: { total, free, premium, myCreated, otherCreators, enrolled, purchased }
+     * @param {number|null} userId - ID del usuario actual (para filtros relativos al usuario)
+     */
+    async getFilterCounts(userId) {
+        const countPromises = [
+            this.courseRepo.count({}),                                           // total
+            this.courseRepo.count({ isFree: true }),                             // free
+            this.courseRepo.count({ isFree: false }),                            // premium (is_premium = true)
+        ];
+
+        // User-specific counts
+        if (userId) {
+            countPromises.push(
+                this.courseRepo.count({ creatorUserId: userId }),                // myCreated
+                this.courseRepo.count({ excludeCreatorId: userId }),             // otherCreators
+            );
+        } else {
+            countPromises.push(Promise.resolve(0), Promise.resolve(0));
+        }
+
+        // Enrolled & Purchased counts (require user)
+        if (userId && this.progressRepo) {
+            countPromises.push(this.progressRepo.countEnrolled(userId));         // enrolled
+        } else {
+            countPromises.push(Promise.resolve(0));
+        }
+
+        if (userId && this.transactionRepo) {
+            countPromises.push(this.transactionRepo.countPurchased(userId));     // purchased
+        } else {
+            countPromises.push(Promise.resolve(0));
+        }
+
+        const [total, free, premium, myCreated, otherCreators, enrolled, purchased] = await Promise.all(countPromises);
+
+        return Result.ok({ total, free, premium, myCreated, otherCreators, enrolled, purchased });
+    }
+
     async findByCreator(username, pagination) {
         const [courses, total] = await Promise.all([
             this.courseRepo.findByCreator(username, pagination),
