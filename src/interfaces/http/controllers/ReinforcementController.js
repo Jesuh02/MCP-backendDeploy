@@ -106,6 +106,28 @@ export class ReinforcementController {
         } catch (err) { next(err); }
     };
 
+    /**
+     * POST /ingest-context
+     * Manual trigger to ensure RAG documents exist for a task.
+     * Checks content_items and ingests them into rag_documents if missing.
+     */
+    ingestContext = async (req, res, next) => {
+        try {
+            const taskId = parseInt(req.body.taskId || req.body.task_id);
+            const courseId = parseInt(req.body.courseId || req.body.course_id);
+            const topicId = req.body.topicId || req.body.topic_id ? parseInt(req.body.topicId || req.body.topic_id) : null;
+
+            if (!taskId || !courseId) {
+                return next(new ValidationError('taskId and courseId are required'));
+            }
+
+            const result = await this.reinforcementService.ensureContentIngested(courseId, taskId, topicId);
+            
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getHistory = async (req, res, next) => {
         try {
             const userId = parseInt(req.params.userId);
