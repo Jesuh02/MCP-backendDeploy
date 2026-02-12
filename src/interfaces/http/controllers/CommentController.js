@@ -9,17 +9,17 @@ export class CommentController extends BaseController {
         this.commentService = commentService;
     }
 
-    getByVideo = async (req, res, next) => {
+    getByVideo = async(req, res, next) => {
         const pg = parsePagination(req.query);
         this.store(req, res, next, () => this.commentService.getByVideo(parseInt(req.params.videoId), pg));
     };
 
-    create = async (req, res, next) => {
+    create = async(req, res, next) => {
         const { error, value } = createCommentSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
         value.userId = req.user.userId;
         value.username = req.user.username;
-        this.handleResult(res, next, (async () => {
+        this.handleResult(res, next, (async() => {
             const result = await this.commentService.create(value);
             if (result.isFail()) return result;
             res.status(201);
@@ -27,17 +27,17 @@ export class CommentController extends BaseController {
         })());
     };
 
-    update = async (req, res, next) => {
+    update = async(req, res, next) => {
         const { error, value } = updateCommentSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
         this.store(req, res, next, () => this.commentService.update(parseInt(req.params.id), value, req.user.userId));
     };
 
-    delete = async (req, res, next) => {
+    delete = async(req, res, next) => {
         this.store(req, res, next, () => this.commentService.delete(parseInt(req.params.id), req.user.userId));
     };
 
-    getCount = async (req, res, next) => {
+    getCount = async(req, res, next) => {
         this.store(req, res, next, () => this.commentService.getCount(parseInt(req.params.videoId)));
     };
 }

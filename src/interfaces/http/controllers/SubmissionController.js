@@ -12,26 +12,26 @@ export class SubmissionController extends BaseController {
         this.storageAdapter = storageAdapter;
     }
 
-    getById = async (req, res, next) => {
+    getById = async(req, res, next) => {
         this.store(req, res, next, () => this.subService.getById(parseInt(req.params.id)));
     };
 
-    getByTask = async (req, res, next) => {
+    getByTask = async(req, res, next) => {
         const pg = parsePagination(req.query);
         this.store(req, res, next, () => this.subService.getByTask(parseInt(req.params.taskId), pg));
     };
 
-    getMySubmissions = async (req, res, next) => {
+    getMySubmissions = async(req, res, next) => {
         const pg = parsePagination(req.query);
         this.store(req, res, next, () => this.subService.getByUser(req.user.userId, pg));
     };
 
-    submit = async (req, res, next) => {
+    submit = async(req, res, next) => {
         const { error, value } = createSubmissionSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
         value.userId = req.user.userId;
         value.username = req.user.username;
-        this.handleResult(res, next, (async () => {
+        this.handleResult(res, next, (async() => {
             const result = await this.subService.submitAndNotify(value);
             if (result.isFail()) return result;
             res.status(201);
@@ -39,23 +39,23 @@ export class SubmissionController extends BaseController {
         })());
     };
 
-    grade = async (req, res, next) => {
+    grade = async(req, res, next) => {
         const { error, value } = gradeSubmissionSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
         this.store(req, res, next, () => this.subService.grade(parseInt(req.params.id), value, req.user.userId));
     };
 
-    delete = async (req, res, next) => {
+    delete = async(req, res, next) => {
         this.store(req, res, next, () => this.subService.delete(parseInt(req.params.id), req.user.userId));
     };
 
-    getByUserAndTask = async (req, res, next) => {
+    getByUserAndTask = async(req, res, next) => {
         const taskId = parseInt(req.params.taskId);
         const studentId = req.query.studentId ? parseInt(req.query.studentId) : req.user.userId;
         this.store(req, res, next, () => this.subService.getByUserAndTask(studentId, taskId));
     };
 
-    getByCourse = async (req, res, next) => {
+    getByCourse = async(req, res, next) => {
         const pg = parsePagination(req.query);
         this.store(req, res, next, () => this.subService.getByCourse(parseInt(req.params.courseId), pg));
     };
@@ -64,9 +64,9 @@ export class SubmissionController extends BaseController {
      * Upload a submission file to R2 storage.
      * Returns only the R2 object key (relative path), never the public URL.
      */
-    uploadFile = async (req, res, next) => {
+    uploadFile = async(req, res, next) => {
         if (!req.file) return next(new ValidationError('Se requiere un archivo'));
-        this.handleResult(res, next, (async () => {
+        this.handleResult(res, next, (async() => {
             const folder = req.body.folder || req.body.prefix || 'submissions';
             const key = `${folder}/${Date.now()}_${req.file.originalname}`;
             const result = await this.storageService.upload(req.file.buffer, key, req.file.mimetype);
@@ -81,7 +81,7 @@ export class SubmissionController extends BaseController {
      * Proxy/stream a submission file from R2 storage.
      * This avoids exposing the R2 bucket URL to clients.
      */
-    getFile = async (req, res, next) => {
+    getFile = async(req, res, next) => {
         try {
             const submissionId = parseInt(req.params.id);
             const result = await this.subService.getById(submissionId);
