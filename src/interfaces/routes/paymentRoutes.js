@@ -4,7 +4,7 @@
  */
 import express from 'express';
 import crypto from 'crypto';
-import PaymentService from '../../services/PaymentService.js';
+import PaymentService from '../../infrastructure/legacy/PaymentService.js';
 
 const router = express.Router();
 
@@ -12,7 +12,7 @@ const router = express.Router();
  * GET /banks
  * Returns list of PSE banks.
  */
-router.get('/banks', async (req, res) => {
+router.get('/banks', async(req, res) => {
     try {
         const banks = await PaymentService.getBanksList();
         res.json({ success: true, banks });
@@ -26,57 +26,57 @@ router.get('/banks', async (req, res) => {
  * Starts the payment flow.
  * Body: { userId, courseId } - amount will be fetched from courses table
  */
-router.post('/initiate', async (req, res) => {
+router.post('/initiate', async(req, res) => {
     try {
         // Validate required fields only (amount will be fetched from DB)
         if (!req.body.userId || !req.body.courseId) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Missing required fields: userId, courseId' 
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields: userId, courseId'
             });
         }
-        
+
         // Collect IP/UserAgent if not provided in body (though body is safer if proxy involved)
         const ip = req.body.ipAddress || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         const ua = req.body.userAgent || req.headers['user-agent'];
-        
+
         // Fetch course price from database for security
         const { data: course, error: courseError } = await PaymentService.supabase.client
             .from('courses')
             .select('price')
             .eq('id', req.body.courseId)
             .single();
-        
+
         if (courseError || !course) {
             return res.status(400).json({ success: false, message: 'Course not found' });
         }
-        
+
         const coursePrice = parseFloat(course.price || 0);
         if (coursePrice <= 0) {
             return res.status(400).json({ success: false, message: 'This course is free, no payment required' });
         }
 
         const paymentData = {
-             userId: req.body.userId,
-             courseId: req.body.courseId,
-             amount: coursePrice,
-             fullName: req.body.payerName || req.body.fullName || 'Usuario',
-             email: req.body.payerEmail || req.body.email || 'user@example.com',
-             phone: req.body.phone || '3000000000',
-             dni: req.body.payerDocNumber || req.body.dni || '12345678',
-             bankCode: req.body.bankCode || '0',
-             userType: req.body.userType || '0',
-             ipAddress: ip,
-             userAgent: ua
+            userId: req.body.userId,
+            courseId: req.body.courseId,
+            amount: coursePrice,
+            fullName: req.body.payerName || req.body.fullName || 'Usuario',
+            email: req.body.payerEmail || req.body.email || 'user@example.com',
+            phone: req.body.phone || '3000000000',
+            dni: req.body.payerDocNumber || req.body.dni || '12345678',
+            bankCode: req.body.bankCode || '0',
+            userType: req.body.userType || '0',
+            ipAddress: ip,
+            userAgent: ua
         };
 
         const result = await PaymentService.initiatePayment(paymentData);
         // Map backend response fields to match Android PaymentInitiationResponse DTO
         // Backend returns: { payment_url, reference, signature, course_name, amount }
         // Android expects: { urlBankPayment, transactionId, message, courseName, amount }
-        res.json({ 
-            success: true, 
-            urlBankPayment: result.payment_url, 
+        res.json({
+            success: true,
+            urlBankPayment: result.payment_url,
             transactionId: result.reference,
             courseName: result.course_name,
             amount: result.amount,
@@ -92,15 +92,15 @@ router.post('/initiate', async (req, res) => {
  * POST /webhook
  * Endpoint called by Wompi to notify status changes.
  */
-router.post('/webhook', async (req, res) => {
+router.post('/webhook', async(req, res) => {
     try {
         // SECURITY: Verify Wompi Integrity Signature
         const body = req.body;
         // Normalize payload: handle wrapped event (Format 1) vs direct event (Format 2/Standard)
         const eventData = (body.event && body.event.data) ? body.event : body;
-        
+
         const { data, signature, timestamp } = eventData;
-        
+
         // If it looks like a transaction event, strictly enforce signature verification
         if (data && data.transaction) {
             if (!signature || !signature.checksum || !timestamp) {
@@ -108,7 +108,7 @@ router.post('/webhook', async (req, res) => {
                 return res.status(400).json({ success: false, message: 'Missing integrity signature' });
             }
 
-            const secret = PaymentService.wompiEventSecret; 
+            const secret = PaymentService.wompiEventSecret;
             if (!secret) {
                 console.error('❌ Critical: PaymentService.wompiEventSecret is missing');
                 return res.status(500).json({ success: false, message: 'Server configuration error' });
@@ -117,7 +117,7 @@ router.post('/webhook', async (req, res) => {
             const tx = data.transaction;
             const signatureString = `${tx.id}${tx.status}${tx.amount_in_cents}${timestamp}${secret}`;
             const calculatedChecksum = crypto.createHash('sha256').update(signatureString).digest('hex');
-            
+
             if (calculatedChecksum !== signature.checksum) {
                 console.error(`❌ Webhook Signature Mismatch! Calculated: ${calculatedChecksum}, Received: ${signature.checksum}`);
                 return res.status(400).json({ success: false, message: 'Invalid integrity signature' });
@@ -125,7 +125,7 @@ router.post('/webhook', async (req, res) => {
         }
 
         const result = await PaymentService.handleWebhook(req.body);
-        
+
         // Wompi expects a proper JSON response
         res.status(200).json({
             success: result.success,
@@ -145,7 +145,7 @@ router.post('/webhook', async (req, res) => {
  * Checks the status of a specific transaction.
  * Polls Wompi directly if necessary (useful for sandbox/no-webhook envs).
  */
-router.get('/status/:transactionId', async (req, res) => {
+router.get('/status/:transactionId', async(req, res) => {
     try {
         const { transactionId } = req.params;
         const result = await PaymentService.getTransactionStatus(transactionId);
@@ -162,7 +162,7 @@ router.get('/status/:transactionId', async (req, res) => {
  * Useful developer tool or cron job endpoint.
  * Protected by ADMIN_SECRET environment variable.
  */
-router.get('/sync', async (req, res) => {
+router.get('/sync', async(req, res) => {
     try {
         // SECURITY: Require authentication for administrative task
         const adminSecret = process.env.ADMIN_SECRET;
@@ -193,27 +193,27 @@ router.get('/sync', async (req, res) => {
  * Wompi redirects here with transaction ID in query params.
  * This page shows a success/failure message and provides a deep link back to the app.
  */
-router.get('/redirect', async (req, res) => {
+router.get('/redirect', async(req, res) => {
     try {
         const { id: transactionId, reference: queryReference } = req.query;
-        
+
         console.log('📥 Payment redirect received:', req.query);
-        
+
         // SECURITY FIX: Don't check or update status here
         // User just opened the link, payment is still processing
         // The webhook will update the status when Wompi confirms
         const status = 'pending';
         const message = 'Tu pago está siendo procesado. Recibirás una confirmación pronto.';
-        
+
         // XSS PREVENTION: Sanitize inputs
         const rawReference = queryReference || transactionId || '';
         // 1. Sanitize for HTML output
         const displayReference = String(rawReference).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[m]);
-        
+
         // 2. Encode for URL parameters
         const safeRef = encodeURIComponent(rawReference);
         const safeStatus = encodeURIComponent(status);
-        
+
         // Return a simple HTML page that redirects to the app
         const html = `
 <!DOCTYPE html>
@@ -295,7 +295,7 @@ router.get('/redirect', async (req, res) => {
 </body>
 </html>
         `;
-        
+
         res.send(html);
     } catch (error) {
         console.error("Redirect Error:", error);

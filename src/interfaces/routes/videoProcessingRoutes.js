@@ -15,8 +15,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
 import os from 'os';
-import { VideoProcessingService } from '../../services/VideoProcessingService.js';
-import { R2StorageService } from '../../services/R2StorageService.js';
+import { VideoProcessingService } from '../../infrastructure/legacy/VideoProcessingService.js';
+import { R2StorageService } from '../../infrastructure/legacy/R2StorageService.js';
 
 const router = express.Router();
 
@@ -77,12 +77,12 @@ router.post('/analyze', upload.single('video'), async(req, res) => {
         console.log(`   📏 Size: ${(req.file.size / (1024 * 1024)).toFixed(2)} MB`);
         console.log(`   🔧 FFmpeg path: ${process.env.FFMPEG_PATH || 'system default'}`);
         console.log(`   🔧 FFprobe path: ${process.env.FFPROBE_PATH || 'system default'}`);
-        
+
         // Get video metadata
         const startTime = Date.now();
         const metadata = await videoService.getVideoMetadata(req.file.path);
         const analysisTime = Date.now() - startTime;
-        
+
         console.log(`\n✅ [FFmpeg Analysis] Completed in ${analysisTime}ms`);
         console.log('═══════════════════════════════════════════════════════════');
         console.log('📊 VIDEO METADATA');
@@ -100,7 +100,7 @@ router.post('/analyze', upload.single('video'), async(req, res) => {
             isScreenRecording: isScreenRecording === 'true',
             isFromMobile: isFromMobile !== 'false' // Default to true
         });
-        
+
         console.log('🤔 [Compression Decision]');
         console.log(`   Should Compress: ${compressionDecision.shouldCompress ? '✅ YES' : '❌ NO'}`);
         console.log(`   Reason: ${compressionDecision.reason}`);
@@ -121,10 +121,10 @@ router.post('/analyze', upload.single('video'), async(req, res) => {
                 fileSize: metadata.fileSize,
                 fileSizeMB: (metadata.fileSize / (1024 * 1024)).toFixed(2),
                 resolution: metadata.video ? `${metadata.video.width}x${metadata.video.height}` : null,
-                fps: metadata.video?.fps,
+                fps: metadata.video ? .fps,
                 bitrate: metadata.bitrate,
-                videoCodec: metadata.video?.codec,
-                audioCodec: metadata.audio?.codec
+                videoCodec: metadata.video ? .codec,
+                audioCodec: metadata.audio ? .codec
             },
             compression: compressionDecision,
             recommendedQualities: targetQualities.map(q => q.name)
@@ -134,7 +134,7 @@ router.post('/analyze', upload.single('video'), async(req, res) => {
         console.error('❌ Video analysis error:', error);
 
         // Cleanup on error
-        if (req.file?.path) {
+        if (req.file ? .path) {
             await fs.unlink(req.file.path).catch(() => {});
         }
 
@@ -201,11 +201,11 @@ router.post('/process', upload.single('video'), async(req, res) => {
             console.log(`   🆔 Video ID: ${videoId}`);
             console.log(`   👤 User: ${username}`);
             console.log(`   📊 Source: ${metadata.video?.width}x${metadata.video?.height} @ ${(metadata.bitrate / 1000).toFixed(0)}kbps`);
-            
+
             const hlsStartTime = Date.now();
             result = await videoService.transcodeToHLS(req.file.path, outputDir);
             const hlsTime = Date.now() - hlsStartTime;
-            
+
             console.log(`✅ [FFmpeg HLS] Completed in ${(hlsTime / 1000).toFixed(1)}s`);
             console.log(`   📺 Generated qualities: ${result.qualities.map(q => q.quality).join(', ')}`);
             console.log(`   📁 Total variants: ${result.qualities.length}`);
@@ -268,7 +268,7 @@ router.post('/process', upload.single('video'), async(req, res) => {
             const compressStartTime = Date.now();
             const compressionResult = await videoService.compressVideo(req.file.path, outputPath);
             const compressTime = Date.now() - compressStartTime;
-            
+
             console.log(`✅ [FFmpeg Compression] Completed in ${(compressTime / 1000).toFixed(1)}s`);
             console.log(`   💾 Size reduced: ${(compressionResult.originalSize / (1024 * 1024)).toFixed(2)} MB → ${(compressionResult.newSize / (1024 * 1024)).toFixed(2)} MB`);
             console.log(`   📉 Compression ratio: ${compressionResult.compressionRatio}`);
@@ -296,10 +296,10 @@ router.post('/process', upload.single('video'), async(req, res) => {
             // Apply fast start (move moov atom to beginning)
             const optimizedPath = path.join(outputDir, 'optimized.mp4');
             await fs.mkdir(outputDir, { recursive: true });
-            
+
             try {
                 await videoService.applyFastStart(req.file.path, optimizedPath);
-                
+
                 const optimizedContent = await fs.readFile(optimizedPath);
                 const originalUrl = await r2Service.uploadFile(
                     optimizedContent,
@@ -314,7 +314,7 @@ router.post('/process', upload.single('video'), async(req, res) => {
                 };
             } catch (error) {
                 console.warn('⚠️ Fast start optimization failed, falling back to original file:', error.message);
-                
+
                 // Fallback to original if optimization fails
                 const originalContent = await fs.readFile(req.file.path);
                 const originalUrl = await r2Service.uploadFile(
@@ -322,7 +322,7 @@ router.post('/process', upload.single('video'), async(req, res) => {
                     `videos/${username}/${videoId}/video.mp4`,
                     'video/mp4'
                 );
-                
+
                 result = {
                     type: 'passthrough',
                     url: originalUrl,
@@ -353,7 +353,7 @@ router.post('/process', upload.single('video'), async(req, res) => {
         console.error('❌ Video processing error:', error);
 
         // Cleanup on error
-        if (req.file?.path) {
+        if (req.file ? .path) {
             await fs.unlink(req.file.path).catch(() => {});
         }
 
@@ -451,7 +451,7 @@ router.post('/process-url', async(req, res) => {
             try {
                 // Apply fast start
                 await videoService.applyFastStart(tempPath, optimizedPath);
-                
+
                 // Upload optimized file
                 const optimizedContent = await fs.readFile(optimizedPath);
                 const videoUrl = await r2Service.uploadFile(
@@ -467,7 +467,7 @@ router.post('/process-url', async(req, res) => {
                 };
             } catch (error) {
                 console.warn('⚠️ Fast start optimization failed in process-url, using original:', error.message);
-                
+
                 // Fallback to original
                 const originalContent = await fs.readFile(tempPath);
                 const videoUrl = await r2Service.uploadFile(
@@ -511,7 +511,7 @@ router.post('/process-url', async(req, res) => {
  * GET /video/stream-info
  * Get streaming information (HLS or direct) for a video
  */
-router.get('/stream-info', async (req, res) => {
+router.get('/stream-info', async(req, res) => {
     try {
         const { username, videoId, directUrl } = req.query;
 
@@ -589,7 +589,7 @@ router.get('/qualities', (req, res) => {
  * Generate a presigned URL for uploading a video file to R2
  * Used by the mobile client to upload video files before creating the video record
  */
-router.post('/upload-url', async (req, res) => {
+router.post('/upload-url', async(req, res) => {
     try {
         const { filename, contentType } = req.body;
         if (!filename || !contentType) {
@@ -627,7 +627,7 @@ router.post('/upload-url', async (req, res) => {
  * This endpoint centralizes database operations on the backend
  */
 // Accept either JSON (with optional videoBase64) or multipart/form-data with 'videoFile'
-router.post('/insert', upload.single('videoFile'), async (req, res) => {
+router.post('/insert', upload.single('videoFile'), async(req, res) => {
     try {
         const {
             title,
@@ -657,7 +657,8 @@ router.post('/insert', upload.single('videoFile'), async (req, res) => {
         console.log(`   remoteId: ${remoteId}`);
 
         // Import SupabaseService dynamically to avoid circular dependencies
-        const { SupabaseService } = await import('../../infrastructure/database/SupabaseService.js');
+        const { SupabaseService } = await
+        import ('../../infrastructure/database/SupabaseService.js');
         const supabaseService = SupabaseService.getInstance();
 
         // Support direct upload via base64 payload (optional fields: videoBase64, originalFilename, contentType)
@@ -697,12 +698,12 @@ router.post('/insert', upload.single('videoFile'), async (req, res) => {
                 payload.videoBase64 = fileBuffer.toString('base64');
                 payload.originalFilename = req.file.originalname || `${title.replace(/\s+/g, '_')}.mp4`;
                 payload.contentType = req.file.mimetype || 'video/mp4';
-                
+
                 // Cleanup optimized file if created
                 if (fileToRead !== req.file.path) {
                     try { await fs.unlink(optimizedPath); } catch (e) { /* ignore */ }
                 }
-                
+
                 // Remove temp file after reading
                 try { await fs.unlink(req.file.path); } catch (e) { /* ignore */ }
             } catch (e) {
@@ -743,7 +744,7 @@ router.post('/insert', upload.single('videoFile'), async (req, res) => {
  * PUT /video/update/:videoId
  * Update an existing video record
  */
-router.put('/update/:videoId', async (req, res) => {
+router.put('/update/:videoId', async(req, res) => {
     try {
         const { videoId } = req.params;
         const updateData = req.body;
@@ -757,7 +758,8 @@ router.put('/update/:videoId', async (req, res) => {
 
         console.log(`📝 [Backend] Updating video: ID=${videoId}`);
 
-        const { SupabaseService } = await import('../../infrastructure/database/SupabaseService.js');
+        const { SupabaseService } = await
+        import ('../../infrastructure/database/SupabaseService.js');
         const supabaseService = SupabaseService.getInstance();
 
         const updatedVideo = await supabaseService.updateVideo(parseInt(videoId), updateData);
@@ -787,7 +789,7 @@ router.put('/update/:videoId', async (req, res) => {
  * GET /video/fetch/:videoId
  * Fetch a video by ID from Supabase
  */
-router.get('/fetch/:videoId', async (req, res) => {
+router.get('/fetch/:videoId', async(req, res) => {
     try {
         const { videoId } = req.params;
 
@@ -798,7 +800,8 @@ router.get('/fetch/:videoId', async (req, res) => {
             });
         }
 
-        const { SupabaseService } = await import('../../infrastructure/database/SupabaseService.js');
+        const { SupabaseService } = await
+        import ('../../infrastructure/database/SupabaseService.js');
         const supabaseService = SupabaseService.getInstance();
 
         const video = await supabaseService.fetchVideoById(parseInt(videoId));

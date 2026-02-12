@@ -1,14 +1,14 @@
 import { Router } from 'express';
-import { NotificationService } from '../../services/NotificationService.js';
+import { NotificationService } from '../../infrastructure/legacy/NotificationService.js';
 
 const router = Router();
 const notificationService = NotificationService.getInstance();
 
 // Endpoint for chat response notifications (Email)
-router.post('/notify-chat-response', async (req, res) => {
+router.post('/notify-chat-response', async(req, res) => {
     try {
         const { userId } = req.body;
-        
+
         if (!userId) {
             return res.status(400).json({ error: 'UserId is required' });
         }
@@ -23,9 +23,9 @@ router.post('/notify-chat-response', async (req, res) => {
                 'Tu consulta ha sido procesada. Abre la app para ver la respuesta completa.'
             );
         } catch (notifError) {
-             console.warn('⚠️ Notification failed but response handled:', notifError.message);
-             // We continue to return success to the client because the MAIN action (processing) was fine.
-             // The notification is secondary.
+            console.warn('⚠️ Notification failed but response handled:', notifError.message);
+            // We continue to return success to the client because the MAIN action (processing) was fine.
+            // The notification is secondary.
         }
 
         res.json({ success: true });
@@ -36,10 +36,10 @@ router.post('/notify-chat-response', async (req, res) => {
 });
 
 // Endpoint for push notifications
-router.post('/send-push-notification', async (req, res) => {
+router.post('/send-push-notification', async(req, res) => {
     try {
         const { userId, title, body, data } = req.body;
-        
+
         if (!userId || !title || !body) {
             return res.status(400).json({ error: 'Missing required fields' });
         }
@@ -47,7 +47,7 @@ router.post('/send-push-notification', async (req, res) => {
         // Use the same service but potentially different method if implemented
         // For now, assuming sendNotification handles both or just email
         // If you have specific push logic, add it here
-        
+
         await notificationService.sendPushNotification(
             userId,
             title,
@@ -67,7 +67,7 @@ router.post('/send-push-notification', async (req, res) => {
  * Notifies all subscribers of a creator about a new course.
  * Called by Android app when a course is published.
  */
-router.post('/notify-course-creation', async (req, res) => {
+router.post('/notify-course-creation', async(req, res) => {
     try {
         const { creatorUserId, creatorUsername, courseId, courseTitle, courseThumbnailUrl } = req.body;
 
@@ -77,8 +77,7 @@ router.post('/notify-course-creation', async (req, res) => {
 
         const result = await notificationService.notifySubscribersOfNewCourse(
             creatorUserId,
-            creatorUsername || 'Un instructor',
-            {
+            creatorUsername || 'Un instructor', {
                 id: courseId,
                 title: courseTitle || 'Nuevo curso',
                 thumbnailUri: courseThumbnailUrl

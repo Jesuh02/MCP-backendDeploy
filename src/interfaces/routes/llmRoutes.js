@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import axios from 'axios';
-import { R2StorageService } from '../../services/R2StorageService.js';
+import { R2StorageService } from '../../infrastructure/legacy/R2StorageService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
 import { MCPService } from '../../domain/services/MCPService.js';
 import { RAGService } from '../../domain/services/RAGService.js';

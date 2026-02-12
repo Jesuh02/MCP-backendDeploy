@@ -113,5 +113,70 @@ export class UserDomainService {
         }
         return Result.ok(users);
     }
+
+    /**
+     * Validates if an email is valid and usable for sending
+     */
+    validateEmail(email) {
+        if (!email) return { valid: false, reason: 'Email vacío o nulo' };
+        if (email === '.') return { valid: false, reason: 'Email placeholder "." (no configurado)' };
+        if (email.startsWith('missing_email_')) return { valid: false, reason: `Email placeholder temporal: ${email}` };
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email.trim())) return { valid: false, reason: `Formato de email inválido: ${email}` };
+
+        return { valid: true, reason: null };
+    }
+
+    /**
+     * Gets validated user email
+     */
+    async getValidatedUserEmail(userId) {
+        const user = await this.userRepo.findById(userId);
+        if (!user) {
+            return {
+                email: null,
+                username: null,
+                valid: false,
+                reason: 'Usuario no encontrado en base de datos'
+            };
+        }
+
+        const validation = this.validateEmail(user.email);
+        return {
+            email: validation.valid ? user.email : null,
+            username: user.username || 'Usuario',
+            valid: validation.valid,
+            reason: validation.reason
+        };
+    }
+
+    async getUserEmail(userId) {
+        const { data } = await this.userRepo.findById(userId);
+        return data ? data.email : null;
+    }
+
+    async getUsername(userId) {
+        const { data } = await this.userRepo.findById(userId);
+        return data ? data.username : null;
+    }
+
+    async getUserFCMTokens(userId) {
+        try {
+            const tokens = await this.userRepo.getUserFCMTokens(userId);
+            return Result.ok(tokens);
+        } catch (error) {
+            return Result.ok([]); // Return empty on error to avoid breaking flows
+        }
+    }
+
+    async removeInvalidFCMTokens(tokens) {
+        try {
+            await this.userRepo.removeInvalidFCMTokens(tokens);
+            return Result.ok(true);
+        } catch (error) {
+            return Result.fail(error);
+        }
+    }
 }
 export default UserDomainService;
