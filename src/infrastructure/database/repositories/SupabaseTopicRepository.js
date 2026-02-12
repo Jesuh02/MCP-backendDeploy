@@ -24,7 +24,7 @@
 
     async create(topicData) {
         const payload = {
-            title: topicData.title,
+            name: topicData.title,
             description: topicData.description || '',
             course_id: topicData.courseId,
             order_index: topicData.orderIndex || 0,
@@ -36,7 +36,7 @@
 
     async update(id, data) {
         const payload = {};
-        if (data.title !== undefined) payload.title = data.title;
+        if (data.title !== undefined) payload.name = data.title;
         if (data.description !== undefined) payload.description = data.description;
         if (data.orderIndex !== undefined) payload.order_index = data.orderIndex;
         payload.updated_at = new Date().toISOString();

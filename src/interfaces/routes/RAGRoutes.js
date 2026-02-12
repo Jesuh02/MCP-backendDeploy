@@ -18,7 +18,7 @@ const require = createRequire(
 const pdf = require('pdf-parse');
 import { RAGService } from '../../domain/services/RAGService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
-import { R2StorageService } from '../../services/R2StorageService.js';
+import { R2StorageService } from '../../infrastructure/legacy/R2StorageService.js';
 import { logger } from '../../infrastructure/logging/Logger.js';
 import Joi from 'joi';
 

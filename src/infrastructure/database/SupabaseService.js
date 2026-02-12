@@ -6,7 +6,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '../logging/Logger.js';
-import R2StorageService from '../../services/R2StorageService.js';
+import R2StorageService from '../legacy/R2StorageService.js';
 
 export class SupabaseService {
     static instance = null;

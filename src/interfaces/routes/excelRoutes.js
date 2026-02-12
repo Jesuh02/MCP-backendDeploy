@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { MCPService } from '../../domain/services/MCPService.js';
-import { R2StorageService } from '../../services/R2StorageService.js';
+import { R2StorageService } from '../../infrastructure/legacy/R2StorageService.js';
 import { createRequire } from 'module';
 import multer from 'multer';
 
-const require = createRequire(import.meta.url);
+const require = createRequire(
+    import.meta.url);
 const xlsx = require('xlsx');
 
 const router = Router();
@@ -12,7 +13,7 @@ const mcpService = new MCPService();
 const r2Service = R2StorageService.getInstance();
 
 // Configure multer for memory storage
-const upload = multer({ 
+const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
@@ -21,7 +22,7 @@ const upload = multer({
  * Upload a file to R2
  * Accepts multipart/form-data with field 'file'
  */
-router.post('/upload', upload.single('file'), async (req, res) => {
+router.post('/upload', upload.single('file'), async(req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'No file uploaded' });
@@ -59,7 +60,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
  * Generate an Excel file from a natural language query
  * ... (existing code)
  */
-router.post('/generate-excel', async (req, res) => {
+router.post('/generate-excel', async(req, res) => {
     try {
         const { query, userId } = req.body;
 
@@ -81,7 +82,7 @@ router.post('/generate-excel', async (req, res) => {
             console.warn("⚠️ processQueryToData failed, falling back to processQuery:", e.message);
             result = await mcpService.processQuery(query);
         }
-        
+
         if (typeof result === 'string') {
             return res.status(400).json({ error: result });
         }
@@ -91,7 +92,7 @@ router.post('/generate-excel', async (req, res) => {
         }
 
         let dataToExport = [];
-        
+
         // Handle different data structures
         if (Array.isArray(result.data)) {
             dataToExport = result.data;
@@ -125,24 +126,24 @@ router.post('/generate-excel', async (req, res) => {
         // 2. Generate Excel
         const wb = xlsx.utils.book_new();
         const ws = xlsx.utils.json_to_sheet(dataToExport);
-        
+
         // Auto-width columns
         const colWidths = Object.keys(dataToExport[0] || {}).map(key => ({ wch: Math.max(key.length, 15) }));
         ws['!cols'] = colWidths;
 
         xlsx.utils.book_append_sheet(wb, ws, "Results");
-        
+
         const excelBuffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
         console.log(`⏱️ [${Date.now() - startTime}ms] Excel buffer created (${excelBuffer.length} bytes). Uploading...`);
 
         // 3. Upload to R2
         const timestamp = Date.now();
         const filename = `reports/excel_export_${userId || 'anon'}_${timestamp}.xlsx`;
-        
+
         console.log(`📤 Uploading Excel to ${filename}...`);
         const publicUrl = await r2Service.uploadFile(
-            excelBuffer, 
-            filename, 
+            excelBuffer,
+            filename,
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         );
         console.log(`⏱️ [${Date.now() - startTime}ms] Upload complete: ${publicUrl}`);

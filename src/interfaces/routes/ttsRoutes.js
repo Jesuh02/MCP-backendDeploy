@@ -6,7 +6,7 @@
  */
 
 import express from 'express';
-import { getTTSService, OpenAIVoices, AudioFormats } from '../../services/TTSService.js';
+import { getTTSService, OpenAIVoices, AudioFormats } from '../../infrastructure/legacy/TTSService.js';
 
 const router = express.Router();
 
@@ -116,7 +116,7 @@ router.post('/stream', async(req, res) => {
         // Pipe the stream to response
         // OpenAI SDK returns a web standard ReadableStream, we need to convert or handle it
         // Node.js response is a WritableStream
-        
+
         if (stream.pipe) {
             // If it's a Node stream
             stream.pipe(res);
@@ -168,7 +168,7 @@ router.get('/stream', async(req, res) => {
 
         res.setHeader('Content-Type', contentType);
         res.setHeader('Transfer-Encoding', 'chunked');
-        
+
         const stream = await ttsService.stream(text, {
             voice,
             model,
