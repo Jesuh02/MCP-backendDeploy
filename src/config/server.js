@@ -18,7 +18,6 @@ import { createV1Router } from '../interfaces/http/routes/v1/index.js';
 import { createAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
 import { errorHandler } from '../infrastructure/middleware/ErrorHandler.js';
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
-import { MCPService } from '../domain/services/MCPService.js';
 import legacyPaymentRouter from '../interfaces/routes/paymentRoutes.js';
 
 /**
@@ -168,18 +167,9 @@ export function createApp() {
     // These endpoints replicate the standalone mcp-http.js server
     // so the deployed Railway backend handles them.
     // ═══════════════════════════════════════════════════════════
-
-    let _mcpHttpService = null;
-
+    
     function getMCPHttpService() {
-        if (!_mcpHttpService) {
-            try {
-                _mcpHttpService = new MCPService();
-            } catch (e) {
-                console.error('❌ Failed to init MCPService for HTTP tools:', e.message);
-            }
-        }
-        return _mcpHttpService;
+        return container.mcpServiceLegacy;
     }
 
     // MCP Initialize — Android client calls this to handshak
