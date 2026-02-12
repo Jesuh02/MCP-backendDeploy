@@ -28,7 +28,7 @@ export class ExcelController {
                 return next(new ValidationError('Se requiere el campo "query"'));
             }
 
-            const effectiveUserId = userId || req.user ? .userId ? .toString() || 'anon';
+            const effectiveUserId = userId || req.user ?.userId ?.toString() || 'anon';
 
             console.log(`📊 Generating Excel for query: "${query}" (User: ${effectiveUserId})`);
 
@@ -58,7 +58,7 @@ export class ExcelController {
                 return next(new ValidationError('Se requiere un archivo'));
             }
 
-            const userId = req.body.userId || req.user ? .userId ? .toString() || 'anon';
+            const userId = req.body.userId || req.user ?.userId ?.toString() || 'anon';
 
             const result = await this.excelService.uploadFile({
                 buffer: req.file.buffer,

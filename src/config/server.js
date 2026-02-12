@@ -164,6 +164,7 @@ export function createApp() {
     // ═══════════════════════════════════════════════════════════
 
     let _mcpHttpService = null;
+
     function getMCPHttpService() {
         if (!_mcpHttpService) {
             try {
@@ -176,7 +177,7 @@ export function createApp() {
     }
 
     // MCP Initialize — Android client calls this to handshake
-    app.post('/initialize', async (req, res) => {
+    app.post('/initialize', async(req, res) => {
         console.log('🔧 MCP Initialize request (Android compat)');
         try {
             const supabase = SupabaseService.getInstance();
@@ -214,8 +215,7 @@ export function createApp() {
             jsonrpc: '2.0',
             id: req.body?.id || 1,
             result: {
-                tools: [
-                    {
+                tools: [{
                         name: 'query_database',
                         description: 'Execute queries on the YisusCompany Supabase database. Accepts raw SQL or natural language.',
                         inputSchema: {
@@ -250,7 +250,7 @@ export function createApp() {
     });
 
     // MCP Tools Call — Android client executes tools (query_database, etc.)
-    app.post('/tools/call', async (req, res) => {
+    app.post('/tools/call', async(req, res) => {
         const { params } = req.body;
         console.log('🔧 Tool call (Android compat):', params?.name);
 
@@ -321,7 +321,7 @@ export function createApp() {
     });
 
     // Notification endpoint — Android sends email/push notifications after chat
-    app.post('/notify-chat-response', async (req, res) => {
+    app.post('/notify-chat-response', async(req, res) => {
         try {
             const { userId } = req.body;
             if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
@@ -344,7 +344,7 @@ export function createApp() {
     });
 
     // Push notification endpoint — Android sends push when app is in background
-    app.post('/send-push-notification', async (req, res) => {
+    app.post('/send-push-notification', async(req, res) => {
         try {
             const { userId, title, body: notifBody, data } = req.body;
             if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
@@ -397,7 +397,7 @@ export function createApp() {
     });
 
     // FCM token registration
-    app.post('/register-fcm-token', async (req, res) => {
+    app.post('/register-fcm-token', async(req, res) => {
         try {
             const { userId, token, deviceType } = req.body;
             if (!userId || !token) {
@@ -412,17 +412,17 @@ export function createApp() {
     });
 
     // Notify grade — Android sends grade notification to student
-    app.post('/notify-grade', async (req, res) => {
-        try {
-            const { userId, taskName, grade, feedback, gradedByUsername, submissionId } = req.body;
-            if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+    app.post('/notify-grade', async(req, res) => {
+                try {
+                    const { userId, taskName, grade, feedback, gradedByUsername, submissionId } = req.body;
+                    if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
-            const notifService = container.notificationService;
-            if (notifService) {
-                await notifService.sendNotification({
-                    userId: parseInt(userId),
-                    title: `📊 Tu tarea "${taskName || 'Tarea'}" ha sido calificada`,
-                    message: `Nota: ${grade}/10${feedback ? ` — ${feedback.substring(0, 100)}` : ''}`,
+                    const notifService = container.notificationService;
+                    if (notifService) {
+                        await notifService.sendNotification({
+                                    userId: parseInt(userId),
+                                    title: `📊 Tu tarea "${taskName || 'Tarea'}" ha sido calificada`,
+                                    message: `Nota: ${grade}/10${feedback ? ` — ${feedback.substring(0, 100)}` : ''}`,
                     type: 'task_graded',
                     relatedId: submissionId,
                     senderUsername: gradedByUsername,

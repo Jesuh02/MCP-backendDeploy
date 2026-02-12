@@ -160,8 +160,8 @@ class PaymentService {
             .eq('id', paymentData.courseId)
             .single();
 
-        const courseName = courseDetails ? .title || 'Curso';
-        const courseDescription = courseDetails ? .description || 'Acceso al curso';
+        const courseName = courseDetails ?.title || 'Curso';
+        const courseDescription = courseDetails ?.description || 'Acceso al curso';
 
         // 3. Create Transaction in DB (Pending) with DB-fetched price
         await this._recordTransactionStart({
@@ -256,7 +256,7 @@ class PaymentService {
         const status = event.data.transaction.status;
         const amount = event.data.transaction.amount_in_cents;
         const timestamp = event.timestamp;
-        const checksum = event.signature ? .checksum;
+        const checksum = event.signature ?.checksum;
 
         if (!checksum) return false;
 
@@ -284,19 +284,19 @@ class PaymentService {
             let amountInCents = null;
 
             // Format 1: { event: { data: { transaction: {...} } } }
-            if (data ? .event ? .data ? .transaction) {
+            if (data ?.event ?.data ?.transaction) {
                 transaction = data.event.data.transaction;
             }
             // Format 2: { data: { transaction: {...} } } - THIS IS THE WOMPI FORMAT
-            else if (data ? .data ? .transaction) {
+            else if (data ?.data ?.transaction) {
                 transaction = data.data.transaction;
             }
             // Format 3: Direct transaction object { transaction: {...} }
-            else if (data ? .transaction) {
+            else if (data ?.transaction) {
                 transaction = data.transaction;
             }
             // Format 4: The data itself is the transaction
-            else if (data ? .id && data ? .status) {
+            else if (data ?.id && data ?.status) {
                 transaction = data;
             }
 

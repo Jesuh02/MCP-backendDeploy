@@ -1,26 +1,25 @@
 /**
- * ExcelDomainService — Servicio de dominio para generación de reportes Excel.
+ * ExcelDomainService  Servicio de dominio para generaci�n de reportes Excel.
  *
- * Principio SRP: encapsula la lógica de:
- *   1. Obtener datos desde MCPService (consulta en lenguaje natural → SQL → datos)
+ * Principio SRP: encapsula la l�gica de:
+ *   1. Obtener datos desde MCPService (consulta en lenguaje natural  SQL  datos)
  *   2. Generar un archivo Excel (.xlsx) en memoria
  *   3. Subir el buffer resultante a R2 Storage
  *
  * Depende de puertos (interfaces), no de implementaciones concretas (DIP).
  */
 
-import { Result } from '../../shared/Result.js';
-import { createRequire } from 'module';
+import { Result } from "../../shared/Result.js";
+import { createRequire } from "module";
 
-const require = createRequire(
-    import.meta.url);
-const xlsx = require('xlsx');
+const require = createRequire(import.meta.url);
+const xlsx = require("xlsx");
 
 export class ExcelDomainService {
     /**
      * @param {Object} deps
-     * @param {Object} deps.mcpService   - MCPService (legacy singleton, se inyecta como dependencia)
-     * @param {Object} deps.fileStoragePort - R2StorageAdapter (puerto de almacenamiento)
+     * @param {Object} deps.mcpService   - MCPService
+     * @param {Object} deps.fileStoragePort - R2StorageAdapter
      */
     constructor({ mcpService, fileStoragePort }) {
         this.mcpService = mcpService;
@@ -36,155 +35,115 @@ export class ExcelDomainService {
      * @returns {Promise<Result<{url: string, rows: number, filename: string}>>}
      */
     async generateFromQuery({ query, userId }) {
-            const startTime = Date.now();
+        const startTime = Date.now();
 
-            // ── 1. Obtener datos ──────────────────────────────────────
-            let result;
+        //  1. Obtener datos 
+        let result;
+        try {
+            console.log("Starting processQueryToData...");
+            result = await this.mcpService.processQueryToData(query, userId);
+        } catch (e) {
+            console.warn("processQueryToData failed, falling back to processQuery:", e.message);
             try {
-                console.log(`⏱️ [${Date.now() - startTime}ms] Starting processQueryToData...`);
-                result = await this.mcpService.processQueryToData(query, userId);
-                console.log(`⏱️ [${Date.now() - startTime}ms] processQueryToData complete.`);
-            } catch (e) {
-                console.warn('⚠️ processQueryToData failed, falling back to processQuery:', e.message);
-
-
-            } catch (fallbackErr) {
                 result = await this.mcpService.processQuery(query);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-export default ExcelDomainService;}    }        return [];        }            return [result.data];            if (arrayProp) return arrayProp;            const arrayProp = Object.values(result.data).find(v => Array.isArray(v));            }                return Array.isArray(result.data.data) ? result.data.data : [result.data.data];            if (result.data.data) {            }                }));                    Value: value,                    Metric: key,                return Object.entries(result.data.metrics).map(([key, value]) => ({            if (result.data.metrics) {        if (result.data && typeof result.data === 'object') {        }            return result.data;        if (Array.isArray(result.data)) {    _extractData(result) {     */     * @private     * que puede venir en diferentes formatos.     * Extrae un array plano de datos desde la respuesta de MCPService,    /**    // ── Helpers privados ──────────────────────────────────────    }        }            return Result.fail(`Error subiendo archivo: ${err.message}`);        } catch (err) {            });                mimetype,                size,                filename: originalname,                url: publicUrl,            return Result.ok({            const publicUrl = uploadResult?.getValue ? uploadResult.getValue() : uploadResult;            const uploadResult = await this.fileStoragePort.uploadFile(buffer, objectKey, mimetype);        try {        console.log(`📤 Uploading ${originalname} (${size} bytes) to ${objectKey}`);        const objectKey = `uploads/${userId || 'anon'}/${timestamp}_${safeName}`;        const safeName = originalname.replace(/[^a-zA-Z0-9.-]/g, '_');        const timestamp = Date.now();    async uploadFile({ buffer, originalname, mimetype, size, userId }) {     */     * @returns {Promise<Result<{url: string, filename: string, size: number, mimetype: string}>>}     * @param {string} [params.userId] - ID del usuario     * @param {number} params.size     - Tamaño en bytes     * @param {string} params.mimetype - Tipo MIME     * @param {string} params.originalname - Nombre original     * @param {Buffer} params.buffer   - Contenido del archivo     * @param {Object} params     *     * Sube un archivo genérico a R2 (para la ruta /upload).    /**    }        }            return Result.fail(`Error subiendo archivo: ${uploadErr.message}`);        } catch (uploadErr) {            });                filename,                rows: dataToExport.length,                url: publicUrl,            return Result.ok({            console.log(`⏱️ [${Date.now() - startTime}ms] Upload complete: ${publicUrl}`);            const publicUrl = uploadResult?.getValue ? uploadResult.getValue() : uploadResult;            // uploadFile puede devolver un Result o directamente la URL            );                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',                filename,                excelBuffer,            const uploadResult = await this.fileStoragePort.uploadFile(        try {        console.log(`📤 Uploading Excel to ${filename}...`);        const filename = `reports/excel_export_${userId || 'anon'}_${timestamp}.xlsx`;        const timestamp = Date.now();        // ── 4. Subir a R2 ─────────────────────────────────────────        console.log(`⏱️ [${Date.now() - startTime}ms] Excel buffer created (${excelBuffer.length} bytes). Uploading...`);        const excelBuffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });        xlsx.utils.book_append_sheet(wb, ws, 'Results');        ws['!cols'] = colWidths;        }));            wch: Math.max(key.length, 15),        const colWidths = Object.keys(dataToExport[0] || {}).map(key => ({        // Auto-width columns        const ws = xlsx.utils.json_to_sheet(dataToExport);        const wb = xlsx.utils.book_new();        // ── 3. Generar Excel ──────────────────────────────────────        console.log(`⏱️ [${Date.now() - startTime}ms] Starting Excel generation...`);        console.log(`✅ Data retrieved: ${dataToExport.length} rows`);        }            return Result.fail('No se encontraron datos para esta consulta');        if (!dataToExport || dataToExport.length === 0) {        const dataToExport = this._extractData(result);                // ── 2. Normalizar estructura de datos ─────────────────────            }
-                return Result.fail(result.message || result.error);
-                if (result.error) {}
-                return Result.fail(result);
-                if (typeof result === 'string') {}
-                try {
-
-                }
+            } catch (fallbackErr) {
                 return Result.fail(`Error obteniendo datos: ${fallbackErr.message}`);
-            } catch (fallbackErr) { result = await this.mcpService.processQuery(query); try {
+            }
+        }
+
+        //  2. Normalizar estructura de datos 
+        if (!result) return Result.fail("No se obtuvo ning�n resultado de la consulta");
+        
+        let dataToExport;
+        try {
+            dataToExport = this._extractData(result);
+        } catch (err) {
+            return Result.fail(`Error procesando estructura de datos: ${err.message}`);
+        }
+
+        if (!dataToExport || dataToExport.length === 0) {
+            return Result.fail("No se encontraron datos para esta consulta");
+        }
+
+        //  3. Generar Excel 
+        try {
+            const wb = xlsx.utils.book_new();
+            const ws = xlsx.utils.json_to_sheet(dataToExport);
+
+            // Auto-width columns
+            const colWidths = Object.keys(dataToExport[0] || {}).map(key => ({
+                wch: Math.max(key.length, 15)
+            }));
+            ws["!cols"] = colWidths;
+
+            xlsx.utils.book_append_sheet(wb, ws, "Results");
+            const excelBuffer = xlsx.write(wb, { type: "buffer", bookType: "xlsx" });
+
+            //  4. Subir a R2 
+            const timestamp = Date.now();
+            const filename = `reports/excel_export_${userId || "anon"}_${timestamp}.xlsx`;
+
+            const uploadResult = await this.fileStoragePort.uploadFile(
+                excelBuffer,
+                filename,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            );
+
+            const publicUrl = uploadResult?.getValue ? uploadResult.getValue() : uploadResult;
+
+            return Result.ok({
+                url: publicUrl,
+                rows: dataToExport.length,
+                filename
+            });
+        } catch (uploadErr) {
+            return Result.fail(`Error subiendo archivo: ${uploadErr.message}`);
+        }
+    }
+
+    /**
+     * Sube un archivo gen�rico a R2 (para la ruta /upload).
+     */
+    async uploadFile({ buffer, originalname, mimetype, size, userId }) {
+        try {
+            const timestamp = Date.now();
+            const safeName = originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
+            const objectKey = `uploads/${userId || "anon"}/${timestamp}_${safeName}`;
+
+            const uploadResult = await this.fileStoragePort.uploadFile(buffer, objectKey, mimetype);
+            const publicUrl = uploadResult?.getValue ? uploadResult.getValue() : uploadResult;
+
+            return Result.ok({
+                url: publicUrl,
+                filename: originalname,
+                size,
+                mimetype,
+            });
+        } catch (err) {
+            return Result.fail(`Error subiendo archivo: ${err.message}`);
+        }
+    }
+
+    /**
+     * Extrae un array plano de datos desde la respuesta de MCPService.
+     * @private
+     */
+    _extractData(result) {
+        if (!result) return [];
+        if (Array.isArray(result)) return result;
+        const data = result.getValue ? result.getValue() : result;
+        if (Array.isArray(data)) return data;
+        if (data && typeof data === "object") {
+            if (Array.isArray(data.data)) return data.data;
+            if (Array.isArray(data.metrics)) {
+                return data.metrics.map(([key, value]) => ({ Metric: key, Value: value }));
+            }
+            const arrayProp = Object.values(data).find(v => Array.isArray(v));
+            if (arrayProp) return arrayProp;
+            return [data];
+        }
+        return [];
+    }
+}
+
+export default ExcelDomainService;
