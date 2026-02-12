@@ -1,59 +1,38 @@
+import { BaseController } from './BaseController.js';
 import { initiatePaymentSchema } from '../../../domain/validators/CommonSchemas.js';
 import { ValidationError } from '../../../shared/errors/index.js';
 
-export class PaymentController {
+export class PaymentController extends BaseController {
     constructor({ paymentService }) {
+        super();
         this.paymentService = paymentService;
     }
 
-    initiate = async(req, res, next) => {
-        try {
-            const { error, value } = initiatePaymentSchema.validate(req.body);
-            if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.paymentService.initiate({...value, userId: req.user.userId });
-            if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
-        } catch (err) { next(err); }
+    initiate = async (req, res, next) => {
+        const { error, value } = initiatePaymentSchema.validate(req.body);
+        if (error) return next(ValidationError.fromJoi(error));
+        this.store(req, res, next, () => this.paymentService.initiate({ ...value, userId: req.user.userId }));
     };
 
-    checkStatus = async(req, res, next) => {
-        try {
-            const result = await this.paymentService.checkStatus(req.params.transactionId);
-            if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
-        } catch (err) { next(err); }
-    };
-    webhook = async(req, res, next) => {
-        try {
-            const result = await this.paymentService.handleWebhook(req.body);
-            if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
-        } catch (err) { next(err); }
+    checkStatus = async (req, res, next) => {
+        this.store(req, res, next, () => this.paymentService.checkStatus(req.params.transactionId));
     };
 
-    getMyTransactions = async(req, res, next) => {
-        try {
-            const result = await this.paymentService.getUserTransactions(req.user.userId);
-            if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
-        } catch (err) { next(err); }
+    webhook = async (req, res, next) => {
+        this.store(req, res, next, () => this.paymentService.handleWebhook(req.body));
     };
 
-    getBanks = async(req, res, next) => {
-        try {
-            const result = await this.paymentService.getBanks();
-            if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
-        } catch (err) { next(err); }
+    getMyTransactions = async (req, res, next) => {
+        this.store(req, res, next, () => this.paymentService.getUserTransactions(req.user.userId));
     };
 
-    hasPurchased = async(req, res, next) => {
-        try {
-            const courseId = parseInt(req.params.courseId);
-            const result = await this.paymentService.hasPurchasedCourse(req.user.userId, courseId);
-            if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
-        } catch (err) { next(err); }
+    getBanks = async (req, res, next) => {
+        this.store(req, res, next, () => this.paymentService.getBanks());
+    };
+
+    hasPurchased = async (req, res, next) => {
+        const courseId = parseInt(req.params.courseId);
+        this.store(req, res, next, () => this.paymentService.hasPurchasedCourse(req.user.userId, courseId));
     };
 }
 export default PaymentController;

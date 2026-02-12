@@ -6,7 +6,7 @@
  */
 
 import crypto from 'crypto';
-import SupabaseService from '../infrastructure/database/SupabaseService.js';
+import SupabaseService from '../database/SupabaseService.js';
 import fetch from 'node-fetch'; // Ensure node-fetch is available
 
 class PaymentService {

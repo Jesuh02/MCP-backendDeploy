@@ -2,10 +2,14 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class SubmissionDomainService {
-    constructor({ submissionRepository, taskRepository, progressRepository }) {
+    constructor({ submissionRepository, taskRepository, progressRepository, notificationService, courseService, topicService, userService }) {
         this.subRepo = submissionRepository;
         this.taskRepo = taskRepository;
         this.progressRepo = progressRepository;
+        this.notificationService = notificationService || null;
+        this.courseService = courseService || null;
+        this.topicService = topicService || null;
+        this.userService = userService || null;
     }
 
     async getById(id) {
@@ -44,6 +48,68 @@ export class SubmissionDomainService {
             const created = await this.subRepo.create(data);
             return Result.ok(created);
         }
+    }
+
+    /**
+     * Envía una entrega y notifica al creador del curso.
+     * Orquesta la lógica de negocio que antes vivía en el controlador.
+     */
+    async submitAndNotify(data) {
+        const submitResult = await this.submit(data);
+        if (submitResult.isFail()) return submitResult;
+
+        // Fire-and-forget: la notificación no bloquea la respuesta
+        this._notifySubmission(data).catch(err =>
+            console.warn('[SubmissionDomainService] Error notificando entrega:', err.message)
+        );
+        return submitResult;
+    }
+
+    /**
+     * Notifica al creador del curso sobre una nueva entrega.
+     * @private
+     */
+    async _notifySubmission(data) {
+        if (!this.notificationService || !this.taskRepo || !this.courseService || !this.topicService) return;
+
+        const task = await this.taskRepo.findById(data.taskId);
+        if (!task) return;
+
+        const topicId = task.topicId || task.topic_id;
+        if (!topicId) return;
+
+        const topicResult = await this.topicService.getById(topicId);
+        if (topicResult.isFail()) return;
+        const topic = topicResult.getValue();
+        const courseId = topic.course_id || topic.courseId;
+        if (!courseId) return;
+
+        const courseResult = await this.courseService.getById(courseId);
+        if (courseResult.isFail()) return;
+        const course = courseResult.getValue();
+        const creatorId = course.creator_user_id || course.creatorUserId;
+
+        if (!creatorId || creatorId === data.userId) return;
+
+        let senderAvatarUrl = null;
+        if (this.userService) {
+            const userResult = await this.userService.getById(data.userId);
+            if (userResult.isOk()) {
+                senderAvatarUrl = userResult.getValue().avatar;
+            }
+        }
+
+        await this.notificationService.sendNotification({
+            userId: creatorId,
+            title: `Nueva entrega: ${task.title}`,
+            message: `${data.username} ha enviado una entrega para la tarea '${task.title}'`,
+            type: 'task_submission',
+            relatedId: data.taskId,
+            senderUsername: data.username,
+            senderAvatarUrl,
+            thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnail_uri || senderAvatarUrl,
+            metadata: JSON.stringify({ taskId: data.taskId, courseId, type: 'task_submission' })
+        });
     }
 
     async grade(id, { grade, feedback }, graderId) {

@@ -152,13 +152,13 @@ export class UserDomainService {
     }
 
     async getUserEmail(userId) {
-        const { data } = await this.userRepo.findById(userId);
-        return data ? data.email : null;
+        const user = await this.userRepo.findById(userId);
+        return user ? user.email : null;
     }
 
     async getUsername(userId) {
-        const { data } = await this.userRepo.findById(userId);
-        return data ? data.username : null;
+        const user = await this.userRepo.findById(userId);
+        return user ? user.username : null;
     }
 
     async getUserFCMTokens(userId) {

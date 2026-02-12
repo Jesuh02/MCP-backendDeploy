@@ -26,7 +26,7 @@ async function loadPresigner() {
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
+import { SupabaseService } from '../database/SupabaseService.js';
 
 // ============================================================
 // SINGLETON INSTANCE
