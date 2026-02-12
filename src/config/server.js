@@ -323,8 +323,7 @@ export function createApp() {
             // Use the notification service from the container
             const notifService = container.notificationService;
             if (notifService) {
-                await notifService.create({
-                    userId,
+                await notifService.send(userId, {
                     title: '🤖 Nueva respuesta del chat',
                     message: 'Tu consulta ha sido procesada. Abre la app para ver la respuesta.',
                     type: 'chat_response',
@@ -344,11 +343,12 @@ export function createApp() {
             const { userId, title, body: notifBody, data } = req.body;
             if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
-            const fcm = container.fcmAdapter;
-            if (fcm) {
-                await fcm.sendToUser(userId, {
+            const notifService = container.notificationService;
+            if (notifService) {
+                await notifService.send(userId, {
                     title: title || '🤖 Nueva respuesta',
-                    body: notifBody || 'Tu consulta ha sido procesada.',
+                    message: notifBody || 'Tu consulta ha sido procesada.',
+                    type: 'push',
                     data: data || {},
                 });
             }
