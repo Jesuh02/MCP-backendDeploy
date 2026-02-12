@@ -18,6 +18,7 @@ import { createV1Router } from '../interfaces/http/routes/v1/index.js';
 import { createAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
 import { errorHandler } from '../infrastructure/middleware/ErrorHandler.js';
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
+import legacyPaymentRouter from '../interfaces/routes/paymentRoutes.js';
 
 /**
  * Crea y configura la aplicación Express con toda la arquitectura hexagonal.
@@ -78,6 +79,10 @@ export function createApp() {
         req.url = `/api/v1/excel${req.url}`;
         app.handle(req, res, next);
     });
+
+    // Legacy Payment routes → redirect /api/payment/* to legacy paymentRoutes
+    // Android PaymentApi.kt uses /api/payment/* endpoints directly
+    app.use('/api/payment', legacyPaymentRouter);
 
     // ═══════════════════════════════════════════════════════════
     // 3. RUTAS DE COMPATIBILIDAD (Legacy → /api/v1)
@@ -185,7 +190,7 @@ export function createApp() {
 
             res.json({
                 jsonrpc: '2.0',
-                id: req.body?.id || 1,
+                id: req.body ? .id || 1,
                 result: {
                     protocolVersion: '2024-11-05',
                     capabilities: {
@@ -202,7 +207,7 @@ export function createApp() {
             console.error('❌ Initialize error:', error);
             res.status(500).json({
                 jsonrpc: '2.0',
-                id: req.body?.id || 1,
+                id: req.body ? .id || 1,
                 error: { code: -32603, message: 'Internal error', data: error.message },
             });
         }
@@ -213,7 +218,7 @@ export function createApp() {
         console.log('🔧 Tools list request (Android compat)');
         res.json({
             jsonrpc: '2.0',
-            id: req.body?.id || 1,
+            id: req.body ? .id || 1,
             result: {
                 tools: [{
                         name: 'query_database',
@@ -252,7 +257,7 @@ export function createApp() {
     // MCP Tools Call — Android client executes tools (query_database, etc.)
     app.post('/tools/call', async(req, res) => {
         const { params } = req.body;
-        console.log('🔧 Tool call (Android compat):', params?.name);
+        console.log('🔧 Tool call (Android compat):', params ? .name);
 
         try {
             const mcpSvc = getMCPHttpService();
