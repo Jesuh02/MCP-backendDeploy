@@ -18,6 +18,7 @@ import { createV1Router } from '../interfaces/http/routes/v1/index.js';
 import { createAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
 import { errorHandler } from '../infrastructure/middleware/ErrorHandler.js';
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
+import { MCPService } from '../domain/services/MCPService.js';
 import legacyPaymentRouter from '../interfaces/routes/paymentRoutes.js';
 
 /**
