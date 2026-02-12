@@ -55,7 +55,7 @@ router.post('/procesar-prompt', async(req, res) => {
                 const topicId = parseId(req.body.topicId || req.body.topic_id);
                 const courseId = parseId(req.body.courseId || req.body.course_id || req.body.idCurso);
                 const contentItemId = parseId(req.body.contentItemId || req.body.content_item_id);
-                const userId = req.body.userId || req.body.user_id || req.body.usuarioId || null;
+                const userId = parseId(req.body.userId || req.body.user_id || req.body.usuarioId); // 🔥 Parse as integer for Supabase FK
                 const submissionId = parseId(req.body.submissionId || req.body.submission_id); // 🔥 Extract submissionId
 
                 // 🔥 LOGIC: Determine if fileContent needs to be fetched from the database or URL
@@ -560,9 +560,25 @@ router.post('/procesar-prompt', async(req, res) => {
                         }).filter(Boolean);
 
                         if (historyQuestionsList.length > 0) {
-                            // Pass up to 50 previous questions to ensure better coverage against duplicates
-                            augmentedPrompt += `\n\n--- AVISO: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${historyQuestionsList.slice(-50).map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
-                }
+                            // OPTIMIZATION: Instead of just the last 50, we want a better spread.
+                            // If we have > 60 questions, we take the last 20 (recency) + 40 random from the rest.
+                            let contextQuestions = [];
+                            if (historyQuestionsList.length > 60) {
+                                const recent = historyQuestionsList.slice(-20);
+                                const older = historyQuestionsList.slice(0, -20);
+                                // Fisher-Yates shuffle for older questions
+                                for (let i = older.length - 1; i > 0; i--) {
+                                    const j = Math.floor(Math.random() * (i + 1));
+                                    [older[i], older[j]] = [older[j], older[i]];
+                                }
+                                contextQuestions = [...older.slice(0, 40), ...recent];
+                            } else {
+                                contextQuestions = historyQuestionsList;
+                            }
+
+                            // Pass selected questions to ensure better coverage against duplicates
+                            augmentedPrompt += `\n\n--- AVISO CRÍTICO DE DUPLICADOS: Evita generar preguntas iguales o muy similares a las siguientes (ya dadas a este usuario en este curso):\n${contextQuestions.map((q,i)=>`${i+1}. ${q}`).join('\n')}\n---\nPor favor, crea preguntas totalmente diferentes que no repitan ni parafraseen las anteriores.`;
+                        }
             } catch (e) {
                 console.warn('⚠️ Could not read reinforcement history before generation:', e?.message || e);
             }
@@ -628,6 +644,10 @@ NO USES JAMÁS en preguntas u opciones:
                 const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
                 
                 let data;
+                const MAX_RETRIES = 2; // Try twice to avoid long waits, but enough to fix duplicates
+
+                for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                    if (attempt > 1) console.log(`🔄 Retrying LLM generation (Attempt ${attempt}/${MAX_RETRIES})...`);
                 
                 // ALWAYS prefer DeepSeek
                 if (deepseekApiKey) {
@@ -830,8 +850,50 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
 
                 // Si ningún LLM respondió, lanzar error
                 if (!data || !data.response) {
-                    throw new Error('No se pudo obtener respuesta de ningún modelo LLM (DeepSeek, OpenRouter, Ollama)');
+                    // If this was the last attempt, we let it fall through to the final error check
+                     if (attempt < MAX_RETRIES) {
+                        console.warn(`⚠️ Attempt ${attempt} failed to get any response. Retrying...`);
+                        continue;
+                    }
+                } else {
+                     // 🛑 DUPLICATE CHECK (Inside Loop)
+                    // If we are generating questions (not grading), check for duplicates immediately
+                    if (!isGradingRequest && historyQuestionsList && historyQuestionsList.length > 0) {
+                        try {
+                            const rawCheck = typeof data.response === 'string' ? data.response : JSON.stringify(data.response);
+                            const start = rawCheck.indexOf('[');
+                            const end = rawCheck.lastIndexOf(']');
+                            if (start !== -1 && end !== -1) {
+                                const jsonStr = rawCheck.substring(start, end + 1);
+                                const parsedCheck = JSON.parse(jsonStr);
+                                if (Array.isArray(parsedCheck)) {
+                                    const newTexts = parsedCheck.map(q => (q.question || q.pregunta || '').trim()).filter(Boolean);
+                                    // Check against history
+                                    const duplicateCount = newTexts.filter(t => questionExistsInHistory(t, historyQuestionsList)).length;
+                                    
+                                    if (duplicateCount > 0 && duplicateCount >= newTexts.length / 2) {
+                                        console.warn(`♻️ GENERATION REJECTED: ${duplicateCount}/${newTexts.length} questions are duplicates. (Attempt ${attempt}/${MAX_RETRIES})`);
+                                        if (attempt < MAX_RETRIES) {
+                                            augmentedPrompt += `\n\n❌ GENERACIÓN ANTERIOR DESCARTADA: Generaste preguntas duplicadas (${newTexts.slice(0,2).join(', ')}...). \n⚠️ INSTRUCCIÓN CRÍTICA: Debes generar preguntas COMPLETAMENTE NUEVAS. No repitas NADA del historial.`;
+                                            data = null; // Force retry
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            // Ignore parse errors here, let main parser handle it or fail
+                        }
+                    } 
+                    
+                    // If valid and unique (or close enough), break out of loop
+                    break;
                 }
+            } // End of retry loop
+
+            if (!data || !data.response) {
+                throw new Error('No se pudo obtener respuesta de ningún modelo LLM tras ' + MAX_RETRIES + ' intentos.');
+            }
 
                 // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
                 let respuestaTexto = data.response;
@@ -926,10 +988,9 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
                     let filtered = [];
 
                     // ═══════════════════════════════════════════════════════════════
-                    // VALIDATION ONLY — NO DB SAVE HERE
-                    // The Android ViewModel saves via /reinforcement/save-questions
-                    // which uses MCPService with full uniqueness flow (hash + embedding).
-                    // Saving here AND in /save-questions caused DUPLICATE question_sessions.
+                    // VALIDATION — Filter blacklisted/invalid questions.
+                    // Actual DB save (question_sessions) happens AFTER this block,
+                    // in the unified AUTO-SAVE section before res.json().
                     // ═══════════════════════════════════════════════════════════════
 
                     if (userId && courseId) {
@@ -975,9 +1036,9 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
                                 validQuestions.push(q);
                             }
 
-                            // Return validated questions (saving is done by /save-questions endpoint)
+                            // Return validated questions (auto-save happens after response is built)
                             filtered = validQuestions.length > 0 ? validQuestions : [];
-                            console.log(`✅ Validated ${filtered.length} questions (from ${transformed.length}). Saving deferred to /save-questions.`);
+                            console.log(`✅ Validated ${filtered.length} questions (from ${transformed.length}).`);
 
                         } catch (e) {
                             console.warn('⚠️ Failed to validate questions:', e?.message || e);
@@ -1095,9 +1156,9 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
                                                         });
 
                                                         if (newlyFiltered.length > 0) {
-                                                            // Return validated retry questions (saving deferred to /save-questions)
+                                                            // Return validated retry questions (auto-save happens after response is built)
                                                             filtered = newlyFiltered;
-                                                            console.log(`✅ Retry accepted ${filtered.length} questions (saving deferred to /save-questions).`);
+                                                            console.log(`✅ Retry accepted ${filtered.length} questions.`);
                                                             break;
                                                         }
                                                     }
@@ -1181,6 +1242,43 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
                 }
             } catch (e) {
                 console.warn('⚠️ Error extracting grade from response:', e.message);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // 🔥 AUTO-SAVE QUESTION SESSION TO SUPABASE
+        // Single unified save point for ALL quiz generation paths.
+        // Saves to question_sessions with user_id, course_id, topic_id, task_id.
+        // Uses MCPService.saveReinforcementHistory which creates the session
+        // and saves individual questions with hash/embedding uniqueness checks.
+        // ═══════════════════════════════════════════════════════════════
+        if (isQuizGeneration && userId && courseId && !isGrading) {
+            try {
+                // Parse respuestaTexto to get the questions array
+                let questionsToSave = [];
+                try {
+                    const parsed = JSON.parse(respuestaTexto);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                        questionsToSave = parsed;
+                    }
+                } catch (_) { /* not JSON — skip save */ }
+
+                if (questionsToSave.length > 0) {
+                    console.log(`💾 [AUTO-SAVE] Saving ${questionsToSave.length} questions to question_sessions (User: ${userId}, Course: ${courseId}, Topic: ${topicId}, Task: ${taskId})...`);
+                    const mcpService = new MCPService();
+                    const saveResult = await mcpService.saveReinforcementHistory(
+                        userId, courseId, questionsToSave, topicId, taskId
+                    );
+                    if (saveResult && saveResult.success) {
+                        console.log(`✅ [AUTO-SAVE] Session created with ${saveResult.savedCount} questions saved.`);
+                    } else {
+                        console.warn(`⚠️ [AUTO-SAVE] saveReinforcementHistory returned: ${JSON.stringify(saveResult)}`);
+                    }
+                } else {
+                    console.log('ℹ️ [AUTO-SAVE] No parseable questions in response — skipping session save.');
+                }
+            } catch (autoSaveErr) {
+                console.error('❌ [AUTO-SAVE] Failed to save question session:', autoSaveErr.message);
             }
         }
 

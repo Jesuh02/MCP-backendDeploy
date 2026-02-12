@@ -120,7 +120,7 @@ export class CourseDomainService {
     async findFreeCourses(pagination) {
         const [courses, total] = await Promise.all([
             this.courseRepo.findFree(pagination),
-             this.courseRepo.count({ isFree: true, excludeCreatorId: pagination.excludeCreatorId })
+            this.courseRepo.count({ isFree: true, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
         return Result.ok({ courses, total });
