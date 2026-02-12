@@ -1405,6 +1405,53 @@ Esta señal es invisible para el usuario y es procesada por el sistema.`;
             }
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // 🎯 AUTO-SAVE GRADE: If LLM detected a grading request and we have
+        // a submissionId, persist the grade to task_submissions immediately.
+        // This ensures the grade is saved even before the Android green button.
+        // ═══════════════════════════════════════════════════════════════
+        if (isGrading && extractedGrade !== null && !isNaN(extractedGrade)) {
+            try {
+                let targetSubmissionId = submissionId;
+
+                // If no submissionId, try to find by taskId + studentId
+                if (!targetSubmissionId && taskId && studentId) {
+                    const { data: foundSub } = await SupabaseService.getInstance().client
+                        .from('task_submissions')
+                        .select('id')
+                        .eq('task_id', taskId)
+                        .eq('student_id', studentId)
+                        .order('created_at', { ascending: false })
+                        .limit(1)
+                        .maybeSingle();
+                    if (foundSub) targetSubmissionId = foundSub.id;
+                }
+
+                if (targetSubmissionId) {
+                    const gradeValue = Math.max(0, Math.min(10, extractedGrade));
+                    const feedbackText = (typeof respuestaTexto === 'string' ? respuestaTexto : '').substring(0, 5000);
+
+                    const { error: updateError } = await SupabaseService.getInstance().client
+                        .from('task_submissions')
+                        .update({
+                            grade: gradeValue,
+                            feedback: feedbackText,
+                        })
+                        .eq('id', targetSubmissionId);
+
+                    if (updateError) {
+                        console.error(`❌ [AUTO-GRADE] Failed to update submission #${targetSubmissionId}:`, updateError.message);
+                    } else {
+                        console.log(`✅ [AUTO-GRADE] Saved grade ${gradeValue}/10 to submission #${targetSubmissionId}`);
+                    }
+                } else {
+                    console.warn(`⚠️ [AUTO-GRADE] Grading detected (nota=${extractedGrade}) but no submissionId found (submissionId=${submissionId}, taskId=${taskId}, studentId=${studentId})`);
+                }
+            } catch (autoGradeErr) {
+                console.error(`❌ [AUTO-GRADE] Error:`, autoGradeErr.message);
+            }
+        }
+
         // Return in MicroservicioPromptResponse format matching Android expectations
         res.json({
             respuesta_texto: respuestaTexto,
