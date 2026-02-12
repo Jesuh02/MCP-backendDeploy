@@ -317,6 +317,7 @@ export function createContainer() {
         mcpDomainService,
         appDistributionService,
         excelService,
+        mcpServiceLegacy, // Injected for server.js legacy tools
 
         // Adaptadores
         storageAdapter,
