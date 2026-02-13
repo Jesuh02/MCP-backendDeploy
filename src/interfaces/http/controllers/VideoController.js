@@ -129,18 +129,39 @@ export class VideoController {
     };
 
     /**
+     * POST /videos/batch-signed-urls
+     * Batch pre-sign URLs for multiple video IDs in one request.
+     * Designed for mobile pre-loading: the client sends IDs of adjacent
+     * videos and receives all signed URLs at once.
+     *
+     * Body: { videoIds: [1, 2, 3] }
+     * Response: { success: true, data: { 1: { videoUrl, thumbnailUrl }, ... } }
+     */
+    batchSignedUrls = async(req, res, next) => {
+        try {
+            const { videoIds } = req.body;
+            if (!Array.isArray(videoIds) || videoIds.length === 0) {
+                return res.status(400).json({ success: false, error: 'videoIds array is required' });
+            }
+            const result = await this.videoService.batchSignedUrls(videoIds);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
      * POST /videos/upload
      * Multipart upload: receives video file + optional thumbnail + JSON metadata.
      * All storage operations happen server-side — the client never touches R2.
      */
     uploadAndCreate = async(req, res, next) => {
         try {
-            const videoFile = req.files ?.video ?.[0] || req.file;
+            const videoFile = req.files?.video?.[0] || req.file;
             if (!videoFile) {
                 return res.status(400).json({ success: false, error: 'Video file is required (field name: video)' });
             }
 
-            const thumbnailFile = req.files ?.thumbnail ?.[0] || null;
+            const thumbnailFile = req.files?.thumbnail?.[0] || null;
 
             // Parse metadata from body (may come as JSON string or flat fields)
             let metadata;
@@ -161,9 +182,9 @@ export class VideoController {
                 videoBuffer: videoFile.buffer,
                 videoFilename: videoFile.originalname,
                 videoMimeType: videoFile.mimetype,
-                thumbnailBuffer: thumbnailFile ?.buffer || null,
-                thumbnailFilename: thumbnailFile ?.originalname || null,
-                thumbnailMimeType: thumbnailFile ?.mimetype || null,
+                thumbnailBuffer: thumbnailFile?.buffer || null,
+                thumbnailFilename: thumbnailFile?.originalname || null,
+                thumbnailMimeType: thumbnailFile?.mimetype || null,
                 metadata,
                 userId: req.user.userId,
             });

@@ -194,5 +194,22 @@
         if (error) return [];
         return (data || []).map(v => this._mapVideo(v));
     }
+
+    /**
+     * Fetch multiple videos by their IDs in a single query.
+     * Used by the batch-signed-urls endpoint for mobile pre-loading.
+     * @param {number[]} ids
+     * @returns {Promise<Object[]>}
+     */
+    async findByIds(ids) {
+        if (!ids || ids.length === 0) return [];
+        this._requireClient();
+        const { data, error } = await this.client
+            .from('videos')
+            .select('*, usuarios!remote_id(username)')
+            .in('id', ids);
+        if (error) throw new Error(error.message);
+        return (data || []).map(v => this._mapVideo(v));
+    }
 }
 export default SupabaseVideoRepository;
