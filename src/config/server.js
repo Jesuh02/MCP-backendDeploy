@@ -202,7 +202,7 @@ export function createApp() {
                 // Android Notification entity expects Long for relatedId, so we use metadata for string IDs
                 metadata: JSON.stringify({
                     messageId: messageId,
-                    fragment: data ? .fragment || 'database_query',
+                    fragment: data?.fragment || 'database_query',
                     action: 'OPEN_CHAT',
                     ...data
                 }),
