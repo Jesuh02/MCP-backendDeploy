@@ -36,6 +36,20 @@ export class WhatsAppController {
         return false;
     }
 
+    isWebhookSignatureValid(req) {
+        const verifySignature = this.service?.whatsAppPort?.verifySignature;
+        if (typeof verifySignature !== 'function') return true;
+
+        const signature = req.get('x-hub-signature-256') || '';
+        const payload = req.rawBody || JSON.stringify(req.body || {});
+
+        try {
+            return verifySignature.call(this.service.whatsAppPort, payload, signature);
+        } catch {
+            return false;
+        }
+    }
+
     /**
      * GET /webhook — Verificación del webhook de Meta.
      * Meta envía hub.mode, hub.verify_token y hub.challenge.
@@ -64,6 +78,11 @@ export class WhatsAppController {
         res.status(200).json({ success: true });
 
         try {
+            if (!this.isWebhookSignatureValid(req)) {
+                console.warn('[WhatsApp] Invalid webhook signature');
+                return;
+            }
+
             const body = req.body;
 
             // Validar estructura del payload de Meta
@@ -138,7 +157,22 @@ export class WhatsAppController {
             if (!userId) return res.status(401).json({ success: false, error: 'No autorizado' });
 
             const result = await this.service.linkAccount(userId, value.phoneNumber);
-            if (result.isFail()) return next(result.getError());
+            if (result.isFail()) {
+                const domainError = result.getError();
+
+                if (domainError?.code === 'WHATSAPP_OTP_SEND_FAILED') {
+                    return res.status(400).json({
+                        success: false,
+                        error: {
+                            code: 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE',
+                            message: 'No se pudo enviar el OTP porque este número no está permitido en el modo prueba de Meta. Agrega el número como tester en WhatsApp Cloud API o publica la app para usar números externos.',
+                            statusCode: 400,
+                        },
+                    });
+                }
+
+                return next(domainError);
+            }
 
             res.json({ success: true, data: result.getValue() });
         } catch (err) {

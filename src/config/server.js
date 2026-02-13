@@ -31,7 +31,12 @@ export function createApp() {
     // ═══════════════════════════════════════════════════════════
 
     // Body parsing con límites de seguridad
-    app.use(express.json({ limit: '50mb' }));
+    app.use(express.json({
+        limit: '50mb',
+        verify: (req, _res, buf) => {
+            req.rawBody = buf.toString('utf8');
+        },
+    }));
     app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
     // CORS
@@ -204,7 +209,7 @@ export function createApp() {
                 // Android Notification entity expects Long for relatedId, so we use metadata for string IDs
                 metadata: JSON.stringify({
                     messageId: messageId,
-                    fragment: data?.fragment || 'database_query',
+                    fragment: data ? .fragment || 'database_query',
                     action: 'OPEN_CHAT',
                     ...data
                 }),

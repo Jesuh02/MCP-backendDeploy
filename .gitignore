@@ -60,3 +60,4 @@ scripts/setup_rag_tables.sql
 scripts/ddlpro.sql
 scripts/ddlqa.sql
 scripts/diagram.mermaid
+scripts/migration_whatsapp_sessions.sql
