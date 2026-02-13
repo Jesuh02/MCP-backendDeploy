@@ -15,7 +15,7 @@ import express from 'express';
 import { networkInterfaces } from 'os';
 import { createContainer } from './container.js';
 import { createV1Router } from '../interfaces/http/routes/v1/index.js';
-import { createAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
+import { createAuthMiddleware, createOptionalAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
 import { errorHandler } from '../infrastructure/middleware/ErrorHandler.js';
 import { MCPHttpCompatController } from '../interfaces/http/controllers/MCPHttpCompatController.js';
 
@@ -62,9 +62,11 @@ export function createApp() {
 
     const container = createContainer();
     const authMiddleware = createAuthMiddleware(container.jwtAdapter);
+    const optionalAuthMiddleware = createOptionalAuthMiddleware(container.jwtAdapter);
     const v1Router = createV1Router({
         ...container,
         authMiddleware,
+        optionalAuthMiddleware,
         requireRoles,
     });
 

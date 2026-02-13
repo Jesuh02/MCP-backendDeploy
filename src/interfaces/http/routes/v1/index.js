@@ -50,8 +50,18 @@ export function createV1Router(deps) {
     // Public streaming feed (no auth, for instant video loading before login)
     router.get('/public/streaming/feed', deps.videoStreamingController.feed);
 
-    // Webhook de pagos (sin auth)
+    // Webhook de pagos (sin auth — Wompi llama directamente)
     router.post('/payment/webhook', deps.paymentController.webhook);
+
+    // Payment initiate con auth opcional — algunos clientes Android
+    // no envían JWT (PaymentApi.kt, SyncRepository.kt). El controlador
+    // usa req.user?.userId si hay JWT, o req.body.userId como fallback.
+    // La seguridad se mantiene: solo se crea una tx PENDING; el acceso
+    // al curso solo se otorga cuando el webhook de Wompi confirma el pago.
+    if (deps.optionalAuthMiddleware) {
+        router.post('/payment/initiate', deps.optionalAuthMiddleware, deps.paymentController.initiate);
+        router.get('/payment/status/:transactionId', deps.optionalAuthMiddleware, deps.paymentController.checkStatus);
+    }
 
     // MCP SSE (sin auth — los clientes VS Code se conectan directamente)
     router.use('/mcp', mcpRoutes(deps));
