@@ -48,6 +48,8 @@ import { LLMAdapter } from '../infrastructure/ai/LLMAdapter.js';
 import { RAGAdapter } from '../infrastructure/ai/RAGAdapter.js';
 import { GitHubAdapter } from '../infrastructure/github/GitHubAdapter.js';
 import { CacheAdapter } from '../infrastructure/cache/CacheAdapter.js';
+import { MetaWhatsAppAdapter } from '../infrastructure/messaging/MetaWhatsAppAdapter.js';
+import { SupabaseWhatsAppSessionRepository } from '../infrastructure/database/repositories/SupabaseWhatsAppSessionRepository.js';
 
 // ── Dominio: Servicios (casos de uso) ───────────────────────
 import { AuthService } from '../domain/services/AuthService.js';
@@ -80,6 +82,7 @@ import { MCPDomainService } from '../domain/services/MCPDomainService.js';
 import { AppDistributionDomainService } from '../domain/services/AppDistributionDomainService.js';
 import { ExcelDomainService } from '../domain/services/ExcelDomainService.js';
 import { MCPService } from '../domain/services/MCPService.js';
+import { WhatsAppDomainService } from '../domain/services/WhatsAppDomainService.js';
 
 // ── Interfaces: Controladores ───────────────────────────────
 import { AuthController } from '../interfaces/http/controllers/AuthController.js';
@@ -112,6 +115,7 @@ import { RAGController } from '../interfaces/http/controllers/RAGController.js';
 import { MCPController } from '../interfaces/http/controllers/MCPController.js';
 import { AppDistributionController } from '../interfaces/http/controllers/AppDistributionController.js';
 import { ExcelController } from '../interfaces/http/controllers/ExcelController.js';
+import { WhatsAppController } from '../interfaces/http/controllers/WhatsAppController.js';
 
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los
@@ -165,6 +169,13 @@ export function createContainer() {
     const githubAdapter = safeInit('GitHubAdapter', () => new GitHubAdapter());
     const cacheAdapter = safeInit('CacheAdapter', () => new CacheAdapter());
 
+    // WhatsApp adapter (non-critical — missing env vars will not crash)
+    const whatsAppAdapter = safeInit('MetaWhatsAppAdapter', () => new MetaWhatsAppAdapter({
+        accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
+        phoneId: process.env.WHATSAPP_PHONE_ID,
+        appSecret: process.env.WHATSAPP_APP_SECRET,
+    }));
+
     // ═══════════════════════════════════════════════════════════
     // 2. REPOSITORIOS — Inyectar cliente Supabase
     // ═══════════════════════════════════════════════════════════
@@ -187,6 +198,7 @@ export function createContainer() {
     const fileContextRepo = new SupabaseFileContextRepository(client);
     const reinforcementRepo = new SupabaseReinforcementRepository(client);
     const chatMessageRepo = new SupabaseChatMessageRepository(client);
+    const whatsAppSessionRepo = new SupabaseWhatsAppSessionRepository(client);
 
     // ═══════════════════════════════════════════════════════════
     // 3. SERVICIOS DE DOMINIO — Inyectar repositorios y adaptadores
@@ -248,6 +260,20 @@ export function createContainer() {
     const mcpServiceLegacy = new MCPService();
     const excelService = new ExcelDomainService({ mcpService: mcpServiceLegacy, fileStoragePort: storageAdapter });
 
+    // Nivel 3: WhatsApp (depende de MCP, LLM, repos)
+    const whatsAppDomainService = safeInit('WhatsAppDomainService', () => new WhatsAppDomainService({
+        whatsAppPort: whatsAppAdapter,
+        whatsAppSessionRepo,
+        userRepository: userRepo,
+        rolRepository: rolRepo,
+        mcpDomainService,
+        llmDomainService,
+        submissionRepository: submissionRepo,
+        progressRepository: progressRepo,
+        courseRepository: courseRepo,
+        chatMessageRepository: chatMessageRepo,
+    }));
+
     // ═══════════════════════════════════════════════════════════
     // 4. CONTROLADORES — Inyectar servicios de dominio
     // ═══════════════════════════════════════════════════════════
@@ -288,6 +314,12 @@ export function createContainer() {
     // Excel
     const excelController = new ExcelController({ excelService });
 
+    // WhatsApp
+    const whatsAppController = safeInit('WhatsAppController', () => new WhatsAppController({
+        whatsAppService: whatsAppDomainService,
+        verifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
+    }));
+
     return {
         // Middleware
         jwtAdapter,
@@ -323,6 +355,7 @@ export function createContainer() {
         mcpController,
         appDistributionController,
         excelController,
+        whatsAppController,
 
         // Servicios de dominio
         authService,
@@ -354,6 +387,7 @@ export function createContainer() {
         appDistributionService,
         excelService,
         mcpServiceLegacy, // Injected for server.js legacy tools
+        whatsAppDomainService,
 
         // Adaptadores
         storageAdapter,
@@ -366,6 +400,7 @@ export function createContainer() {
         ragAdapter,
         githubAdapter,
         cacheAdapter,
+        whatsAppAdapter,
     };
 }
 

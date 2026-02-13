@@ -1,5 +1,5 @@
 import { createCourseSchema, updateCourseSchema } from '../../../domain/validators/CourseSchemas.js';
-import { ValidationError } from '../../../shared/errors/index.js';
+import { ValidationError, NotFoundError } from '../../../shared/errors/index.js';
 import { parsePagination, buildPaginatedResponse } from '../../../shared/pagination.js';
 
 export class CourseController {
@@ -83,7 +83,14 @@ export class CourseController {
     delete = async(req, res, next) => {
         try {
             const result = await this.courseService.delete(parseInt(req.params.id), req.user.userId);
-            if (result.isFail()) return next(result.getError());
+            if (result.isFail()) {
+                const error = result.getError();
+                // Idempotencia: Si el curso no existe, consideramos que ya fue eliminado (Clean Code)
+                if (error instanceof NotFoundError) {
+                    return res.json({ success: true, message: 'Curso eliminado (idempotente)' });
+                }
+                return next(error);
+            }
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
