@@ -15,8 +15,9 @@ const MAX_MESSAGE_LENGTH = 4096;
  */
 export function markdownToWhatsApp(text) {
     if (!text) return '';
+    const safeText = String(text).replace(/\r\n/g, '\n');
 
-    return text
+    return safeText
         // Headers → negrita
         .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')
         // **negrita** → *negrita*
@@ -43,10 +44,11 @@ export function markdownToWhatsApp(text) {
  */
 export function truncateResponse(text, maxLength = MAX_MESSAGE_LENGTH) {
     if (!text) return [''];
-    if (text.length <= maxLength) return [text];
+    const safeText = String(text);
+    if (safeText.length <= maxLength) return [safeText];
 
     const chunks = [];
-    let remaining = text;
+    let remaining = safeText;
 
     while (remaining.length > 0) {
         if (remaining.length <= maxLength) {
@@ -95,9 +97,9 @@ export function formatProgressReport(data) {
 
     const lines = data.map(item => {
         const status = item.estado === 'Ganado' ? '✅' : '⚠️';
-        const pct = item.porcentaje_progreso != null
-            ? `${Math.round(item.porcentaje_progreso)}%`
-            : '—';
+        const pct = item.porcentaje_progreso != null ?
+            `${Math.round(item.porcentaje_progreso)}%` :
+            '—';
         return `${status} *${item.username || 'Estudiante'}* — ${item.curso || 'Curso'}\n` +
             `   📊 Progreso: ${pct} | Tareas: ${item.tareas_completadas}/${item.tareas_totales}\n` +
             `   📝 Promedio: ${item.promedio ?? '—'} | Estado: ${item.estado ?? '—'}`;
@@ -137,16 +139,14 @@ export const MESSAGES = {
         `✏️ Calificar entregas\n\n` +
         `Escribe */ayuda* para ver todos los comandos.`,
 
-    HELP:
-        `*Comandos disponibles:*\n\n` +
+    HELP: `*Comandos disponibles:*\n\n` +
         `*/calificar* <id> <nota> [feedback]\n→ Califica una entrega\n\n` +
         `*/progreso* [curso]\n→ Ver progreso de estudiantes\n\n` +
         `*/consulta* <pregunta> *(solo admin)*\n→ Consultar base de datos\n\n` +
         `*/desvincular*\n→ Desvincular tu cuenta\n\n` +
         `*/ayuda*\n→ Ver este mensaje`,
 
-    NOT_LINKED:
-        `⚠️ Este número no está vinculado a ninguna cuenta.\n\n` +
+    NOT_LINKED: `⚠️ Este número no está vinculado a ninguna cuenta.\n\n` +
         `Para usar el asistente por WhatsApp:\n` +
         `1. Abre la app CourseV\n` +
         `2. Ve a tu Perfil → Configuración\n` +
@@ -161,15 +161,12 @@ export const MESSAGES = {
         `📱 Se ha enviado un código de verificación a *${phone}*.\n` +
         `Ingresa el código de 6 dígitos en la app para completar la vinculación.`,
 
-    UNLINKED:
-        `✅ Tu cuenta ha sido desvinculada de WhatsApp.\n` +
+    UNLINKED: `✅ Tu cuenta ha sido desvinculada de WhatsApp.\n` +
         `Ya no recibirás mensajes por este canal.`,
 
-    ERROR:
-        `😔 Lo siento, hubo un error procesando tu mensaje. Intenta de nuevo en unos momentos.`,
+    ERROR: `😔 Lo siento, hubo un error procesando tu mensaje. Intenta de nuevo en unos momentos.`,
 
-    PROCESSING:
-        `⏳ Procesando tu solicitud...`,
+    PROCESSING: `⏳ Procesando tu solicitud...`,
 };
 
 export default {

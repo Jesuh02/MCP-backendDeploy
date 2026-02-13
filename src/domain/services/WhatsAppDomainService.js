@@ -96,9 +96,7 @@ export class WhatsAppDomainService {
 
         try {
             const isAvailable = await this.whatsAppPort.isAvailable();
-            const result = isAvailable
-                ? { available: true }
-                : { available: false, reason: 'Canal WhatsApp temporalmente no disponible' };
+            const result = isAvailable ? { available: true } : { available: false, reason: 'Canal WhatsApp temporalmente no disponible' };
 
             cache.value = result;
             cache.checkedAt = now;
@@ -291,7 +289,7 @@ export class WhatsAppDomainService {
         }
 
         return Result.ok({
-            sessionId: session?.id,
+            sessionId: session ? .id,
             phoneNumber: normalized,
             message: 'Código de verificación enviado a WhatsApp',
         });
@@ -332,7 +330,7 @@ export class WhatsAppDomainService {
 
         // Enviar bienvenida
         const user = await this.userRepo.findById(userId);
-        const name = user?.username || 'usuario';
+        const name = user ? .username || 'usuario';
         if (this.whatsAppPort) {
             await this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.WELCOME(name)).catch(() => {});
         }
@@ -478,7 +476,7 @@ export class WhatsAppDomainService {
 
             if (result && result.isOk && result.isOk()) {
                 const answer = result.getValue();
-                const responseText = typeof answer === 'string' ? answer : (answer?.response || answer?.text || JSON.stringify(answer));
+                const responseText = typeof answer === 'string' ? answer : (answer ? .response || answer ? .text || JSON.stringify(answer));
                 return markdownToWhatsApp(responseText);
             }
 
@@ -637,7 +635,7 @@ export class WhatsAppDomainService {
 
             if (result && result.isOk && result.isOk()) {
                 const data = result.getValue();
-                const responseText = typeof data === 'string' ? data : (data?.response || JSON.stringify(data, null, 2));
+                const responseText = typeof data === 'string' ? data : (data ? .response || JSON.stringify(data, null, 2));
                 return markdownToWhatsApp(responseText);
             }
 
