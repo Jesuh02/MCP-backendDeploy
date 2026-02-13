@@ -294,6 +294,12 @@ export class WhatsAppDomainService {
                 errorMessage.includes('131030') ||
                 errorMessage.toLowerCase().includes('recipient phone number not in allowed list');
 
+            const isAccountNotRegistered =
+                appCode === 'WHATSAPP_ACCOUNT_NOT_REGISTERED' ||
+                metaCode === 133010 ||
+                errorMessage.includes('133010') ||
+                errorMessage.toLowerCase().includes('account not registered');
+
             if (isRecipientNotAllowed) {
                 console.warn('[WhatsApp] OTP bloqueado por modo prueba de Meta (allowed list).');
                 return Result.fail(new AppError(
@@ -301,6 +307,16 @@ export class WhatsAppDomainService {
                     400,
                     true,
                     'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE',
+                ));
+            }
+
+            if (isAccountNotRegistered) {
+                console.warn('[WhatsApp] El número no tiene cuenta de WhatsApp activa.');
+                return Result.fail(new AppError(
+                    'El número ingresado no tiene una cuenta de WhatsApp activa. Verifica que el número sea correcto y tenga WhatsApp instalado.',
+                    400,
+                    true,
+                    'WHATSAPP_ACCOUNT_NOT_REGISTERED',
                 ));
             }
 

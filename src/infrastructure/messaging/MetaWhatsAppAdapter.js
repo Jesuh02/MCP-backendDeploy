@@ -233,19 +233,31 @@ export class MetaWhatsAppAdapter {
             const metaError = data?.error || {};
             const rawErrorMsg = metaError.message || `Meta API error: ${response.status}`;
             const metaCode = Number(metaError.code);
+            const metaSubcode = Number(metaError.error_subcode);
             const isRecipientNotAllowed =
                 metaCode === 131030 ||
                 String(rawErrorMsg).includes('131030') ||
                 String(rawErrorMsg).toLowerCase().includes('recipient phone number not in allowed list');
 
-            const errorMsg = isRecipientNotAllowed ?
-                'El número destino no está permitido en modo prueba de Meta (allowed list). Agrega el número como tester en WhatsApp Cloud API o publica la app.' :
-                rawErrorMsg;
+            const isAccountNotRegistered =
+                metaCode === 133010 ||
+                metaSubcode === 133010 ||
+                String(rawErrorMsg).includes('133010') ||
+                String(rawErrorMsg).toLowerCase().includes('account not registered');
+
+            let errorMsg = rawErrorMsg;
+            if (isRecipientNotAllowed) {
+                errorMsg = 'El número destino no está permitido en modo prueba de Meta (allowed list). Agrega el número como tester en WhatsApp Cloud API o publica la app.';
+            } else if (isAccountNotRegistered) {
+                errorMsg = 'El número ingresado no tiene una cuenta de WhatsApp activa. Verifica que el número sea correcto y tenga WhatsApp instalado.';
+            }
 
             console.error(`[MetaWhatsAppAdapter] ${method} ${url} → ${response.status}:`, errorMsg);
             const error = new Error(errorMsg);
             if (isRecipientNotAllowed) {
                 error.code = 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE';
+            } else if (isAccountNotRegistered) {
+                error.code = 'WHATSAPP_ACCOUNT_NOT_REGISTERED';
             }
             error.metaCode = metaError.code;
             error.metaSubcode = metaError.error_subcode;
