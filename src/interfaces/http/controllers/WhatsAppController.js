@@ -171,6 +171,17 @@ export class WhatsAppController {
                     });
                 }
 
+                if (domainError?.code === 'WHATSAPP_ACCOUNT_NOT_REGISTERED') {
+                    return res.status(400).json({
+                        success: false,
+                        error: {
+                            code: 'WHATSAPP_ACCOUNT_NOT_REGISTERED',
+                            message: 'El número ingresado no tiene una cuenta de WhatsApp activa. Verifica que el número sea correcto y tenga WhatsApp instalado.',
+                            statusCode: 400,
+                        },
+                    });
+                }
+
                 return next(domainError);
             }
 
