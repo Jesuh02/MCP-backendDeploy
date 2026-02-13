@@ -73,6 +73,7 @@ import { ChatMessageDomainService } from '../domain/services/ChatMessageDomainSe
 
 import { TTSDomainService } from '../domain/services/TTSDomainService.js';
 import { VideoProcessingDomainService } from '../domain/services/VideoProcessingDomainService.js';
+import { VideoStreamingDomainService } from '../domain/services/VideoStreamingDomainService.js';
 import { LLMDomainService } from '../domain/services/LLMDomainService.js';
 import { RAGDomainService } from '../domain/services/RAGDomainService.js';
 import { MCPDomainService } from '../domain/services/MCPDomainService.js';
@@ -106,6 +107,7 @@ import { ChatMessageController } from '../interfaces/http/controllers/ChatMessag
 import { TTSController } from '../interfaces/http/controllers/TTSController.js';
 import { LLMController } from '../interfaces/http/controllers/LLMController.js';
 import { VideoProcessingController } from '../interfaces/http/controllers/VideoProcessingController.js';
+import { VideoStreamingController } from '../interfaces/http/controllers/VideoStreamingController.js';
 import { RAGController } from '../interfaces/http/controllers/RAGController.js';
 import { MCPController } from '../interfaces/http/controllers/MCPController.js';
 import { AppDistributionController } from '../interfaces/http/controllers/AppDistributionController.js';
@@ -218,6 +220,10 @@ export function createContainer() {
     // Nivel 2: servicios de IA y procesamiento
     const ttsService = new TTSDomainService({ ttsPort: ttsAdapter });
     const videoProcessingService = new VideoProcessingDomainService({ videoProcessingPort: videoProcessingAdapter, fileStoragePort: storageAdapter });
+    const videoStreamingService = new VideoStreamingDomainService({ videoRepository: videoRepo, fileStoragePort: storageAdapter });
+
+    // Evict expired URL cache entries every 10 minutes
+    setInterval(() => videoStreamingService.evictExpiredCache(), 10 * 60 * 1000);
     const llmDomainService = new LLMDomainService({
         llmPort: llmAdapter,
         ragPort: ragAdapter,
@@ -271,6 +277,7 @@ export function createContainer() {
     const ttsController = new TTSController({ ttsService });
     const llmController = new LLMController({ llmService: llmDomainService });
     const videoProcessingController = new VideoProcessingController({ videoProcessingService });
+    const videoStreamingController = new VideoStreamingController({ videoStreamingService });
     const ragController = new RAGController({ ragService: ragDomainService });
     const mcpController = new MCPController({ mcpService: mcpDomainService });
 
@@ -311,6 +318,7 @@ export function createContainer() {
         ttsController,
         llmController,
         videoProcessingController,
+        videoStreamingController,
         ragController,
         mcpController,
         appDistributionController,
@@ -339,6 +347,7 @@ export function createContainer() {
         chatMessageService,
         ttsService,
         videoProcessingService,
+        videoStreamingService,
         llmDomainService,
         ragDomainService,
         mcpDomainService,

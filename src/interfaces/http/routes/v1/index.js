@@ -25,6 +25,7 @@ import { chatMessageRoutes } from './chatMessageRoutes.js';
 import { ttsRoutes } from './ttsRoutes.js';
 import { llmRoutes } from './llmRoutes.js';
 import { videoProcessingRoutes } from './videoProcessingRoutes.js';
+import { videoStreamingRoutes } from './videoStreamingRoutes.js';
 import { ragRoutes } from './ragRoutes.js';
 import { mcpRoutes } from './mcpRoutes.js';
 import { appDistributionRoutes } from './appDistributionRoutes.js';
@@ -45,6 +46,9 @@ export function createV1Router(deps) {
 
     // Feed público — lectura sin autenticación (browsing / discovery)
     router.use('/public', publicRoutes(deps));
+
+    // Public streaming feed (no auth, for instant video loading before login)
+    router.get('/public/streaming/feed', deps.videoStreamingController.feed);
 
     // Webhook de pagos (sin auth)
     router.post('/payment/webhook', deps.paymentController.webhook);
@@ -80,6 +84,7 @@ export function createV1Router(deps) {
     router.use('/tts', ttsRoutes(deps));
     router.use('/llm', llmRoutes(deps));
     router.use('/video-processing', videoProcessingRoutes(deps));
+    router.use('/streaming', videoStreamingRoutes(deps));
     router.use('/rag', ragRoutes(deps));
     router.use('/excel', excelRoutes(deps));
 
