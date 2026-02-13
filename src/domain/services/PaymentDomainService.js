@@ -21,7 +21,7 @@ export class PaymentDomainService {
 
         const reference = `CV-${userId}-${courseId}-${Date.now()}`;
 
-        // Guardar tx pendiente — amount in pesos (matches DB schema)
+        // Guardar tx pendiente con referencia incluida (evita round-trip extra)
         const tx = await this.txRepo.create({
             userId,
             courseId,
@@ -29,6 +29,7 @@ export class PaymentDomainService {
             currency: 'COP',
             status: 'PENDING',
             paymentMethod: 'pse',
+            externalReference: reference,
         });
 
         // Generar URL de checkout
@@ -39,9 +40,6 @@ export class PaymentDomainService {
             reference,
             redirectUrl: redirectBase,
         });
-
-        // Actualizar con referencia
-        await this.txRepo.update(tx.id, { transactionId: reference });
 
         return Result.ok({
             ...checkout,
