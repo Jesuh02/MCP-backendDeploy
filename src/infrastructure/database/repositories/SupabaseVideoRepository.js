@@ -128,7 +128,6 @@
             remote_id: videoData.userId || videoData.user_id || videoData.remote_id || null,
             course_id: videoData.courseId || videoData.course_id || null,
             type: videoData.type || 'video',
-            hls_url: videoData.hlsUrl || videoData.hls_url || null,
             is_published: videoData.isPublished !== false,
         };
         const { data, error } = await this.client.from('videos').insert(payload).select().single();
@@ -145,7 +144,6 @@
         if (updateData.userId !== undefined) payload.remote_id = updateData.userId;
         if (updateData.courseId !== undefined) payload.course_id = updateData.courseId;
         if (updateData.type !== undefined) payload.type = updateData.type;
-        if (updateData.hlsUrl !== undefined) payload.hls_url = updateData.hlsUrl;
         if (updateData.isPublished !== undefined) payload.is_published = updateData.isPublished;
 
         payload.updated_at = new Date().toISOString();
