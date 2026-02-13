@@ -9,37 +9,39 @@ export class VideoDomainService {
     }
 
     /**
-     * Replace public R2 URLs with signed download URLs so clients
-     * can access videos/thumbnails without the bucket being public.
+     * Resolves and signs all video/thumbnail URLs so clients receive
+     * ready-to-play pre-signed URLs in every response.
+     *
+     * Handles three URL formats stored in the DB:
+     *  1. Relative R2 object key  → "videos/123_file.mp4"
+     *  2. Public R2 HTTP URL      → "https://pub-xxx.r2.dev/videos/..."
+     *  3. Already-signed URL      → contains "X-Amz-Signature" (skip)
+     *
+     * Principle: OCP — new URL formats can be added without modifying
+     * existing signing logic; just extend _resolveAndSign.
      */
     async _signUrls(videos) {
         if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return videos;
         const list = Array.isArray(videos) ? videos : [videos];
-        await Promise.all(list.map(async(v) => {
+        await Promise.all(list.map(async (v) => {
             if (!v) return;
             try {
-                // Sign video URL (skip if already signed or not an HTTP URL)
-                if (v.video_uri_string || v.videoUriString) {
-                    const url = v.video_uri_string || v.videoUriString;
-                    if (url && url.startsWith('http') && !url.includes('X-Amz-Signature')) {
-                        const key = this.storage.extractObjectKey(url);
-                        if (key) {
-                            const signed = await this.storage.generateDownloadUrl(key, 3600);
-                            v.video_uri_string = signed;
-                            v.videoUriString = signed;
-                        }
+                // Sign video URL
+                const videoUrl = v.video_uri_string || v.videoUriString;
+                if (videoUrl) {
+                    const signed = await this._resolveAndSign(videoUrl);
+                    if (signed) {
+                        v.video_uri_string = signed;
+                        v.videoUriString = signed;
                     }
                 }
-                // Sign thumbnail URL (skip if already signed or not an HTTP URL)
-                if (v.thumbnail_uri || v.thumbnailUri) {
-                    const url = v.thumbnail_uri || v.thumbnailUri;
-                    if (url && url.startsWith('http') && !url.includes('X-Amz-Signature')) {
-                        const key = this.storage.extractObjectKey(url);
-                        if (key) {
-                            const signed = await this.storage.generateDownloadUrl(key, 3600);
-                            v.thumbnail_uri = signed;
-                            v.thumbnailUri = signed;
-                        }
+                // Sign thumbnail URL
+                const thumbUrl = v.thumbnail_uri || v.thumbnailUri;
+                if (thumbUrl) {
+                    const signed = await this._resolveAndSign(thumbUrl);
+                    if (signed) {
+                        v.thumbnail_uri = signed;
+                        v.thumbnailUri = signed;
                     }
                 }
             } catch (e) {
@@ -47,6 +49,34 @@ export class VideoDomainService {
             }
         }));
         return Array.isArray(videos) ? list : list[0];
+    }
+
+    /**
+     * Resolves a raw URL/key to a pre-signed download URL.
+     *
+     * @param {string} raw — R2 object key, public URL, or signed URL.
+     * @returns {Promise<string|null>} Pre-signed URL or null if already signed.
+     * @private
+     */
+    async _resolveAndSign(raw) {
+        if (!raw) return null;
+
+        // Already signed — skip
+        if (raw.includes('X-Amz-Signature')) return null;
+
+        let objectKey = null;
+
+        if (raw.startsWith('http://') || raw.startsWith('https://')) {
+            // Full HTTP URL — extract R2 object key
+            objectKey = this.storage.extractObjectKey(raw);
+        } else if (!raw.startsWith('file://') && !raw.startsWith('content://')) {
+            // Relative R2 object key stored directly in DB (e.g. "videos/123.mp4")
+            objectKey = raw;
+        }
+
+        if (!objectKey) return null;
+
+        return this.storage.generateDownloadUrl(objectKey, 3600);
     }
 
     async getById(id) {
