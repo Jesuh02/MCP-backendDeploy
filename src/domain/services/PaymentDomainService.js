@@ -82,19 +82,19 @@ export class PaymentDomainService {
         let transaction = null;
 
         // Format 1: { event: { data: { transaction: {...} } } }
-        if (payload?.event?.data?.transaction) {
+        if (payload ? .event ? .data ? .transaction) {
             transaction = payload.event.data.transaction;
         }
         // Format 2: { data: { transaction: {...} } } — Standard Wompi webhook
-        else if (payload?.data?.transaction) {
+        else if (payload ? .data ? .transaction) {
             transaction = payload.data.transaction;
         }
         // Format 3: { transaction: {...} }
-        else if (payload?.transaction) {
+        else if (payload ? .transaction) {
             transaction = payload.transaction;
         }
         // Format 4: Direct transaction object
-        else if (payload?.id && payload?.status) {
+        else if (payload ? .id && payload ? .status) {
             transaction = payload;
         }
 
@@ -159,9 +159,9 @@ export class PaymentDomainService {
 
             // If we couldn't parse from reference, try to find in DB
             if (!userId || !courseId) {
-                const tx = this.txRepo.findByReference
-                    ? await this.txRepo.findByReference(reference)
-                    : await this.txRepo.findByTransactionId(reference);
+                const tx = this.txRepo.findByReference ?
+                    await this.txRepo.findByReference(reference) :
+                    await this.txRepo.findByTransactionId(reference);
                 if (tx) {
                     userId = tx.user_id;
                     courseId = tx.course_id;
@@ -268,8 +268,8 @@ export class PaymentDomainService {
     }
 
     async getCourseTransactions(courseId) {
-        const txs = this.txRepo.findByCourse
-            ? await this.txRepo.findByCourse(courseId) : [];
+        const txs = this.txRepo.findByCourse ?
+            await this.txRepo.findByCourse(courseId) : [];
         return Result.ok(txs || []);
     }
 }
