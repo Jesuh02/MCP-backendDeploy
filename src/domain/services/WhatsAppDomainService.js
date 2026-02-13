@@ -280,6 +280,21 @@ export class WhatsAppDomainService {
             await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
         } catch (err) {
             console.error('[WhatsApp] Error sending OTP:', err.message);
+
+            const errorMessage = String(err?.message || '');
+            const isRecipientNotAllowed =
+                errorMessage.includes('131030') ||
+                errorMessage.toLowerCase().includes('recipient phone number not in allowed list');
+
+            if (isRecipientNotAllowed) {
+                return Result.fail(new AppError(
+                    'No se pudo enviar el OTP porque este número no está permitido en el modo prueba de Meta. Agrega el número como tester en WhatsApp Cloud API o publica la app para usar números externos.',
+                    400,
+                    true,
+                    'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE',
+                ));
+            }
+
             return Result.fail(new AppError(
                 'No se pudo enviar el código de verificación por WhatsApp. Verifica el número e inténtalo nuevamente.',
                 502,
@@ -289,7 +304,7 @@ export class WhatsAppDomainService {
         }
 
         return Result.ok({
-            sessionId: session ? .id,
+            sessionId: session?.id,
             phoneNumber: normalized,
             message: 'Código de verificación enviado a WhatsApp',
         });
@@ -330,7 +345,7 @@ export class WhatsAppDomainService {
 
         // Enviar bienvenida
         const user = await this.userRepo.findById(userId);
-        const name = user ? .username || 'usuario';
+        const name = user?.username || 'usuario';
         if (this.whatsAppPort) {
             await this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.WELCOME(name)).catch(() => {});
         }
@@ -476,7 +491,7 @@ export class WhatsAppDomainService {
 
             if (result && result.isOk && result.isOk()) {
                 const answer = result.getValue();
-                const responseText = typeof answer === 'string' ? answer : (answer ? .response || answer ? .text || JSON.stringify(answer));
+                const responseText = typeof answer === 'string' ? answer : (answer?.response || answer?.text || JSON.stringify(answer));
                 return markdownToWhatsApp(responseText);
             }
 
@@ -635,7 +650,7 @@ export class WhatsAppDomainService {
 
             if (result && result.isOk && result.isOk()) {
                 const data = result.getValue();
-                const responseText = typeof data === 'string' ? data : (data ? .response || JSON.stringify(data, null, 2));
+                const responseText = typeof data === 'string' ? data : (data?.response || JSON.stringify(data, null, 2));
                 return markdownToWhatsApp(responseText);
             }
 

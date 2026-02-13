@@ -48,7 +48,7 @@ export class MetaWhatsAppAdapter {
         };
 
         const response = await this._request('POST', this.messagesUrl, body);
-        const messageId = response ? .messages ? .[0] ? .id || null;
+        const messageId = response?.messages?.[0]?.id || null;
         return { messageId };
     }
 
@@ -83,7 +83,7 @@ export class MetaWhatsAppAdapter {
         };
 
         const response = await this._request('POST', this.messagesUrl, payload);
-        const messageId = response ? .messages ? .[0] ? .id || null;
+        const messageId = response?.messages?.[0]?.id || null;
         return { messageId };
     }
 
@@ -162,7 +162,7 @@ export class MetaWhatsAppAdapter {
         const data = await response.json();
 
         if (!response.ok) {
-            const errorMsg = data ? .error ? .message || `Meta API error: ${response.status}`;
+            const errorMsg = data?.error?.message || `Meta API error: ${response.status}`;
             console.error(`[MetaWhatsAppAdapter] ${method} ${url} → ${response.status}:`, errorMsg);
             throw new Error(errorMsg);
         }
