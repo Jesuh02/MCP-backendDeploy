@@ -26,7 +26,7 @@ export class MCPHttpCompatController {
         try {
             res.json({
                 jsonrpc: '2.0',
-                id: req.body ? .id || 1,
+                id: req.body ?.id || 1,
                 result: {
                     protocolVersion: '2024-11-05',
                     capabilities: {
@@ -43,7 +43,7 @@ export class MCPHttpCompatController {
             console.error('❌ Initialize error:', error);
             res.status(500).json({
                 jsonrpc: '2.0',
-                id: req.body ? .id || 1,
+                id: req.body ?.id || 1,
                 error: { code: -32603, message: 'Internal error', data: error.message },
             });
         }
@@ -55,7 +55,7 @@ export class MCPHttpCompatController {
     listTools = (_req, res) => {
             res.json({
                         jsonrpc: '2.0',
-                        id: _req.body ? .id || 1,
+                        id: _req.body ?.id || 1,
                         result: {
                 tools: [
                     {
