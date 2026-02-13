@@ -127,5 +127,50 @@ export class VideoController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    /**
+     * POST /videos/upload
+     * Multipart upload: receives video file + optional thumbnail + JSON metadata.
+     * All storage operations happen server-side — the client never touches R2.
+     */
+    uploadAndCreate = async(req, res, next) => {
+        try {
+            const videoFile = req.files ? .video ? .[0] || req.file;
+            if (!videoFile) {
+                return res.status(400).json({ success: false, error: 'Video file is required (field name: video)' });
+            }
+
+            const thumbnailFile = req.files ? .thumbnail ? .[0] || null;
+
+            // Parse metadata from body (may come as JSON string or flat fields)
+            let metadata;
+            if (req.body.metadata) {
+                metadata = typeof req.body.metadata === 'string' ? JSON.parse(req.body.metadata) : req.body.metadata;
+            } else {
+                metadata = {
+                    title: req.body.title,
+                    description: req.body.description,
+                    isPaid: req.body.isPaid === 'true' || req.body.isPaid === true,
+                    price: req.body.price ? parseFloat(req.body.price) : null,
+                    courseId: req.body.courseId ? parseInt(req.body.courseId) : null,
+                    timestamp: req.body.timestamp ? parseInt(req.body.timestamp) : Date.now(),
+                };
+            }
+
+            const result = await this.videoService.uploadAndCreate({
+                videoBuffer: videoFile.buffer,
+                videoFilename: videoFile.originalname,
+                videoMimeType: videoFile.mimetype,
+                thumbnailBuffer: thumbnailFile ? .buffer || null,
+                thumbnailFilename: thumbnailFile ? .originalname || null,
+                thumbnailMimeType: thumbnailFile ? .mimetype || null,
+                metadata,
+                userId: req.user.userId,
+            });
+
+            if (result.isFail()) return next(result.getError());
+            res.status(201).json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default VideoController;
