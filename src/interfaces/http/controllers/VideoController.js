@@ -135,12 +135,12 @@ export class VideoController {
      */
     uploadAndCreate = async(req, res, next) => {
         try {
-            const videoFile = req.files ? .video ? .[0] || req.file;
+            const videoFile = req.files ?.video ?.[0] || req.file;
             if (!videoFile) {
                 return res.status(400).json({ success: false, error: 'Video file is required (field name: video)' });
             }
 
-            const thumbnailFile = req.files ? .thumbnail ? .[0] || null;
+            const thumbnailFile = req.files ?.thumbnail ?.[0] || null;
 
             // Parse metadata from body (may come as JSON string or flat fields)
             let metadata;
@@ -161,9 +161,9 @@ export class VideoController {
                 videoBuffer: videoFile.buffer,
                 videoFilename: videoFile.originalname,
                 videoMimeType: videoFile.mimetype,
-                thumbnailBuffer: thumbnailFile ? .buffer || null,
-                thumbnailFilename: thumbnailFile ? .originalname || null,
-                thumbnailMimeType: thumbnailFile ? .mimetype || null,
+                thumbnailBuffer: thumbnailFile ?.buffer || null,
+                thumbnailFilename: thumbnailFile ?.originalname || null,
+                thumbnailMimeType: thumbnailFile ?.mimetype || null,
                 metadata,
                 userId: req.user.userId,
             });
