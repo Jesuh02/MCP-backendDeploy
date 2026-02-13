@@ -123,13 +123,12 @@
         const payload = {
             title: videoData.title,
             description: videoData.description || '',
-            video_uri_string: videoData.videoUri || null,
-            thumbnail_uri: videoData.thumbnailUri || null,
-            duration: videoData.duration || null,
-            remote_id: videoData.userId || null,
-            course_id: videoData.courseId || null,
+            video_uri_string: videoData.videoUri || videoData.video_uri_string || null,
+            thumbnail_uri: videoData.thumbnailUri || videoData.thumbnail_uri || null,
+            remote_id: videoData.userId || videoData.user_id || videoData.remote_id || null,
+            course_id: videoData.courseId || videoData.course_id || null,
             type: videoData.type || 'video',
-            hls_url: videoData.hlsUrl || null,
+            hls_url: videoData.hlsUrl || videoData.hls_url || null,
             is_published: videoData.isPublished !== false,
         };
         const { data, error } = await this.client.from('videos').insert(payload).select().single();
@@ -143,7 +142,6 @@
         if (updateData.description !== undefined) payload.description = updateData.description;
         if (updateData.videoUri !== undefined) payload.video_uri_string = updateData.videoUri;
         if (updateData.thumbnailUri !== undefined) payload.thumbnail_uri = updateData.thumbnailUri;
-        if (updateData.duration !== undefined) payload.duration = updateData.duration;
         if (updateData.userId !== undefined) payload.remote_id = updateData.userId;
         if (updateData.courseId !== undefined) payload.course_id = updateData.courseId;
         if (updateData.type !== undefined) payload.type = updateData.type;
