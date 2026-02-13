@@ -212,7 +212,7 @@ export class VideoStreamingDomainService {
         if (raw.includes('X-Amz-Signature')) return null; // Already signed
 
         if (raw.startsWith('http://') || raw.startsWith('https://')) {
-            return this.storage ? .extractObjectKey ? .(raw) || null;
+            return this.storage?.extractObjectKey?.(raw) || null;
         }
 
         // Skip local device paths
