@@ -46,19 +46,17 @@ export class ReinforcementController {
         this.reinforcementService = reinforcementService;
     }
 
-    firstDefined = (...values) => values.find(v => v !== undefined && v !== null);
-
-    saveSession = async (req, res, next) => {
+    saveSession = async(req, res, next) => {
         try {
             const { error, value } = saveSessionSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
 
             // Normalize snake_case → camelCase, fallback to req.user from auth middleware
             const normalized = {
-                userId: this.firstDefined(value.userId, value.user_id, req.user?.userId, req.user?.id, null),
-                courseId: this.firstDefined(value.courseId, value.course_id, null),
-                topicId: this.firstDefined(value.topicId, value.topic_id, null),
-                taskId: this.firstDefined(value.taskId, value.task_id, null),
+                userId: value.userId || value.user_id || req.user?.userId || req.user?.id || null,
+                courseId: value.courseId || value.course_id,
+                topicId: value.topicId || value.topic_id || null,
+                taskId: value.taskId || value.task_id || null,
                 questions: value.questions,
             };
 
@@ -80,16 +78,16 @@ export class ReinforcementController {
      * Called by Android after receiving questions from /procesar-prompt
      * Uses MCPService flow: session → hash check → embedding → semantic check → save
      */
-    saveQuestions = async (req, res, next) => {
+    saveQuestions = async(req, res, next) => {
         try {
             const { error, value } = saveQuestionsSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
 
             const normalized = {
-                userId: this.firstDefined(value.userId, value.user_id, req.user?.userId, req.user?.id, null),
-                courseId: this.firstDefined(value.courseId, value.course_id, null),
-                topicId: this.firstDefined(value.topicId, value.topic_id, null),
-                taskId: this.firstDefined(value.taskId, value.task_id, null),
+                userId: value.userId || value.user_id || req.user?.userId || req.user?.id || null,
+                courseId: value.courseId || value.course_id,
+                topicId: value.topicId || value.topic_id || null,
+                taskId: value.taskId || value.task_id || null,
                 questions: value.questions,
             };
 
@@ -113,28 +111,24 @@ export class ReinforcementController {
      * Manual trigger to ensure RAG documents exist for a task.
      * Checks content_items and ingests them into rag_documents if missing.
      */
-    ingestContext = async (req, res, next) => {
+    ingestContext = async(req, res, next) => {
         try {
-            const taskIdRaw = this.firstDefined(req.body.taskId, req.body.task_id, null);
-            const courseIdRaw = this.firstDefined(req.body.courseId, req.body.course_id, null);
-            const topicIdRaw = this.firstDefined(req.body.topicId, req.body.topic_id, null);
-
-            const taskId = taskIdRaw != null ? parseInt(taskIdRaw) : null;
-            const courseId = courseIdRaw != null ? parseInt(courseIdRaw) : null;
-            const topicId = topicIdRaw != null ? parseInt(topicIdRaw) : null;
+            const taskId = parseInt(req.body.taskId || req.body.task_id);
+            const courseId = parseInt(req.body.courseId || req.body.course_id);
+            const topicId = req.body.topicId || req.body.topic_id ? parseInt(req.body.topicId || req.body.topic_id) : null;
 
             if (!taskId || !courseId) {
                 return next(new ValidationError('taskId and courseId are required'));
             }
 
             const result = await this.reinforcementService.ensureContentIngested(courseId, taskId, topicId);
-            
+
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
 
-    getHistory = async (req, res, next) => {
+    getHistory = async(req, res, next) => {
         try {
             const userId = parseInt(req.params.userId);
             const courseId = parseInt(req.params.courseId);
@@ -144,7 +138,7 @@ export class ReinforcementController {
         } catch (err) { next(err); }
     };
 
-    getMySessions = async (req, res, next) => {
+    getMySessions = async(req, res, next) => {
         try {
             const result = await this.reinforcementService.getUserSessions(req.user.userId, req.query);
             if (result.isFail()) return next(result.getError());
