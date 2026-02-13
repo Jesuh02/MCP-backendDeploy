@@ -13,7 +13,7 @@ export class SupabaseCourseRepository {
     async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc', excludeCreatorId = null } = {}) {
         let query = this.client.from('courses').select('*');
         if (excludeCreatorId) query = query.neq('creator_user_id', excludeCreatorId);
-        
+
         const { data, error } = await query.order(sortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
@@ -80,7 +80,7 @@ export class SupabaseCourseRepository {
         if (data.price !== undefined) payload.price = data.price;
         if (data.category !== undefined) payload.category = data.category;
         if (data.isPublished !== undefined) payload.is_published = data.isPublished;
-        payload.last_modified_date = new Date().toISOString(); 
+        payload.last_modified_date = new Date().toISOString();
 
         const { data: updated, error } = await this.client.from('courses').update(payload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando curso: ${error.message}`);
