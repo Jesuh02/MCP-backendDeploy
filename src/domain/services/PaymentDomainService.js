@@ -54,17 +54,37 @@ export class PaymentDomainService {
         // Try to find by reference in both columns (transaction_id and external_reference)
         const tx = (this.txRepo.findByReference ? await this.txRepo.findByReference(transactionId) : null) ||
             await this.txRepo.findByTransactionId(transactionId);
-        if (tx) {
+
+        // If we have a local transaction and it's already APPROVED, return it immediately.
+        if (tx && tx.status === 'APPROVED') {
             return Result.ok({
                 status: tx.status,
                 reference: tx.transaction_id || tx.external_reference || transactionId,
             });
         }
-        // Fallback: query Wompi directly
+
+        // If local is PENDING (or missing but should be there), Query Wompi directly.
+        // This acts as a fallback if the webhook hasn't arrived yet (race condition fix).
         try {
-            const status = await this.gateway.getTransactionStatus(transactionId);
-            return Result.ok(status);
+            const wompiStatus = await this.gateway.getTransactionStatus(transactionId);
+
+            // If Wompi says APPROVED, verify/update our DB state immediately.
+            // This ensures the frontend doesn't see "APPROVED" while the backend still thinks "PENDING".
+            if (wompiStatus && wompiStatus.status === 'APPROVED') {
+                // Reuse webhook logic to update DB and grant access (DRY)
+                // We wrap it in a pseudo-webhook payload structure
+                const payload = { data: { transaction: wompiStatus } };
+                await this.handleWebhook(payload);
+
+                return Result.ok(wompiStatus);
+            }
+
+            return Result.ok(wompiStatus);
         } catch (e) {
+            // If Wompi fails, return the pending local state if we have it
+            if (tx) {
+                return Result.ok({ status: tx.status, reference: transactionId });
+            }
             return Result.ok({ status: 'pending', reference: transactionId });
         }
     }
@@ -78,23 +98,35 @@ export class PaymentDomainService {
     async handleWebhook(payload) {
         console.log('📥 [PaymentDomainService] Webhook received:', JSON.stringify(payload, null, 2));
 
+        // 0. VERIFICAR FIRMA DE SEGURIDAD (Wompi Integrity)
+        if (this.gateway.verifyWebhookSignature) {
+            const isValid = this.gateway.verifyWebhookSignature(payload);
+            if (!isValid) {
+                console.error('❌ Webhook Signature Verification FAILED. Ignoring request.');
+                return Result.fail(new ValidationError('Firma inválida del webhook'));
+            }
+            console.log('✅ Webhook Signature Verified');
+        } else {
+            console.warn('⚠️ Gateway does not support signature verification or method missing');
+        }
+
         // Extract transaction from various Wompi payload structures
         let transaction = null;
 
         // Format 1: { event: { data: { transaction: {...} } } }
-        if (payload?.event?.data?.transaction) {
+        if (payload ? .event ? .data ? .transaction) {
             transaction = payload.event.data.transaction;
         }
         // Format 2: { data: { transaction: {...} } } — Standard Wompi webhook
-        else if (payload?.data?.transaction) {
+        else if (payload ? .data ? .transaction) {
             transaction = payload.data.transaction;
         }
         // Format 3: { transaction: {...} }
-        else if (payload?.transaction) {
+        else if (payload ? .transaction) {
             transaction = payload.transaction;
         }
         // Format 4: Direct transaction object
-        else if (payload?.id && payload?.status) {
+        else if (payload ? .id && payload ? .status) {
             transaction = payload;
         }
 
