@@ -5,6 +5,7 @@
  * con { userId, username, roles } y rechaza con 401 si es inválido.
  *
  * Rutas públicas (sin autenticación) se configuran al crear el middleware.
+ * Las rutas bajo /api/v1/public/* son públicas por convención (browsing/discovery).
  */
 import { UnauthorizedError } from '../../shared/errors/index.js';
 
@@ -17,6 +18,7 @@ const DEFAULT_PUBLIC_PATHS = [
     '/api/v1/auth/login',
     '/api/v1/auth/register',
     '/api/v1/auth/refresh-token',
+    '/api/v1/public',
 ];
 
 /**
@@ -32,14 +34,20 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
         // ── Rutas públicas ──
         // Usamos originalUrl para obtener la ruta completa (incluyendo /api/v1)
         // y eliminamos query params si existen.
-        const path = req.originalUrl.split('?')[0];
+        const fullPath = req.originalUrl.split('?')[0];
 
-        if (publicPaths.some((p) => path === p || path.startsWith(p + '/'))) {
+        // Whitelist: rutas explícitamente públicas (browsing, auth, health)
+        if (publicPaths.some((p) => fullPath === p || fullPath.startsWith(p + '/'))) {
+            return next();
+        }
+
+        // Convención: cualquier ruta bajo /api/v1/public/ es pública por diseño
+        if (fullPath.startsWith('/api/v1/public/') || fullPath === '/api/v1/public') {
             return next();
         }
 
         // Permitir rutas legacy que no estén bajo /api/v1
-        if (!path.startsWith('/api/v1')) {
+        if (!fullPath.startsWith('/api/v1')) {
             return next();
         }
 

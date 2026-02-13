@@ -29,6 +29,7 @@ import { ragRoutes } from './ragRoutes.js';
 import { mcpRoutes } from './mcpRoutes.js';
 import { appDistributionRoutes } from './appDistributionRoutes.js';
 import { excelRoutes } from './excelRoutes.js';
+import { publicRoutes } from './publicRoutes.js';
 
 /**
  * Monta todas las rutas v1 en un router.
@@ -41,6 +42,9 @@ export function createV1Router(deps) {
     // Rutas públicas (sin auth)
     router.use('/auth', authRoutes(deps));
     router.use('/', healthRoutes(deps));
+
+    // Feed público — lectura sin autenticación (browsing / discovery)
+    router.use('/public', publicRoutes(deps));
 
     // Webhook de pagos (sin auth)
     router.post('/payment/webhook', deps.paymentController.webhook);
