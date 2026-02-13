@@ -162,9 +162,14 @@ export class MetaWhatsAppAdapter {
         const data = await response.json();
 
         if (!response.ok) {
-            const errorMsg = data?.error?.message || `Meta API error: ${response.status}`;
+            const metaError = data?.error || {};
+            const errorMsg = metaError.message || `Meta API error: ${response.status}`;
             console.error(`[MetaWhatsAppAdapter] ${method} ${url} → ${response.status}:`, errorMsg);
-            throw new Error(errorMsg);
+            const error = new Error(errorMsg);
+            error.metaCode = metaError.code;
+            error.metaSubcode = metaError.error_subcode;
+            error.httpStatus = response.status;
+            throw error;
         }
 
         return data;

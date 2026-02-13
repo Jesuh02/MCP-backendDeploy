@@ -282,7 +282,9 @@ export class WhatsAppDomainService {
             console.error('[WhatsApp] Error sending OTP:', err.message);
 
             const errorMessage = String(err?.message || '');
+            const metaCode = Number(err?.metaCode);
             const isRecipientNotAllowed =
+                metaCode === 131030 ||
                 errorMessage.includes('131030') ||
                 errorMessage.toLowerCase().includes('recipient phone number not in allowed list');
 
