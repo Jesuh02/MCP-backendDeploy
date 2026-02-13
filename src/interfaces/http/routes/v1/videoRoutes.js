@@ -27,6 +27,7 @@ export function videoRoutes({ videoController }) {
     router.get('/course/:courseId', videoController.getByCourse);
     router.get('/:id', videoController.getById);
     router.get('/:id/signed-url', videoController.getSignedUrl);
+    router.post('/batch-signed-urls', videoController.batchSignedUrls);
     router.post('/upload-url', videoController.getUploadUrl);
     router.post('/upload', videoUpload.fields([{ name: 'video', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), videoController.uploadAndCreate);
     router.post('/', videoController.create);

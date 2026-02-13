@@ -199,6 +199,48 @@ export class VideoDomainService {
         return Result.ok({ message: 'Video eliminado' });
     }
 
+    /**
+     * Batch sign URLs for multiple video IDs in a single request.
+     * Optimized for mobile pre-loading: the client sends IDs of adjacent
+     * videos and receives all signed URLs at once, avoiding N+1 round trips.
+     *
+     * @param {number[]} videoIds - Array of video IDs to sign
+     * @returns {Promise<Result>} Map of { id -> { videoUrl, thumbnailUrl } }
+     */
+    async batchSignedUrls(videoIds) {
+        if (!Array.isArray(videoIds) || videoIds.length === 0) {
+            return Result.fail(new ValidationError('videoIds must be a non-empty array'));
+        }
+        // Cap at 20 to prevent abuse
+        const ids = videoIds.slice(0, 20).map(Number).filter(n => !isNaN(n) && n > 0);
+        if (ids.length === 0) {
+            return Result.fail(new ValidationError('No valid video IDs provided'));
+        }
+
+        try {
+            const videos = await this.videoRepo.findByIds(ids);
+            if (!videos || videos.length === 0) {
+                return Result.ok({});
+            }
+
+            // Sign all URLs in parallel for maximum speed
+            await this._signUrls(videos);
+
+            // Build a lookup map keyed by video ID
+            const urlMap = {};
+            for (const v of videos) {
+                urlMap[v.id] = {
+                    videoUrl: v.video_uri_string || v.videoUriString || null,
+                    thumbnailUrl: v.thumbnail_uri || v.thumbnailUri || null,
+                };
+            }
+            return Result.ok(urlMap);
+        } catch (error) {
+            console.error('[VideoDomainService] batchSignedUrls error:', error.message);
+            return Result.fail(error);
+        }
+    }
+
     async findByCourseIds(courseIds, pagination) {
         const videos = await this.videoRepo.findByCourseIds(courseIds, pagination);
         await this._signUrls(videos);
