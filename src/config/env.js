@@ -66,6 +66,13 @@ if (result.error) {
     } else {
         console.log('✅ All critical R2 keys present in .env');
     }
+
+    // Log WhatsApp integration keys presence
+    const whatsappKeys = ['WHATSAPP_VERIFY_TOKEN', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_ID', 'WHATSAPP_APP_SECRET'];
+    const presentWA = whatsappKeys.filter(k => keys.includes(k) || process.env[k]);
+    if (presentWA.length > 0) {
+        console.log(`📱 WhatsApp keys present: ${presentWA.length}/${whatsappKeys.length}`);
+    }
 } else {
     // In production (Railway), environment variables are set directly
     console.log('ℹ️  No .env file found — using system environment variables (Railway mode)');
