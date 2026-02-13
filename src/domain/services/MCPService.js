@@ -671,6 +671,8 @@ export class MCPService {
                     continue;
                 }
 
+                let savedQResult = null;
+
                 const { data: savedQ, error: saveError } = await supabase
                     .from('questions_history')
                     .insert({
@@ -688,14 +690,41 @@ export class MCPService {
 
                 if (saveError) {
                     if (saveError.message.includes('dimensions')) {
-                        logger.error(`❌ ABORT: Database vector dimension mismatch. Please run 'fix_vector_dimensions.sql'.`);
+                        logger.warn(`⚠️ Vector dimension mismatch detected (model=${questionEmbedding.length}). Attempting auto-migration...`);
+                        try {
+                            await this._migrateQuestionVectorDimensions(supabase, questionEmbedding.length);
+                            // Retry insert after migration
+                            const retry = await supabase
+                                .from('questions_history')
+                                .insert({
+                                    session_id: sessionId,
+                                    user_id: userId,
+                                    course_id: courseId,
+                                    question_text: qText,
+                                    question_hash: questionHash,
+                                    question_embedding: questionEmbedding,
+                                    correct_index: qIndex,
+                                    explanation: qExplanation
+                                })
+                                .select('id')
+                                .single();
+                            if (retry.error) {
+                                logger.error(`❌ Retry failed after migration: ${retry.error.message}`);
+                                continue;
+                            }
+                            savedQResult = retry.data;
+                            logger.info(`✅ Auto-migration succeeded. Question saved.`);
+                        } catch (migErr) {
+                            logger.error(`❌ Auto-migration failed: ${migErr.message}. Run 'fix_vector_dimensions.sql' manually.`);
+                            continue;
+                        }
                     } else {
                         logger.error(`❌ Error saving question: ${saveError.message}`);
+                        continue;
                     }
-                    continue;
                 }
 
-                const questionId = savedQ.id;
+                const questionId = (savedQResult || savedQ).id;
 
                 // Save Options
                 if (optionsArray.length > 0) {
@@ -717,7 +746,21 @@ export class MCPService {
 
 
                     if (optError) {
-                        logger.error(`❌ Error saving options: ${optError.message}`);
+                        if (optError.message.includes('dimensions')) {
+                            // Migration should have already run from the question insert.
+                            // Retry once — the column type should now match.
+                            logger.warn(`⚠️ Options dimension mismatch, retrying after migration...`);
+                            const retryOpt = await supabase
+                                .from('question_options')
+                                .insert(optionsPayload);
+                            if (retryOpt.error) {
+                                logger.error(`❌ Options retry failed: ${retryOpt.error.message}`);
+                            } else {
+                                logger.info(`✅ Options saved after migration retry.`);
+                            }
+                        } else {
+                            logger.error(`❌ Error saving options: ${optError.message}`);
+                        }
                     }
                 }
 
@@ -736,6 +779,119 @@ export class MCPService {
             logger.error(`❌ Critical error in saveReinforcementHistory: ${error.message}`);
             return false;
         }
+    }
+
+
+    /**
+     * Auto-migrate questions_history and question_options vector columns to match model dimensions.
+     * Similar to SupabaseVectorStore._migrateTableDimensions but for the question tables.
+     * @param {object} supabase - Supabase client
+     * @param {number} targetDim - Target vector dimension (e.g., 4096)
+     */
+    async _migrateQuestionVectorDimensions(supabase, targetDim) {
+        logger.info(`🔄 Migrating questions vector dimensions to ${targetDim}...`);
+
+        const migrationSQL = `
+            DO $$
+            BEGIN
+                -- Drop dependent objects
+                DROP INDEX IF EXISTS public.idx_questions_history_embedding;
+                DROP INDEX IF EXISTS public.idx_question_options_embedding;
+                DROP FUNCTION IF EXISTS public.match_questions;
+                DROP FUNCTION IF EXISTS public.match_options;
+
+                -- Migrate questions_history
+                BEGIN
+                    ALTER TABLE public.questions_history
+                    ALTER COLUMN question_embedding TYPE vector(${targetDim}) USING NULL;
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE NOTICE 'ALTER questions_history failed: %, dropping and recreating column', SQLERRM;
+                    ALTER TABLE public.questions_history DROP COLUMN IF EXISTS question_embedding;
+                    ALTER TABLE public.questions_history ADD COLUMN question_embedding vector(${targetDim});
+                END;
+
+                -- Migrate question_options
+                BEGIN
+                    ALTER TABLE public.question_options
+                    ALTER COLUMN option_embedding TYPE vector(${targetDim}) USING NULL;
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE NOTICE 'ALTER question_options failed: %, dropping and recreating column', SQLERRM;
+                    ALTER TABLE public.question_options DROP COLUMN IF EXISTS option_embedding;
+                    ALTER TABLE public.question_options ADD COLUMN option_embedding vector(${targetDim});
+                END;
+            END $$;
+
+            -- Recreate match_questions function
+            CREATE OR REPLACE FUNCTION match_questions(
+                query_embedding vector(${targetDim}),
+                match_threshold float,
+                match_count int,
+                filter_user_id bigint
+            ) RETURNS TABLE (
+                id bigint,
+                question_text text,
+                similarity float
+            ) LANGUAGE plpgsql AS $$
+            BEGIN
+                RETURN QUERY
+                SELECT qh.id, qh.question_text,
+                       1 - (qh.question_embedding <=> query_embedding) AS similarity
+                FROM questions_history qh
+                WHERE qh.user_id = filter_user_id
+                  AND qh.question_embedding IS NOT NULL
+                  AND 1 - (qh.question_embedding <=> query_embedding) > match_threshold
+                ORDER BY qh.question_embedding <=> query_embedding
+                LIMIT match_count;
+            END;
+            $$;
+
+            -- Recreate match_options function
+            CREATE OR REPLACE FUNCTION match_options(
+                query_embedding vector(${targetDim}),
+                match_threshold float,
+                match_count int,
+                filter_user_id bigint
+            ) RETURNS TABLE (
+                id bigint,
+                option_text text,
+                similarity float
+            ) LANGUAGE plpgsql AS $$
+            BEGIN
+                RETURN QUERY
+                SELECT qo.id, qo.option_text,
+                       1 - (qo.option_embedding <=> query_embedding) AS similarity
+                FROM question_options qo
+                JOIN questions_history qh ON qo.question_id = qh.id
+                WHERE qh.user_id = filter_user_id
+                  AND qo.option_embedding IS NOT NULL
+                  AND 1 - (qo.option_embedding <=> query_embedding) > match_threshold
+                ORDER BY qo.option_embedding <=> query_embedding
+                LIMIT match_count;
+            END;
+            $$;
+
+            -- Add B-Tree index for fast user/session filtering
+            CREATE INDEX IF NOT EXISTS idx_questions_history_user_session
+            ON public.questions_history(user_id, session_id);
+        `;
+
+        // Try exec_sql RPC (common Supabase admin function)
+        const { error: err1 } = await supabase.rpc('exec_sql', { sql: migrationSQL });
+        if (!err1) {
+            logger.info(`✅ Questions vector migration to ${targetDim} dimensions completed successfully.`);
+            return;
+        }
+
+        logger.warn(`exec_sql failed (${err1.message}), trying execute_sql...`);
+
+        // Try execute_sql as fallback
+        const { error: err2 } = await supabase.rpc('execute_sql', { query: migrationSQL });
+        if (!err2) {
+            logger.info(`✅ Questions vector migration to ${targetDim} dimensions completed successfully.`);
+            return;
+        }
+
+        throw new Error(`Both RPC methods failed. exec_sql: ${err1.message}, execute_sql: ${err2.message}`);
     }
 
 

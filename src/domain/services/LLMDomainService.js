@@ -44,7 +44,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId, topicId }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
@@ -56,11 +56,16 @@ export class LLMDomainService {
                 resolvedFileContent = await this._resolveFileContent({ fileUri, submissionId, taskId, studentId });
             }
 
-            // 1. Build RAG context if available
+            // 1. Build RAG context if available — pass topicId/taskId for scoped retrieval
             let ragContext = '';
             if (this.rag && courseId) {
                 try {
-                    ragContext = await this.rag.buildContext(prompt, { courseId, maxTokens: 2000 });
+                    ragContext = await this.rag.buildContext(prompt, {
+                        courseId,
+                        topicId: topicId || null,
+                        taskId: taskId || null,
+                        maxTokens: 2000
+                    });
                 } catch (ragErr) {
                     console.warn('[LLMDomainService] RAG context failed, proceeding without:', ragErr.message);
                 }
@@ -88,15 +93,32 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
                 fullPrompt = `Contenido del archivo:\n${resolvedFileContent}\n\nPregunta/Instrucción: ${prompt}`;
             }
 
-            // 4. Check reinforcement history to avoid repetitions
+            // 4. Check reinforcement history to avoid repetitions — filter by topic/task
             if (userId && courseId && this._isReinforcementRequest(prompt)) {
                 try {
-                    const history = await this.reinforcementRepo.getHistory(userId, courseId);
+                    // Use MCPService for topic/task-scoped history when available
+                    const { MCPService } = await import('./MCPService.js');
+                    const mcpService = new MCPService();
+                    const history = await mcpService.getReinforcementHistory(
+                        userId, courseId, topicId || null, taskId || null
+                    );
                     if (history && history.length > 0) {
-                        systemPrompt += `\n\nPreguntas ya generadas (NO repetir):\n${JSON.stringify(history)}`;
+                        const historyTexts = history.map(h => h.question || h.text || '');
+                        systemPrompt += `\n\n═══ PREGUNTAS YA GENERADAS PARA ESTE TEMA/TAREA (PROHIBIDO REPETIR O PARAFRASEAR) ═══`;
+                        systemPrompt += `\nHay ${historyTexts.length} preguntas existentes. Cada nueva pregunta DEBE cubrir un ASPECTO DIFERENTE del material:`;
+                        historyTexts.forEach((q, i) => { systemPrompt += `\n${i + 1}. ${q}`; });
+                        systemPrompt += `\n═══ FIN DEL HISTORIAL ═══`;
+                        systemPrompt += `\nIMPORTANTE: NO reformules ni parafrasees ninguna de las preguntas anteriores. Aborda conceptos, funciones o secciones del material que NO aparezcan en el historial.`;
                     }
                 } catch (histErr) {
                     console.warn('[LLMDomainService] Reinforcement history failed:', histErr.message);
+                    // Fallback to legacy repo method
+                    try {
+                        const history = await this.reinforcementRepo.getHistory(userId, courseId);
+                        if (history && history.length > 0) {
+                            systemPrompt += `\n\nPreguntas ya generadas (NO repetir):\n${JSON.stringify(history)}`;
+                        }
+                    } catch (_) { /* ignore */ }
                 }
             }
 

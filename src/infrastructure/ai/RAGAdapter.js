@@ -103,6 +103,8 @@ export class RAGAdapter {
         try {
             const context = await this._rag.buildContext(query, {
                 courseId: options.courseId,
+                topicId: options.topicId || null,
+                taskId: options.taskId || null,
                 maxTokens: options.maxTokens,
             });
             return context || '';
