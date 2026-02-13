@@ -157,5 +157,21 @@ export class CourseController {
             res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
         } catch (err) { next(err); }
     };
+
+    /**
+     * GET /creator-id/:userId/with-submissions
+     * Courses created by a user that have at least one task submission.
+     */
+    getCreatorCoursesWithSubmissions = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            if (isNaN(userId)) {
+                return res.status(400).json({ success: false, error: 'Invalid user ID' });
+            }
+            const result = await this.courseService.findCreatorCoursesWithSubmissions(userId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default CourseController;

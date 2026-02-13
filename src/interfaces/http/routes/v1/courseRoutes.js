@@ -14,6 +14,7 @@ export function courseRoutes({ courseController }) {
     router.get('/by-ids', courseController.getByIds);
     router.get('/creator/:username', courseController.getByCreator);
     router.get('/creator-id/:userId', courseController.getByCreatorId);
+    router.get('/creator-id/:userId/with-submissions', courseController.getCreatorCoursesWithSubmissions);
     router.get('/:id', courseController.getById);
     router.post('/', courseController.create);
     router.put('/:id', courseController.update);

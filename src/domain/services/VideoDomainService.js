@@ -1,5 +1,6 @@
 import { Result } from '../../shared/Result.js';
-import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
+import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
+import path from 'path';
 
 export class VideoDomainService {
     constructor({ videoRepository, fileStoragePort }) {
@@ -102,6 +103,73 @@ export class VideoDomainService {
                 key: uniqueKey
             });
         } catch (error) {
+            return Result.fail(error);
+        }
+    }
+
+    /**
+     * Upload video + optional thumbnail files to R2 and create the video record.
+     * All storage logic is centralized here — the mobile client only sends files.
+     *
+     * @param {Object} params
+     * @param {Buffer} params.videoBuffer - Raw video bytes
+     * @param {string} params.videoFilename - Original filename
+     * @param {string} params.videoMimeType - MIME type (e.g. video/mp4)
+     * @param {Buffer|null} params.thumbnailBuffer - Raw thumbnail bytes (optional)
+     * @param {string|null} params.thumbnailFilename - Thumbnail filename (optional)
+     * @param {string|null} params.thumbnailMimeType - Thumbnail MIME (optional)
+     * @param {Object} params.metadata - Video metadata (title, description, etc.)
+     * @param {number} params.userId - Authenticated user ID
+     * @returns {Promise<Result>}
+     */
+    async uploadAndCreate({ videoBuffer, videoFilename, videoMimeType, thumbnailBuffer, thumbnailFilename, thumbnailMimeType, metadata, userId }) {
+        if (!videoBuffer || !videoBuffer.length) {
+            return Result.fail(new ValidationError('Video file is required'));
+        }
+        if (!metadata || !metadata.title) {
+            return Result.fail(new ValidationError('Title is required'));
+        }
+        if (!this.storage || !this.storage.isAvailable()) {
+            return Result.fail(new Error('Storage service not available'));
+        }
+
+        try {
+            // 1. Upload video to R2
+            const sanitizedTitle = (metadata.title || 'video').replace(/[^a-zA-Z0-9._-]/g, '_');
+            const videoExt = path.extname(videoFilename || '.mp4') || '.mp4';
+            const videoKey = `videos/${Date.now()}_${sanitizedTitle}${videoExt}`;
+            const videoPublicUrl = await this.storage.uploadFile(videoBuffer, videoKey, videoMimeType || 'video/mp4');
+
+            // 2. Upload thumbnail if provided
+            let thumbnailUrl = null;
+            if (thumbnailBuffer && thumbnailBuffer.length > 0) {
+                const thumbExt = path.extname(thumbnailFilename || '.jpg') || '.jpg';
+                const thumbKey = `thumbnails/courses/thumb_${Date.now()}${thumbExt}`;
+                thumbnailUrl = await this.storage.uploadFile(thumbnailBuffer, thumbKey, thumbnailMimeType || 'image/jpeg');
+            }
+
+            // 3. Create video record in the database
+            const videoData = {
+                title: metadata.title,
+                description: metadata.description || '',
+                video_uri_string: videoKey, // Store the object key, not the full URL
+                thumbnail_uri: thumbnailUrl || null,
+                is_paid: metadata.isPaid || false,
+                price: metadata.price || null,
+                course_id: metadata.courseId || null,
+                user_id: userId,
+                remote_id: userId,
+                timestamp: metadata.timestamp || Date.now(),
+            };
+
+            const created = await this.videoRepo.create(videoData);
+
+            // Sign URLs before returning
+            await this._signUrls(created);
+
+            return Result.ok(created);
+        } catch (error) {
+            console.error('[VideoDomainService] uploadAndCreate error:', error.message);
             return Result.fail(error);
         }
     }

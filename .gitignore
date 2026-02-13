@@ -59,3 +59,4 @@ scripts/setup_rag_tables.sql
 .env.QA
 scripts/ddlpro.sql
 scripts/ddlqa.sql
+scripts/diagram.mermaid
