@@ -80,9 +80,12 @@ export function createApp() {
     });
 
     // Legacy Payment routes → redirect /api/payment/* to /api/v1/payment/*
-    // Android PaymentApi.kt uses /api/payment/* endpoints directly
+    // Android PaymentApi.kt uses /api/payment/* endpoints directly.
+    // IMPORTANT: Override originalUrl so AuthMiddleware sees '/api/v1/...' and enforces JWT.
     app.use('/api/payment', (req, res, next) => {
-        req.url = `/api/v1/payment${req.url}`;
+        const suffix = req.url; // e.g. '/initiate'
+        req.originalUrl = `/api/v1/payment${suffix}`; // auth middleware reads this
+        req.url = `/api/v1/payment${suffix}`;
         app.handle(req, res, next);
     });
 
@@ -184,9 +187,9 @@ export function createApp() {
     // Se mantienen como redirects para backward compatibility con Android.
     // ═══════════════════════════════════════════════════════════
 
-    app.post('/notify-chat-response', async (req, res) => {
+    app.post('/notify-chat-response', async(req, res) => {
         try {
-            const { userId } = req.body;
+            const { userId, messageId, metadata, data } = req.body;
             if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
             const notifService = container.notificationService;
@@ -196,6 +199,14 @@ export function createApp() {
                 title: '🤖 Nueva respuesta del chat',
                 message: 'Tu consulta ha sido procesada. Abre la app para ver la respuesta.',
                 type: 'chat_response',
+                // Android Notification entity expects Long for relatedId, so we use metadata for string IDs
+                metadata: JSON.stringify({
+                    messageId: messageId,
+                    fragment: data ? .fragment || 'database_query',
+                    action: 'OPEN_CHAT',
+                    ...data
+                }),
+                data: data
             });
             res.json({ success: true });
         } catch (error) {
@@ -204,7 +215,7 @@ export function createApp() {
         }
     });
 
-    app.post('/send-push-notification', async (req, res) => {
+    app.post('/send-push-notification', async(req, res) => {
         try {
             const { userId, title, body: notifBody, data } = req.body;
             if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
@@ -255,7 +266,7 @@ export function createApp() {
     });
 
     // FCM token registration — delegates to userService via container (DIP)
-    app.post('/register-fcm-token', async (req, res) => {
+    app.post('/register-fcm-token', async(req, res) => {
         try {
             const { userId, token, deviceType } = req.body;
             if (!userId || !token) {
@@ -270,18 +281,18 @@ export function createApp() {
     });
 
     // Notify grade — delegates to notificationService via container (DIP)
-    app.post('/notify-grade', async (req, res) => {
-        try {
-            const { userId, taskName, grade, feedback, gradedByUsername, submissionId } = req.body;
-            if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+    app.post('/notify-grade', async(req, res) => {
+                try {
+                    const { userId, taskName, grade, feedback, gradedByUsername, submissionId } = req.body;
+                    if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
-            const notifService = container.notificationService;
-            if (!notifService) return res.json({ success: false, error: 'NotificationService not available' });
+                    const notifService = container.notificationService;
+                    if (!notifService) return res.json({ success: false, error: 'NotificationService not available' });
 
-            await notifService.sendNotification({
-                userId: parseInt(userId),
-                title: `📊 Tu tarea "${taskName || 'Tarea'}" ha sido calificada`,
-                message: `Nota: ${grade}/10${feedback ? ` — ${feedback.substring(0, 100)}` : ''}`,
+                    await notifService.sendNotification({
+                                userId: parseInt(userId),
+                                title: `📊 Tu tarea "${taskName || 'Tarea'}" ha sido calificada`,
+                                message: `Nota: ${grade}/10${feedback ? ` — ${feedback.substring(0, 100)}` : ''}`,
                 type: 'task_graded',
                 relatedId: submissionId,
                 senderUsername: gradedByUsername,

@@ -10,6 +10,10 @@ export class PaymentController extends BaseController {
 
     initiate = async(req, res, next) => {
         try {
+            if (!req.user?.userId) {
+                return next(new ValidationError('Autenticación requerida para iniciar un pago'));
+            }
+
             const { error, value } = initiatePaymentSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
 
