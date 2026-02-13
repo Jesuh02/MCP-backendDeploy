@@ -279,16 +279,17 @@ export class WhatsAppDomainService {
         try {
             await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
         } catch (err) {
-            console.error('[WhatsApp] Error sending OTP:', err.message);
-
             const errorMessage = String(err?.message || '');
             const metaCode = Number(err?.metaCode);
+            const appCode = String(err?.code || '');
             const isRecipientNotAllowed =
+                appCode === 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE' ||
                 metaCode === 131030 ||
                 errorMessage.includes('131030') ||
                 errorMessage.toLowerCase().includes('recipient phone number not in allowed list');
 
             if (isRecipientNotAllowed) {
+                console.warn('[WhatsApp] OTP bloqueado por modo prueba de Meta (allowed list).');
                 return Result.fail(new AppError(
                     'No se pudo enviar el OTP porque este número no está permitido en el modo prueba de Meta. Agrega el número como tester en WhatsApp Cloud API o publica la app para usar números externos.',
                     400,
@@ -296,6 +297,8 @@ export class WhatsAppDomainService {
                     'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE',
                 ));
             }
+
+            console.error('[WhatsApp] Error sending OTP:', err.message);
 
             return Result.fail(new AppError(
                 'No se pudo enviar el código de verificación por WhatsApp. Verifica el número e inténtalo nuevamente.',
