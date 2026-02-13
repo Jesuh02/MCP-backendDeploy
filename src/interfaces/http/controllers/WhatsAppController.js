@@ -160,13 +160,24 @@ export class WhatsAppController {
             if (result.isFail()) {
                 const domainError = result.getError();
 
-                if (domainError?.code === 'WHATSAPP_OTP_SEND_FAILED' || domainError?.code === 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE') {
+                if (domainError?.code === 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE') {
                     return res.status(400).json({
                         success: false,
                         error: {
                             code: 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE',
                             message: 'No se pudo enviar el OTP porque este número no está permitido en el modo prueba de Meta. Agrega el número como tester en WhatsApp Cloud API o publica la app para usar números externos.',
                             statusCode: 400,
+                        },
+                    });
+                }
+
+                if (domainError?.code === 'WHATSAPP_OTP_SEND_FAILED') {
+                    return res.status(502).json({
+                        success: false,
+                        error: {
+                            code: 'WHATSAPP_OTP_SEND_FAILED',
+                            message: 'No se pudo enviar el código de verificación por WhatsApp. Verifica el número e inténtalo nuevamente.',
+                            statusCode: 502,
                         },
                     });
                 }

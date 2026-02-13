@@ -46,6 +46,8 @@ export class ReinforcementController {
         this.reinforcementService = reinforcementService;
     }
 
+    firstDefined = (...values) => values.find(v => v !== undefined && v !== null);
+
     saveSession = async (req, res, next) => {
         try {
             const { error, value } = saveSessionSchema.validate(req.body);
@@ -53,10 +55,10 @@ export class ReinforcementController {
 
             // Normalize snake_case → camelCase, fallback to req.user from auth middleware
             const normalized = {
-                userId: value.userId || value.user_id || req.user?.userId || req.user?.id || null,
-                courseId: value.courseId || value.course_id,
-                topicId: value.topicId || value.topic_id || null,
-                taskId: value.taskId || value.task_id || null,
+                userId: this.firstDefined(value.userId, value.user_id, req.user?.userId, req.user?.id, null),
+                courseId: this.firstDefined(value.courseId, value.course_id, null),
+                topicId: this.firstDefined(value.topicId, value.topic_id, null),
+                taskId: this.firstDefined(value.taskId, value.task_id, null),
                 questions: value.questions,
             };
 
@@ -84,10 +86,10 @@ export class ReinforcementController {
             if (error) return next(ValidationError.fromJoi(error));
 
             const normalized = {
-                userId: value.userId || value.user_id || req.user?.userId || req.user?.id || null,
-                courseId: value.courseId || value.course_id,
-                topicId: value.topicId || value.topic_id || null,
-                taskId: value.taskId || value.task_id || null,
+                userId: this.firstDefined(value.userId, value.user_id, req.user?.userId, req.user?.id, null),
+                courseId: this.firstDefined(value.courseId, value.course_id, null),
+                topicId: this.firstDefined(value.topicId, value.topic_id, null),
+                taskId: this.firstDefined(value.taskId, value.task_id, null),
                 questions: value.questions,
             };
 
@@ -113,9 +115,13 @@ export class ReinforcementController {
      */
     ingestContext = async (req, res, next) => {
         try {
-            const taskId = parseInt(req.body.taskId || req.body.task_id);
-            const courseId = parseInt(req.body.courseId || req.body.course_id);
-            const topicId = req.body.topicId || req.body.topic_id ? parseInt(req.body.topicId || req.body.topic_id) : null;
+            const taskIdRaw = this.firstDefined(req.body.taskId, req.body.task_id, null);
+            const courseIdRaw = this.firstDefined(req.body.courseId, req.body.course_id, null);
+            const topicIdRaw = this.firstDefined(req.body.topicId, req.body.topic_id, null);
+
+            const taskId = taskIdRaw != null ? parseInt(taskIdRaw) : null;
+            const courseId = courseIdRaw != null ? parseInt(courseIdRaw) : null;
+            const topicId = topicIdRaw != null ? parseInt(topicIdRaw) : null;
 
             if (!taskId || !courseId) {
                 return next(new ValidationError('taskId and courseId are required'));

@@ -234,6 +234,7 @@ export class MetaWhatsAppAdapter {
             const rawErrorMsg = metaError.message || `Meta API error: ${response.status}`;
             const metaCode = Number(metaError.code);
             const metaSubcode = Number(metaError.error_subcode);
+            const isHelloWorldTemplate = body?.type === 'template' && body?.template?.name === 'hello_world';
             const isRecipientNotAllowed =
                 metaCode === 131030 ||
                 String(rawErrorMsg).includes('131030') ||
@@ -245,8 +246,10 @@ export class MetaWhatsAppAdapter {
                 String(rawErrorMsg).includes('133010') ||
                 String(rawErrorMsg).toLowerCase().includes('account not registered');
 
+            const treatAsTestModeRestriction = isHelloWorldTemplate && isAccountNotRegistered;
+
             let errorMsg = rawErrorMsg;
-            if (isRecipientNotAllowed) {
+            if (isRecipientNotAllowed || treatAsTestModeRestriction) {
                 errorMsg = 'El número destino no está permitido en modo prueba de Meta (allowed list). Agrega el número como tester en WhatsApp Cloud API o publica la app.';
             } else if (isAccountNotRegistered) {
                 errorMsg = 'El número ingresado no tiene una cuenta de WhatsApp activa. Verifica que el número sea correcto y tenga WhatsApp instalado.';
@@ -254,7 +257,7 @@ export class MetaWhatsAppAdapter {
 
             console.error(`[MetaWhatsAppAdapter] ${method} ${url} → ${response.status}:`, errorMsg);
             const error = new Error(errorMsg);
-            if (isRecipientNotAllowed) {
+            if (isRecipientNotAllowed || treatAsTestModeRestriction) {
                 error.code = 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE';
             } else if (isAccountNotRegistered) {
                 error.code = 'WHATSAPP_ACCOUNT_NOT_REGISTERED';

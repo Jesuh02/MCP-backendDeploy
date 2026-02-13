@@ -68,14 +68,14 @@ export class RAGController {
      */
     ingestTaskContent = async(req, res, next) => {
         const parseId = (val) => {
-            if (!val) return null;
+            if (val === undefined || val === null || val === '') return null;
             const parsed = parseInt(val);
             return isNaN(parsed) ? null : parsed;
         };
 
-        const taskId = parseId(req.body.taskId);
-        const topicId = parseId(req.body.topicId);
-        const courseId = parseId(req.body.courseId);
+        const taskId = parseId(req.body.taskId ?? req.body.task_id);
+        const topicId = parseId(req.body.topicId ?? req.body.topic_id);
+        const courseId = parseId(req.body.courseId ?? req.body.course_id);
 
         if (!taskId) {
             return res.status(400).json({ success: false, error: 'taskId is required' });
