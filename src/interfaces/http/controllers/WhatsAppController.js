@@ -13,7 +13,7 @@
  *   - SRP: solo traduce HTTP ↔ dominio, no contiene lógica de negocio.
  *   - DIP: depende de WhatsAppDomainService (abstracción del dominio).
  */
-import { linkWhatsAppSchema, verifyWhatsAppSchema } from '../../../domain/validators/WhatsAppSchemas.js';
+import { linkWhatsAppSchema, verifyWhatsAppSchema, validatePhoneNumber } from '../../../domain/validators/WhatsAppSchemas.js';
 import { ValidationError } from '../../../shared/errors/index.js';
 
 export class WhatsAppController {
@@ -111,7 +111,13 @@ export class WhatsAppController {
         try {
             if (!this.ensureServiceAvailable(res)) return;
 
-            const { error, value } = linkWhatsAppSchema.validate(req.body);
+            const rawPhone = req.body?.phoneNumber;
+            const normalizedPhone = validatePhoneNumber(rawPhone);
+            if (!normalizedPhone.valid) {
+                return next(new ValidationError(normalizedPhone.error || 'Número de teléfono inválido'));
+            }
+
+            const { error, value } = linkWhatsAppSchema.validate({ phoneNumber: normalizedPhone.normalized });
             if (error) return next(ValidationError.fromJoi(error));
 
             const userId = req.user?.userId;
