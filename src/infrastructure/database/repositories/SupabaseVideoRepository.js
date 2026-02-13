@@ -127,8 +127,6 @@
             thumbnail_uri: videoData.thumbnailUri || videoData.thumbnail_uri || null,
             remote_id: videoData.userId || videoData.user_id || videoData.remote_id || null,
             course_id: videoData.courseId || videoData.course_id || null,
-            type: videoData.type || 'video',
-            is_published: videoData.isPublished !== false,
         };
         const { data, error } = await this.client.from('videos').insert(payload).select().single();
         if (error) throw new Error(error.message);
@@ -143,10 +141,6 @@
         if (updateData.thumbnailUri !== undefined) payload.thumbnail_uri = updateData.thumbnailUri;
         if (updateData.userId !== undefined) payload.remote_id = updateData.userId;
         if (updateData.courseId !== undefined) payload.course_id = updateData.courseId;
-        if (updateData.type !== undefined) payload.type = updateData.type;
-        if (updateData.isPublished !== undefined) payload.is_published = updateData.isPublished;
-
-        payload.updated_at = new Date().toISOString();
         const { data, error } = await this.client.from('videos').update(payload).eq('id', id).select().single();
         if (error) throw new Error(error.message);
         return this._mapVideo(data);
