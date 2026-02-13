@@ -163,9 +163,22 @@ export class MetaWhatsAppAdapter {
 
         if (!response.ok) {
             const metaError = data?.error || {};
-            const errorMsg = metaError.message || `Meta API error: ${response.status}`;
+            const rawErrorMsg = metaError.message || `Meta API error: ${response.status}`;
+            const metaCode = Number(metaError.code);
+            const isRecipientNotAllowed =
+                metaCode === 131030 ||
+                String(rawErrorMsg).includes('131030') ||
+                String(rawErrorMsg).toLowerCase().includes('recipient phone number not in allowed list');
+
+            const errorMsg = isRecipientNotAllowed
+                ? 'El número destino no está permitido en modo prueba de Meta (allowed list). Agrega el número como tester en WhatsApp Cloud API o publica la app.'
+                : rawErrorMsg;
+
             console.error(`[MetaWhatsAppAdapter] ${method} ${url} → ${response.status}:`, errorMsg);
             const error = new Error(errorMsg);
+            if (isRecipientNotAllowed) {
+                error.code = 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE';
+            }
             error.metaCode = metaError.code;
             error.metaSubcode = metaError.error_subcode;
             error.httpStatus = response.status;
