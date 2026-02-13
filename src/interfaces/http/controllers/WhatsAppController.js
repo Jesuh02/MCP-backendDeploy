@@ -27,6 +27,15 @@ export class WhatsAppController {
         this.verifyToken = verifyToken || process.env.WHATSAPP_VERIFY_TOKEN || '';
     }
 
+    ensureServiceAvailable(res) {
+        if (this.service) return true;
+        res.status(503).json({
+            success: false,
+            error: 'Servicio de WhatsApp no disponible temporalmente',
+        });
+        return false;
+    }
+
     /**
      * GET /webhook — Verificación del webhook de Meta.
      * Meta envía hub.mode, hub.verify_token y hub.challenge.
@@ -100,6 +109,8 @@ export class WhatsAppController {
      */
     linkAccount = async(req, res, next) => {
         try {
+            if (!this.ensureServiceAvailable(res)) return;
+
             const { error, value } = linkWhatsAppSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
 
@@ -122,6 +133,8 @@ export class WhatsAppController {
      */
     verifyOtp = async(req, res, next) => {
         try {
+            if (!this.ensureServiceAvailable(res)) return;
+
             const { error, value } = verifyWhatsAppSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
 
@@ -143,6 +156,8 @@ export class WhatsAppController {
      */
     unlinkAccount = async(req, res, next) => {
         try {
+            if (!this.ensureServiceAvailable(res)) return;
+
             const userId = req.user?.userId;
             if (!userId) return res.status(401).json({ success: false, error: 'No autorizado' });
 
@@ -161,6 +176,8 @@ export class WhatsAppController {
      */
     getStatus = async(req, res, next) => {
         try {
+            if (!this.ensureServiceAvailable(res)) return;
+
             const userId = req.user?.userId;
             if (!userId) return res.status(401).json({ success: false, error: 'No autorizado' });
 

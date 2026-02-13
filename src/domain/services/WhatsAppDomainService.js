@@ -13,6 +13,7 @@
  *   - OCP: nuevos intents se agregan sin modificar handlers existentes
  */
 import { Result } from '../../shared/Result.js';
+import { AppError } from '../../shared/errors/AppError.js';
 import { NotFoundError, ValidationError, ForbiddenError } from '../../shared/errors/index.js';
 import { WhatsAppSession } from '../entities/WhatsAppSession.js';
 import {
@@ -34,26 +35,26 @@ export class WhatsAppDomainService {
      * @param {object} deps — Dependencias inyectadas (Composition Root).
      */
     constructor({
-            whatsAppPort,
-            whatsAppSessionRepo,
-            userRepository,
-            rolRepository,
-            mcpDomainService,
-            llmDomainService,
-            submissionRepository,
-            progressRepository,
-            courseRepository,
-            chatMessageRepository,
-        }) {
-            this.whatsAppPort = whatsAppPort;
-            this.sessionRepo = whatsAppSessionRepo;
-            this.userRepo = userRepository;
-            this.rolRepo = rolRepository;
-            this.mcpService = mcpDomainService;
-            this.llmService = llmDomainService;
-            this.submissionRepo = submissionRepository;
-            this.progressRepo = progressRepository;
-            this.courseRepo = courseRepository;
+        whatsAppPort,
+        whatsAppSessionRepo,
+        userRepository,
+        rolRepository,
+        mcpDomainService,
+        llmDomainService,
+        submissionRepository,
+        progressRepository,
+        courseRepository,
+        chatMessageRepository,
+    }) {
+        this.whatsAppPort = whatsAppPort;
+        this.sessionRepo = whatsAppSessionRepo;
+        this.userRepo = userRepository;
+        this.rolRepo = rolRepository;
+        this.mcpService = mcpDomainService;
+        this.llmService = llmDomainService;
+        this.submissionRepo = submissionRepository;
+        this.progressRepo = progressRepository;
+        this.courseRepo = courseRepository;
         this.chatMessageRepo = chatMessageRepository;
     }
 
@@ -167,6 +168,16 @@ export class WhatsAppDomainService {
      * @returns {Promise<Result>}
      */
     async linkAccount(userId, phoneNumber) {
+        // 0. Verificar disponibilidad del canal WhatsApp
+        if (!this.whatsAppPort) {
+            return Result.fail(new AppError(
+                'Servicio de WhatsApp no disponible temporalmente. Intenta de nuevo más tarde.',
+                503,
+                true,
+                'WHATSAPP_UNAVAILABLE',
+            ));
+        }
+
         // 1. Validar número
         const { valid, normalized, error } = validatePhoneNumber(phoneNumber);
         if (!valid) return Result.fail(new ValidationError(error));
@@ -209,11 +220,17 @@ export class WhatsAppDomainService {
         }
 
         // 7. Enviar OTP vía WhatsApp
-        if (this.whatsAppPort) {
-            const otpMessage = `🔐 Tu código de verificación CourseV es: *${otpCode}*\n\nEste código expira en 10 minutos.`;
-            await this.whatsAppPort.sendTextMessage(normalized, otpMessage).catch(err => {
-                console.error('[WhatsApp] Error sending OTP:', err.message);
-            });
+        const otpMessage = `🔐 Tu código de verificación CourseV es: *${otpCode}*\n\nEste código expira en 10 minutos.`;
+        try {
+            await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
+        } catch (err) {
+            console.error('[WhatsApp] Error sending OTP:', err.message);
+            return Result.fail(new AppError(
+                'No se pudo enviar el código de verificación por WhatsApp. Verifica el número e inténtalo nuevamente.',
+                502,
+                true,
+                'WHATSAPP_OTP_SEND_FAILED',
+            ));
         }
 
         return Result.ok({
@@ -297,13 +314,14 @@ export class WhatsAppDomainService {
     async getStatus(userId) {
         const session = await this.sessionRepo.findByUserId(userId);
         if (!session) {
-            return Result.ok({ isLinked: false, phoneNumber: null, linkedAt: null });
+            return Result.ok({ isLinked: false, phoneNumber: null, linkedAt: null, otpPending: false });
         }
 
         return Result.ok({
             isLinked: session.isActive,
             phoneNumber: session.phoneNumber,
             linkedAt: session.linkedAt,
+            otpPending: !session.isActive && Boolean(session.otpCode) && Boolean(session.otpExpiresAt),
         });
     }
 
@@ -321,12 +339,12 @@ export class WhatsAppDomainService {
         const text = message.trim().toLowerCase();
 
         // 1. Comandos explícitos (mayor prioridad)
-        if (text.startsWith('/calificar'))    return { intent: 'GRADE_TASK', requiresRole: 'teacher' };
-        if (text.startsWith('/progreso'))     return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
-        if (text.startsWith('/consulta'))     return { intent: 'MCP_QUERY', requiresRole: 'admin' };
-        if (text.startsWith('/ayuda'))        return { intent: 'HELP', requiresRole: null };
-        if (text.startsWith('/desvincular'))  return { intent: 'UNLINK', requiresRole: null };
-        if (text.startsWith('/mi_progreso'))  return { intent: 'MY_PROGRESS', requiresRole: null };
+        if (text.startsWith('/calificar')) return { intent: 'GRADE_TASK', requiresRole: 'teacher' };
+        if (text.startsWith('/progreso')) return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
+        if (text.startsWith('/consulta')) return { intent: 'MCP_QUERY', requiresRole: 'admin' };
+        if (text.startsWith('/ayuda')) return { intent: 'HELP', requiresRole: null };
+        if (text.startsWith('/desvincular')) return { intent: 'UNLINK', requiresRole: null };
+        if (text.startsWith('/mi_progreso')) return { intent: 'MY_PROGRESS', requiresRole: null };
 
         // 2. Detección por palabras clave para calificación
         if (this._isGradeIntent(text) && (userRoles.includes(2) || userRoles.includes(3))) {
