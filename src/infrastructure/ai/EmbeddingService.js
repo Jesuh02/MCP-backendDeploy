@@ -60,24 +60,32 @@ class OpenRouterGenericEmbeddings {
     }
 }
 
-// Dynamic imports to handle missing dependencies gracefully
+/**
+ * LangChain embedding classes are loaded lazily on first use.
+ * Top-level await imports block the entire ESM module chain and can
+ * delay server startup by 500ms+, causing Railway 502 health check failures.
+ */
 let OpenAIEmbeddings = null;
 let OllamaEmbeddings = null;
+let _embeddingDepsLoaded = false;
 
-try {
-    const openaiModule = await
-    import ("@langchain/openai");
-    OpenAIEmbeddings = openaiModule.OpenAIEmbeddings;
-} catch (e) {
-    console.warn("⚠️ @langchain/openai not available for embeddings");
-}
-
-try {
-    const ollamaModule = await
-    import ("@langchain/community/embeddings/ollama");
-    OllamaEmbeddings = ollamaModule.OllamaEmbeddings;
-} catch (e) {
-    console.warn("⚠️ @langchain/community not available for Ollama embeddings");
+async function loadEmbeddingDeps() {
+    if (_embeddingDepsLoaded) return;
+    _embeddingDepsLoaded = true;
+    try {
+        const openaiModule = await
+        import ('@langchain/openai');
+        OpenAIEmbeddings = openaiModule.OpenAIEmbeddings;
+    } catch (e) {
+        console.warn('⚠️ @langchain/openai not available for embeddings');
+    }
+    try {
+        const ollamaModule = await
+        import ('@langchain/community/embeddings/ollama');
+        OllamaEmbeddings = ollamaModule.OllamaEmbeddings;
+    } catch (e) {
+        console.warn('⚠️ @langchain/community not available for Ollama embeddings');
+    }
 }
 
 export class EmbeddingService extends IEmbeddingProvider {
@@ -96,9 +104,19 @@ export class EmbeddingService extends IEmbeddingProvider {
 
         this.model = null;
         this.provider = 'none';
-        this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '1536'); // Default 1536 for text-embedding-3-small
+        this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '1536');
+        this._providerReady = false;
+    }
 
+    /**
+     * Ensures the embedding provider is initialized before use.
+     * Lazy initialization avoids blocking server startup (SRP + DIP).
+     */
+    async _ensureProvider() {
+        if (this._providerReady) return;
+        await loadEmbeddingDeps();
         this._initializeProvider();
+        this._providerReady = true;
     }
 
     _initializeProvider() {
@@ -222,6 +240,8 @@ export class EmbeddingService extends IEmbeddingProvider {
             throw new Error('Text must be a non-empty string');
         }
 
+        await this._ensureProvider();
+
         if (this.provider === 'fallback') {
             return this._fallbackEmbed(text);
         }
@@ -254,6 +274,8 @@ export class EmbeddingService extends IEmbeddingProvider {
         if (!Array.isArray(texts) || texts.length === 0) {
             throw new Error('Texts must be a non-empty array');
         }
+
+        await this._ensureProvider();
 
         if (this.provider === 'fallback') {
             return texts.map(t => this._fallbackEmbed(t));

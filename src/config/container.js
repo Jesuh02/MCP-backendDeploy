@@ -34,6 +34,7 @@ import { SupabasePersonaRepository } from '../infrastructure/database/repositori
 import { SupabaseRolRepository } from '../infrastructure/database/repositories/SupabaseRolRepository.js';
 import { SupabaseFileContextRepository } from '../infrastructure/database/repositories/SupabaseFileContextRepository.js';
 import { SupabaseReinforcementRepository } from '../infrastructure/database/repositories/SupabaseReinforcementRepository.js';
+import { SupabaseChatMessageRepository } from '../infrastructure/database/repositories/SupabaseChatMessageRepository.js';
 
 // Adaptadores externos
 import { R2StorageAdapter } from '../infrastructure/storage/R2StorageAdapter.js';
@@ -68,6 +69,7 @@ import { PersonaDomainService } from '../domain/services/PersonaDomainService.js
 import { RolDomainService } from '../domain/services/RolDomainService.js';
 import { FileContextDomainService } from '../domain/services/FileContextDomainService.js';
 import { ReinforcementDomainService } from '../domain/services/ReinforcementDomainService.js';
+import { ChatMessageDomainService } from '../domain/services/ChatMessageDomainService.js';
 
 import { TTSDomainService } from '../domain/services/TTSDomainService.js';
 import { VideoProcessingDomainService } from '../domain/services/VideoProcessingDomainService.js';
@@ -99,6 +101,7 @@ import { PersonaController } from '../interfaces/http/controllers/PersonaControl
 import { RolController } from '../interfaces/http/controllers/RolController.js';
 import { FileContextController } from '../interfaces/http/controllers/FileContextController.js';
 import { ReinforcementController } from '../interfaces/http/controllers/ReinforcementController.js';
+import { ChatMessageController } from '../interfaces/http/controllers/ChatMessageController.js';
 
 import { TTSController } from '../interfaces/http/controllers/TTSController.js';
 import { LLMController } from '../interfaces/http/controllers/LLMController.js';
@@ -116,6 +119,20 @@ import { ExcelController } from '../interfaces/http/controllers/ExcelController.
  */
 export function createContainer() {
     // ═══════════════════════════════════════════════════════════
+    // HELPER: Safe adapter initialization (Robustness Principle)
+    // Non-critical adapters failing must NOT crash the server.
+    // ═══════════════════════════════════════════════════════════
+
+    function safeInit(name, factory) {
+        try {
+            return factory();
+        } catch (e) {
+            console.warn(`⚠️ Container: ${name} failed to initialize — ${e.message}`);
+            return null;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // 1. INFRAESTRUCTURA — Instanciar adaptadores
     // ═══════════════════════════════════════════════════════════
 
@@ -129,17 +146,22 @@ export function createContainer() {
     }
 
     const jwtAdapter = new JWTAdapter();
-    const storageAdapter = new R2StorageAdapter();
-    const fcmAdapter = new FCMAdapter();
-    const emailAdapter = new EmailAdapter();
-    const paymentGateway = new WompiAdapter();
 
-    const ttsAdapter = new OpenAITTSAdapter();
-    const videoProcessingAdapter = new FFmpegVideoAdapter();
-    const llmAdapter = new LLMAdapter();
-    const ragAdapter = new RAGAdapter();
-    const githubAdapter = new GitHubAdapter();
-    const cacheAdapter = new CacheAdapter();
+    // Adapters are individually guarded to follow the Robustness Principle:
+    // failures in non-critical adapters (AI, TTS, video processing) must NOT
+    // prevent the core API (videos, users, courses) from starting.
+
+    const storageAdapter = safeInit('R2StorageAdapter', () => new R2StorageAdapter());
+    const fcmAdapter = safeInit('FCMAdapter', () => new FCMAdapter());
+    const emailAdapter = safeInit('EmailAdapter', () => new EmailAdapter());
+    const paymentGateway = safeInit('WompiAdapter', () => new WompiAdapter());
+
+    const ttsAdapter = safeInit('OpenAITTSAdapter', () => new OpenAITTSAdapter());
+    const videoProcessingAdapter = safeInit('FFmpegVideoAdapter', () => new FFmpegVideoAdapter());
+    const llmAdapter = safeInit('LLMAdapter', () => new LLMAdapter());
+    const ragAdapter = safeInit('RAGAdapter', () => new RAGAdapter());
+    const githubAdapter = safeInit('GitHubAdapter', () => new GitHubAdapter());
+    const cacheAdapter = safeInit('CacheAdapter', () => new CacheAdapter());
 
     // ═══════════════════════════════════════════════════════════
     // 2. REPOSITORIOS — Inyectar cliente Supabase
@@ -162,6 +184,7 @@ export function createContainer() {
     const rolRepo = new SupabaseRolRepository(client);
     const fileContextRepo = new SupabaseFileContextRepository(client);
     const reinforcementRepo = new SupabaseReinforcementRepository(client);
+    const chatMessageRepo = new SupabaseChatMessageRepository(client);
 
     // ═══════════════════════════════════════════════════════════
     // 3. SERVICIOS DE DOMINIO — Inyectar repositorios y adaptadores
@@ -177,13 +200,14 @@ export function createContainer() {
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo });
-    const progressService = new ProgressDomainService({ progressRepository: progressRepo });
+    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo });
     const notificationService = new NotificationDomainService({ notificationRepository: notificationRepo, userRepository: userRepo, pushNotificationPort: fcmAdapter, emailPort: emailAdapter });
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
-    const rolService = new RolDomainService({ rolRepository: rolRepo });
+    const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
     const fileContextService = new FileContextDomainService({ fileContextRepository: fileContextRepo });
     const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo });
+    const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios
     const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo, notificationService, courseService, progressService, userService });
@@ -242,6 +266,7 @@ export function createContainer() {
     const rolController = new RolController({ rolService });
     const fileContextController = new FileContextController({ fileContextService });
     const reinforcementController = new ReinforcementController({ reinforcementService });
+    const chatMessageController = new ChatMessageController({ chatMessageService });
 
     const ttsController = new TTSController({ ttsService });
     const llmController = new LLMController({ llmService: llmDomainService });
@@ -281,6 +306,7 @@ export function createContainer() {
         rolController,
         fileContextController,
         reinforcementController,
+        chatMessageController,
 
         ttsController,
         llmController,
@@ -310,6 +336,7 @@ export function createContainer() {
         rolService,
         fileContextService,
         reinforcementService,
+        chatMessageService,
         ttsService,
         videoProcessingService,
         llmDomainService,

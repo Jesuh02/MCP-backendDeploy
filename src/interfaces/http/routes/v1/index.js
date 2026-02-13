@@ -19,6 +19,7 @@ import { personaRoutes } from './personaRoutes.js';
 import { rolRoutes } from './rolRoutes.js';
 import { fileContextRoutes } from './fileContextRoutes.js';
 import { reinforcementRoutes } from './reinforcementRoutes.js';
+import { chatMessageRoutes } from './chatMessageRoutes.js';
 
 // Nuevas rutas hexagonales (transición completa)
 import { ttsRoutes } from './ttsRoutes.js';
@@ -69,6 +70,7 @@ export function createV1Router(deps) {
     router.use('/roles', rolRoutes(deps));
     router.use('/file-contexts', fileContextRoutes(deps));
     router.use('/reinforcement', reinforcementRoutes(deps));
+    router.use('/chat-messages', chatMessageRoutes(deps));
 
     // Nuevas rutas hexagonales (antes legacy)
     router.use('/tts', ttsRoutes(deps));
