@@ -111,6 +111,20 @@ export class WhatsAppController {
         try {
             if (!this.ensureServiceAvailable(res)) return;
 
+            if (typeof this.service.getChannelAvailability === 'function') {
+                const availability = await this.service.getChannelAvailability();
+                if (!availability.available) {
+                    return res.status(503).json({
+                        success: false,
+                        error: {
+                            code: 'WHATSAPP_UNAVAILABLE',
+                            message: 'Servicio de WhatsApp no disponible temporalmente. Intenta de nuevo más tarde.',
+                            statusCode: 503,
+                        },
+                    });
+                }
+            }
+
             const rawPhone = req.body?.phoneNumber;
             const normalizedPhone = validatePhoneNumber(rawPhone);
             if (!normalizedPhone.valid) {

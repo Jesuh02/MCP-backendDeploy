@@ -56,6 +56,62 @@ export class WhatsAppDomainService {
         this.progressRepo = progressRepository;
         this.courseRepo = courseRepository;
         this.chatMessageRepo = chatMessageRepository;
+
+        this.channelAvailabilityCache = {
+            checkedAt: 0,
+            ttlMs: 30 * 1000,
+            value: null,
+        };
+    }
+
+    /**
+     * Verifica disponibilidad del canal WhatsApp (con caché breve).
+     * @param {boolean} [forceRefresh=false]
+     * @returns {Promise<{available: boolean, reason?: string}>}
+     */
+    async getChannelAvailability(forceRefresh = false) {
+        const now = Date.now();
+        const cache = this.channelAvailabilityCache;
+
+        if (!forceRefresh && cache.value && now - cache.checkedAt < cache.ttlMs) {
+            return cache.value;
+        }
+
+        if (!this.whatsAppPort) {
+            const unavailable = {
+                available: false,
+                reason: 'Canal WhatsApp no configurado en el servidor',
+            };
+            cache.value = unavailable;
+            cache.checkedAt = now;
+            return unavailable;
+        }
+
+        if (typeof this.whatsAppPort.isAvailable !== 'function') {
+            const available = { available: true };
+            cache.value = available;
+            cache.checkedAt = now;
+            return available;
+        }
+
+        try {
+            const isAvailable = await this.whatsAppPort.isAvailable();
+            const result = isAvailable
+                ? { available: true }
+                : { available: false, reason: 'Canal WhatsApp temporalmente no disponible' };
+
+            cache.value = result;
+            cache.checkedAt = now;
+            return result;
+        } catch {
+            const unavailable = {
+                available: false,
+                reason: 'No se pudo validar disponibilidad del canal WhatsApp',
+            };
+            cache.value = unavailable;
+            cache.checkedAt = now;
+            return unavailable;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -169,7 +225,8 @@ export class WhatsAppDomainService {
      */
     async linkAccount(userId, phoneNumber) {
         // 0. Verificar disponibilidad del canal WhatsApp
-        if (!this.whatsAppPort) {
+        const availability = await this.getChannelAvailability(true);
+        if (!availability.available) {
             return Result.fail(new AppError(
                 'Servicio de WhatsApp no disponible temporalmente. Intenta de nuevo más tarde.',
                 503,
@@ -312,9 +369,16 @@ export class WhatsAppDomainService {
      * @returns {Promise<Result>}
      */
     async getStatus(userId) {
+        const channelAvailability = await this.getChannelAvailability();
         const session = await this.sessionRepo.findByUserId(userId);
         if (!session) {
-            return Result.ok({ isLinked: false, phoneNumber: null, linkedAt: null, otpPending: false });
+            return Result.ok({
+                isLinked: false,
+                phoneNumber: null,
+                linkedAt: null,
+                otpPending: false,
+                channelAvailable: channelAvailability.available,
+            });
         }
 
         return Result.ok({
@@ -322,6 +386,7 @@ export class WhatsAppDomainService {
             phoneNumber: session.phoneNumber,
             linkedAt: session.linkedAt,
             otpPending: !session.isActive && Boolean(session.otpCode) && Boolean(session.otpExpiresAt),
+            channelAvailable: channelAvailability.available,
         });
     }
 
