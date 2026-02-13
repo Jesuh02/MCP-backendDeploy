@@ -274,10 +274,16 @@ export class WhatsAppDomainService {
             session = await this.sessionRepo.save(sessionData);
         }
 
-        // 7. Enviar OTP vía WhatsApp
+        // 7. Enviar OTP vía WhatsApp (usa template message para iniciar conversación)
         const otpMessage = `🔐 Tu código de verificación CourseV es: *${otpCode}*\n\nEste código expira en 10 minutos.`;
         try {
-            await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
+            // Preferir template message (requerido por Meta fuera de la ventana de 24h)
+            if (typeof this.whatsAppPort.sendOtpMessage === 'function') {
+                await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
+            } else {
+                // Fallback a texto libre (solo funciona si hay conversación abierta)
+                await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
+            }
         } catch (err) {
             const errorMessage = String(err?.message || '');
             const metaCode = Number(err?.metaCode);

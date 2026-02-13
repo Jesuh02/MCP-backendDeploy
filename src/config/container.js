@@ -174,6 +174,8 @@ export function createContainer() {
         accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
         phoneId: process.env.WHATSAPP_PHONE_ID,
         appSecret: process.env.WHATSAPP_APP_SECRET,
+        otpTemplateName: process.env.WHATSAPP_OTP_TEMPLATE || 'hello_world',
+        otpTemplateLanguage: process.env.WHATSAPP_OTP_TEMPLATE_LANG || 'en_US',
     }));
 
     // ═══════════════════════════════════════════════════════════
