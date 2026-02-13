@@ -9,7 +9,7 @@ const pdf = require('pdf-parse');
 import { ingestSchema, searchSchema, buildContextSchema } from '../../../domain/validators/RAGSchemas.js';
 import { ValidationError } from '../../../shared/errors/index.js';
 import { SupabaseService } from '../../../infrastructure/database/SupabaseService.js';
-import { R2StorageService } from '../../../infrastructure/legacy/R2StorageService.js';
+import { R2StorageAdapter } from '../../../infrastructure/storage/R2StorageAdapter.js';
 import { RAGService } from '../../../domain/services/RAGService.js';
 import { logger } from '../../../infrastructure/logging/Logger.js';
 
@@ -116,7 +116,7 @@ export class RAGController {
             }
 
             // Step 3: Process each content_item
-            const r2Service = R2StorageService.getInstance();
+            const r2Service = new R2StorageAdapter();
             let totalChunksStored = 0;
             let filesProcessed = 0;
             const errors = [];
