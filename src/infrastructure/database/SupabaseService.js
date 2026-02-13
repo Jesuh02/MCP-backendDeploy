@@ -6,7 +6,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '../logging/Logger.js';
-import R2StorageService from '../legacy/R2StorageService.js';
+import { R2StorageAdapter } from '../storage/R2StorageAdapter.js';
 
 export class SupabaseService {
     static instance = null;
@@ -658,7 +658,7 @@ CREATE TABLE public.videos (
                     const buffer = Buffer.from(videoData.videoBase64, 'base64');
                     const originalFilename = videoData.originalFilename || `${title.replace(/\s+/g, '_')}.mp4`;
                     const contentType = videoData.contentType || 'video/mp4';
-                    const r2 = R2StorageService.getInstance();
+                    const r2 = new R2StorageAdapter();
                     uploaded = await r2.uploadBufferWithAutoKey(buffer, originalFilename, contentType, 'videos');
                     logger.info(`✅ Uploaded video to R2: ${uploaded.key}`);
                 } catch (e) {

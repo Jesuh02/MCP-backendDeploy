@@ -1,8 +1,13 @@
 /**
  * OpenAITTSAdapter — Adaptador de infraestructura que implementa ITTSPort.
  *
- * Envuelve la lógica de OpenAI TTS que antes vivía en services/TTSService.js.
+ * Envuelve la lógica de OpenAI TTS.
  * El dominio solo conoce ITTSPort; este adaptador es intercambiable.
+ *
+ * Principios:
+ *   - SRP: solo síntesis de voz vía OpenAI
+ *   - DIP: el dominio depende de ITTSPort, no de este adaptador
+ *   - OCP: intercambiable por ElevenLabsAdapter, GoogleTTSAdapter, etc.
  */
 
 import OpenAI from 'openai';
@@ -24,6 +29,16 @@ const FORMATS = {
     WAV: 'wav',
     PCM: 'pcm',
 };
+
+const CONTENT_TYPES = {
+    mp3: 'audio/mpeg',
+    opus: 'audio/opus',
+    aac: 'audio/aac',
+    flac: 'audio/flac',
+    wav: 'audio/wav',
+    pcm: 'audio/pcm',
+};
+
 export class OpenAITTSAdapter {
     constructor() {
         this.openai = null;
@@ -40,9 +55,11 @@ export class OpenAITTSAdapter {
         const apiKey = process.env.OPENAI_API_KEY;
         if (apiKey) {
             this.openai = new OpenAI({ apiKey });
-            console.log('✅ OpenAITTSAdapter: inicializado');
+            console.log('✅ OpenAITTSAdapter: initialized');
         }
     }
+
+    // ── ITTSPort ─────────────────────────────────────────────
 
     /** @returns {boolean} */
     isAvailable() {
@@ -51,37 +68,84 @@ export class OpenAITTSAdapter {
 
     /** @returns {Object} */
     getAvailableVoices() {
-            return VOICES;
-        }
-        /** @returns {Object} */
-    getSupportedFormats() {
-            return FORMATS;
-        }
-        /**
-         * @param {string} text
-         * @param {{ voice?: string, model?: string, format?: string, speed?: number }} options
-         * @returns {Promise<Buffer>}
-         */
-    async synthesize(text, options = {}) {
-        if (!this.isAvailable()) {
-            throw new Error('OpenAI TTS no disponible. Configure OPENAI_API_KEY.');
-        }
+        return VOICES;
+    }
 
+    /** @returns {Object} */
+    getSupportedFormats() {
+        return FORMATS;
+    }
+
+    /**
+     * Synthesize text to audio buffer.
+     * @param {string} text
+     * @param {{ voice?: string, model?: string, format?: string, speed?: number }} options
+     * @returns {Promise<Buffer>}
+     */
+    async synthesize(text, options = {}) {
+        this._ensureAvailable();
+        const config = this._buildConfig(text, options);
+
+        const response = await this.openai.audio.speech.create(config);
+        return Buffer.from(await response.arrayBuffer());
+    }
+
+    /**
+     * Stream audio directly from OpenAI.
+     * @param {string} text
+     * @param {{ voice?: string, model?: string, format?: string, speed?: number }} options
+     * @returns {Promise<ReadableStream>}
+     */
+    async stream(text, options = {}) {
+        this._ensureAvailable();
+        const config = this._buildConfig(text, options);
+
+        const response = await this.openai.audio.speech.create(config);
+        return response.body;
+    }
+
+    /**
+     * Synthesize text and return as base64 for easy transport.
+     * @param {string} text
+     * @param {{ voice?: string, model?: string, format?: string, speed?: number }} options
+     * @returns {Promise<{ audio: string, format: string, contentType: string, size: number, estimatedDuration: number }>}
+     */
+    async synthesizeToBase64(text, options = {}) {
+        const buffer = await this.synthesize(text, options);
+        const format = options.format || this.defaultFormat;
+
+        return {
+            audio: buffer.toString('base64'),
+            format,
+            contentType: CONTENT_TYPES[format] || 'audio/mpeg',
+            size: buffer.length,
+            estimatedDuration: this._estimateDuration(text),
+        };
+    }
+
+    // ── Private Helpers ──────────────────────────────────────
+
+    /** @private */
+    _ensureAvailable() {
+        if (!this.isAvailable()) {
+            throw new Error('OpenAI TTS not available. Configure OPENAI_API_KEY.');
+        }
+    }
+
+    /** @private */
+    _buildConfig(text, options) {
         const sanitized = this._sanitize(text);
         if (!sanitized || sanitized.length === 0) {
-            throw new Error('Texto requerido para síntesis TTS.');
+            throw new Error('Text is required for TTS synthesis.');
         }
 
-        const config = {
+        return {
             model: options.model || this.defaultModel,
             voice: options.voice || this.defaultVoice,
             input: sanitized,
             response_format: options.format || this.defaultFormat,
             speed: Math.min(Math.max(options.speed || this.defaultSpeed, 0.25), 4.0),
         };
-
-        const response = await this.openai.audio.speech.create(config);
-        return Buffer.from(await response.arrayBuffer());
     }
 
     /** @private */
@@ -107,5 +171,12 @@ export class OpenAITTSAdapter {
             .trim()
             .substring(0, this.maxTextLength);
     }
+
+    /** @private */
+    _estimateDuration(text) {
+        const words = (text || '').split(/\s+/).length;
+        return Math.ceil(words / 2.5); // ~150 words/min
+    }
 }
+
 export default OpenAITTSAdapter;
