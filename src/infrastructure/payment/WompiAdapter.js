@@ -87,13 +87,13 @@ export class WompiAdapter {
 
         // Intentar extraer transaction, timestamp y checksum
         // Estructura típica: { data: { transaction: {...} }, timestamp: 123, signature: { checksum: '...' } }
-        const transaction = payload ? .data ? .transaction || payload ? .transaction;
-        const timestamp = payload ? .timestamp || payload ? .event ? .timestamp;
-        const checksum = payload ? .signature ? .checksum || payload ? .signature;
+        const transaction = payload?.data?.transaction || payload?.transaction;
+        const timestamp = payload?.timestamp || payload?.event?.timestamp;
+        const checksum = payload?.signature?.checksum || payload?.signature;
 
         if (!transaction || !timestamp || !checksum) {
             // Fallback para estructura anidada antigua: { event: { data: { transaction: ... } } }
-            if (payload ? .event ? .data ? .transaction) {
+            if (payload?.event?.data?.transaction) {
                 // Implementar lógica si es necesario, pero la estructura estándar es la prioridad
             }
             return false;
@@ -118,7 +118,7 @@ export class WompiAdapter {
     async getAcceptanceToken() {
         const resp = await fetch(`${this.baseUrl}/merchants/${this.publicKey}`);
         const json = await resp.json();
-        return json ? .data ? .presigned_acceptance ? .acceptance_token || null;
+        return json?.data?.presigned_acceptance?.acceptance_token || null;
     }
 }
 
