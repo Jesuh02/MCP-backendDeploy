@@ -104,7 +104,8 @@ export class EmbeddingService extends IEmbeddingProvider {
 
         this.model = null;
         this.provider = 'none';
-        this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '1536');
+        // Default to 4096 to match DB schema (questions_history.question_embedding vector(4096))
+        this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '4096');
         this._providerReady = false;
     }
 
@@ -116,6 +117,16 @@ export class EmbeddingService extends IEmbeddingProvider {
         if (this._providerReady) return;
         await loadEmbeddingDeps();
         this._initializeProvider();
+
+        // FINAL OVERRIDE: EMBEDDING_DIMENSIONS env var always wins over provider defaults.
+        // This ensures all vectors match the DB schema regardless of which model/provider
+        // was selected. _normalizeVector() will truncate/pad provider output to this size.
+        const envDimOverride = parseInt(process.env.EMBEDDING_DIMENSIONS || '0');
+        if (envDimOverride > 0) {
+            this.dimensions = envDimOverride;
+        }
+        console.log(`📐 Final embedding dimensions: ${this.dimensions} (provider: ${this.provider})`);
+
         this._providerReady = true;
     }
 
@@ -252,7 +263,7 @@ export class EmbeddingService extends IEmbeddingProvider {
 
         try {
             const embedding = await this.model.embedQuery(text);
-            return embedding;
+            return this._normalizeVector(embedding);
         } catch (error) {
             console.error(`❌ Embedding error (${this.provider}): ${error.message}`);
             // Check for specific API errors we can handle
@@ -287,7 +298,7 @@ export class EmbeddingService extends IEmbeddingProvider {
 
         try {
             const embeddings = await this.model.embedDocuments(texts);
-            return embeddings;
+            return embeddings.map(v => this._normalizeVector(v));
         } catch (error) {
             console.error(`❌ Batch embedding error (${this.provider}):`, error.message);
             // Fallback to simple hash if provider fails
@@ -316,6 +327,18 @@ export class EmbeddingService extends IEmbeddingProvider {
         // Normalize
         const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0)) || 1;
         return embedding.map(val => val / magnitude);
+    }
+
+    /**
+     * Normalize a vector to match this.dimensions (DB schema requirement).
+     * Truncates if longer, zero-pads if shorter.
+     * @param {number[]} vector - Raw embedding vector from provider
+     * @returns {number[]} - Vector with exactly this.dimensions elements
+     */
+    _normalizeVector(vector) {
+        if (!Array.isArray(vector) || vector.length === this.dimensions) return vector;
+        if (vector.length > this.dimensions) return vector.slice(0, this.dimensions);
+        return [...vector, ...new Array(this.dimensions - vector.length).fill(0)];
     }
 
     /**
