@@ -82,19 +82,19 @@ export class PaymentDomainService {
         let transaction = null;
 
         // Format 1: { event: { data: { transaction: {...} } } }
-        if (payload ? .event ? .data ? .transaction) {
+        if (payload?.event?.data?.transaction) {
             transaction = payload.event.data.transaction;
         }
         // Format 2: { data: { transaction: {...} } } — Standard Wompi webhook
-        else if (payload ? .data ? .transaction) {
+        else if (payload?.data?.transaction) {
             transaction = payload.data.transaction;
         }
         // Format 3: { transaction: {...} }
-        else if (payload ? .transaction) {
+        else if (payload?.transaction) {
             transaction = payload.transaction;
         }
         // Format 4: Direct transaction object
-        else if (payload ? .id && payload ? .status) {
+        else if (payload?.id && payload?.status) {
             transaction = payload;
         }
 
