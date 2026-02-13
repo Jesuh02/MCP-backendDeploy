@@ -76,6 +76,40 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
 }
 
 /**
+ * Middleware de autenticación opcional (soft auth).
+ * Intenta extraer y validar el JWT si está presente, inyecta req.user.
+ * Si NO hay token o es inválido, simplemente continúa sin req.user.
+ *
+ * Útil para endpoints como payment/initiate donde:
+ *   - Si hay JWT → lo usamos (más seguro)
+ *   - Si no hay JWT → el controlador puede usar userId del body como fallback
+ *
+ * @param {import('../../infrastructure/auth/JWTAdapter.js').JWTAdapter} jwtAdapter
+ * @returns {import('express').RequestHandler}
+ */
+export function createOptionalAuthMiddleware(jwtAdapter) {
+    return (req, _res, next) => {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return next(); // No token — proceed without req.user
+        }
+
+        const token = authHeader.slice(7);
+        const { valid, decoded } = jwtAdapter.verifyAccessToken(token);
+
+        if (valid && decoded) {
+            req.user = {
+                userId: decoded.userId,
+                username: decoded.username,
+                roles: decoded.roles || [],
+            };
+        }
+
+        next();
+    };
+}
+
+/**
  * Middleware para verificar roles específicos.
  * @param  {...number} requiredRoles — IDs de roles permitidos (ej: 1=estudiante, 2=docente, 3=admin).
  * @returns {import('express').RequestHandler}
@@ -100,4 +134,4 @@ export function requireRoles(...requiredRoles) {
     };
 }
 
-export default { createAuthMiddleware, requireRoles };
+export default { createAuthMiddleware, createOptionalAuthMiddleware, requireRoles };
