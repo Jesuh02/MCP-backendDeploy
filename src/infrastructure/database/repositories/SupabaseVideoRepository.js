@@ -1,6 +1,16 @@
 ﻿export class SupabaseVideoRepository {
     constructor(client) { this.client = client; }
 
+    /**
+     * Guard: Throws a descriptive error if the Supabase client is not available.
+     * Follows Fail-Fast principle — callers get a clear message instead of NPE.
+     */
+    _requireClient() {
+        if (!this.client) {
+            throw new Error('Database client not available. Check SUPABASE_URL and SUPABASE_SERVICE_KEY.');
+        }
+    }
+
     _mapVideo(video) {
         if (!video) return null;
         let username = '';
@@ -22,6 +32,7 @@
     }
 
     async findById(id) {
+        this._requireClient();
         const { data, error } = await this.client
             .from('videos')
             .select('*, usuarios!remote_id(username)')
@@ -32,6 +43,7 @@
     }
 
     async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc' } = {}) {
+        this._requireClient();
         const effectiveSortBy = (sortBy && sortBy !== 'null') ? sortBy : 'created_at';
         const { data, error } = await this.client
             .from('videos')
@@ -43,6 +55,7 @@
     }
 
     async findByCreator(username, { offset = 0, limit = 20 } = {}) {
+        this._requireClient();
         // First get the user ID using the username
         const { data: userData, error: userError } = await this.client
             .from('usuarios')
@@ -68,6 +81,7 @@
     }
 
     async findByCreatorId(userId, { offset = 0, limit = 20 } = {}) {
+        this._requireClient();
         const { data, error } = await this.client
             .from('videos')
             .select('*, usuarios!remote_id(username)')
@@ -80,6 +94,7 @@
     }
 
     async findByCourse(courseId, { offset = 0, limit = 20 } = {}) {
+        this._requireClient();
         const { data, error } = await this.client
             .from('videos')
             .select('*, usuarios!remote_id(username)')
@@ -91,6 +106,7 @@
     }
 
     async search(query, { offset = 0, limit = 20 } = {}) {
+        this._requireClient();
         const pattern = '%' + query + '%';
         const { data, error } = await this.client
             .from('videos')
@@ -103,6 +119,7 @@
     }
 
     async create(videoData) {
+        this._requireClient();
         const payload = {
             title: videoData.title,
             description: videoData.description || '',
@@ -153,6 +170,7 @@
     }
 
     async count(filters) {
+        this._requireClient();
         filters = filters || {};
         let q = this.client.from('videos').select('id', { count: 'exact', head: true });
         if (filters.username) q = q.ilike('username', filters.username);

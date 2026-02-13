@@ -115,5 +115,17 @@ export class ProgressController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    recalculate = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            if (!courseId || isNaN(courseId) || courseId <= 0) {
+                return res.status(400).json({ success: false, error: 'courseId must be a positive integer' });
+            }
+            const result = await this.progressService.recalculateForCourse(courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ProgressController;

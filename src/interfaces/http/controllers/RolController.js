@@ -72,5 +72,22 @@ export class RolController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    ensureCreatorRole = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const result = await this.rolService.ensureCreatorRole(userId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    syncCreatorRoles = async(req, res, next) => {
+        try {
+            const result = await this.rolService.syncAllCreatorRoles();
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default RolController;

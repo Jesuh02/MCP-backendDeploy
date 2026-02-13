@@ -2,8 +2,10 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
 export class ProgressDomainService {
-    constructor({ progressRepository }) {
+    constructor({ progressRepository, taskRepository, submissionRepository }) {
         this.progressRepo = progressRepository;
+        this.taskRepo = taskRepository || null;
+        this.submissionRepo = submissionRepository || null;
     }
 
     async getByUserAndCourse(userId, courseId) {
@@ -80,6 +82,63 @@ export class ProgressDomainService {
     async getAllByCourse(courseId) {
         const progress = await this.progressRepo.findByCourse(courseId);
         return Result.ok(progress);
+    }
+
+    /**
+     * Recalculate progress for all enrolled students in a course.
+     * Fetches total tasks, completed submissions, and average grades,
+     * then upserts each student's progress record.
+     */
+    async recalculateForCourse(courseId) {
+        if (!this.taskRepo || !this.submissionRepo) {
+            return Result.fail(new Error('Task/Submission repositories not available'));
+        }
+
+        const tasks = await this.taskRepo.findByCourse(courseId);
+        const totalTasks = tasks.length;
+        const taskIds = tasks.map(t => t.id);
+
+        const enrolledStudents = await this.progressRepo.findByCourse(courseId);
+        if (!enrolledStudents || enrolledStudents.length === 0) {
+            return Result.ok({ recalculated: 0, totalTasks });
+        }
+
+        let recalculated = 0;
+        for (const student of enrolledStudents) {
+            try {
+                let completedTasks = 0;
+                let totalGrade = 0;
+                let gradedCount = 0;
+
+                for (const taskId of taskIds) {
+                    const submission = await this.submissionRepo.findByUserAndTask(student.userId, taskId);
+                    if (submission) {
+                        completedTasks++;
+                        if (submission.grade !== null && submission.grade !== undefined) {
+                            totalGrade += submission.grade;
+                            gradedCount++;
+                        }
+                    }
+                }
+
+                const avgGrade = gradedCount > 0 ? totalGrade / gradedCount : 0;
+                const progressPct = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+
+                await this.progressRepo.upsert({
+                    userId: student.userId,
+                    courseId,
+                    completedTasks,
+                    totalTasks,
+                    averageGrade: Math.round(avgGrade * 100) / 100,
+                    progressPercentage: Math.round(progressPct * 100) / 100,
+                });
+                recalculated++;
+            } catch (err) {
+                console.error(`[ProgressService] Error recalculating for user ${student.userId}:`, err.message);
+            }
+        }
+
+        return Result.ok({ recalculated, totalTasks });
     }
 }
 export default ProgressDomainService;

@@ -5,8 +5,9 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
 export class RolDomainService {
-    constructor({ rolRepository }) {
+    constructor({ rolRepository, courseRepository }) {
         this.rolRepo = rolRepository;
+        this.courseRepo = courseRepository || null;
     }
 
     // ── Roles ────────────────────────────────────────────
@@ -62,6 +63,53 @@ export class RolDomainService {
     async getRolRecursosByRol(rolId) {
         const rr = await this.rolRepo.findRolRecursosByRol(rolId);
         return Result.ok(rr);
+    }
+
+    /**
+     * Ensure a specific user has the Creator (Docente) role.
+     * If they already have it, this is a no-op.
+     */
+    async ensureCreatorRole(userId) {
+        try {
+            const result = await this.rolRepo.promoteToDocente(userId);
+            return Result.ok(result);
+        } catch (err) {
+            return Result.fail(err);
+        }
+    }
+
+    /**
+     * Scan all courses and promote their creators to Docente role.
+     * Useful for batch-fixing role assignments.
+     */
+    async syncAllCreatorRoles() {
+        if (!this.courseRepo) {
+            return Result.fail(new Error('Course repository not available'));
+        }
+        try {
+            const courses = await this.courseRepo.findAll({ limit: 10000 });
+            const courseList = Array.isArray(courses) ? courses : [];
+
+            const creatorIds = new Set();
+            for (const course of courseList) {
+                const cid = course.creator_user_id || course.creatorUserId;
+                if (cid && cid > 0) creatorIds.add(cid);
+            }
+
+            let promoted = 0;
+            for (const userId of creatorIds) {
+                try {
+                    await this.rolRepo.promoteToDocente(userId);
+                    promoted++;
+                } catch (err) {
+                    console.warn(`[RolService] Could not promote user ${userId}:`, err.message);
+                }
+            }
+
+            return Result.ok({ promoted, total: creatorIds.size });
+        } catch (err) {
+            return Result.fail(err);
+        }
     }
 }
 export default RolDomainService;

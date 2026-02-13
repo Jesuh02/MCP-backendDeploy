@@ -14,6 +14,7 @@ export function progressRoutes({ progressController }) {
     router.post('/upsert', progressController.upsert);
     router.post('/course/:courseId/certificate', progressController.issueCertificate);
     router.put('/course/:courseId/certificate-url', progressController.updateCertificateUrl);
+    router.post('/course/:courseId/recalculate', progressController.recalculate);
 
     return router;
 }

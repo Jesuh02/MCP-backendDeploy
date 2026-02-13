@@ -52,6 +52,9 @@ process.on('SIGTERM', () => {
 
 process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err.message);
+    console.error(err.stack);
+    // Exit to let Railway restart a clean process instead of running in a broken state
+    setTimeout(() => process.exit(1), 1000);
 });
 
 process.on('unhandledRejection', (reason) => {
