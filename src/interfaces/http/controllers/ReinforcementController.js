@@ -138,6 +138,27 @@ export class ReinforcementController {
         } catch (err) { next(err); }
     };
 
+    /**
+     * GET /existing-questions?courseId=X&topicId=Y&taskId=Z
+     * Returns full question objects already stored for this user+course+topic+task
+     * so the client can use them for deduplication before LLM generation.
+     */
+    getExistingQuestions = async(req, res, next) => {
+        try {
+            const userId = req.user?.userId || req.user?.id;
+            const courseId = parseInt(req.query.courseId || req.query.course_id);
+            const topicId = req.query.topicId || req.query.topic_id ? parseInt(req.query.topicId || req.query.topic_id) : null;
+            const taskId = req.query.taskId || req.query.task_id ? parseInt(req.query.taskId || req.query.task_id) : null;
+
+            if (!userId) return next(new ValidationError('Authentication required'));
+            if (!courseId) return next(new ValidationError('courseId is required'));
+
+            const result = await this.reinforcementService.getExistingQuestions(userId, courseId, topicId, taskId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getMySessions = async(req, res, next) => {
         try {
             const result = await this.reinforcementService.getUserSessions(req.user.userId, req.query);

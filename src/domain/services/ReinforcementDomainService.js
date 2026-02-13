@@ -124,14 +124,32 @@ export class ReinforcementDomainService {
                     return Result.ok({
                         success: true,
                         savedCount: saveResult.savedCount,
+                        duplicateCount: (parsedQuestions.length - saveResult.savedCount),
+                        totalSubmitted: parsedQuestions.length,
                         message: `${saveResult.savedCount} unique questions saved with embeddings`
                     });
                 } else {
                     console.warn('[ReinforcementDomainService] MCPService save returned no unique questions (all duplicates?)');
+                    // Fetch existing questions so client can use them for regeneration
+                    let existingQuestions = [];
+                    try {
+                        const existing = await mcpService.getReinforcementHistory(userId, courseId, topicId, taskId);
+                        existingQuestions = (existing || []).map(h => ({
+                            question: h.question || '',
+                            options: h.options || [],
+                            correctIndex: h.answer_index ?? 0,
+                            explanation: h.explanation || '',
+                        }));
+                    } catch (_) { /* non-blocking */ }
+
                     return Result.ok({
                         success: true,
                         savedCount: 0,
-                        message: 'All questions were duplicates or save failed'
+                        duplicateCount: parsedQuestions.length,
+                        totalSubmitted: parsedQuestions.length,
+                        allDuplicates: true,
+                        existingQuestions,
+                        message: 'All questions were duplicates — client should regenerate with different content'
                     });
                 }
             } catch (e) {
@@ -145,6 +163,35 @@ export class ReinforcementDomainService {
         // No questions provided — just create session
         const session = await this.reinforcementRepo.saveSession({ userId, courseId, topicId, taskId });
         return Result.ok(session);
+    }
+
+    /**
+     * Get existing questions for a user+course filtered by topic/task.
+     * Returns full question objects (text, options, correctIndex, explanation)
+     * so the client can use them for deduplication before generating new ones.
+     */
+    async getExistingQuestions(userId, courseId, topicId = null, taskId = null) {
+        try {
+            const mcpService = new MCPService();
+            const history = await mcpService.getReinforcementHistory(userId, courseId, topicId, taskId);
+
+            if (!Array.isArray(history) || history.length === 0) {
+                return Result.ok({ questions: [], count: 0 });
+            }
+
+            // Return structured question objects for client-side dedup
+            const questions = history.map(h => ({
+                question: h.question || '',
+                options: h.options || [],
+                correctIndex: h.answer_index ?? 0,
+                explanation: h.explanation || '',
+            }));
+
+            return Result.ok({ questions, count: questions.length });
+        } catch (error) {
+            console.error('[ReinforcementDomainService] getExistingQuestions error:', error.message);
+            return Result.ok({ questions: [], count: 0 });
+        }
     }
 
     async getHistory(userId, courseId, pagination = {}) {
