@@ -160,7 +160,7 @@ export class WhatsAppController {
             if (result.isFail()) {
                 const domainError = result.getError();
 
-                if (domainError?.code === 'WHATSAPP_OTP_SEND_FAILED') {
+                if (domainError?.code === 'WHATSAPP_OTP_SEND_FAILED' || domainError?.code === 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE') {
                     return res.status(400).json({
                         success: false,
                         error: {
