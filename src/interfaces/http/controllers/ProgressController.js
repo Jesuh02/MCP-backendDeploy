@@ -5,7 +5,8 @@ export class ProgressController {
 
     getMyProgress = async(req, res, next) => {
         try {
-            const result = await this.progressService.getByUser(req.user.userId);
+            const creatorOnly = ['1', 'true', 'yes'].includes(String(req.query.creatorOnly || '').toLowerCase());
+            const result = await this.progressService.getByUser(req.user.userId, { creatorOnly });
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
