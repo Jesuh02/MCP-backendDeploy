@@ -10,6 +10,8 @@ export function videoRoutes({ videoController }) {
     router.get('/course/:courseId', videoController.getByCourse);
     router.get('/:id', videoController.getById);
     router.get('/:id/signed-url', videoController.getSignedUrl);
+    router.post('/signed-url-by-key', videoController.getSignedUrlByKey);
+    router.post('/signed-url-by-key', videoController.getSignedUrlByKey);
     router.post('/upload-url', videoController.getUploadUrl);
     router.post('/', videoController.create);
     router.put('/:id', videoController.update);
