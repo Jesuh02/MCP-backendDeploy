@@ -7,41 +7,10 @@ export class SupabaseProgressRepository {
         return this._mapToDomain(data);
     }
 
-    async findByUser(userId, { creatorOnly = false } = {}) {
-        const { data, error } = await this.client
-            .from('progreso_estudiante')
-            .select('*')
-            .eq('usuario_estudiante', userId)
-            .order('ultima_calculada_en', { ascending: false });
-
-        if (error || !data) return [];
-
-        if (!creatorOnly) {
-            return data.map(this._mapToDomain);
-        }
-
-        const courseIds = data
-            .map((row) => Number(row?.curso_id))
-            .filter((courseId) => Number.isInteger(courseId) && courseId > 0);
-
-        if (courseIds.length === 0) return [];
-
-        const { data: ownedCourses, error: ownedCoursesError } = await this.client
-            .from('courses')
-            .select('id')
-            .eq('creator_user_id', userId)
-            .in('id', courseIds);
-
-        if (ownedCoursesError || !ownedCourses) return [];
-
-        const ownedCourseIds = new Set(
-            ownedCourses
-                .map((course) => Number(course?.id))
-                .filter((courseId) => Number.isInteger(courseId) && courseId > 0),
-        );
-
-        const filtered = data.filter((row) => ownedCourseIds.has(Number(row?.curso_id)));
-        return filtered.map(this._mapToDomain);
+    async findByUser(userId) {
+        const { data, error } = await this.client.from('progreso_estudiante').select('*').eq('usuario_estudiante', userId).order('ultima_calculada_en', { ascending: false });
+        if (error) return [];
+        return data ? data.map(this._mapToDomain) : [];
     }
 
     async findByCourse(courseId) {
