@@ -126,6 +126,19 @@ export class ProgressController {
         } catch (err) { next(err); }
     };
 
+    getCreatorEnrollmentAnalytics = async(req, res, next) => {
+        try {
+            const weeklyDays = parseInt(req.query.weeklyDays) || 7;
+            const monthlyMonths = parseInt(req.query.monthlyMonths) || 6;
+            const result = await this.progressService.getCreatorEnrollmentAnalytics(req.user.userId, {
+                weeklyDays,
+                monthlyMonths,
+            });
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     issueCertificate = async(req, res, next) => {
         try {
             const courseId = parseInt(req.params.courseId);
@@ -168,4 +181,3 @@ export class ProgressController {
     };
 }
 export default ProgressController;
-

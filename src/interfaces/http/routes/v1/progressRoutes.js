@@ -6,6 +6,7 @@ export function progressRoutes({ progressController }) {
     router.get('/my', progressController.getMyProgress);
     router.get('/my/enrolled-course-ids', progressController.getEnrolledCourseIds);
     router.get('/top-students', progressController.getTopStudents);
+    router.get('/creator/enrollment-analytics', progressController.getCreatorEnrollmentAnalytics);
     router.get('/course/:courseId', progressController.getByCourse);
     router.get('/course/:courseId/all', progressController.getAllByCourse);
     router.get('/course/:courseId/enrolled-count', progressController.getEnrolledCount);
@@ -19,4 +20,3 @@ export function progressRoutes({ progressController }) {
     return router;
 }
 export default progressRoutes;
-

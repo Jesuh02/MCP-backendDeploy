@@ -98,6 +98,81 @@ export class CourseDomainService {
         return Result.ok({ total, free, premium, myCreated, otherCreators, enrolled, purchased });
     }
 
+    async getCreatorDashboardMetrics(creatorUserId) {
+        if (!creatorUserId || Number.isNaN(Number(creatorUserId)) || Number(creatorUserId) <= 0) {
+            return Result.ok({
+                creatorUserId: 0,
+                totalCourses: 0,
+                enrolledUsersCount: 0,
+                certifiedUsersCount: 0,
+                completionRate: 0,
+                approvalRate: 0,
+                satisfactionRate: 0,
+            });
+        }
+
+        const courses = await this.courseRepo.findByCreatorUserId(Number(creatorUserId), { offset: 0, limit: 10000 });
+        const courseIds = (courses || []).map(c => Number(c.id)).filter(id => Number.isInteger(id) && id > 0);
+
+        if (courseIds.length === 0) {
+            return Result.ok({
+                creatorUserId: Number(creatorUserId),
+                totalCourses: 0,
+                enrolledUsersCount: 0,
+                certifiedUsersCount: 0,
+                completionRate: 0,
+                approvalRate: 0,
+                satisfactionRate: 0,
+            });
+        }
+
+        const progressRows = this.progressRepo && typeof this.progressRepo.findByCourseIds === 'function' ?
+            await this.progressRepo.findByCourseIds(courseIds) : [];
+
+        const uniqueUsers = new Set();
+        const certifiedUsers = new Set();
+        let completedRows = 0;
+        let approvedRows = 0;
+
+        for (const row of progressRows || []) {
+            const userId = Number(row ? .userId);
+            if (!Number.isInteger(userId) || userId <= 0) continue;
+
+            uniqueUsers.add(userId);
+
+            const isCertified = Boolean(row ? .certificateIssuedAt) || (typeof row ? .certificateUrl === 'string' && row.certificateUrl.trim().length > 0);
+            if (isCertified) certifiedUsers.add(userId);
+
+            const progressPercentage = Number(row ? .progressPercentage || 0);
+            const completedTasks = Number(row ? .completedTasks || 0);
+            const totalTasks = Number(row ? .totalTasks || 0);
+            const status = String(row ? .status || '').trim().toLowerCase();
+            const averageGrade = Number(row ? .averageGrade);
+
+            const isCompleted = progressPercentage >= 100 || (totalTasks > 0 && completedTasks >= totalTasks);
+            if (isCompleted) completedRows++;
+
+            const isApprovedByStatus = status === 'ganado' || status === 'aprobado';
+            const isApprovedByGrade = Number.isFinite(averageGrade) && averageGrade >= 6;
+            if (isApprovedByStatus || isApprovedByGrade) approvedRows++;
+        }
+
+        const totalProgressRows = (progressRows || []).length;
+        const completionRate = totalProgressRows > 0 ? Math.round((completedRows * 100) / totalProgressRows) : 0;
+        const approvalRate = totalProgressRows > 0 ? Math.round((approvedRows * 100) / totalProgressRows) : 0;
+        const satisfactionRate = Math.max(0, Math.min(100, Math.abs(approvalRate - completionRate)));
+
+        return Result.ok({
+            creatorUserId: Number(creatorUserId),
+            totalCourses: courseIds.length,
+            enrolledUsersCount: uniqueUsers.size,
+            certifiedUsersCount: certifiedUsers.size,
+            completionRate,
+            approvalRate,
+            satisfactionRate,
+        });
+    }
+
     async findByCreator(username, pagination) {
         const [courses, total] = await Promise.all([
             this.courseRepo.findByCreator(username, pagination),
@@ -243,4 +318,3 @@ export class CourseDomainService {
     }
 }
 export default CourseDomainService;
-

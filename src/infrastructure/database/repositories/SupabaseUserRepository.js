@@ -131,10 +131,7 @@ export class SupabaseUserRepository {
 
         const { error } = await this.client
             .from('user_fcm_tokens')
-            .upsert(
-                { user_id: userId, token: normalizedToken, device_type: deviceType },
-                { onConflict: 'user_id,token' }
-            );
+            .upsert({ user_id: userId, token: normalizedToken, device_type: deviceType }, { onConflict: 'user_id,token' });
         if (error) throw new Error(`Error registrando FCM token: ${error.message}`);
         return true;
     }
@@ -151,4 +148,3 @@ export class SupabaseUserRepository {
     }
 }
 export default SupabaseUserRepository;
-

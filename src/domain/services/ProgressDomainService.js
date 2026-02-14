@@ -41,7 +41,7 @@ export class ProgressDomainService {
     async upsert(data) {
         let progress = null;
 
-        if (this.taskRepo && this.submissionRepo && data?.userId && data?.courseId) {
+        if (this.taskRepo && this.submissionRepo && data ? .userId && data ? .courseId) {
             progress = await this._recalculateAndUpsertUserCourseProgress(data.userId, data.courseId);
         } else {
             progress = await this.progressRepo.upsert(data);
@@ -76,6 +76,11 @@ export class ProgressDomainService {
     async getTopStudentsGlobal(limit = 10) {
         const students = await this.progressRepo.getTopStudentsGlobal(limit);
         return Result.ok(students);
+    }
+
+    async getCreatorEnrollmentAnalytics(creatorUserId, options = {}) {
+        const analytics = await this.progressRepo.getCreatorEnrollmentAnalytics(creatorUserId, options);
+        return Result.ok(analytics);
     }
 
     async issueCertificate(userId, courseId) {
@@ -134,7 +139,7 @@ export class ProgressDomainService {
 
         const existingProgress = await this.progressRepo.findByCourse(courseId);
         for (const item of existingProgress || []) {
-            const userId = Number(item?.userId);
+            const userId = Number(item ? .userId);
             if (Number.isInteger(userId) && userId > 0) ids.add(userId);
         }
 
@@ -150,7 +155,7 @@ export class ProgressDomainService {
     }
 
     async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null) {
-        const totalTasks = totalTasksFromCaller ?? await this.taskRepo.countByCourse(courseId);
+        const totalTasks = totalTasksFromCaller ? ? await this.taskRepo.countByCourse(courseId);
         const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId);
         const completedTasks = submittedTaskIds.length;
 
@@ -185,4 +190,3 @@ export class ProgressDomainService {
     }
 }
 export default ProgressDomainService;
-
