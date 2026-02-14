@@ -107,5 +107,15 @@
         if (error) return [];
         return data || [];
     }
+
+    async getTaskIdsByUserAndCourse(userId, courseId) {
+        const { data, error } = await this.client
+            .from('task_submissions')
+            .select('task_id, tasks!inner(topics!inner(course_id))')
+            .eq('student_id', userId)
+            .eq('tasks.topics.course_id', courseId);
+        if (error || !data) return [];
+        return [...new Set(data.map(item => item.task_id).filter(Boolean))];
+    }
 }
 export default SupabaseSubmissionRepository;
