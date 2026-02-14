@@ -225,5 +225,22 @@ export class CourseDomainService {
         await this._signUrls(sortedCourses);
         return Result.ok({ courses: sortedCourses, total });
     }
+
+    /**
+     * Finds courses created by a specific user that have at least one task submission.
+     * Used by ChatBot context filtering.
+     * @param {number} creatorUserId
+     * @returns {Promise<Result>}
+     */
+    async findCreatorCoursesWithSubmissions(creatorUserId) {
+        try {
+            const courses = await this.courseRepo.findCreatorCoursesWithSubmissions(creatorUserId);
+            await this._signUrls(courses);
+            return Result.ok(courses);
+        } catch (err) {
+            return Result.fail(new Error(`Error fetching courses with submissions: ${err.message}`));
+        }
+    }
 }
 export default CourseDomainService;
+

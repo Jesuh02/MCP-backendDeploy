@@ -60,24 +60,32 @@ class OpenRouterGenericEmbeddings {
     }
 }
 
-// Dynamic imports to handle missing dependencies gracefully
+/**
+ * LangChain embedding classes are loaded lazily on first use.
+ * Top-level await imports block the entire ESM module chain and can
+ * delay server startup by 500ms+, causing Railway 502 health check failures.
+ */
 let OpenAIEmbeddings = null;
 let OllamaEmbeddings = null;
+let _embeddingDepsLoaded = false;
 
-try {
-    const openaiModule = await
-    import ("@langchain/openai");
-    OpenAIEmbeddings = openaiModule.OpenAIEmbeddings;
-} catch (e) {
-    console.warn("⚠️ @langchain/openai not available for embeddings");
-}
-
-try {
-    const ollamaModule = await
-    import ("@langchain/community/embeddings/ollama");
-    OllamaEmbeddings = ollamaModule.OllamaEmbeddings;
-} catch (e) {
-    console.warn("⚠️ @langchain/community not available for Ollama embeddings");
+async function loadEmbeddingDeps() {
+    if (_embeddingDepsLoaded) return;
+    _embeddingDepsLoaded = true;
+    try {
+        const openaiModule = await
+        import ('@langchain/openai');
+        OpenAIEmbeddings = openaiModule.OpenAIEmbeddings;
+    } catch (e) {
+        console.warn('⚠️ @langchain/openai not available for embeddings');
+    }
+    try {
+        const ollamaModule = await
+        import ('@langchain/community/embeddings/ollama');
+        OllamaEmbeddings = ollamaModule.OllamaEmbeddings;
+    } catch (e) {
+        console.warn('⚠️ @langchain/community not available for Ollama embeddings');
+    }
 }
 
 export class EmbeddingService extends IEmbeddingProvider {
@@ -96,9 +104,30 @@ export class EmbeddingService extends IEmbeddingProvider {
 
         this.model = null;
         this.provider = 'none';
-        this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '1536'); // Default 1536 for text-embedding-3-small
+        // Default to 4096 to match DB schema (questions_history.question_embedding vector(4096))
+        this.dimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '4096');
+        this._providerReady = false;
+    }
 
+    /**
+     * Ensures the embedding provider is initialized before use.
+     * Lazy initialization avoids blocking server startup (SRP + DIP).
+     */
+    async _ensureProvider() {
+        if (this._providerReady) return;
+        await loadEmbeddingDeps();
         this._initializeProvider();
+
+        // FINAL OVERRIDE: EMBEDDING_DIMENSIONS env var always wins over provider defaults.
+        // This ensures all vectors match the DB schema regardless of which model/provider
+        // was selected. _normalizeVector() will truncate/pad provider output to this size.
+        const envDimOverride = parseInt(process.env.EMBEDDING_DIMENSIONS || '0');
+        if (envDimOverride > 0) {
+            this.dimensions = envDimOverride;
+        }
+        console.log(`📐 Final embedding dimensions: ${this.dimensions} (provider: ${this.provider})`);
+
+        this._providerReady = true;
     }
 
     _initializeProvider() {
@@ -222,6 +251,8 @@ export class EmbeddingService extends IEmbeddingProvider {
             throw new Error('Text must be a non-empty string');
         }
 
+        await this._ensureProvider();
+
         if (this.provider === 'fallback') {
             return this._fallbackEmbed(text);
         }
@@ -232,7 +263,7 @@ export class EmbeddingService extends IEmbeddingProvider {
 
         try {
             const embedding = await this.model.embedQuery(text);
-            return embedding;
+            return this._normalizeVector(embedding);
         } catch (error) {
             console.error(`❌ Embedding error (${this.provider}): ${error.message}`);
             // Check for specific API errors we can handle
@@ -255,6 +286,8 @@ export class EmbeddingService extends IEmbeddingProvider {
             throw new Error('Texts must be a non-empty array');
         }
 
+        await this._ensureProvider();
+
         if (this.provider === 'fallback') {
             return texts.map(t => this._fallbackEmbed(t));
         }
@@ -265,7 +298,7 @@ export class EmbeddingService extends IEmbeddingProvider {
 
         try {
             const embeddings = await this.model.embedDocuments(texts);
-            return embeddings;
+            return embeddings.map(v => this._normalizeVector(v));
         } catch (error) {
             console.error(`❌ Batch embedding error (${this.provider}):`, error.message);
             // Fallback to simple hash if provider fails
@@ -297,6 +330,18 @@ export class EmbeddingService extends IEmbeddingProvider {
     }
 
     /**
+     * Normalize a vector to match this.dimensions (DB schema requirement).
+     * Truncates if longer, zero-pads if shorter.
+     * @param {number[]} vector - Raw embedding vector from provider
+     * @returns {number[]} - Vector with exactly this.dimensions elements
+     */
+    _normalizeVector(vector) {
+        if (!Array.isArray(vector) || vector.length === this.dimensions) return vector;
+        if (vector.length > this.dimensions) return vector.slice(0, this.dimensions);
+        return [...vector, ...new Array(this.dimensions - vector.length).fill(0)];
+    }
+
+    /**
      * Get the current provider name
      * @returns {string} Provider name
      */
@@ -322,3 +367,4 @@ export class EmbeddingService extends IEmbeddingProvider {
 }
 
 export default EmbeddingService;
+

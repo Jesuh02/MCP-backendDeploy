@@ -467,6 +467,44 @@ export class SupabaseVectorStore extends IVectorStore {
     }
 
     /**
+     * Fetch all text chunks from rag_documents for a given filter.
+     * Returns raw text content (no embeddings) for direct inclusion in prompts.
+     * @param {object} filter - { courseId, topicId, taskId }
+     * @returns {Promise<Array<{ content: string, fileName: string, chunkIndex: number }>>}
+     */
+    async getContentChunks(filter = {}) {
+        await this.initialize();
+
+        try {
+            let query = this.supabase.client
+                .from(this.tableName)
+                .select('content, file_name, chunk_index')
+                .order('file_name', { ascending: true })
+                .order('chunk_index', { ascending: true });
+
+            if (filter.courseId) query = query.eq('course_id', filter.courseId);
+            if (filter.topicId) query = query.eq('topic_id', filter.topicId);
+            if (filter.taskId) query = query.eq('task_id', filter.taskId);
+
+            const { data, error } = await query.limit(200);
+
+            if (error) {
+                logger.error('Error fetching content chunks:', error);
+                return [];
+            }
+
+            return (data || []).map(row => ({
+                content: row.content || '',
+                fileName: row.file_name || '',
+                chunkIndex: row.chunk_index ?? 0,
+            }));
+        } catch (error) {
+            logger.error('Error in getContentChunks:', error);
+            return [];
+        }
+    }
+
+    /**
      * Check if documents exist for a specific context
      * @param {object} filter - Filter criteria
      * @returns {Promise<boolean>}
@@ -492,3 +530,4 @@ export class SupabaseVectorStore extends IVectorStore {
 }
 
 export default SupabaseVectorStore;
+

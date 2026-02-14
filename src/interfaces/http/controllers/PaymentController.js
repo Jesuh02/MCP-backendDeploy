@@ -10,12 +10,21 @@ export class PaymentController extends BaseController {
 
     initiate = async(req, res, next) => {
         try {
+            // Prefer userId from JWT (secure). Fall back to body (legacy Android clients
+            // that call /api/payment/initiate without Bearer token).
+            // Security: creating a PENDING transaction is low-risk; actual course access
+            // is only granted by the Wompi webhook after confirmed payment.
+            const userId = req.user?.userId || req.body?.userId;
+            if (!userId) {
+                return next(new ValidationError('Se requiere userId (vía token o en el body)'));
+            }
+
             const { error, value } = initiatePaymentSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
 
             const result = await this.paymentService.initiate({
                 ...value,
-                userId: req.user.userId,
+                userId: parseInt(userId, 10),
             });
 
             if (result.isFail()) return next(result.getError());
@@ -72,3 +81,4 @@ export class PaymentController extends BaseController {
     };
 }
 export default PaymentController;
+

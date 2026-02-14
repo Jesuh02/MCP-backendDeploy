@@ -1,4 +1,4 @@
-﻿export class SupabaseLikeRepository {
+export class SupabaseLikeRepository {
     constructor(client) { this.client = client; }
 
     async findByUserAndEntity(userId, entityType, entityId) {
@@ -37,3 +37,4 @@
     }
 }
 export default SupabaseLikeRepository;
+

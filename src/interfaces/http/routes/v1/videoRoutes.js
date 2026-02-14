@@ -1,4 +1,21 @@
 import { Router } from 'express';
+import multer from 'multer';
+
+const videoUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
+    fileFilter: (req, file, cb) => {
+        if (file.fieldname === 'video') {
+            const allowed = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'video/x-matroska'];
+            cb(null, allowed.includes(file.mimetype));
+        } else if (file.fieldname === 'thumbnail') {
+            const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+            cb(null, allowed.includes(file.mimetype));
+        } else {
+            cb(null, false);
+        }
+    },
+});
 
 export function videoRoutes({ videoController }) {
     const router = Router();
@@ -10,9 +27,9 @@ export function videoRoutes({ videoController }) {
     router.get('/course/:courseId', videoController.getByCourse);
     router.get('/:id', videoController.getById);
     router.get('/:id/signed-url', videoController.getSignedUrl);
-    router.post('/signed-url-by-key', videoController.getSignedUrlByKey);
-    router.post('/signed-url-by-key', videoController.getSignedUrlByKey);
+    router.post('/batch-signed-urls', videoController.batchSignedUrls);
     router.post('/upload-url', videoController.getUploadUrl);
+    router.post('/upload', videoUpload.fields([{ name: 'video', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), videoController.uploadAndCreate);
     router.post('/', videoController.create);
     router.put('/:id', videoController.update);
     router.delete('/:id', videoController.delete);
@@ -20,3 +37,4 @@ export function videoRoutes({ videoController }) {
     return router;
 }
 export default videoRoutes;
+

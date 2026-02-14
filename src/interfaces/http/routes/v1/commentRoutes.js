@@ -12,3 +12,4 @@ export function commentRoutes({ commentController }) {
     return router;
 }
 export default commentRoutes;
+

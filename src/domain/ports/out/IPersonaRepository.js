@@ -10,3 +10,4 @@ export class IPersonaRepository {
     async delete(id) { throw new Error('Not implemented'); }
 }
 export default IPersonaRepository;
+

@@ -25,3 +25,4 @@ export const updateCourseSchema = Joi.object({
     level: Joi.string().valid('beginner', 'intermediate', 'advanced').allow(null).optional(),
     isPublished: Joi.boolean().optional(),
 }).min(1);
+

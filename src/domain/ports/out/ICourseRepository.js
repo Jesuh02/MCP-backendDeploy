@@ -15,3 +15,4 @@ export class ICourseRepository {
     async count(filters) { throw new Error('Not implemented'); }
 }
 export default ICourseRepository;
+

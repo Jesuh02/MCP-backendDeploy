@@ -25,3 +25,4 @@ export const searchUsersSchema = Joi.object({
     q: Joi.string().min(1).max(100).required(),
     limit: Joi.number().integer().min(1).max(100).default(20),
 });
+

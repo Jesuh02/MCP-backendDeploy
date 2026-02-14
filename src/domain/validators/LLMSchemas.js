@@ -19,6 +19,8 @@ export const processPromptSchema = Joi.object({
     jsonContent: Joi.any().optional(),
     submissionId: Joi.number().integer().optional(),
     taskId: Joi.number().integer().optional(),
+    topicId: Joi.number().integer().optional(),
+    topic_id: Joi.number().integer().optional(),
 }).options({ allowUnknown: true });
 
 export const analyzeSubmissionSchema = Joi.object({
@@ -39,3 +41,4 @@ export const feedbackSchema = Joi.object({
 });
 
 export default { processPromptSchema, analyzeSubmissionSchema, feedbackSchema };
+

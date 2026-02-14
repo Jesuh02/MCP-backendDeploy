@@ -1,4 +1,4 @@
-﻿export class SupabaseProgressRepository {
+export class SupabaseProgressRepository {
     constructor(client) { this.client = client; }
 
     async findByUserAndCourse(userId, courseId) {
@@ -117,3 +117,4 @@
     }
 }
 export default SupabaseProgressRepository;
+

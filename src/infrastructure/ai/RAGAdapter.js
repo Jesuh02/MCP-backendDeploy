@@ -3,21 +3,39 @@
  *
  * Envuelve RAGService existente detrás de un puerto abstracto.
  * El dominio (RAGDomainService) solo conoce IRAGPort.
+ *
+ * RAGService is loaded lazily to prevent blocking server startup.
+ * The RAG subsystem is non-critical for the core video/user API.
  */
-
-import { RAGService } from '../../domain/services/RAGService.js';
 
 export class RAGAdapter {
     constructor() {
         this._rag = null;
-        this._init();
+        this._initPromise = null;
+    }
+
+    /**
+     * Lazy initialization: RAGService is only loaded when first needed.
+     * This prevents heavy Supabase/VectorStore/Embedding initialization
+     * from blocking Express startup and causing Railway 502 errors.
+     */
+    async _ensureInitialized() {
+        if (this._rag) return;
+        if (this._initPromise) {
+            await this._initPromise;
+            return;
+        }
+        this._initPromise = this._doInit();
+        await this._initPromise;
     }
 
     /** @private */
-    _init() {
+    async _doInit() {
         try {
+            const { RAGService } = await
+            import ('../../domain/services/RAGService.js');
             this._rag = new RAGService();
-            console.log('✅ RAGAdapter: inicializado');
+            console.log('✅ RAGAdapter: inicializado (lazy)');
         } catch (err) {
             console.warn('⚠️ RAGAdapter: RAGService no disponible:', err.message);
         }
@@ -29,6 +47,7 @@ export class RAGAdapter {
      * @returns {Promise<{ documentId: string, chunksProcessed: number }>}
      */
     async ingest({ content, metadata, courseId }) {
+        await this._ensureInitialized();
         if (!this._rag || !this._rag.isReady()) {
             throw new Error('RAG service no disponible');
         }
@@ -51,6 +70,7 @@ export class RAGAdapter {
      * @returns {Promise<Array<{ content: string, score: number, metadata: Object }>>}
      */
     async search(query, options = {}) {
+        await this._ensureInitialized();
         if (!this._rag || !this._rag.isReady()) {
             throw new Error('RAG service no disponible');
         }
@@ -75,6 +95,7 @@ export class RAGAdapter {
      * @returns {Promise<string>}
      */
     async buildContext(query, options = {}) {
+        await this._ensureInitialized();
         if (!this._rag || !this._rag.isReady()) {
             return '';
         }
@@ -82,6 +103,8 @@ export class RAGAdapter {
         try {
             const context = await this._rag.buildContext(query, {
                 courseId: options.courseId,
+                topicId: options.topicId || null,
+                taskId: options.taskId || null,
                 maxTokens: options.maxTokens,
             });
             return context || '';
@@ -103,3 +126,4 @@ export class RAGAdapter {
     }
 }
 export default RAGAdapter;
+

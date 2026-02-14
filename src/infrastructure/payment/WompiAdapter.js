@@ -80,12 +80,34 @@ export class WompiAdapter {
 
     /**
      * Verifica la firma de un evento webhook de Wompi.
+     * @param {Object} payload - Body completo del webhook
      */
-    verifyWebhookSignature(payload, receivedSignature) {
+    verifyWebhookSignature(payload) {
         if (!this.eventSecret) return false;
-        const toSign = `${payload.transaction.id}${payload.transaction.status}${payload.transaction.amount_in_cents}`;
-        const hmac = crypto.createHmac('sha256', this.eventSecret).update(toSign).digest('hex');
-        return hmac === receivedSignature;
+
+        // Intentar extraer transaction, timestamp y checksum
+        // Estructura típica: { data: { transaction: {...} }, timestamp: 123, signature: { checksum: '...' } }
+        const transaction = payload?.data?.transaction || payload?.transaction;
+        const timestamp = payload?.timestamp || payload?.event?.timestamp;
+        const checksum = payload?.signature?.checksum || payload?.signature;
+
+        if (!transaction || !timestamp || !checksum) {
+            // Fallback para estructura anidada antigua: { event: { data: { transaction: ... } } }
+            if (payload?.event?.data?.transaction) {
+                // Implementar lógica si es necesario, pero la estructura estándar es la prioridad
+            }
+            return false;
+        }
+
+        const id = transaction.id;
+        const status = transaction.status;
+        const amount = transaction.amount_in_cents;
+
+        // Checksum = SHA256(transaction.id + transaction.status + transaction.amount_in_cents + timestamp + event_secret)
+        const toSign = `${id}${status}${amount}${timestamp}${this.eventSecret}`;
+
+        const calculated = crypto.createHash('sha256').update(toSign).digest('hex');
+        return calculated === checksum;
     }
 
     _generateSignature(reference, amountInCents, currency) {
@@ -101,3 +123,4 @@ export class WompiAdapter {
 }
 
 export default WompiAdapter;
+

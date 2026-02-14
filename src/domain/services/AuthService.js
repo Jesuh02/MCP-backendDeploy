@@ -67,8 +67,9 @@ export class AuthService {
 
     async refreshToken(refreshToken) {
         try {
-            const payload = this.jwt.verifyRefreshToken(refreshToken);
-            const user = await this.userRepo.findById(payload.userId);
+            const result = this.jwt.verifyRefreshToken(refreshToken);
+            if (!result.valid) return Result.fail(new UnauthorizedError('Refresh token inválido'));
+            const user = await this.userRepo.findById(result.decoded.userId);
             if (!user) return Result.fail(new UnauthorizedError('Usuario no encontrado'));
             const tokens = this._generateTokens(user);
             return Result.ok(tokens);
@@ -103,3 +104,4 @@ export class AuthService {
     }
 }
 export default AuthService;
+

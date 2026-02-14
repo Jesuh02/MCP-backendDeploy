@@ -11,3 +11,4 @@ export function authRoutes({ authController }) {
     return router;
 }
 export default authRoutes;
+

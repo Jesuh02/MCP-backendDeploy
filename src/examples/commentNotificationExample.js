@@ -1,17 +1,24 @@
 /**
  * EJEMPLO DE USO: Notificaciones para Comentarios y Likes
  * 
- * Este archivo muestra cómo integrar las notificaciones en tus endpoints
- * de comentarios y likes en video_comments.
+ * Este archivo muestra cómo integrar las notificaciones usando
+ * la arquitectura hexagonal (NotificationDomainService).
  * 
  * IMPORTANTE: No ejecutar este archivo directamente, solo es referencia.
+ * En producción, el contenedor de DI inyecta las dependencias.
  */
 
-import { NotificationService } from '../infrastructure/legacy/NotificationService.js';
+// En un controlador real, notificationService se inyecta via constructor:
+// constructor({ notificationService }) { this.notifService = notificationService; }
+//
+// Aquí se muestra un ejemplo simplificado para documentación.
+
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
 
-const notificationService = NotificationService.getInstance();
 const supabaseService = SupabaseService.getInstance();
+
+// NOTE: In production, notificationService is injected by the DI container.
+// This example assumes it's available as a parameter or from the container.
 
 // ============================================================
 // EJEMPLO 1: Notificar cuando alguien comenta en un video
@@ -284,3 +291,4 @@ export {
     likeCommentExample,
     replyToCommentExample
 };
+

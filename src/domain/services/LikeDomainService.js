@@ -98,3 +98,4 @@ export class LikeDomainService {
     }
 }
 export default LikeDomainService;
+

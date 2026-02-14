@@ -479,6 +479,22 @@ export class MCPService {
         if (!userId || !courseId || !questions || !questions.length) return false;
 
         try {
+            const REQUIRED_QUESTION_COUNT = 10;
+            const preparedQuestions = this._prepareQuestionsForPersistence(questions, REQUIRED_QUESTION_COUNT);
+
+            if (preparedQuestions.length < REQUIRED_QUESTION_COUNT) {
+                logger.warn(`⚠️ saveReinforcementHistory rejected batch: expected ${REQUIRED_QUESTION_COUNT} valid unique questions, got ${preparedQuestions.length}`);
+                return {
+                    success: false,
+                    savedCount: 0,
+                    savedQuestions: [],
+                    requiredCount: REQUIRED_QUESTION_COUNT,
+                    insufficientCount: true,
+                    totalSubmitted: Array.isArray(questions) ? questions.length : 0,
+                    reason: 'INSUFFICIENT_VALID_QUESTIONS'
+                };
+            }
+
             // Import services dynamically to avoid circular deps
             const EmbeddingService = (await
                 import ('../../infrastructure/ai/EmbeddingService.js')).EmbeddingService;
@@ -545,18 +561,24 @@ export class MCPService {
 
             let savedCount = 0;
             const acceptedQuestions = [];
+            const inBatchQuestionHashes = new Set();
 
             // B. Process Each Question
-            for (const q of questions) {
-                const qText = (typeof q === 'string' ? q : (q.question || q.pregunta || "")).trim();
-                const qExplanation = (typeof q === 'string' ? "" : (q.explanation || q.explicacion || ""));
-                const qIndex = (typeof q === 'string' ? 0 : (q.correctIndex || q.correct_index || 0));
+            for (const q of preparedQuestions) {
+                const qText = q.question;
+                const qExplanation = q.explanation;
+                const qIndex = q.correctIndex;
 
                 if (!qText) continue;
 
                 // --- 1. Hash Check (Paso B) ---
-                const normalizedText = qText.toLowerCase().trim();
+                const normalizedText = this._normalizeQuestionText(qText);
                 const questionHash = crypto.createHash('sha256').update(normalizedText).digest('hex');
+
+                if (inBatchQuestionHashes.has(questionHash)) {
+                    logger.info(`🚫 Duplicate Question (In-Batch Hash Match): "${qText.substring(0, 40)}..."`);
+                    continue;
+                }
 
                 const { data: hashExists } = await supabase
                     .from('questions_history')
@@ -573,10 +595,9 @@ export class MCPService {
                 // --- 2. Embedding Generation (Paso C) ---
                 let questionEmbedding = null;
                 try {
-                    // Embed using the 4096-dim model (Qwen) by default
-                    if (embeddingService.isReady()) {
-                        questionEmbedding = await embeddingService.embedQuery(qText);
-                    }
+                    // Always call embedQuery: EmbeddingService initializes provider lazily.
+                    // Guarding with isReady() can force fallback vectors with stale dimensions.
+                    questionEmbedding = await embeddingService.embedQuery(qText);
                 } catch (e) {
                     logger.warn(`⚠️ Failed to embed question: ${e.message}`);
                 }
@@ -616,7 +637,28 @@ export class MCPService {
                     if (semanticError) {
                         // Special handling for dimension error in RPC
                         if (semanticError.message.includes('dimensions')) {
-                            logger.warn(`⚠️ Vector dimension mismatch in match_questions (likely DB is 1024, Model is ${questionEmbedding.length}). Skipping semantic check.`);
+                            const expectedDim = this._parseExpectedDimensionFromError(semanticError.message);
+                            if (expectedDim > 0) {
+                                const adjustedEmbedding = this._adjustVectorDimension(questionEmbedding, expectedDim);
+                                const { data: retryMatches, error: retrySemanticError } = await supabase
+                                    .rpc('match_questions', {
+                                        query_embedding: adjustedEmbedding,
+                                        match_threshold: 0.90,
+                                        match_count: 1,
+                                        filter_user_id: userId
+                                    });
+
+                                if (!retrySemanticError && retryMatches && retryMatches.length > 0) {
+                                    logger.info(`🚫 Duplicate Question (Semantic Match ${retryMatches[0].similarity?.toFixed(2)}): "${qText.substring(0, 40)}..."`);
+                                    continue;
+                                }
+
+                                if (retrySemanticError) {
+                                    logger.warn(`⚠️ Semantic check retry failed after dimension adjust: ${retrySemanticError.message}`);
+                                }
+                            } else {
+                                logger.warn(`⚠️ Vector dimension mismatch in match_questions (model=${questionEmbedding.length}). Skipping semantic check.`);
+                            }
                         } else {
                             logger.warn(`⚠️ Semantic check failed: ${semanticError.message}`);
                         }
@@ -628,7 +670,6 @@ export class MCPService {
 
                 // --- 4. Validate Options (Paso G) ---
                 const optionsArray = q.options || q.opciones || [];
-                let optionsValid = true;
                 let optionEmbeddings = [];
 
                 if (Array.isArray(optionsArray) && optionsArray.length > 0) {
@@ -671,6 +712,8 @@ export class MCPService {
                     continue;
                 }
 
+                let savedQResult = null;
+
                 const { data: savedQ, error: saveError } = await supabase
                     .from('questions_history')
                     .insert({
@@ -688,14 +731,43 @@ export class MCPService {
 
                 if (saveError) {
                     if (saveError.message.includes('dimensions')) {
-                        logger.error(`❌ ABORT: Database vector dimension mismatch. Please run 'fix_vector_dimensions.sql'.`);
+                        const expectedDim = this._parseExpectedDimensionFromError(saveError.message);
+                        if (expectedDim <= 0) {
+                            logger.error(`❌ Vector dimension mismatch (model=${questionEmbedding.length}) and expected dimension could not be parsed: ${saveError.message}`);
+                            continue;
+                        }
+
+                        logger.warn(`⚠️ Adjusting question embedding from ${questionEmbedding.length} to DB dimension ${expectedDim} and retrying insert...`);
+                        questionEmbedding = this._adjustVectorDimension(questionEmbedding, expectedDim);
+
+                        const retry = await supabase
+                            .from('questions_history')
+                            .insert({
+                                session_id: sessionId,
+                                user_id: userId,
+                                course_id: courseId,
+                                question_text: qText,
+                                question_hash: questionHash,
+                                question_embedding: questionEmbedding,
+                                correct_index: qIndex,
+                                explanation: qExplanation
+                            })
+                            .select('id')
+                            .single();
+
+                        if (retry.error) {
+                            logger.error(`❌ Retry failed after dimension adjust: ${retry.error.message}`);
+                            continue;
+                        }
+                        savedQResult = retry.data;
+                        logger.info(`✅ Question saved after dimension adjust (${expectedDim}).`);
                     } else {
                         logger.error(`❌ Error saving question: ${saveError.message}`);
+                        continue;
                     }
-                    continue;
                 }
 
-                const questionId = savedQ.id;
+                const questionId = (savedQResult || savedQ).id;
 
                 // Save Options
                 if (optionsArray.length > 0) {
@@ -717,25 +789,142 @@ export class MCPService {
 
 
                     if (optError) {
-                        logger.error(`❌ Error saving options: ${optError.message}`);
+                        if (optError.message.includes('dimensions')) {
+                            const expectedDim = this._parseExpectedDimensionFromError(optError.message);
+                            if (expectedDim <= 0) {
+                                logger.error(`❌ Options dimension mismatch and expected dimension could not be parsed: ${optError.message}`);
+                                continue;
+                            }
+
+                            logger.warn(`⚠️ Adjusting option embeddings to DB dimension ${expectedDim} and retrying...`);
+                            const adjustedOptionsPayload = optionsPayload.map((item) => ({
+                                ...item,
+                                option_embedding: this._adjustVectorDimension(item.option_embedding, expectedDim)
+                            }));
+
+                            const retryOpt = await supabase
+                                .from('question_options')
+                                .insert(adjustedOptionsPayload);
+                            if (retryOpt.error) {
+                                logger.error(`❌ Options retry failed after dimension adjust: ${retryOpt.error.message}`);
+                            } else {
+                                logger.info(`✅ Options saved after dimension adjust (${expectedDim}).`);
+                            }
+                        } else {
+                            logger.error(`❌ Error saving options: ${optError.message}`);
+                        }
                     }
                 }
 
                 savedCount++;
+                inBatchQuestionHashes.add(questionHash);
                 acceptedQuestions.push(q);
+
+                if (savedCount >= REQUIRED_QUESTION_COUNT) {
+                    break;
+                }
             }
 
-            logger.info(`✅ MCPService: Saved ${savedCount} unique questions to history.`);
+            logger.info(`✅ MCPService: Saved ${savedCount}/${REQUIRED_QUESTION_COUNT} unique questions to history.`);
             return {
-                success: savedCount > 0,
+                success: savedCount === REQUIRED_QUESTION_COUNT,
                 savedCount,
-                savedQuestions: acceptedQuestions
+                savedQuestions: acceptedQuestions,
+                requiredCount: REQUIRED_QUESTION_COUNT,
+                insufficientCount: savedCount < REQUIRED_QUESTION_COUNT
             };
 
         } catch (error) {
             logger.error(`❌ Critical error in saveReinforcementHistory: ${error.message}`);
             return false;
         }
+    }
+
+
+    _parseExpectedDimensionFromError(message = '') {
+        const match = String(message).match(/expected\s+(\d+)\s+dimensions?,\s+not\s+(\d+)/i);
+        return match ? parseInt(match[1], 10) : 0;
+    }
+
+    _adjustVectorDimension(vector, targetDim) {
+        if (!Array.isArray(vector)) return vector;
+        if (!Number.isInteger(targetDim) || targetDim <= 0) return vector;
+        if (vector.length === targetDim) return vector;
+        if (vector.length > targetDim) return vector.slice(0, targetDim);
+        return [...vector, ...new Array(targetDim - vector.length).fill(0)];
+    }
+
+    _prepareQuestionsForPersistence(questions, limit = 10) {
+        if (!Array.isArray(questions) || questions.length === 0) {
+            return [];
+        }
+
+        const prepared = [];
+        const seenQuestions = new Set();
+
+        for (const item of questions) {
+            const questionText = (typeof item === 'string' ? item : (item.question || item.pregunta || '')).trim();
+            if (!questionText) continue;
+
+            const normalizedQuestion = this._normalizeQuestionText(questionText);
+            if (!normalizedQuestion || seenQuestions.has(normalizedQuestion)) continue;
+
+            const rawOptions = (Array.isArray(item?.options) ? item.options : Array.isArray(item?.opciones) ? item.opciones : [])
+                .map(option => String(option || '').trim())
+                .filter(Boolean);
+
+            const uniqueOptions = [];
+            const seenOptions = new Set();
+            for (const option of rawOptions) {
+                const normalizedOption = this._normalizeOptionText(option);
+                if (!normalizedOption || seenOptions.has(normalizedOption)) continue;
+                seenOptions.add(normalizedOption);
+                uniqueOptions.push(option);
+            }
+
+            if (uniqueOptions.length < 4) {
+                continue;
+            }
+
+            const trimmedOptions = uniqueOptions.slice(0, 4);
+            const rawCorrectIndex = Number(item?.correctIndex ?? item?.correct_index ?? 0);
+            const safeCorrectIndex = Number.isInteger(rawCorrectIndex) ? rawCorrectIndex : 0;
+            const originalCorrectOption = rawOptions[safeCorrectIndex] || trimmedOptions[0];
+            const normalizedCorrectOption = this._normalizeOptionText(originalCorrectOption);
+            let correctedIndex = trimmedOptions.findIndex(option => this._normalizeOptionText(option) === normalizedCorrectOption);
+            if (correctedIndex < 0) {
+                correctedIndex = 0;
+            }
+
+            prepared.push({
+                question: questionText,
+                options: trimmedOptions,
+                correctIndex: correctedIndex,
+                explanation: String(item?.explanation || item?.explicacion || '').trim()
+            });
+
+            seenQuestions.add(normalizedQuestion);
+
+            if (prepared.length >= limit) {
+                break;
+            }
+        }
+
+        return prepared;
+    }
+
+    _normalizeQuestionText(text = '') {
+        return String(text)
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    _normalizeOptionText(text = '') {
+        return String(text)
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
     }
 
 
@@ -2722,3 +2911,4 @@ export function setUseRemoteLLM(flag) {
         console.warn('MCPService: Failed to set useRemoteLLM flag', e.message || e);
     }
 }
+

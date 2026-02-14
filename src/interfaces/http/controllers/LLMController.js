@@ -30,6 +30,7 @@ export class LLMController {
                 userId: req.user?.userId || value.userId,
                 submissionId: value.submissionId,
                 taskId: value.taskId,
+                topicId: value.topicId || value.topic_id,
             };
 
             const result = await this.llmService.processPrompt(params);
@@ -80,3 +81,4 @@ export class LLMController {
     };
 }
 export default LLMController;
+

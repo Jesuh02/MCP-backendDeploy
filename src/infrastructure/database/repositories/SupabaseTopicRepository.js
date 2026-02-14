@@ -1,4 +1,4 @@
-﻿export class SupabaseTopicRepository {
+export class SupabaseTopicRepository {
     constructor(client) { this.client = client; }
 
     async findAll(pg = {}) {
@@ -52,3 +52,4 @@
     }
 }
 export default SupabaseTopicRepository;
+

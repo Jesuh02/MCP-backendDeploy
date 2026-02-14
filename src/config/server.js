@@ -15,10 +15,9 @@ import express from 'express';
 import { networkInterfaces } from 'os';
 import { createContainer } from './container.js';
 import { createV1Router } from '../interfaces/http/routes/v1/index.js';
-import { createAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
+import { createAuthMiddleware, createOptionalAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
 import { errorHandler } from '../infrastructure/middleware/ErrorHandler.js';
-import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
-import legacyPaymentRouter from '../interfaces/routes/paymentRoutes.js';
+import { MCPHttpCompatController } from '../interfaces/http/controllers/MCPHttpCompatController.js';
 
 /**
  * Crea y configura la aplicación Express con toda la arquitectura hexagonal.
@@ -32,7 +31,12 @@ export function createApp() {
     // ═══════════════════════════════════════════════════════════
 
     // Body parsing con límites de seguridad
-    app.use(express.json({ limit: '50mb' }));
+    app.use(express.json({
+        limit: '50mb',
+        verify: (req, _res, buf) => {
+            req.rawBody = buf.toString('utf8');
+        },
+    }));
     app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
     // CORS
@@ -63,9 +67,11 @@ export function createApp() {
 
     const container = createContainer();
     const authMiddleware = createAuthMiddleware(container.jwtAdapter);
+    const optionalAuthMiddleware = createOptionalAuthMiddleware(container.jwtAdapter);
     const v1Router = createV1Router({
         ...container,
         authMiddleware,
+        optionalAuthMiddleware,
         requireRoles,
     });
 
@@ -80,9 +86,15 @@ export function createApp() {
         app.handle(req, res, next);
     });
 
-    // Legacy Payment routes → redirect /api/payment/* to legacy paymentRoutes
-    // Android PaymentApi.kt uses /api/payment/* endpoints directly
-    app.use('/api/payment', legacyPaymentRouter);
+    // Legacy Payment routes → redirect /api/payment/* to /api/v1/payment/*
+    // Android PaymentApi.kt uses /api/payment/* endpoints directly.
+    // IMPORTANT: Override originalUrl so AuthMiddleware sees '/api/v1/...' and enforces JWT.
+    app.use('/api/payment', (req, res, next) => {
+        const suffix = req.url; // e.g. '/initiate'
+        req.originalUrl = `/api/v1/payment${suffix}`; // auth middleware reads this
+        req.url = `/api/v1/payment${suffix}`;
+        app.handle(req, res, next);
+    });
 
     // ═══════════════════════════════════════════════════════════
     // 3. RUTAS DE COMPATIBILIDAD (Legacy → /api/v1)
@@ -162,176 +174,47 @@ export function createApp() {
     // ═══════════════════════════════════════════════════════════
     // 3.5. MCP HTTP TOOL ENDPOINTS (Android MCPHttpClient compat)
     //
-    // The Android app's MCPHttpClient sends direct HTTP requests to
-    // /initialize, /tools/list, /tools/call using JSON-RPC format.
-    // These endpoints replicate the standalone mcp-http.js server
-    // so the deployed Railway backend handles them.
+    // Delegados al MCPHttpCompatController (arquitectura hexagonal).
+    // El controlador recibe dependencias por DI desde el container.
     // ═══════════════════════════════════════════════════════════
-    
-    function getMCPHttpService() {
-        return container.mcpServiceLegacy;
-    }
 
-    // MCP Initialize — Android client calls this to handshak
-    app.post('/initialize', async(req, res) => {
-        console.log('🔧 MCP Initialize request (Android compat)');
-        try {
-            const supabase = SupabaseService.getInstance();
-            await supabase.testConnection();
-
-            res.json({
-                jsonrpc: '2.0',
-                id: req.body?.id || 1,
-                result: {
-                    protocolVersion: '2024-11-05',
-                    capabilities: {
-                        tools: { listChanged: true },
-                        resources: { subscribe: true, listChanged: true },
-                    },
-                    serverInfo: {
-                        name: 'YisusCompany by YisusFactory MCP Server',
-                        version: '3.0.0',
-                    },
-                },
-            });
-        } catch (error) {
-            console.error('❌ Initialize error:', error);
-            res.status(500).json({
-                jsonrpc: '2.0',
-                id: req.body?.id || 1,
-                error: { code: -32603, message: 'Internal error', data: error.message },
-            });
-        }
+    const mcpHttpCompat = new MCPHttpCompatController({
+        mcpService: container.mcpDomainService,
+        mcpServiceLegacy: container.mcpServiceLegacy,
     });
 
-    // MCP Tools List — Android client discovers available tools
-    app.post('/tools/list', (req, res) => {
-        console.log('🔧 Tools list request (Android compat)');
-        res.json({
-            jsonrpc: '2.0',
-            id: req.body?.id || 1,
-            result: {
-                tools: [{
-                        name: 'query_database',
-                        description: 'Execute queries on the YisusCompany Supabase database. Accepts raw SQL or natural language.',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                query: { type: 'string', description: 'SQL or natural language query' },
-                            },
-                            required: ['query'],
-                        },
-                    },
-                    {
-                        name: 'get_database_schema',
-                        description: 'Get the complete database schema with all tables and columns.',
-                        inputSchema: { type: 'object', properties: {} },
-                    },
-                    {
-                        name: 'analyze_github_repo',
-                        description: 'Analyze and grade a GitHub repository.',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                repoUrl: { type: 'string', description: 'GitHub repository URL' },
-                                criteria: { type: 'string', description: 'Evaluation criteria' },
-                                taskDescription: { type: 'string', description: 'Task description' },
-                            },
-                            required: ['repoUrl'],
-                        },
-                    },
-                ],
-            },
-        });
-    });
+    app.post('/initialize', mcpHttpCompat.initialize);
+    app.post('/tools/list', mcpHttpCompat.listTools);
+    app.post('/tools/call', mcpHttpCompat.callTool);
 
-    // MCP Tools Call — Android client executes tools (query_database, etc.)
-    app.post('/tools/call', async(req, res) => {
-        const { params } = req.body;
-        console.log('🔧 Tool call (Android compat):', params?.name);
+    // ═══════════════════════════════════════════════════════════
+    // 3.6. LEGACY NOTIFICATION ENDPOINTS → Redirect a /api/v1
+    //
+    // Todos delegan al NotificationDomainService vía el container.
+    // Se mantienen como redirects para backward compatibility con Android.
+    // ═══════════════════════════════════════════════════════════
 
-        try {
-            const mcpSvc = getMCPHttpService();
-            if (!mcpSvc) throw new Error('MCPService not initialized');
-
-            const { name, arguments: args } = params;
-
-            if (name === 'query_database') {
-                let result;
-                const isSQL = /^\s*(select|insert|update|delete|with)\s/i.test(args.query);
-
-                if (isSQL) {
-                    console.log('📊 Executing raw SQL (Android)...');
-                    result = await mcpSvc.processQuery(args.query, { includeSchema: true });
-                } else {
-                    console.log('🤖 NL query via Agent (Android)...');
-                    try {
-                        const agentResponse = await mcpSvc.processQueryWithAgent(args.query);
-                        result = { data: agentResponse, sqlScript: '-- Executed via LLM Agent' };
-                    } catch (agentErr) {
-                        console.error('❌ Agent error:', agentErr);
-                        result = { error: true, message: `Error del agente LLM: ${agentErr.message}` };
-                    }
-                }
-
-                res.json({
-                    jsonrpc: '2.0',
-                    id: req.body.id,
-                    result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
-                });
-            } else if (name === 'get_database_schema') {
-                const schema = await mcpSvc.getDatabaseSchema();
-                res.json({
-                    jsonrpc: '2.0',
-                    id: req.body.id,
-                    result: { content: [{ type: 'text', text: JSON.stringify(schema, null, 2) }] },
-                });
-            } else if (name === 'analyze_github_repo') {
-                console.log('🐙 Analyzing GitHub repo (Android):', args.repoUrl);
-                const ghResult = await mcpSvc.analyzeGitHubRepo(args.repoUrl, {
-                    taskDescription: args.taskDescription,
-                    gradingCriteria: args.gradingCriteria,
-                });
-                res.json({
-                    jsonrpc: '2.0',
-                    id: req.body.id,
-                    result: { content: [{ type: 'text', text: JSON.stringify(ghResult, null, 2) }] },
-                });
-            } else {
-                res.status(404).json({
-                    jsonrpc: '2.0',
-                    id: req.body.id,
-                    error: { code: -32601, message: `Tool not found: ${name}` },
-                });
-            }
-        } catch (error) {
-            console.error('❌ Tool call error:', error);
-            res.json({
-                jsonrpc: '2.0',
-                id: req.body.id,
-                result: {
-                    content: [{ type: 'text', text: `❌ Error: ${error.message}` }],
-                },
-            });
-        }
-    });
-
-    // Notification endpoint — Android sends email/push notifications after chat
     app.post('/notify-chat-response', async(req, res) => {
         try {
-            const { userId } = req.body;
+            const { userId, messageId, metadata, data } = req.body;
             if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
-            // Use the notification service from the container
             const notifService = container.notificationService;
-            if (notifService) {
-                await notifService.send(userId, {
-                    title: '🤖 Nueva respuesta del chat',
-                    message: 'Tu consulta ha sido procesada. Abre la app para ver la respuesta.',
-                    type: 'chat_response',
-                });
-            }
+            if (!notifService) return res.json({ success: false, error: 'NotificationService not available' });
 
+            await notifService.send(parseInt(userId), {
+                title: '🤖 Nueva respuesta del chat',
+                message: 'Tu consulta ha sido procesada. Abre la app para ver la respuesta.',
+                type: 'chat_response',
+                // Android Notification entity expects Long for relatedId, so we use metadata for string IDs
+                metadata: JSON.stringify({
+                    messageId: messageId,
+                    fragment: data?.fragment || 'database_query',
+                    action: 'OPEN_CHAT',
+                    ...data
+                }),
+                data: data
+            });
             res.json({ success: true });
         } catch (error) {
             console.error('❌ notify-chat-response error:', error.message);
@@ -339,31 +222,28 @@ export function createApp() {
         }
     });
 
-    // Push notification endpoint — Android sends push when app is in background
     app.post('/send-push-notification', async(req, res) => {
         try {
             const { userId, title, body: notifBody, data } = req.body;
             if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
             const notifService = container.notificationService;
-            if (notifService) {
-                await notifService.send(userId, {
-                    title: title || '🤖 Nueva respuesta',
-                    message: notifBody || 'Tu consulta ha sido procesada.',
-                    type: 'push',
-                    data: data || {},
-                });
-            }
+            if (!notifService) return res.json({ success: false, error: 'NotificationService not available' });
 
+            await notifService.send(parseInt(userId), {
+                title: title || '🤖 Nueva respuesta',
+                message: notifBody || 'Tu consulta ha sido procesada.',
+                type: 'push',
+                data: data || {},
+            });
             res.json({ success: true });
         } catch (error) {
             console.error('❌ send-push-notification error:', error.message);
             res.json({ success: false, error: error.message });
         }
     });
-
     // ═══════════════════════════════════════════════════════════
-    // 3.6. LEGACY REDIRECTS — Android backward compatibility
+    // 3.7. LEGACY REDIRECTS — Android backward compatibility
     //
     // Estos endpoints legacy se redirigen a la arquitectura
     // hexagonal /api/v1 para mantener compatibilidad con la app.
@@ -392,7 +272,7 @@ export function createApp() {
         app.handle(req, res, next);
     });
 
-    // FCM token registration
+    // FCM token registration — delegates to userService via container (DIP)
     app.post('/register-fcm-token', async(req, res) => {
         try {
             const { userId, token, deviceType } = req.body;
@@ -407,24 +287,23 @@ export function createApp() {
         }
     });
 
-    // Notify grade — Android sends grade notification to student
+    // Notify grade — delegates to notificationService via container (DIP)
     app.post('/notify-grade', async(req, res) => {
                 try {
                     const { userId, taskName, grade, feedback, gradedByUsername, submissionId } = req.body;
                     if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
                     const notifService = container.notificationService;
-                    if (notifService) {
-                        await notifService.sendNotification({
-                                    userId: parseInt(userId),
-                                    title: `📊 Tu tarea "${taskName || 'Tarea'}" ha sido calificada`,
-                                    message: `Nota: ${grade}/10${feedback ? ` — ${feedback.substring(0, 100)}` : ''}`,
-                    type: 'task_graded',
-                    relatedId: submissionId,
-                    senderUsername: gradedByUsername,
-                });
-            }
+                    if (!notifService) return res.json({ success: false, error: 'NotificationService not available' });
 
+                    await notifService.sendNotification({
+                                userId: parseInt(userId),
+                                title: `📊 Tu tarea "${taskName || 'Tarea'}" ha sido calificada`,
+                                message: `Nota: ${grade}/10${feedback ? ` — ${feedback.substring(0, 100)}` : ''}`,
+                type: 'task_graded',
+                relatedId: submissionId,
+                senderUsername: gradedByUsername,
+            });
             res.json({ success: true });
         } catch (error) {
             console.error('❌ notify-grade error:', error.message);
@@ -432,7 +311,7 @@ export function createApp() {
         }
     });
 
-    // Notify video upload — notifica suscriptores de nuevo video
+    // Notify video upload — delegates to notificationService + subscriptionService (DIP)
     app.post('/notify-video-upload', async (req, res) => {
         try {
             const { creatorUserId, creatorUsername, videoTitle, courseId, courseTitle, thumbnailUrl } = req.body;
@@ -441,38 +320,33 @@ export function createApp() {
             const notifService = container.notificationService;
             const subService = container.subscriptionService;
 
-            if (notifService && subService) {
-                const subsResult = await subService.getSubscribers(parseInt(creatorUserId));
-                const subscribers = subsResult.isOk() ? subsResult.getValue() : [];
-
-                let sent = 0;
-                for (const sub of subscribers) {
-                    try {
-                        await notifService.sendNotification({
-                            userId: sub.subscriber_id || sub.subscriberId,
-                            title: `🎬 ${creatorUsername || 'Un creador'} subió un nuevo video`,
-                            message: videoTitle || courseTitle || 'Nuevo video disponible',
-                            type: 'new_video',
-                            relatedId: courseId,
-                            senderUsername: creatorUsername,
-                            thumbnailUrl,
-                        });
-                        sent++;
-                    } catch (e) {
-                        console.warn(`⚠️ Failed to notify subscriber ${sub.subscriber_id}:`, e.message);
-                    }
-                }
-                res.json({ success: true, notificationsSent: sent });
-            } else {
-                res.json({ success: false, error: 'NotificationService not available' });
+            if (!notifService || !subService) {
+                return res.json({ success: false, error: 'NotificationService not available' });
             }
+
+            const subsResult = await subService.getSubscribers(parseInt(creatorUserId));
+            const subscribers = subsResult.isOk() ? subsResult.getValue() : [];
+            const subscriberIds = subscribers.map(s => s.subscriber_id || s.subscriberId);
+
+            if (subscriberIds.length > 0) {
+                await notifService.sendBulk(subscriberIds, {
+                    title: `🎬 ${creatorUsername || 'Un creador'} subió un nuevo video`,
+                    message: videoTitle || courseTitle || 'Nuevo video disponible',
+                    type: 'new_video',
+                    relatedId: courseId,
+                    senderUsername: creatorUsername,
+                    thumbnailUrl,
+                });
+            }
+
+            res.json({ success: true, notificationsSent: subscriberIds.length });
         } catch (error) {
             console.error('❌ notify-video-upload error:', error.message);
             res.json({ success: false, error: error.message });
         }
     });
 
-    // Notify course creation — notifica suscriptores de nuevo curso
+    // Notify course creation — delegates to notificationService + subscriptionService (DIP)
     app.post('/notify-course-creation', async (req, res) => {
         try {
             const { creatorUserId, creatorUsername, courseId, courseTitle, courseThumbnailUrl } = req.body;
@@ -483,99 +357,65 @@ export function createApp() {
             const notifService = container.notificationService;
             const subService = container.subscriptionService;
 
-            if (notifService && subService) {
-                const subsResult = await subService.getSubscribers(parseInt(creatorUserId));
-                const subscribers = subsResult.isOk() ? subsResult.getValue() : [];
-
-                let sent = 0;
-                for (const sub of subscribers) {
-                    try {
-                        await notifService.sendNotification({
-                            userId: sub.subscriber_id || sub.subscriberId,
-                            title: `📚 ${creatorUsername || 'Un creador'} publicó un nuevo curso`,
-                            message: courseTitle || 'Nuevo curso disponible',
-                            type: 'new_course',
-                            relatedId: courseId,
-                            senderUsername: creatorUsername,
-                            thumbnailUrl: courseThumbnailUrl,
-                        });
-                        sent++;
-                    } catch (e) {
-                        console.warn(`⚠️ Failed to notify subscriber ${sub.subscriber_id}:`, e.message);
-                    }
-                }
-                res.json({ success: true, notificationsSent: sent });
-            } else {
-                res.json({ success: false, error: 'NotificationService not available' });
+            if (!notifService || !subService) {
+                return res.json({ success: false, error: 'NotificationService not available' });
             }
+
+            const subsResult = await subService.getSubscribers(parseInt(creatorUserId));
+            const subscribers = subsResult.isOk() ? subsResult.getValue() : [];
+            const subscriberIds = subscribers.map(s => s.subscriber_id || s.subscriberId);
+
+            if (subscriberIds.length > 0) {
+                await notifService.sendBulk(subscriberIds, {
+                    title: `📚 ${creatorUsername || 'Un creador'} publicó un nuevo curso`,
+                    message: courseTitle || 'Nuevo curso disponible',
+                    type: 'new_course',
+                    relatedId: courseId,
+                    senderUsername: creatorUsername,
+                    thumbnailUrl: courseThumbnailUrl,
+                });
+            }
+
+            res.json({ success: true, notificationsSent: subscriberIds.length });
         } catch (error) {
             console.error('❌ notify-course-creation error:', error.message);
             res.json({ success: false, error: error.message });
         }
     });
 
-    // Generic send-notification combo (push + email)
+    // Generic send-notification — delegates to notificationService (DIP)
     app.post('/send-notification', async (req, res) => {
         try {
             const { userId, title, message, type, relatedId, senderUsername } = req.body;
             if (!userId) return res.status(400).json({ error: 'userId is required' });
 
             const notifService = container.notificationService;
-            if (notifService) {
-                await notifService.sendNotification({
-                    userId: parseInt(userId),
-                    title: title || 'Nueva notificación',
-                    message: message || '',
-                    type: type || 'generic',
-                    relatedId,
-                    senderUsername,
-                });
-                res.json({ success: true });
-            } else {
-                res.json({ success: false, error: 'NotificationService not available' });
-            }
+            if (!notifService) return res.json({ success: false, error: 'NotificationService not available' });
+
+            await notifService.sendNotification({
+                userId: parseInt(userId),
+                title: title || 'Nueva notificación',
+                message: message || '',
+                type: type || 'generic',
+                relatedId,
+                senderUsername,
+            });
+            res.json({ success: true });
         } catch (error) {
             console.error('❌ send-notification error:', error.message);
             res.json({ success: false, error: error.message });
         }
     });
 
-    // Reinforcement history — save and fetch
-    app.post('/reinforcement-history', async (req, res) => {
-        try {
-            const { userId, courseId, questions } = req.body;
-            if (!userId || !courseId || !questions) {
-                return res.status(400).json({ success: false, error: 'Missing userId, courseId or questions' });
-            }
-            const reinforcementRepo = container.reinforcementService?.reinforcementRepo;
-            if (reinforcementRepo) {
-                await reinforcementRepo.saveHistory(parseInt(userId), parseInt(courseId), questions);
-                return res.json({ success: true, message: 'Reinforcement history saved' });
-            }
-            res.json({ success: false, error: 'ReinforcementService not available' });
-        } catch (err) {
-            console.error('Error saving reinforcement history:', err.message);
-            res.status(500).json({ success: false, error: err.message });
-        }
+    // Reinforcement history — redirect to v1 hexagonal routes
+    app.post('/reinforcement-history', (req, res, next) => {
+        req.url = '/api/v1/reinforcement/session';
+        app.handle(req, res, next);
     });
 
-    app.get('/reinforcement-history/:userId/:courseId', async (req, res) => {
-        try {
-            const userId = parseInt(req.params.userId);
-            const courseId = parseInt(req.params.courseId);
-            if (!userId || !courseId) {
-                return res.status(400).json({ success: false, error: 'Missing userId or courseId' });
-            }
-            const reinforcementRepo = container.reinforcementService?.reinforcementRepo;
-            if (reinforcementRepo) {
-                const history = await reinforcementRepo.getHistory(userId, courseId);
-                return res.json({ success: true, data: history || [] });
-            }
-            res.json({ success: false, data: [] });
-        } catch (err) {
-            console.error('Error fetching reinforcement history:', err.message);
-            res.status(500).json({ success: false, error: err.message });
-        }
+    app.get('/reinforcement-history/:userId/:courseId', (req, res, next) => {
+        req.url = `/api/v1/reinforcement/history/user/${req.params.userId}/course/${req.params.courseId}`;
+        app.handle(req, res, next);
     });
 
     // ═══════════════════════════════════════════════════════════
@@ -658,3 +498,4 @@ export function startServer(app, port = 3000) {
 }
 
 export default { createApp, startServer };
+

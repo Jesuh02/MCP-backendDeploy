@@ -1,6 +1,44 @@
-import { ChatOllama } from "@langchain/community/chat_models/ollama";
-import { ChatOpenAI } from "@langchain/openai";
-import { HumanMessage, SystemMessage, ToolMessage, AIMessage } from "@langchain/core/messages";
+/**
+ * LLM model classes are loaded lazily to avoid blocking server startup.
+ * Static imports of @langchain packages are heavy (~500ms+) and can cause
+ * Railway 502 errors if they delay health check responses.
+ */
+let ChatOllama = null;
+let ChatOpenAI = null;
+let _HumanMessage = null;
+let _SystemMessage = null;
+let _ToolMessage = null;
+let _AIMessage = null;
+let _langchainLoaded = false;
+
+/**
+ * Lazy-loads LangChain dependencies on first use.
+ * Follows OCP: new providers can be added without modifying existing logic.
+ */
+async function ensureLangChainLoaded() {
+    if (_langchainLoaded) return;
+    try {
+        const [openaiMod, coreMod] = await Promise.all([
+            import ('@langchain/openai'),
+            import ('@langchain/core/messages'),
+        ]);
+        ChatOpenAI = openaiMod.ChatOpenAI;
+        _HumanMessage = coreMod.HumanMessage;
+        _SystemMessage = coreMod.SystemMessage;
+        _ToolMessage = coreMod.ToolMessage;
+        _AIMessage = coreMod.AIMessage;
+    } catch (e) {
+        console.warn('⚠️ @langchain/openai not available:', e.message);
+    }
+    try {
+        const ollamaMod = await
+        import ('@langchain/community/chat_models/ollama');
+        ChatOllama = ollamaMod.ChatOllama;
+    } catch (e) {
+        console.warn('⚠️ @langchain/community not available:', e.message);
+    }
+    _langchainLoaded = true;
+}
 
 export class LLMService {
     static instance = null;
@@ -13,51 +51,61 @@ export class LLMService {
     }
 
     constructor() {
-        // Prevent multiple instances
         if (LLMService.instance) {
             return LLMService.instance;
         }
 
-        // Check if DeepSeek is configured
+        this.model = null;
+        this.provider = 'none';
+        this._initialized = false;
+        LLMService.instance = this;
+    }
+
+    /**
+     * Initializes the LLM provider lazily on first use.
+     * Separates construction from initialization (SRP).
+     */
+    async _ensureInitialized() {
+        if (this._initialized) return;
+        this._initialized = true;
+
+        await ensureLangChainLoaded();
+
         const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
         const useDeepSeek = process.env.USE_LLM === 'true' && deepSeekApiKey;
 
-        if (useDeepSeek) {
-            // DeepSeek V3 (Chat) is preferred over Reasoner for generic tasks to avoid loops/timeouts
-            // API Docs: https://api-docs.deepseek.com/
-            const modelName = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+        if (useDeepSeek && ChatOpenAI) {
+            const modelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
             console.log(`🧠 Initializing DeepSeek ${modelName} ...`);
             this.provider = 'deepseek';
             this.model = new ChatOpenAI({
                 openAIApiKey: deepSeekApiKey,
                 configuration: {
-                    baseURL: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
+                    baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
                 },
-                modelName: modelName,
+                modelName,
                 temperature: 0.3,
                 timeout: 300000,
-                maxRetries: 2
+                maxRetries: 2,
+            });
+        } else if (ChatOllama) {
+            console.log('Initializing Ollama LLM...');
+            this.provider = 'ollama';
+            this.model = new ChatOllama({
+                baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+                model: 'llama3:8b',
+                temperature: 0,
+                timeout: 30000,
             });
         } else {
-            console.log("Initializing Ollama LLM...");
-            this.provider = 'ollama';
-            // Initialize Ollama with Llama 3:8b
-            this.model = new ChatOllama({
-                baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
-                model: "llama3:8b",
-                temperature: 0,
-                // Reduced timeout to 30s to prevent long hangs
-                timeout: 30000
-            });
+            console.warn('⚠️ No LLM provider available (LangChain not loaded)');
         }
-
-        LLMService.instance = this;
     }
 
     async testConnection() {
+        await this._ensureInitialized();
         if (!this.model) return { status: 'disabled', error: 'Model not initialized' };
         try {
-            // Simple test with timeout (longer for reasoning models)
             const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Connection test timeout')), 30000)
             );
@@ -81,6 +129,7 @@ export class LLMService {
      * @param {Array} tools - List of tool definitions (JSON Schema)
      */
     async generateResponse(messages, tools = []) {
+        await this._ensureInitialized();
         if (!this.model) throw new Error("LLM disabled");
 
         // --- USER REQUESTED LOGGING ---
@@ -189,18 +238,18 @@ export class LLMService {
     sanitizeMessages(messages) {
         return messages.map(msg => {
             // If it's an AIMessage with empty tool_calls, remove the tool_calls property
-            if (msg instanceof AIMessage || (msg._getType && msg._getType() === 'ai')) {
+            if ((_AIMessage && msg instanceof _AIMessage) || (msg._getType && msg._getType() === 'ai')) {
                 if (msg.tool_calls && msg.tool_calls.length === 0) {
                     // Create a new AIMessage without tool_calls
-                    return new AIMessage({
-                        content: msg.content || ""
-                    });
+                    if (_AIMessage) return new _AIMessage({ content: msg.content || "" });
+                    return {...msg, tool_calls: undefined };
                 }
                 // If there ARE tool_calls, ensure each has the required fields
                 if (msg.tool_calls && msg.tool_calls.length > 0) {
                     const validToolCalls = msg.tool_calls.filter(tc => tc && tc.id && tc.name);
                     if (validToolCalls.length === 0) {
-                        return new AIMessage({ content: msg.content || "" });
+                        if (_AIMessage) return new _AIMessage({ content: msg.content || "" });
+                        return {...msg, tool_calls: undefined };
                     }
                 }
             }
@@ -208,3 +257,4 @@ export class LLMService {
         });
     }
 }
+

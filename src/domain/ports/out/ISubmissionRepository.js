@@ -13,5 +13,7 @@ export class ISubmissionRepository {
     async delete(id) { throw new Error('Not implemented'); }
     async countByUserAndCourse(userId, courseId) { throw new Error('Not implemented'); }
     async getGradedByUserAndCourse(userId, courseId) { throw new Error('Not implemented'); }
+    async getStudentIdsByCourse(courseId) { throw new Error('Not implemented'); }
 }
 export default ISubmissionRepository;
+
