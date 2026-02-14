@@ -448,12 +448,10 @@ Responde de forma clara y constructiva.`;
         try {
             const parsed = JSON.parse(jsonPart);
             if (Array.isArray(parsed) && parsed.length > 1) {
-                // Validate each object has the required fields
-                const valid = parsed.every(q =>
-                    q.question && Array.isArray(q.options) &&
-                    typeof q.correctIndex === 'number'
-                );
-                if (valid) return text; // Already valid
+                const sanitized = this._sanitizeQuizQuestions(parsed);
+                if (sanitized.length > 0) {
+                    return prefix + JSON.stringify(sanitized) + suffix;
+                }
             }
         } catch (_) { /* needs repair */ }
 
@@ -533,15 +531,88 @@ Responde de forma clara y constructiva.`;
                 };
             });
 
-            if (repaired.length >= 2) {
-                console.log(`🔧 [LLMDomainService] Repaired quiz JSON: ${repaired.length} questions reconstructed (position-aware grouping)`);
-                return prefix + JSON.stringify(repaired) + suffix;
+            const sanitized = this._sanitizeQuizQuestions(repaired);
+            if (sanitized.length >= 2) {
+                console.log(`🔧 [LLMDomainService] Repaired quiz JSON: ${sanitized.length} questions reconstructed (position-aware grouping)`);
+                return prefix + JSON.stringify(sanitized) + suffix;
             }
         } catch (repairErr) {
             console.warn(`⚠️ [LLMDomainService] Quiz JSON repair failed: ${repairErr.message}`);
         }
 
         return text;
+    }
+
+    _sanitizeQuizQuestions(questions) {
+        if (!Array.isArray(questions) || questions.length === 0) {
+            return [];
+        }
+
+        const sanitized = [];
+        const seenQuestions = new Set();
+
+        for (const rawQuestion of questions) {
+            const questionText = String(rawQuestion?.question || '').trim();
+            const normalizedQuestion = this._normalizeQuizText(questionText);
+            if (!normalizedQuestion || seenQuestions.has(normalizedQuestion)) {
+                continue;
+            }
+
+            const rawOptions = Array.isArray(rawQuestion?.options)
+                ? rawQuestion.options.map(option => String(option || '').trim()).filter(Boolean)
+                : [];
+
+            const uniqueOptions = [];
+            const seenOptions = new Set();
+            for (const option of rawOptions) {
+                const normalizedOption = this._normalizeQuizText(option);
+                if (!normalizedOption || seenOptions.has(normalizedOption)) {
+                    continue;
+                }
+                seenOptions.add(normalizedOption);
+                uniqueOptions.push(option);
+            }
+
+            if (uniqueOptions.length < 4) {
+                continue;
+            }
+
+            const options = uniqueOptions.slice(0, 4);
+            const requestedIndex = Number(rawQuestion?.correctIndex);
+            const safeRequestedIndex = Number.isInteger(requestedIndex) ? requestedIndex : 0;
+            const originalCorrectOption = rawOptions[safeRequestedIndex] || options[0];
+            const normalizedCorrectOption = this._normalizeQuizText(originalCorrectOption);
+
+            let correctIndex = options.findIndex(option => this._normalizeQuizText(option) === normalizedCorrectOption);
+            if (correctIndex < 0) {
+                correctIndex = 0;
+            }
+
+            const explanation = String(rawQuestion?.explanation || '').trim() ||
+                `La respuesta correcta es: "${options[correctIndex] || 'la opción correcta'}".`;
+
+            sanitized.push({
+                question: questionText,
+                options,
+                correctIndex,
+                explanation
+            });
+
+            seenQuestions.add(normalizedQuestion);
+
+            if (sanitized.length >= 10) {
+                break;
+            }
+        }
+
+        return sanitized;
+    }
+
+    _normalizeQuizText(text = '') {
+        return String(text)
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
     }
 
     /** @private */
