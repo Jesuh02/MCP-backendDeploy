@@ -19,6 +19,16 @@ export class SupabaseProgressRepository {
         return data ? data.map(this._mapToDomain) : [];
     }
 
+    async findByCourseIds(courseIds = []) {
+        if (!Array.isArray(courseIds) || courseIds.length === 0) return [];
+        const { data, error } = await this.client
+            .from('progreso_estudiante')
+            .select('*')
+            .in('curso_id', courseIds);
+        if (error) return [];
+        return data ? data.map(this._mapToDomain) : [];
+    }
+
     async upsert(progressData) {
         // Guard against null/undefined required fields
         if (!progressData.courseId) throw new Error('courseId is required for progress upsert');
@@ -95,9 +105,218 @@ export class SupabaseProgressRepository {
     }
 
     async getTopStudentsGlobal(limit = 10) {
-        const { data, error } = await this.client.from('progreso_estudiante').select('*').order('porcentaje_progreso', { ascending: false }).limit(limit);
-        if (error) return [];
-        return data ? data.map(this._mapToDomain) : [];
+        const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Number(limit) : 10;
+
+        const { data: progressRows, error: progressError } = await this.client
+            .from('progreso_estudiante')
+            .select('usuario_estudiante, estado, usuarios:usuario_estudiante(id, username, avatar)')
+            .not('usuario_estudiante', 'is', null);
+
+        if (progressError || !progressRows) return [];
+
+        const aggregatedByUser = new Map();
+
+        for (const row of progressRows) {
+            const userId = Number(row ? .usuario_estudiante);
+            if (!Number.isInteger(userId) || userId <= 0) continue;
+
+            const existing = aggregatedByUser.get(userId) || {
+                user_id: userId,
+                approved_courses: 0,
+                username: null,
+                avatar: null,
+            };
+
+            const status = String(row ? .estado || '').trim().toLowerCase();
+            if (status === 'ganado') {
+                existing.approved_courses += 1;
+            }
+
+            const relatedUser = Array.isArray(row ? .usuarios) ?
+                row.usuarios[0] :
+                row ? .usuarios;
+
+            if (!existing.username && relatedUser ? .username) {
+                existing.username = relatedUser.username;
+            }
+            if (!existing.avatar && relatedUser ? .avatar) {
+                existing.avatar = relatedUser.avatar;
+            }
+
+            aggregatedByUser.set(userId, existing);
+        }
+
+        const ranked = [...aggregatedByUser.values()]
+            .filter((student) => student.approved_courses > 0)
+            .sort((a, b) => {
+                if (b.approved_courses !== a.approved_courses) {
+                    return b.approved_courses - a.approved_courses;
+                }
+                return a.user_id - b.user_id;
+            })
+            .slice(0, safeLimit);
+
+        const missingProfileIds = ranked
+            .filter((student) => !student.username)
+            .map((student) => student.user_id);
+
+        if (missingProfileIds.length > 0) {
+            const { data: usersData } = await this.client
+                .from('usuarios')
+                .select('id, username, avatar')
+                .in('id', missingProfileIds);
+
+            const usersById = new Map((usersData || []).map((user) => [Number(user.id), user]));
+
+            for (const student of ranked) {
+                const user = usersById.get(student.user_id);
+                if (!user) continue;
+                if (!student.username && user.username) student.username = user.username;
+                if (!student.avatar && user.avatar) student.avatar = user.avatar;
+            }
+        }
+
+        return ranked.map((student) => ({
+            user_id: student.user_id,
+            username: student.username || `Usuario ${student.user_id}`,
+            avatar: student.avatar || null,
+            approved_courses: student.approved_courses,
+        }));
+    }
+
+    async getCreatorEnrollmentAnalytics(creatorUserId, { weeklyDays = 7, monthlyMonths = 6 } = {}) {
+        const safeWeeklyDays = Number.isInteger(weeklyDays) && weeklyDays > 0 ? weeklyDays : 7;
+        const safeMonthlyMonths = Number.isInteger(monthlyMonths) && monthlyMonths > 0 ? monthlyMonths : 6;
+
+        const { data: creatorCourses, error: coursesError } = await this.client
+            .from('courses')
+            .select('id')
+            .eq('creator_user_id', creatorUserId);
+
+        if (coursesError || !creatorCourses || creatorCourses.length === 0) {
+            return this._buildEmptyCreatorEnrollmentAnalytics(safeWeeklyDays, safeMonthlyMonths);
+        }
+
+        const courseIds = creatorCourses.map((course) => course.id);
+        const { data: progressRows, error: progressError } = await this.client
+            .from('progreso_estudiante')
+            .select('creado_en, ultima_calculada_en')
+            .in('curso_id', courseIds);
+
+        if (progressError || !progressRows) {
+            return this._buildEmptyCreatorEnrollmentAnalytics(safeWeeklyDays, safeMonthlyMonths);
+        }
+
+        return this._aggregateCreatorEnrollmentAnalytics(progressRows, safeWeeklyDays, safeMonthlyMonths);
+    }
+
+    _buildEmptyCreatorEnrollmentAnalytics(weeklyDays, monthlyMonths) {
+        const dailyBuckets = this._createDailyBuckets(weeklyDays);
+        const monthlyBuckets = this._createMonthlyBuckets(monthlyMonths);
+
+        return {
+            weekly: {
+                labels: dailyBuckets.map((bucket) => bucket.label),
+                values: dailyBuckets.map(() => 0),
+            },
+            monthly: {
+                labels: monthlyBuckets.map((bucket) => bucket.label),
+                values: monthlyBuckets.map(() => 0),
+            },
+            totalEnrollments: 0,
+        };
+    }
+
+    _aggregateCreatorEnrollmentAnalytics(progressRows, weeklyDays, monthlyMonths) {
+        const dailyBuckets = this._createDailyBuckets(weeklyDays);
+        const monthlyBuckets = this._createMonthlyBuckets(monthlyMonths);
+
+        const dailyIndexByKey = new Map(dailyBuckets.map((bucket, index) => [bucket.key, index]));
+        const monthlyIndexByKey = new Map(monthlyBuckets.map((bucket, index) => [bucket.key, index]));
+
+        for (const row of progressRows) {
+            const rawDate = row.creado_en || row.ultima_calculada_en;
+            if (!rawDate) continue;
+
+            const enrollmentDate = new Date(rawDate);
+            if (Number.isNaN(enrollmentDate.getTime())) continue;
+
+            const dayKey = this._formatDayKeyUtc(enrollmentDate);
+            const dayIndex = dailyIndexByKey.get(dayKey);
+            if (dayIndex !== undefined) {
+                dailyBuckets[dayIndex].count += 1;
+            }
+
+            const monthKey = this._formatMonthKeyUtc(enrollmentDate);
+            const monthIndex = monthlyIndexByKey.get(monthKey);
+            if (monthIndex !== undefined) {
+                monthlyBuckets[monthIndex].count += 1;
+            }
+        }
+
+        return {
+            weekly: {
+                labels: dailyBuckets.map((bucket) => bucket.label),
+                values: dailyBuckets.map((bucket) => bucket.count),
+            },
+            monthly: {
+                labels: monthlyBuckets.map((bucket) => bucket.label),
+                values: monthlyBuckets.map((bucket) => bucket.count),
+            },
+            totalEnrollments: progressRows.length,
+        };
+    }
+
+    _createDailyBuckets(weeklyDays) {
+        const dayLabels = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+        const now = new Date();
+        const buckets = [];
+
+        for (let offset = weeklyDays - 1; offset >= 0; offset--) {
+            const date = new Date(Date.UTC(
+                now.getUTCFullYear(),
+                now.getUTCMonth(),
+                now.getUTCDate() - offset,
+            ));
+
+            buckets.push({
+                key: this._formatDayKeyUtc(date),
+                label: dayLabels[date.getUTCDay()],
+                count: 0,
+            });
+        }
+
+        return buckets;
+    }
+
+    _createMonthlyBuckets(monthlyMonths) {
+        const monthLabels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+        const now = new Date();
+        const buckets = [];
+
+        for (let offset = monthlyMonths - 1; offset >= 0; offset--) {
+            const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1));
+            buckets.push({
+                key: this._formatMonthKeyUtc(date),
+                label: monthLabels[date.getUTCMonth()],
+                count: 0,
+            });
+        }
+
+        return buckets;
+    }
+
+    _formatDayKeyUtc(date) {
+        const year = date.getUTCFullYear();
+        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(date.getUTCDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    _formatMonthKeyUtc(date) {
+        const year = date.getUTCFullYear();
+        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+        return `${year}-${month}`;
     }
 
     _mapToDomain(dbRecord) {
@@ -117,4 +336,3 @@ export class SupabaseProgressRepository {
     }
 }
 export default SupabaseProgressRepository;
-

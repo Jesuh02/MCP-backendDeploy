@@ -13,6 +13,7 @@ export function courseRoutes({ courseController }) {
     router.get('/purchased', asyncHandler(courseController.getPurchasedCourses));
     router.get('/enrolled', asyncHandler(courseController.getEnrolledCourses));
     router.get('/by-ids', asyncHandler(courseController.getByIds));
+    router.get('/my/creator-metrics', asyncHandler(courseController.getMyCreatorMetrics));
     router.get('/creator/:username', asyncHandler(courseController.getByCreator));
     router.get('/creator-id/:userId', asyncHandler(courseController.getByCreatorId));
     router.get('/creator-id/:userId/with-submissions', asyncHandler(courseController.getCreatorCoursesWithSubmissions));
@@ -24,4 +25,3 @@ export function courseRoutes({ courseController }) {
     return router;
 }
 export default courseRoutes;
-

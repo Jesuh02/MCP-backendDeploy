@@ -23,8 +23,17 @@ export class CourseController {
     };
 
     getFilterCounts = async(req, res, next) => {
-        const userId = req.query.userId ? parseInt(req.query.userId) : (req.user?.userId || null);
+        const userId = req.query.userId ? parseInt(req.query.userId) : (req.user ? .userId || null);
         const result = await this.courseService.getFilterCounts(userId);
+        if (result.isFail()) return next(result.getError());
+        res.json({ success: true, data: result.getValue() });
+    };
+
+    getMyCreatorMetrics = async(req, res, next) => {
+        const userId = req.user ? .userId;
+        if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+        const result = await this.courseService.getCreatorDashboardMetrics(userId);
         if (result.isFail()) return next(result.getError());
         res.json({ success: true, data: result.getValue() });
     };
@@ -96,7 +105,7 @@ export class CourseController {
     };
 
     getPurchasedCourses = async(req, res, next) => {
-        const userId = req.user?.userId || req.query.userId;
+        const userId = req.user ? .userId || req.query.userId;
         if (!userId) return res.status(400).json({ success: false, error: 'User ID required' });
 
         const pg = parsePagination(req.query);
@@ -108,7 +117,7 @@ export class CourseController {
     };
 
     getEnrolledCourses = async(req, res, next) => {
-        const userId = req.user?.userId || req.query.userId;
+        const userId = req.user ? .userId || req.query.userId;
         if (!userId) return res.status(400).json({ success: false, error: 'User ID required' });
 
         const pg = parsePagination(req.query);
@@ -150,4 +159,3 @@ export class CourseController {
     };
 }
 export default CourseController;
-
