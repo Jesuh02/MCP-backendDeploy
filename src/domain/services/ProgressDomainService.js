@@ -23,8 +23,8 @@ export class ProgressDomainService {
         return Result.ok(refreshed);
     }
 
-    async getByUser(userId) {
-        const progress = await this.progressRepo.findByUser(userId);
+    async getByUser(userId, options = {}) {
+        const progress = await this.progressRepo.findByUser(userId, options);
         return Result.ok(progress);
     }
 
