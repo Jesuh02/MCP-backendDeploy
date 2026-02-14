@@ -1,5 +1,5 @@
 import { Result } from '../../shared/Result.js';
-import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
+import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
     constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort }) {
@@ -7,6 +7,14 @@ export class CourseDomainService {
         this.transactionRepo = transactionRepository;
         this.progressRepo = progressRepository;
         this.storage = fileStoragePort || null;
+    }
+
+    _validateCourseId(id) {
+        const normalizedId = Number(id);
+        if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+            return Result.fail(new ValidationError('courseId debe ser un entero positivo'));
+        }
+        return Result.ok(normalizedId);
     }
 
     /**
@@ -38,8 +46,12 @@ export class CourseDomainService {
     }
 
     async getById(id) {
-        const course = await this.courseRepo.findById(id);
-        if (!course) return Result.fail(new NotFoundError('Curso', id));
+        const idValidation = this._validateCourseId(id);
+        if (idValidation.isFail()) return idValidation;
+
+        const courseId = idValidation.getValue();
+        const course = await this.courseRepo.findById(courseId);
+        if (!course) return Result.fail(new NotFoundError('Curso', courseId));
         await this._signUrls(course);
         return Result.ok(course);
     }
