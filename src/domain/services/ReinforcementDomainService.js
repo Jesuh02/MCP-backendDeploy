@@ -194,6 +194,29 @@ export class ReinforcementDomainService {
         }
     }
 
+    /**
+     * Retrieve all raw text content from rag_documents for a task/topic/course.
+     * Used by the client to build RAG-grounded prompts that prevent hallucination.
+     * @param {number} courseId
+     * @param {number|null} topicId
+     * @param {number|null} taskId
+     * @returns {Promise<Result>} { content: string, chunks: number, files: string[] }
+     */
+    async getRagContent(courseId, topicId = null, taskId = null) {
+        try {
+            const ragService = new RAGService();
+            const filter = { courseId };
+            if (topicId) filter.topicId = topicId;
+            if (taskId) filter.taskId = taskId;
+
+            const result = await ragService.getRagContent(filter);
+            return Result.ok(result);
+        } catch (error) {
+            console.error('[ReinforcementDomainService] getRagContent error:', error.message);
+            return Result.ok({ content: '', chunks: 0, files: [] });
+        }
+    }
+
     async getHistory(userId, courseId, pagination = {}) {
         const sessions = await this.reinforcementRepo.findByUserAndCourse(userId, courseId, pagination);
         return Result.ok(sessions);

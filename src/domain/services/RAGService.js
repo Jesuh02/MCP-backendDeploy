@@ -339,6 +339,51 @@ export class RAGService {
     }
 
     /**
+     * Get all raw text content from rag_documents for a given filter.
+     * Returns deduplicated, ordered document content for strict grounding.
+     * @param {{ courseId?: number, topicId?: number, taskId?: number }} filter
+     * @returns {Promise<{ content: string, chunks: number, files: string[] }>}
+     */
+    async getRagContent(filter = {}) {
+        try {
+            const chunks = await this.vectorStore.getContentChunks(filter);
+
+            if (!chunks || chunks.length === 0) {
+                return { content: '', chunks: 0, files: [] };
+            }
+
+            // Group chunks by file and reassemble in order
+            const fileMap = new Map();
+            for (const chunk of chunks) {
+                const key = chunk.fileName || 'unknown';
+                if (!fileMap.has(key)) fileMap.set(key, []);
+                fileMap.get(key).push(chunk);
+            }
+
+            let fullContent = '';
+            const fileNames = [];
+
+            for (const [fileName, fileChunks] of fileMap) {
+                fileNames.push(fileName);
+                fileChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+                const fileText = fileChunks.map(c => c.content).join('\n');
+                fullContent += `\n--- DOCUMENTO: ${fileName} ---\n${fileText}\n`;
+            }
+
+            logger.info(`📄 getRagContent: ${chunks.length} chunks from ${fileNames.length} files`);
+
+            return {
+                content: fullContent.trim(),
+                chunks: chunks.length,
+                files: fileNames,
+            };
+        } catch (error) {
+            logger.error('Error in getRagContent:', error);
+            return { content: '', chunks: 0, files: [] };
+        }
+    }
+
+    /**
      * Build smart context that analyzes the query to determine data needs
      */
     async buildSmartContext(query, options = {}) {
