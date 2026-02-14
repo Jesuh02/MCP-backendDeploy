@@ -5,6 +5,7 @@ import Joi from 'joi';
 
 // ─── Topics ──────────────────────────────────────────────
 export const createTopicSchema = Joi.object({
+    id: Joi.any().strip().optional(),
     title: Joi.string().min(1).max(200).optional(),
     name: Joi.string().min(1).max(200).optional(),
     description: Joi.string().max(2000).allow('').optional(),
@@ -12,6 +13,8 @@ export const createTopicSchema = Joi.object({
     course_id: Joi.number().integer().optional(),
     orderIndex: Joi.number().integer().min(0).default(0),
     order_index: Joi.number().integer().min(0).optional(),
+    created_at: Joi.any().strip().optional(),
+    updated_at: Joi.any().strip().optional(),
 }).custom((value, helpers) => {
     // Normalizar: aceptar 'name' como alias de 'title'
     if (!value.title && value.name) value.title = value.name;
@@ -25,11 +28,14 @@ export const createTopicSchema = Joi.object({
 });
 
 export const updateTopicSchema = Joi.object({
+    id: Joi.any().strip().optional(),
     title: Joi.string().min(1).max(200).optional(),
     name: Joi.string().min(1).max(200).optional(),
     description: Joi.string().max(2000).allow('').optional(),
     orderIndex: Joi.number().integer().min(0).optional(),
     order_index: Joi.number().integer().min(0).optional(),
+    created_at: Joi.any().strip().optional(),
+    updated_at: Joi.any().strip().optional(),
 }).custom((value) => {
     // Normalizar: aceptar 'name' como alias de 'title'
     if (!value.title && value.name) value.title = value.name;
