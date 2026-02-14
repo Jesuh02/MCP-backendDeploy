@@ -8,11 +8,25 @@
 import path from 'path';
 
 export class R2StorageAdapter {
+  /**
+   * TTL del cache de URLs firmadas: 50 minutos (las URLs expiran en 60min,
+   * dejamos 10min de margen para que el cliente siempre reciba una URL válida).
+   */
+  static SIGNED_URL_CACHE_TTL_MS = 50 * 60 * 1000; // 3 000 000 ms
+
   constructor() {
     this.r2Client = null;
     this.bucketName = process.env.R2_BUCKET_NAME || 'coursev-files';
     this.publicUrl = process.env.R2_PUBLIC_URL || 'https://pub-9f393625246c4018b5613be60b01bda1.r2.dev';
+
+    // Bucket público de miniaturas (split-bucket strategy)
+    this.thumbnailPublicUrl = process.env.R2_THUMBNAIL_PUBLIC_URL || 'https://pub-4e815af1d00c464d999d446ba4c03d07.r2.dev';
+
     this._presignerFn = null;
+
+    // Cache in-memory: Map<objectKey, { url: string, createdAt: number }>
+    this._signedUrlCache = new Map();
+
     this._initClient();
   }
 
@@ -49,13 +63,25 @@ export class R2StorageAdapter {
   }
 
   async generateDownloadUrl(key, expiresIn) {
-    expiresIn = expiresIn || 300;
+    expiresIn = expiresIn || 3600;
     if (!this.r2Client) return this.getPublicUrl(key);
+
+    // ── Cache check ──
+    const cached = this._signedUrlCache.get(key);
+    if (cached && (Date.now() - cached.createdAt) < R2StorageAdapter.SIGNED_URL_CACHE_TTL_MS) {
+      return cached.url;
+    }
+
     try {
       const getSignedUrl = await this._getPresigner();
       const cmd = new GetObjectCommand({ Bucket: this.bucketName, Key: key });
-      return getSignedUrl(this.r2Client, cmd, { expiresIn: expiresIn });
+      const signedUrl = await getSignedUrl(this.r2Client, cmd, { expiresIn });
+
+      // Almacenar en cache
+      this._signedUrlCache.set(key, { url: signedUrl, createdAt: Date.now() });
+      return signedUrl;
     } catch (e) {
+      console.warn('[R2StorageAdapter] generateDownloadUrl failed for key:', key, e.message);
       return this.getPublicUrl(key);
     }
   }
@@ -118,6 +144,61 @@ export class R2StorageAdapter {
     var m2 = url.match(/https?:\/\/[^/]+\.r2\.cloudflarestorage\.com\/[^/]+\/(.+)/);
     if (m2) return m2[1];
     return null;
+  }
+
+  // ── Split-bucket helpers ──────────────────────────────────
+
+  /**
+   * Detecta si una URL pertenece al bucket público de miniaturas (coursev-fil).
+   * Las miniaturas NO necesitan URL firmada.
+   */
+  isThumbnailPublicUrl(url) {
+    if (!url) return false;
+    return url.includes('pub-4e815af1d00c464d999d446ba4c03d07.r2.dev');
+  }
+
+  /**
+   * Construye la URL pública de una miniatura a partir de su object key.
+   * @param {string} key  e.g. "thumbnails/courses/thumb_123.jpg"
+   */
+  getThumbnailPublicUrl(key) {
+    return this.thumbnailPublicUrl + '/' + key;
+  }
+
+  /**
+   * Devuelve estadísticas del cache de URLs firmadas (útil para /health).
+   */
+  getSignedUrlCacheStats() {
+    let active = 0;
+    let expired = 0;
+    const now = Date.now();
+    for (const [, entry] of this._signedUrlCache) {
+      if ((now - entry.createdAt) < R2StorageAdapter.SIGNED_URL_CACHE_TTL_MS) {
+        active++;
+      } else {
+        expired++;
+      }
+    }
+    return { total: this._signedUrlCache.size, active, expired };
+  }
+
+  /**
+   * Limpia entradas expiradas del cache.
+   */
+  purgeExpiredCache() {
+    const now = Date.now();
+    for (const [key, entry] of this._signedUrlCache) {
+      if ((now - entry.createdAt) >= R2StorageAdapter.SIGNED_URL_CACHE_TTL_MS) {
+        this._signedUrlCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Limpia todo el cache de URLs firmadas.
+   */
+  clearSignedUrlCache() {
+    this._signedUrlCache.clear();
   }
 }
 
