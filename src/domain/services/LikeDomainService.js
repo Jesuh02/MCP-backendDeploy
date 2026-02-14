@@ -30,8 +30,8 @@ export class LikeDomainService {
             if (!this.notificationService) return;
 
             const liker = await this.userRepo.findById(userId);
-            const senderUsername = liker ? liker.usuario : 'Alguien';
-            const senderAvatar = liker ? liker.avatar : '';
+            const senderUsername = liker?.username || liker?.usuario || 'Alguien';
+            const senderAvatar = liker?.avatar || '';
 
             if (entityType === 'video') {
                 if (!this.videoRepo) return;
