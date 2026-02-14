@@ -118,7 +118,7 @@ export class SupabaseProgressRepository {
         if (coursesError || !creatorCourses || creatorCourses.length === 0) return [];
 
         const creatorCourseIds = creatorCourses
-            .map((course) => Number(course?.id))
+            .map((course) => Number(course ? .id))
             .filter((courseId) => Number.isInteger(courseId) && courseId > 0);
 
         if (creatorCourseIds.length === 0) return [];
@@ -135,7 +135,7 @@ export class SupabaseProgressRepository {
         const aggregatedByUser = new Map();
 
         for (const row of progressRows) {
-            const userId = Number(row?.usuario_estudiante);
+            const userId = Number(row ? .usuario_estudiante);
             if (!Number.isInteger(userId) || userId <= 0) continue;
 
             const existing = aggregatedByUser.get(userId) || {
@@ -148,11 +148,11 @@ export class SupabaseProgressRepository {
                 avatar: null,
             };
 
-            const status = String(row?.estado || '').trim().toLowerCase();
+            const status = String(row ? .estado || '').trim().toLowerCase();
             if (status === 'ganado') {
                 existing.approved_courses += 1;
 
-                const gradeRaw = row?.calificacion_ponderada ?? row?.promedio;
+                const gradeRaw = row ? .calificacion_ponderada ? ? row ? .promedio;
                 const grade = Number(gradeRaw);
                 if (Number.isFinite(grade)) {
                     existing.total_grade += grade;
@@ -160,14 +160,14 @@ export class SupabaseProgressRepository {
                 }
             }
 
-            const relatedUser = Array.isArray(row?.usuarios) ?
+            const relatedUser = Array.isArray(row ? .usuarios) ?
                 row.usuarios[0] :
-                row?.usuarios;
+                row ? .usuarios;
 
-            if (!existing.username && relatedUser?.username) {
+            if (!existing.username && relatedUser ? .username) {
                 existing.username = relatedUser.username;
             }
-            if (!existing.avatar && relatedUser?.avatar) {
+            if (!existing.avatar && relatedUser ? .avatar) {
                 existing.avatar = relatedUser.avatar;
             }
 
