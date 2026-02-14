@@ -126,7 +126,15 @@ export class SupabaseUserRepository {
     }
 
     async registerFCMToken(userId, token, deviceType = 'android') {
-        const { error } = await this.client.from('user_fcm_tokens').upsert({ user_id: userId, token, device_type: deviceType }, { onConflict: 'token' });
+        const normalizedToken = (token || '').trim();
+        if (!normalizedToken) throw new Error('Error registrando FCM token: token vacío');
+
+        const { error } = await this.client
+            .from('user_fcm_tokens')
+            .upsert(
+                { user_id: userId, token: normalizedToken, device_type: deviceType },
+                { onConflict: 'user_id,token' }
+            );
         if (error) throw new Error(`Error registrando FCM token: ${error.message}`);
         return true;
     }
