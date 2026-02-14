@@ -73,7 +73,7 @@ export class ProgressDomainService {
         return Result.ok(ids);
     }
 
-    async getTopStudentsGlobal(limit = 10) {
+    async getTopStudentsGlobal(limit = 5) {
         const students = await this.progressRepo.getTopStudentsGlobal(limit);
         return Result.ok(students);
     }
