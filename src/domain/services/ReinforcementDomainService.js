@@ -14,6 +14,7 @@ import { SupabaseService } from '../../infrastructure/database/SupabaseService.j
 export class ReinforcementDomainService {
     constructor({ reinforcementRepository }) {
         this.reinforcementRepo = reinforcementRepository;
+        this.REQUIRED_QUESTION_COUNT = 10;
     }
 
     /**
@@ -110,6 +111,18 @@ export class ReinforcementDomainService {
 
         // If we have questions, use MCPService for full embedding + uniqueness flow
         if (Array.isArray(parsedQuestions) && parsedQuestions.length > 0) {
+            if (parsedQuestions.length !== this.REQUIRED_QUESTION_COUNT) {
+                return Result.ok({
+                    success: false,
+                    savedCount: 0,
+                    duplicateCount: 0,
+                    totalSubmitted: parsedQuestions.length,
+                    requiredCount: this.REQUIRED_QUESTION_COUNT,
+                    needsRegeneration: true,
+                    message: `Se requieren exactamente ${this.REQUIRED_QUESTION_COUNT} preguntas para guardar la sesión.`
+                });
+            }
+
             try {
                 const mcpService = new MCPService();
                 const saveResult = await mcpService.saveReinforcementHistory(
@@ -120,16 +133,21 @@ export class ReinforcementDomainService {
                     taskId || null
                 );
 
-                if (saveResult && saveResult.success) {
+                const savedCount = saveResult?.savedCount || 0;
+                const requiredCount = saveResult?.requiredCount || this.REQUIRED_QUESTION_COUNT;
+                const isCompleteBatch = savedCount === requiredCount;
+
+                if (saveResult && isCompleteBatch) {
                     return Result.ok({
                         success: true,
-                        savedCount: saveResult.savedCount,
-                        duplicateCount: (parsedQuestions.length - saveResult.savedCount),
+                        savedCount,
+                        duplicateCount: (parsedQuestions.length - savedCount),
                         totalSubmitted: parsedQuestions.length,
-                        message: `${saveResult.savedCount} unique questions saved with embeddings`
+                        requiredCount,
+                        message: `${savedCount} preguntas únicas guardadas con embeddings`
                     });
                 } else {
-                    console.warn('[ReinforcementDomainService] MCPService save returned no unique questions (all duplicates?)');
+                    console.warn(`[ReinforcementDomainService] Incomplete save: ${savedCount}/${requiredCount}. Regeneration required.`);
                     // Fetch existing questions so client can use them for regeneration
                     let existingQuestions = [];
                     try {
@@ -143,13 +161,16 @@ export class ReinforcementDomainService {
                     } catch (_) { /* non-blocking */ }
 
                     return Result.ok({
-                        success: true,
-                        savedCount: 0,
-                        duplicateCount: parsedQuestions.length,
+                        success: false,
+                        savedCount,
+                        duplicateCount: (parsedQuestions.length - savedCount),
                         totalSubmitted: parsedQuestions.length,
-                        allDuplicates: true,
+                        requiredCount,
+                        shortfall: Math.max(requiredCount - savedCount, 0),
+                        allDuplicates: savedCount === 0,
+                        needsRegeneration: true,
                         existingQuestions,
-                        message: 'All questions were duplicates — client should regenerate with different content'
+                        message: `Solo se guardaron ${savedCount}/${requiredCount} preguntas únicas. Regenera para completar el lote.`
                     });
                 }
             } catch (e) {

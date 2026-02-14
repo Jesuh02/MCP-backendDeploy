@@ -479,6 +479,22 @@ export class MCPService {
         if (!userId || !courseId || !questions || !questions.length) return false;
 
         try {
+            const REQUIRED_QUESTION_COUNT = 10;
+            const preparedQuestions = this._prepareQuestionsForPersistence(questions, REQUIRED_QUESTION_COUNT);
+
+            if (preparedQuestions.length < REQUIRED_QUESTION_COUNT) {
+                logger.warn(`⚠️ saveReinforcementHistory rejected batch: expected ${REQUIRED_QUESTION_COUNT} valid unique questions, got ${preparedQuestions.length}`);
+                return {
+                    success: false,
+                    savedCount: 0,
+                    savedQuestions: [],
+                    requiredCount: REQUIRED_QUESTION_COUNT,
+                    insufficientCount: true,
+                    totalSubmitted: Array.isArray(questions) ? questions.length : 0,
+                    reason: 'INSUFFICIENT_VALID_QUESTIONS'
+                };
+            }
+
             // Import services dynamically to avoid circular deps
             const EmbeddingService = (await
                 import ('../../infrastructure/ai/EmbeddingService.js')).EmbeddingService;
@@ -545,18 +561,24 @@ export class MCPService {
 
             let savedCount = 0;
             const acceptedQuestions = [];
+            const inBatchQuestionHashes = new Set();
 
             // B. Process Each Question
-            for (const q of questions) {
-                const qText = (typeof q === 'string' ? q : (q.question || q.pregunta || "")).trim();
-                const qExplanation = (typeof q === 'string' ? "" : (q.explanation || q.explicacion || ""));
-                const qIndex = (typeof q === 'string' ? 0 : (q.correctIndex || q.correct_index || 0));
+            for (const q of preparedQuestions) {
+                const qText = q.question;
+                const qExplanation = q.explanation;
+                const qIndex = q.correctIndex;
 
                 if (!qText) continue;
 
                 // --- 1. Hash Check (Paso B) ---
-                const normalizedText = qText.toLowerCase().trim();
+                const normalizedText = this._normalizeQuestionText(qText);
                 const questionHash = crypto.createHash('sha256').update(normalizedText).digest('hex');
+
+                if (inBatchQuestionHashes.has(questionHash)) {
+                    logger.info(`🚫 Duplicate Question (In-Batch Hash Match): "${qText.substring(0, 40)}..."`);
+                    continue;
+                }
 
                 const { data: hashExists } = await supabase
                     .from('questions_history')
@@ -648,7 +670,6 @@ export class MCPService {
 
                 // --- 4. Validate Options (Paso G) ---
                 const optionsArray = q.options || q.opciones || [];
-                let optionsValid = true;
                 let optionEmbeddings = [];
 
                 if (Array.isArray(optionsArray) && optionsArray.length > 0) {
@@ -796,14 +817,21 @@ export class MCPService {
                 }
 
                 savedCount++;
+                inBatchQuestionHashes.add(questionHash);
                 acceptedQuestions.push(q);
+
+                if (savedCount >= REQUIRED_QUESTION_COUNT) {
+                    break;
+                }
             }
 
-            logger.info(`✅ MCPService: Saved ${savedCount} unique questions to history.`);
+            logger.info(`✅ MCPService: Saved ${savedCount}/${REQUIRED_QUESTION_COUNT} unique questions to history.`);
             return {
-                success: savedCount > 0,
+                success: savedCount === REQUIRED_QUESTION_COUNT,
                 savedCount,
-                savedQuestions: acceptedQuestions
+                savedQuestions: acceptedQuestions,
+                requiredCount: REQUIRED_QUESTION_COUNT,
+                insufficientCount: savedCount < REQUIRED_QUESTION_COUNT
             };
 
         } catch (error) {
@@ -824,6 +852,79 @@ export class MCPService {
         if (vector.length === targetDim) return vector;
         if (vector.length > targetDim) return vector.slice(0, targetDim);
         return [...vector, ...new Array(targetDim - vector.length).fill(0)];
+    }
+
+    _prepareQuestionsForPersistence(questions, limit = 10) {
+        if (!Array.isArray(questions) || questions.length === 0) {
+            return [];
+        }
+
+        const prepared = [];
+        const seenQuestions = new Set();
+
+        for (const item of questions) {
+            const questionText = (typeof item === 'string' ? item : (item.question || item.pregunta || '')).trim();
+            if (!questionText) continue;
+
+            const normalizedQuestion = this._normalizeQuestionText(questionText);
+            if (!normalizedQuestion || seenQuestions.has(normalizedQuestion)) continue;
+
+            const rawOptions = (Array.isArray(item?.options) ? item.options : Array.isArray(item?.opciones) ? item.opciones : [])
+                .map(option => String(option || '').trim())
+                .filter(Boolean);
+
+            const uniqueOptions = [];
+            const seenOptions = new Set();
+            for (const option of rawOptions) {
+                const normalizedOption = this._normalizeOptionText(option);
+                if (!normalizedOption || seenOptions.has(normalizedOption)) continue;
+                seenOptions.add(normalizedOption);
+                uniqueOptions.push(option);
+            }
+
+            if (uniqueOptions.length < 4) {
+                continue;
+            }
+
+            const trimmedOptions = uniqueOptions.slice(0, 4);
+            const rawCorrectIndex = Number(item?.correctIndex ?? item?.correct_index ?? 0);
+            const safeCorrectIndex = Number.isInteger(rawCorrectIndex) ? rawCorrectIndex : 0;
+            const originalCorrectOption = rawOptions[safeCorrectIndex] || trimmedOptions[0];
+            const normalizedCorrectOption = this._normalizeOptionText(originalCorrectOption);
+            let correctedIndex = trimmedOptions.findIndex(option => this._normalizeOptionText(option) === normalizedCorrectOption);
+            if (correctedIndex < 0) {
+                correctedIndex = 0;
+            }
+
+            prepared.push({
+                question: questionText,
+                options: trimmedOptions,
+                correctIndex: correctedIndex,
+                explanation: String(item?.explanation || item?.explicacion || '').trim()
+            });
+
+            seenQuestions.add(normalizedQuestion);
+
+            if (prepared.length >= limit) {
+                break;
+            }
+        }
+
+        return prepared;
+    }
+
+    _normalizeQuestionText(text = '') {
+        return String(text)
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    _normalizeOptionText(text = '') {
+        return String(text)
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
     }
 
 

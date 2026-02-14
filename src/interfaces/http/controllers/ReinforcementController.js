@@ -4,6 +4,15 @@
 import Joi from 'joi';
 import { ValidationError } from '../../../shared/errors/index.js';
 
+const normalizeText = (value = '') => String(value).trim().toLowerCase().replace(/\s+/g, ' ');
+
+const questionItemSchema = Joi.object({
+    question: Joi.string().trim().min(8).required(),
+    options: Joi.array().items(Joi.string().trim().min(1).required()).min(4).required(),
+    correctIndex: Joi.number().integer().min(0).required(),
+    explanation: Joi.string().allow('', null).optional(),
+});
+
 // Accept both camelCase and snake_case field names from clients
 const saveSessionSchema = Joi.object({
     userId: Joi.number().integer().optional(),
@@ -31,12 +40,28 @@ const saveQuestionsSchema = Joi.object({
     taskId: Joi.number().integer().allow(null).optional(),
     task_id: Joi.number().integer().allow(null).optional(),
     questions: Joi.alternatives().try(
-        Joi.array().items(Joi.object({
-            question: Joi.string().required(),
-            options: Joi.array().items(Joi.string()).min(2).required(),
-            correctIndex: Joi.number().integer().min(0).required(),
-            explanation: Joi.string().allow('', null).optional(),
-        })),
+        Joi.array().items(questionItemSchema).length(10).custom((items, helpers) => {
+            const seenQuestions = new Set();
+
+            for (const item of items) {
+                const normalizedQuestion = normalizeText(item.question);
+                if (seenQuestions.has(normalizedQuestion)) {
+                    return helpers.error('any.invalid', { message: 'questions must be unique by question text' });
+                }
+                seenQuestions.add(normalizedQuestion);
+
+                const uniqueOptions = new Set(item.options.map(option => normalizeText(option)));
+                if (uniqueOptions.size < 4) {
+                    return helpers.error('any.invalid', { message: 'each question must contain at least 4 unique options' });
+                }
+
+                if (item.correctIndex >= item.options.length) {
+                    return helpers.error('any.invalid', { message: 'correctIndex is out of range for question options' });
+                }
+            }
+
+            return items;
+        }, 'strict question uniqueness validation'),
         Joi.string()
     ).required(),
 }).options({ allowUnknown: true });
