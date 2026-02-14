@@ -155,9 +155,8 @@ export class ProgressDomainService {
         const completedTasks = submittedTaskIds.length;
 
         const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
-        const averageGradeRaw = graded.length > 0 ?
-            graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0) / graded.length :
-            0;
+        const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
+        const averageGradeRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
         const averageGrade = Math.round(averageGradeRaw * 100) / 100;
 
         const progressPercentageRaw = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
