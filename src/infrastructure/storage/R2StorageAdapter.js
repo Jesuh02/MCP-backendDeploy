@@ -1,9 +1,9 @@
 /**
- * R2StorageAdapter — Implementa IFileStoragePort.
+ * R2StorageAdapter ï¿½ Implementa IFileStoragePort.
  *
  * Adaptador de infraestructura para Cloudflare R2 (S3-compatible).
- * Encapsula toda la lógica de almacenamiento, descarga, HLS y
- * recuperación de contenido de archivos.
+ * Encapsula toda la lï¿½gica de almacenamiento, descarga, HLS y
+ * recuperaciï¿½n de contenido de archivos.
  *
  * Principios:
  *   - SRP: solo operaciones de almacenamiento de archivos
@@ -83,7 +83,7 @@ export class R2StorageAdapter {
         }
     }
 
-    /** @private — lazy-load presigner to avoid startup crash */
+    /** @private ï¿½ lazy-load presigner to avoid startup crash */
     async _getPresigner() {
         if (this._presignerFn) return this._presignerFn;
         try {
@@ -95,7 +95,7 @@ export class R2StorageAdapter {
         }
     }
 
-    /** @private — lazy-load SupabaseService for file_contexts queries */
+    /** @private ï¿½ lazy-load SupabaseService for file_contexts queries */
     _getSupabase() {
         if (this._supabaseService) return this._supabaseService;
         try {
@@ -108,7 +108,7 @@ export class R2StorageAdapter {
         return this._supabaseService;
     }
 
-    // -- IFileStoragePort — Core Storage Operations -----------
+    // -- IFileStoragePort ï¿½ Core Storage Operations -----------
 
     isAvailable() {
         return Boolean(this.r2Client);
@@ -252,7 +252,7 @@ export class R2StorageAdapter {
      * @param {Buffer} buffer
      * @param {string} originalFilename
      * @param {string} contentType
-     * @param {string} prefix — e.g. 'videos', 'submissions'
+     * @param {string} prefix ï¿½ e.g. 'videos', 'submissions'
      * @returns {Promise<{ publicUrl: string, key: string }>}
      */
     async uploadBufferWithAutoKey(buffer, originalFilename = null, contentType = 'video/mp4', prefix = 'videos') {
@@ -333,7 +333,7 @@ export class R2StorageAdapter {
     }
 
     /**
-     * Get submission file content — tries file_contexts, R2 auth, R2 public, HTTP.
+     * Get submission file content ï¿½ tries file_contexts, R2 auth, R2 public, HTTP.
      * @param {string} fileUri
      * @param {string} fileName
      * @param {number} submissionId
@@ -379,7 +379,7 @@ export class R2StorageAdapter {
     /**
      * Upload all files in a local HLS directory to R2.
      * @param {string} localDir
-     * @param {string} baseKey — e.g. "videos/user123/video456/hls"
+     * @param {string} baseKey ï¿½ e.g. "videos/user123/video456/hls"
      * @returns {Promise<{ success: boolean, masterPlaylistUrl: string|null, filesUploaded: number }>}
      */
     async uploadHLSDirectory(localDir, baseKey) {

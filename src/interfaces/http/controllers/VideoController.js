@@ -116,6 +116,25 @@ export class VideoController {
         } catch (err) { next(err); }
     };
 
+    /**
+     * POST /api/v1/videos/signed-url-by-key
+     * Body: { objectKey: "videos/mi_video", expiresIn?: 3600 }
+     *
+     * Genera una URL firmada directamente a partir de un object key.
+     * Aprovecha el cache interno (50 min TTL) para no regenerar innecesariamente.
+     */
+    getSignedUrlByKey = async(req, res, next) => {
+        try {
+            const { objectKey, expiresIn } = req.body;
+            if (!objectKey) {
+                return res.status(400).json({ success: false, error: 'objectKey is required' });
+            }
+            const result = await this.videoService.getSignedUrlByKey(objectKey, expiresIn || 3600);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getUploadUrl = async(req, res, next) => {
         try {
             const { filename, contentType } = req.body;
