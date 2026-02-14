@@ -117,6 +117,28 @@ export class SupabaseSubmissionRepository {
         if (error || !data) return [];
         return [...new Set(data.map(item => item.task_id).filter(Boolean))];
     }
+
+    async getStudentIdsByCourse(courseId) {
+        const { data: tasks, error: taskError } = await this.client
+            .from('tasks')
+            .select('id, topics!inner(course_id)')
+            .eq('topics.course_id', courseId);
+
+        if (taskError || !tasks || tasks.length === 0) return [];
+
+        const taskIds = tasks.map(t => t.id).filter(Boolean);
+        if (taskIds.length === 0) return [];
+
+        const { data, error } = await this.client
+            .from('task_submissions')
+            .select('student_id')
+            .in('task_id', taskIds)
+            .not('student_id', 'is', null);
+
+        if (error || !data) return [];
+
+        return [...new Set(data.map(item => item.student_id).filter(id => Number.isInteger(id) && id > 0))];
+    }
 }
 export default SupabaseSubmissionRepository;
 

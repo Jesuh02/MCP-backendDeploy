@@ -151,17 +151,26 @@ export class TaskDomainService {
 
         const originalTopicId = task.topicId || task.topic_id;
         const nextTopicId = data.topicId || originalTopicId;
-        let affectedCourseId = null;
+        let originalCourseId = null;
+        let nextCourseId = null;
+
+        if (originalTopicId) {
+            const originalTopic = await this.topicRepo.findById(originalTopicId);
+            originalCourseId = originalTopic?.course_id || originalTopic?.courseId || null;
+        }
 
         if (nextTopicId) {
             const topic = await this.topicRepo.findById(nextTopicId);
-            affectedCourseId = topic?.course_id || topic?.courseId || null;
+            nextCourseId = topic?.course_id || topic?.courseId || null;
         }
 
         const updated = await this.taskRepo.update(id, data);
 
-        if (affectedCourseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
-            await this.progressService.recalculateForCourse(affectedCourseId);
+        if (this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
+            const affectedCourseIds = [...new Set([originalCourseId, nextCourseId].filter(Boolean))];
+            for (const courseId of affectedCourseIds) {
+                await this.progressService.recalculateForCourse(courseId);
+            }
         }
 
         return Result.ok(updated);
