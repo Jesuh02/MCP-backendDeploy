@@ -84,7 +84,26 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
                 systemPrompt += `\n\nContexto de la tarea: ${taskDescription}`;
             }
             if (ragContext) {
-                systemPrompt += `\n\nContexto relevante del curso:\n${ragContext}`;
+                systemPrompt += `\n\nContexto relevante del curso (extraído de rag_documents):\n${ragContext}`;
+                systemPrompt += `\nINSTRUCCIÓN DE GROUNDING ESTRICTO:
+- Usa EXCLUSIVAMENTE la información contenida en los fragmentos RAG anteriores.
+- Cada pregunta y cada respuesta correcta DEBE poder verificarse directamente en el texto de los fragmentos.
+- NO inventes, infieras ni añadas información que NO aparezca explícitamente en los fragmentos.
+- Si un concepto NO está en los fragmentos, NO generes preguntas sobre él.
+- Las explicaciones deben citar o parafrasear directamente el contenido del material.
+- Extrae conceptos específicos, definiciones, procesos y datos del material para formular preguntas de diferentes niveles de dificultad.`;
+            }
+
+            // 2.5. JSON format enforcement for reinforcement/quiz requests
+            if (this._isReinforcementRequest(prompt)) {
+                systemPrompt += `\n\nINSTRUCCIÓN CRÍTICA DE FORMATO JSON:
+- Tu respuesta DEBE ser ÚNICAMENTE un array JSON válido. Sin texto antes ni después.
+- Cada objeto debe tener los 4 campos en este ORDEN EXACTO: "question", "options", "correctIndex", "explanation".
+- NUNCA mezcles campos de diferentes objetos. Completa un objeto completamente ANTES de iniciar el siguiente.
+- Estructura cada objeto así: {"question":"...","options":["A","B","C","D"],"correctIndex":N,"explanation":"..."}
+- Asegúrate de poner comas entre campos y entre objetos.
+- Genera EXACTAMENTE 10 preguntas que se puedan verificar DIRECTAMENTE en el contexto RAG proporcionado.
+- Cada explicación DEBE referenciar el texto específico del material que justifica la respuesta correcta.`;
             }
 
             // 3. Build user prompt with file content if available
@@ -141,11 +160,18 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
                 content = content.replace(gradingSignal[0], '');
             }
 
-            // 7. Reinforcement history save is handled by the client via /reinforcement/save-questions
+            // 7. Repair malformed quiz JSON before sending to the client
+            // Some LLMs produce scrambled JSON (fields interleaved between objects).
+            // We detect if this is a reinforcement/quiz response and repair it server-side.
+            if (this._isReinforcementRequest(prompt)) {
+                content = this._repairQuizJson(content);
+            }
+
+            // 8. Reinforcement history save is handled by the client via /reinforcement/save-questions
             // which uses MCPService with full uniqueness flow (hash + embedding + semantic dedup)
             // and correctly passes topicId/taskId. Do NOT save here to avoid duplicates.
 
-            // 8. AUTO-SAVE GRADE: If LLM detected a grading request, persist to task_submissions
+            // 9. AUTO-SAVE GRADE: If LLM detected a grading request, persist to task_submissions
             if (esCalificacion && nota !== null && !isNaN(nota)) {
                 const gradeValue = Math.max(0, Math.min(100, nota));
                 const feedbackText = content; // The LLM response is the feedback
@@ -396,6 +422,126 @@ Responde de forma clara y constructiva.`;
             console.warn('[LLMDomainService] Failed to fetch file from R2:', err.message);
             return '';
         }
+    }
+
+    /**
+     * Repairs malformed quiz JSON from LLM responses.
+     * Uses position-aware field extraction: groups fields by proximity
+     * to correctly reconstruct question objects even when fields are interleaved.
+     * @private
+     * @param {string} text - Raw LLM response text
+     * @returns {string} - Repaired text with valid JSON array
+     */
+    _repairQuizJson(text) {
+        if (!text) return text;
+
+        // Extract the JSON array portion
+        const startIdx = text.indexOf('[');
+        const endIdx = text.lastIndexOf(']');
+        if (startIdx === -1 || endIdx === -1 || startIdx >= endIdx) return text;
+
+        const prefix = text.substring(0, startIdx);
+        const suffix = text.substring(endIdx + 1);
+        const jsonPart = text.substring(startIdx, endIdx + 1);
+
+        // Try parsing as-is first
+        try {
+            const parsed = JSON.parse(jsonPart);
+            if (Array.isArray(parsed) && parsed.length > 1) {
+                // Validate each object has the required fields
+                const valid = parsed.every(q =>
+                    q.question && Array.isArray(q.options) &&
+                    typeof q.correctIndex === 'number'
+                );
+                if (valid) return text; // Already valid
+            }
+        } catch (_) { /* needs repair */ }
+
+        try {
+            // Position-aware extraction: capture each field match with its position
+            const fieldMatches = [];
+
+            const questionRegex = /"question"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+            const optionsRegex = /"options"\s*:\s*\[((?:[^\]]*?))\]/g;
+            const correctIndexRegex = /"correctIndex"\s*:\s*(\d+)/g;
+            const explanationRegex = /"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+
+            let m;
+            while ((m = questionRegex.exec(jsonPart)) !== null) {
+                fieldMatches.push({ type: 'question', value: m[1], pos: m.index });
+            }
+            while ((m = optionsRegex.exec(jsonPart)) !== null) {
+                fieldMatches.push({ type: 'options', value: m[1], pos: m.index });
+            }
+            while ((m = correctIndexRegex.exec(jsonPart)) !== null) {
+                fieldMatches.push({ type: 'correctIndex', value: parseInt(m[1]), pos: m.index });
+            }
+            while ((m = explanationRegex.exec(jsonPart)) !== null) {
+                fieldMatches.push({ type: 'explanation', value: m[1], pos: m.index });
+            }
+
+            // Sort all fields by position in the text
+            fieldMatches.sort((a, b) => a.pos - b.pos);
+
+            if (fieldMatches.filter(f => f.type === 'question').length < 2) return text;
+
+            // Group fields into question objects using question boundaries
+            const questionObjects = [];
+            let current = null;
+
+            for (const field of fieldMatches) {
+                if (field.type === 'question') {
+                    // Start a new question object (save previous if exists)
+                    if (current && current.question) {
+                        questionObjects.push(current);
+                    }
+                    current = { question: field.value, options: null, correctIndex: null, explanation: null };
+                } else if (current) {
+                    // Assign to current question if not already set
+                    if (field.type === 'options' && current.options === null) {
+                        current.options = field.value;
+                    } else if (field.type === 'correctIndex' && current.correctIndex === null) {
+                        current.correctIndex = field.value;
+                    } else if (field.type === 'explanation' && current.explanation === null) {
+                        current.explanation = field.value;
+                    }
+                }
+            }
+            // Push the last question
+            if (current && current.question) {
+                questionObjects.push(current);
+            }
+
+            // Build repaired JSON
+            const repaired = questionObjects.map(q => {
+                let parsedOpts;
+                try {
+                    parsedOpts = JSON.parse(`[${q.options || '"A","B","C","D"'}]`);
+                } catch (_) {
+                    parsedOpts = ['A', 'B', 'C', 'D'];
+                }
+
+                const ci = typeof q.correctIndex === 'number'
+                    ? Math.min(q.correctIndex, parsedOpts.length - 1)
+                    : 0;
+
+                return {
+                    question: q.question,
+                    options: parsedOpts,
+                    correctIndex: ci,
+                    explanation: q.explanation || `La respuesta correcta es: "${parsedOpts[ci] || 'la opción correcta'}".`
+                };
+            });
+
+            if (repaired.length >= 2) {
+                console.log(`🔧 [LLMDomainService] Repaired quiz JSON: ${repaired.length} questions reconstructed (position-aware grouping)`);
+                return prefix + JSON.stringify(repaired) + suffix;
+            }
+        } catch (repairErr) {
+            console.warn(`⚠️ [LLMDomainService] Quiz JSON repair failed: ${repairErr.message}`);
+        }
+
+        return text;
     }
 
     /** @private */

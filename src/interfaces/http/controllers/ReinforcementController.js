@@ -166,5 +166,26 @@ export class ReinforcementController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    /**
+     * GET /rag-content?courseId=X&topicId=Y&taskId=Z
+     * Returns raw text content from rag_documents for strict prompt grounding.
+     * The client uses this to build prompts that prevent LLM hallucination.
+     */
+    getRagContent = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.query.courseId || req.query.course_id);
+            const topicId = req.query.topicId || req.query.topic_id ? parseInt(req.query.topicId || req.query.topic_id) : null;
+            const taskId = req.query.taskId || req.query.task_id ? parseInt(req.query.taskId || req.query.task_id) : null;
+
+            if (!courseId) {
+                return next(new ValidationError('courseId is required'));
+            }
+
+            const result = await this.reinforcementService.getRagContent(courseId, topicId, taskId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ReinforcementController;
