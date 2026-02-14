@@ -27,3 +27,4 @@ const router = Router();
 // See: src/interfaces/http/routes/v1/submissionRoutes.js
 
 export default router;
+

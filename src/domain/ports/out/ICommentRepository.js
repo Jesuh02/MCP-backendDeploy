@@ -11,3 +11,4 @@ export class ICommentRepository {
     async countByVideo(videoId) { throw new Error('Not implemented'); }
 }
 export default ICommentRepository;
+

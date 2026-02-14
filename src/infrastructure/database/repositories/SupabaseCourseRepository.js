@@ -189,3 +189,4 @@ export class SupabaseCourseRepository {
     }
 }
 export default SupabaseCourseRepository;
+

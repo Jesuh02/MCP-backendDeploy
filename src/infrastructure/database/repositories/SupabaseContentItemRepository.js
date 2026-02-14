@@ -1,4 +1,4 @@
-﻿export class SupabaseContentItemRepository {
+export class SupabaseContentItemRepository {
     constructor(client) { this.client = client; }
 
     async findById(id) {
@@ -59,3 +59,4 @@
     }
 }
 export default SupabaseContentItemRepository;
+

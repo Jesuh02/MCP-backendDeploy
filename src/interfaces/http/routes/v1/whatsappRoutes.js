@@ -35,3 +35,5 @@ export function whatsappRoutes({ whatsAppController, authMiddleware }) {
 }
 
 export default whatsappRoutes;
+
+

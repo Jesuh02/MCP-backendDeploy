@@ -7,3 +7,4 @@ export class IPushNotificationPort {
     isAvailable() { throw new Error('Not implemented'); }
 }
 export default IPushNotificationPort;
+

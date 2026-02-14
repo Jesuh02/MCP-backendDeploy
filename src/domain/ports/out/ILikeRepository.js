@@ -10,3 +10,4 @@ export class ILikeRepository {
     async findByUserAndEntities(userId, entityType, entityIds) { throw new Error('Not implemented'); }
 }
 export default ILikeRepository;
+

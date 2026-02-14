@@ -37,3 +37,4 @@ export function videoRoutes({ videoController }) {
     return router;
 }
 export default videoRoutes;
+

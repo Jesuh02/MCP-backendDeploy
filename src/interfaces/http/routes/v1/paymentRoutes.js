@@ -13,3 +13,4 @@ export function paymentRoutes({ paymentController }) {
     return router;
 }
 export default paymentRoutes;
+

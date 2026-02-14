@@ -10,3 +10,4 @@ export class ITopicRepository {
     async delete(id) { throw new Error('Not implemented'); }
 }
 export default ITopicRepository;
+

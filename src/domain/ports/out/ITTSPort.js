@@ -41,3 +41,4 @@ export class ITTSPort {
     async synthesizeToBase64(text, options = {}) { throw new Error('Not implemented'); }
 }
 export default ITTSPort;
+

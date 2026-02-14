@@ -1,9 +1,9 @@
-﻿/**
- * R2StorageAdapter — Implementa IFileStoragePort.
+/**
+ * R2StorageAdapter � Implementa IFileStoragePort.
  *
  * Adaptador de infraestructura para Cloudflare R2 (S3-compatible).
- * Encapsula toda la lógica de almacenamiento, descarga, HLS y
- * recuperación de contenido de archivos.
+ * Encapsula toda la l�gica de almacenamiento, descarga, HLS y
+ * recuperaci�n de contenido de archivos.
  *
  * Principios:
  *   - SRP: solo operaciones de almacenamiento de archivos
@@ -22,7 +22,7 @@ import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 
-// ── Text file extensions for content-type detection ──────────
+// -- Text file extensions for content-type detection ----------
 const TEXT_EXTENSIONS = new Set([
     '.txt', '.sql', '.py', '.js', '.ts', '.java', '.kt', '.swift',
     '.html', '.css', '.json', '.xml', '.md', '.csv', '.yaml', '.yml',
@@ -30,7 +30,7 @@ const TEXT_EXTENSIONS = new Set([
     '.rb', '.go', '.rs', '.scala', '.r', '.m', '.lua', '.pl',
 ]);
 
-// ── File type mapping ────────────────────────────────────────
+// -- File type mapping ----------------------------------------
 const FILE_TYPE_MAP = [
     [/\.pdf$/, 'pdf'],
     [/\.docx?$/, 'docx'],
@@ -63,7 +63,7 @@ export class R2StorageAdapter {
         this._initClient();
     }
 
-    // ── Initialization ───────────────────────────────────────
+    // -- Initialization ---------------------------------------
 
     /** @private */
     _initClient() {
@@ -77,13 +77,13 @@ export class R2StorageAdapter {
                 endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
                 credentials: { accessKeyId, secretAccessKey },
             });
-            console.log('✅ R2StorageAdapter: Client initialized');
+            console.log('? R2StorageAdapter: Client initialized');
         } else {
-            console.warn('⚠️ R2StorageAdapter: Missing R2 env vars');
+            console.warn('?? R2StorageAdapter: Missing R2 env vars');
         }
     }
 
-    /** @private — lazy-load presigner to avoid startup crash */
+    /** @private � lazy-load presigner to avoid startup crash */
     async _getPresigner() {
         if (this._presignerFn) return this._presignerFn;
         try {
@@ -95,7 +95,7 @@ export class R2StorageAdapter {
         }
     }
 
-    /** @private — lazy-load SupabaseService for file_contexts queries */
+    /** @private � lazy-load SupabaseService for file_contexts queries */
     _getSupabase() {
         if (this._supabaseService) return this._supabaseService;
         try {
@@ -108,7 +108,7 @@ export class R2StorageAdapter {
         return this._supabaseService;
     }
 
-    // ── IFileStoragePort — Core Storage Operations ───────────
+    // -- IFileStoragePort � Core Storage Operations -----------
 
     isAvailable() {
         return Boolean(this.r2Client);
@@ -189,7 +189,7 @@ export class R2StorageAdapter {
         };
     }
 
-    // ── File Utilities ───────────────────────────────────────
+    // -- File Utilities ---------------------------------------
 
     sanitizeFileName(name) {
         if (!name) return `file_${Date.now()}`;
@@ -245,14 +245,14 @@ export class R2StorageAdapter {
         return 'unknown';
     }
 
-    // ── Upload Helpers ───────────────────────────────────────
+    // -- Upload Helpers ---------------------------------------
 
     /**
      * Upload a buffer with an auto-generated key.
      * @param {Buffer} buffer
      * @param {string} originalFilename
      * @param {string} contentType
-     * @param {string} prefix — e.g. 'videos', 'submissions'
+     * @param {string} prefix � e.g. 'videos', 'submissions'
      * @returns {Promise<{ publicUrl: string, key: string }>}
      */
     async uploadBufferWithAutoKey(buffer, originalFilename = null, contentType = 'video/mp4', prefix = 'videos') {
@@ -263,7 +263,7 @@ export class R2StorageAdapter {
         return { publicUrl, key };
     }
 
-    // ── Download / Content Retrieval ─────────────────────────
+    // -- Download / Content Retrieval -------------------------
 
     /**
      * Download file from a public HTTP URL.
@@ -333,7 +333,7 @@ export class R2StorageAdapter {
     }
 
     /**
-     * Get submission file content — tries file_contexts, R2 auth, R2 public, HTTP.
+     * Get submission file content � tries file_contexts, R2 auth, R2 public, HTTP.
      * @param {string} fileUri
      * @param {string} fileName
      * @param {number} submissionId
@@ -374,12 +374,12 @@ export class R2StorageAdapter {
         throw new Error(`Could not get file content. URI: ${fileUri}, submissionId: ${submissionId}`);
     }
 
-    // ── HLS Video Streaming ──────────────────────────────────
+    // -- HLS Video Streaming ----------------------------------
 
     /**
      * Upload all files in a local HLS directory to R2.
      * @param {string} localDir
-     * @param {string} baseKey — e.g. "videos/user123/video456/hls"
+     * @param {string} baseKey � e.g. "videos/user123/video456/hls"
      * @returns {Promise<{ success: boolean, masterPlaylistUrl: string|null, filesUploaded: number }>}
      */
     async uploadHLSDirectory(localDir, baseKey) {
@@ -453,8 +453,10 @@ export class R2StorageAdapter {
     }
 }
 
-// createRequire for lazy SupabaseService import (ESM ↔ CJS bridge)
+// createRequire for lazy SupabaseService import (ESM ? CJS bridge)
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 
 export default R2StorageAdapter;
+
+

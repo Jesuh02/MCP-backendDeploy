@@ -530,3 +530,4 @@ export class SupabaseVectorStore extends IVectorStore {
 }
 
 export default SupabaseVectorStore;
+

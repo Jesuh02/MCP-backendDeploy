@@ -1229,3 +1229,4 @@ CREATE TABLE public.videos (
 }
 
 export default SupabaseService;
+

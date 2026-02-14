@@ -15,3 +15,4 @@ export function subscriptionRoutes({ subscriptionController }) {
     return router;
 }
 export default subscriptionRoutes;
+

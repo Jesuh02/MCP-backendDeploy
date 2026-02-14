@@ -135,3 +135,4 @@ export function requireRoles(...requiredRoles) {
 }
 
 export default { createAuthMiddleware, createOptionalAuthMiddleware, requireRoles };
+

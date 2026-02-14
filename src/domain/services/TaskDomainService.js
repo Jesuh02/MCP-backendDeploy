@@ -59,11 +59,18 @@ export class TaskDomainService {
 
     /** Crea una nueva tarea, validando que el tema exista. */
     async create(data) {
+        let courseId = null;
         if (data.topicId) {
             const topic = await this.topicRepo.findById(data.topicId);
             if (!topic) return Result.fail(new NotFoundError('Tema', data.topicId));
+            courseId = topic.course_id || topic.courseId || null;
         }
         const created = await this.taskRepo.create(data);
+
+        if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
+            await this.progressService.recalculateForCourse(courseId);
+        }
+
         return Result.ok(created);
     }
 
@@ -141,7 +148,22 @@ export class TaskDomainService {
     async update(id, data) {
         const task = await this.taskRepo.findById(id);
         if (!task) return Result.fail(new NotFoundError('Tarea', id));
+
+        const originalTopicId = task.topicId || task.topic_id;
+        const nextTopicId = data.topicId || originalTopicId;
+        let affectedCourseId = null;
+
+        if (nextTopicId) {
+            const topic = await this.topicRepo.findById(nextTopicId);
+            affectedCourseId = topic?.course_id || topic?.courseId || null;
+        }
+
         const updated = await this.taskRepo.update(id, data);
+
+        if (affectedCourseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
+            await this.progressService.recalculateForCourse(affectedCourseId);
+        }
+
         return Result.ok(updated);
     }
 
@@ -149,8 +171,22 @@ export class TaskDomainService {
     async delete(id) {
         const task = await this.taskRepo.findById(id);
         if (!task) return Result.fail(new NotFoundError('Tarea', id));
+
+        const topicId = task.topicId || task.topic_id;
+        let courseId = null;
+        if (topicId) {
+            const topic = await this.topicRepo.findById(topicId);
+            courseId = topic?.course_id || topic?.courseId || null;
+        }
+
         await this.taskRepo.delete(id);
+
+        if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
+            await this.progressService.recalculateForCourse(courseId);
+        }
+
         return Result.ok({ message: 'Tarea eliminada' });
     }
 }
 export default TaskDomainService;
+

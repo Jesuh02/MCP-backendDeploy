@@ -1,7 +1,7 @@
-﻿import { Task } from '../../../domain/entities/Task.js';
+import { Task } from '../../../domain/entities/Task.js';
 
 /**
- * SupabaseTaskRepository — Adaptador de salida (infraestructura).
+ * SupabaseTaskRepository � Adaptador de salida (infraestructura).
  *
  * Implementa ITaskRepository usando el cliente de Supabase.
  * Responsabilidades:
@@ -12,14 +12,14 @@
  * Tabla `tasks` (columnas reales):
  *   id | topic_id | title | description | due_date | created_at
  *
- * Nota: NO existe `course_id` en `tasks`; la relación con cursos va
- *       tasks.topic_id → topics.course_id. Los métodos que necesitan filtrar
- *       por curso hacen join a través de `topics`.
+ * Nota: NO existe `course_id` en `tasks`; la relaci�n con cursos va
+ *       tasks.topic_id ? topics.course_id. Los m�todos que necesitan filtrar
+ *       por curso hacen join a trav�s de `topics`.
  */
 export class SupabaseTaskRepository {
     constructor(client) { this.client = client; }
 
-    // ── Helpers de mapeo ─────────────────────────────────────
+    // -- Helpers de mapeo -------------------------------------
 
     /** Convierte una fila de Supabase en una entidad de dominio. */
     _toDomain(row) {
@@ -31,7 +31,7 @@ export class SupabaseTaskRepository {
         return (rows || []).map(r => Task.fromSupabaseRow(r));
     }
 
-    // ── Queries ──────────────────────────────────────────────
+    // -- Queries ----------------------------------------------
 
     async findAll(pg = {}) {
         const { offset = 0, limit = 20, sortOrder = 'desc' } = pg;
@@ -66,7 +66,7 @@ export class SupabaseTaskRepository {
 
     /**
      * Busca todas las tareas de un curso.
-     * Como `tasks` no tiene `course_id`, se resuelve a través de `topics`:
+     * Como `tasks` no tiene `course_id`, se resuelve a trav�s de `topics`:
      *   1. Obtener los topic IDs del curso.
      *   2. Filtrar tareas por esos topic IDs.
      */
@@ -91,7 +91,7 @@ export class SupabaseTaskRepository {
         return this._toDomainList(data);
     }
 
-    // ── Mutations ────────────────────────────────────────────
+    // -- Mutations --------------------------------------------
 
     async create(taskData) {
         const payload = {
@@ -157,3 +157,4 @@ export class SupabaseTaskRepository {
     }
 }
 export default SupabaseTaskRepository;
+

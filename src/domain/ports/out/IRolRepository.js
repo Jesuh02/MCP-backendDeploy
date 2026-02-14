@@ -10,3 +10,4 @@ export class IRolRepository {
     async delete(id) { throw new Error('Not implemented'); }
 }
 export default IRolRepository;
+

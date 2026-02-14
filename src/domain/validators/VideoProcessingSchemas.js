@@ -20,3 +20,4 @@ export const processFromUrlSchema = Joi.object({
     outputDir: Joi.string().optional(),
 });
 export default { analyzeVideoSchema, processVideoSchema, processFromUrlSchema };
+

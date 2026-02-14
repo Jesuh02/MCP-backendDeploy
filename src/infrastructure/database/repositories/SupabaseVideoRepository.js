@@ -1,9 +1,9 @@
-﻿export class SupabaseVideoRepository {
+export class SupabaseVideoRepository {
     constructor(client) { this.client = client; }
 
     /**
      * Guard: Throws a descriptive error if the Supabase client is not available.
-     * Follows Fail-Fast principle — callers get a clear message instead of NPE.
+     * Follows Fail-Fast principle � callers get a clear message instead of NPE.
      */
     _requireClient() {
         if (!this.client) {
@@ -203,3 +203,4 @@
     }
 }
 export default SupabaseVideoRepository;
+

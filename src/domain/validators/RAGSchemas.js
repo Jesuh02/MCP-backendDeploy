@@ -24,3 +24,4 @@ export const buildContextSchema = Joi.object({
 });
 
 export default { ingestSchema, searchSchema, buildContextSchema };
+

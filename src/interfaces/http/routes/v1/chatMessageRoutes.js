@@ -27,3 +27,4 @@ export function chatMessageRoutes({ chatMessageController }) {
 }
 
 export default chatMessageRoutes;
+

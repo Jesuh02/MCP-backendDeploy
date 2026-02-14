@@ -239,3 +239,4 @@ export const getUploadUrlSchema = Joi.object({
 export const idParamSchema = Joi.object({
     id: Joi.number().integer().required(),
 });
+

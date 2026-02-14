@@ -70,3 +70,4 @@ export class AppDistributionController extends BaseController {
 }
 
 export default AppDistributionController;
+

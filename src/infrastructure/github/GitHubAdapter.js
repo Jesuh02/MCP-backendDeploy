@@ -74,3 +74,4 @@ export class GitHubAdapter {
     }
 }
 export default GitHubAdapter;
+

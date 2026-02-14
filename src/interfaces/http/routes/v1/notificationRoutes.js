@@ -14,3 +14,4 @@ export function notificationRoutes({ notificationController, requireRoles }) {
     return router;
 }
 export default notificationRoutes;
+

@@ -123,3 +123,4 @@ export class WompiAdapter {
 }
 
 export default WompiAdapter;
+

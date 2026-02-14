@@ -129,13 +129,14 @@ export class ProgressDomainService {
         const completedTasks = submittedTaskIds.length;
 
         const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
-        const averageGradeRaw = graded.length > 0
-            ? graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0) / graded.length
-            : 0;
+        const averageGradeRaw = graded.length > 0 ?
+            graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0) / graded.length :
+            0;
         const averageGrade = Math.round(averageGradeRaw * 100) / 100;
 
         const progressPercentageRaw = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
         const progressPercentage = Math.round(progressPercentageRaw * 100) / 100;
+        const status = averageGrade >= 6 ? 'Ganado' : 'Perdido';
 
         const persisted = await this.progressRepo.upsert({
             userId,
@@ -144,6 +145,7 @@ export class ProgressDomainService {
             totalTasks,
             averageGrade,
             progressPercentage,
+            status,
         });
 
         return persisted || {
@@ -153,8 +155,9 @@ export class ProgressDomainService {
             totalTasks,
             averageGrade,
             progressPercentage,
-            status: averageGrade >= 6 ? 'Ganado' : 'Perdido',
+            status,
         };
     }
 }
 export default ProgressDomainService;
+
