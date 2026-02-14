@@ -7,6 +7,14 @@ export class CourseController {
         this.courseService = courseService;
     }
 
+    parsePositiveInteger(value, fieldName = 'id') {
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+            throw new ValidationError(`${fieldName} debe ser un entero positivo`);
+        }
+        return parsed;
+    }
+
     list = async(req, res, next) => {
         const pg = parsePagination(req.query);
         if (req.query.excludeUserId) pg.excludeCreatorId = parseInt(req.query.excludeUserId);
@@ -39,7 +47,14 @@ export class CourseController {
     };
 
     getById = async(req, res, next) => {
-        const result = await this.courseService.getById(parseInt(req.params.id));
+        let courseId;
+        try {
+            courseId = this.parsePositiveInteger(req.params.id, 'courseId');
+        } catch (error) {
+            return next(error);
+        }
+
+        const result = await this.courseService.getById(courseId);
         if (result.isFail()) return next(result.getError());
         res.json({ success: true, data: result.getValue() });
     };
