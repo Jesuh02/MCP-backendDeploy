@@ -135,19 +135,19 @@ export class CourseDomainService {
         let approvedRows = 0;
 
         for (const row of progressRows || []) {
-            const userId = Number(row ? .userId);
+            const userId = Number(row?.userId);
             if (!Number.isInteger(userId) || userId <= 0) continue;
 
             uniqueUsers.add(userId);
 
-            const isCertified = Boolean(row ? .certificateIssuedAt) || (typeof row ? .certificateUrl === 'string' && row.certificateUrl.trim().length > 0);
+            const isCertified = Boolean(row?.certificateIssuedAt) || (typeof row?.certificateUrl === 'string' && row.certificateUrl.trim().length > 0);
             if (isCertified) certifiedUsers.add(userId);
 
-            const progressPercentage = Number(row ? .progressPercentage || 0);
-            const completedTasks = Number(row ? .completedTasks || 0);
-            const totalTasks = Number(row ? .totalTasks || 0);
-            const status = String(row ? .status || '').trim().toLowerCase();
-            const averageGrade = Number(row ? .averageGrade);
+            const progressPercentage = Number(row?.progressPercentage || 0);
+            const completedTasks = Number(row?.completedTasks || 0);
+            const totalTasks = Number(row?.totalTasks || 0);
+            const status = String(row?.status || '').trim().toLowerCase();
+            const averageGrade = Number(row?.averageGrade);
 
             const isCompleted = progressPercentage >= 100 || (totalTasks > 0 && completedTasks >= totalTasks);
             if (isCompleted) completedRows++;
