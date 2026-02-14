@@ -9,9 +9,18 @@ export class ProgressDomainService {
     }
 
     async getByUserAndCourse(userId, courseId) {
+        if (this.taskRepo && this.submissionRepo) {
+            const refreshed = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
+            return Result.ok(refreshed);
+        }
         const progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
-        if (!progress) return Result.ok({ userId, courseId, completedTasks: 0, totalTasks: 0, progressPercentage: 0 });
+        if (!progress) return Result.ok({ userId, courseId, completedTasks: 0, totalTasks: 0, progressPercentage: 0, averageGrade: 0, status: 'Perdido' });
         return Result.ok(progress);
+    }
+
+    async refreshForUserCourse(userId, courseId) {
+        const refreshed = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
+        return Result.ok(refreshed);
     }
 
     async getByUser(userId) {
@@ -94,9 +103,7 @@ export class ProgressDomainService {
             return Result.fail(new Error('Task/Submission repositories not available'));
         }
 
-        const tasks = await this.taskRepo.findByCourse(courseId);
-        const totalTasks = tasks.length;
-        const taskIds = tasks.map(t => t.id);
+        const totalTasks = await this.taskRepo.countByCourse(courseId);
 
         const enrolledStudents = await this.progressRepo.findByCourse(courseId);
         if (!enrolledStudents || enrolledStudents.length === 0) {
@@ -106,32 +113,7 @@ export class ProgressDomainService {
         let recalculated = 0;
         for (const student of enrolledStudents) {
             try {
-                let completedTasks = 0;
-                let totalGrade = 0;
-                let gradedCount = 0;
-
-                for (const taskId of taskIds) {
-                    const submission = await this.submissionRepo.findByUserAndTask(student.userId, taskId);
-                    if (submission) {
-                        completedTasks++;
-                        if (submission.grade !== null && submission.grade !== undefined) {
-                            totalGrade += submission.grade;
-                            gradedCount++;
-                        }
-                    }
-                }
-
-                const avgGrade = gradedCount > 0 ? totalGrade / gradedCount : 0;
-                const progressPct = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
-
-                await this.progressRepo.upsert({
-                    userId: student.userId,
-                    courseId,
-                    completedTasks,
-                    totalTasks,
-                    averageGrade: Math.round(avgGrade * 100) / 100,
-                    progressPercentage: Math.round(progressPct * 100) / 100,
-                });
+                await this._recalculateAndUpsertUserCourseProgress(student.userId, courseId, totalTasks);
                 recalculated++;
             } catch (err) {
                 console.error(`[ProgressService] Error recalculating for user ${student.userId}:`, err.message);
@@ -139,6 +121,40 @@ export class ProgressDomainService {
         }
 
         return Result.ok({ recalculated, totalTasks });
+    }
+
+    async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null) {
+        const totalTasks = totalTasksFromCaller ?? await this.taskRepo.countByCourse(courseId);
+        const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId);
+        const completedTasks = submittedTaskIds.length;
+
+        const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
+        const averageGradeRaw = graded.length > 0
+            ? graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0) / graded.length
+            : 0;
+        const averageGrade = Math.round(averageGradeRaw * 100) / 100;
+
+        const progressPercentageRaw = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+        const progressPercentage = Math.round(progressPercentageRaw * 100) / 100;
+
+        const persisted = await this.progressRepo.upsert({
+            userId,
+            courseId,
+            completedTasks,
+            totalTasks,
+            averageGrade,
+            progressPercentage,
+        });
+
+        return persisted || {
+            userId,
+            courseId,
+            completedTasks,
+            totalTasks,
+            averageGrade,
+            progressPercentage,
+            status: averageGrade >= 6 ? 'Ganado' : 'Perdido',
+        };
     }
 }
 export default ProgressDomainService;
