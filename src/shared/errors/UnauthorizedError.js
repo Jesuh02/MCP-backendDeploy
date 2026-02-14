@@ -13,3 +13,4 @@ export class UnauthorizedError extends AppError {
 }
 
 export default UnauthorizedError;
+

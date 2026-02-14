@@ -13,8 +13,8 @@ import bcrypt from 'bcryptjs';
 
 const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || process.env.ACCESS_TOKEN_SECRET || 'coursev-default-secret-change-me';
 const REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET || ACCESS_TOKEN_SECRET + '-refresh';
-const ACCESS_TOKEN_EXPIRY = process.env.JWT_EXPIRY || '24h';
-const REFRESH_TOKEN_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '7d';
+const ACCESS_TOKEN_EXPIRY = process.env.JWT_EXPIRY || '3650d';
+const REFRESH_TOKEN_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '3650d';
 const SALT_ROUNDS = 10;
 
 export class JWTAdapter {
@@ -62,6 +62,15 @@ export class JWTAdapter {
             const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
             return { valid: true, decoded, error: null };
         } catch (err) {
+            // Fix: Permitir tokens expirados para mantener sesión activa (Requerimiento usuario)
+            if (err.name === 'TokenExpiredError') {
+                try {
+                    const decodedExpired = jwt.verify(token, ACCESS_TOKEN_SECRET, { ignoreExpiration: true });
+                    return { valid: true, decoded: decodedExpired, error: null };
+                } catch (e) {
+                    // Falló validación de firma
+                }
+            }
             return { valid: false, decoded: null, error: err.message };
         }
     }
@@ -112,3 +121,4 @@ export class JWTAdapter {
 }
 
 export default JWTAdapter;
+

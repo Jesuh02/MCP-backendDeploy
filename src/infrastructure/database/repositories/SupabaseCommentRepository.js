@@ -1,4 +1,4 @@
-﻿export class SupabaseCommentRepository {
+export class SupabaseCommentRepository {
     constructor(client) { this.client = client; }
 
     async findById(id) {
@@ -73,3 +73,5 @@
     }
 }
 export default SupabaseCommentRepository;
+
+

@@ -715,3 +715,5 @@ export default {
     generateGenericEmailHTML,
     generateChatResponseEmailHTML
 };
+
+

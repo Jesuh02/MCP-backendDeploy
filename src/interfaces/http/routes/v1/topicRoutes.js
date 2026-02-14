@@ -13,3 +13,4 @@ export function topicRoutes({ topicController }) {
     return router;
 }
 export default topicRoutes;
+

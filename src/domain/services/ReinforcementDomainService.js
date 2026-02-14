@@ -14,6 +14,7 @@ import { SupabaseService } from '../../infrastructure/database/SupabaseService.j
 export class ReinforcementDomainService {
     constructor({ reinforcementRepository }) {
         this.reinforcementRepo = reinforcementRepository;
+        this.REQUIRED_QUESTION_COUNT = 10;
     }
 
     /**
@@ -110,6 +111,18 @@ export class ReinforcementDomainService {
 
         // If we have questions, use MCPService for full embedding + uniqueness flow
         if (Array.isArray(parsedQuestions) && parsedQuestions.length > 0) {
+            if (parsedQuestions.length !== this.REQUIRED_QUESTION_COUNT) {
+                return Result.ok({
+                    success: false,
+                    savedCount: 0,
+                    duplicateCount: 0,
+                    totalSubmitted: parsedQuestions.length,
+                    requiredCount: this.REQUIRED_QUESTION_COUNT,
+                    needsRegeneration: true,
+                    message: `Se requieren exactamente ${this.REQUIRED_QUESTION_COUNT} preguntas para guardar la sesión.`
+                });
+            }
+
             try {
                 const mcpService = new MCPService();
                 const saveResult = await mcpService.saveReinforcementHistory(
@@ -120,18 +133,44 @@ export class ReinforcementDomainService {
                     taskId || null
                 );
 
-                if (saveResult && saveResult.success) {
+                const savedCount = saveResult?.savedCount || 0;
+                const requiredCount = saveResult?.requiredCount || this.REQUIRED_QUESTION_COUNT;
+                const isCompleteBatch = savedCount === requiredCount;
+
+                if (saveResult && isCompleteBatch) {
                     return Result.ok({
                         success: true,
-                        savedCount: saveResult.savedCount,
-                        message: `${saveResult.savedCount} unique questions saved with embeddings`
+                        savedCount,
+                        duplicateCount: (parsedQuestions.length - savedCount),
+                        totalSubmitted: parsedQuestions.length,
+                        requiredCount,
+                        message: `${savedCount} preguntas únicas guardadas con embeddings`
                     });
                 } else {
-                    console.warn('[ReinforcementDomainService] MCPService save returned no unique questions (all duplicates?)');
+                    console.warn(`[ReinforcementDomainService] Incomplete save: ${savedCount}/${requiredCount}. Regeneration required.`);
+                    // Fetch existing questions so client can use them for regeneration
+                    let existingQuestions = [];
+                    try {
+                        const existing = await mcpService.getReinforcementHistory(userId, courseId, topicId, taskId);
+                        existingQuestions = (existing || []).map(h => ({
+                            question: h.question || '',
+                            options: h.options || [],
+                            correctIndex: h.answer_index ?? 0,
+                            explanation: h.explanation || '',
+                        }));
+                    } catch (_) { /* non-blocking */ }
+
                     return Result.ok({
-                        success: true,
-                        savedCount: 0,
-                        message: 'All questions were duplicates or save failed'
+                        success: false,
+                        savedCount,
+                        duplicateCount: (parsedQuestions.length - savedCount),
+                        totalSubmitted: parsedQuestions.length,
+                        requiredCount,
+                        shortfall: Math.max(requiredCount - savedCount, 0),
+                        allDuplicates: savedCount === 0,
+                        needsRegeneration: true,
+                        existingQuestions,
+                        message: `Solo se guardaron ${savedCount}/${requiredCount} preguntas únicas. Regenera para completar el lote.`
                     });
                 }
             } catch (e) {
@@ -147,6 +186,58 @@ export class ReinforcementDomainService {
         return Result.ok(session);
     }
 
+    /**
+     * Get existing questions for a user+course filtered by topic/task.
+     * Returns full question objects (text, options, correctIndex, explanation)
+     * so the client can use them for deduplication before generating new ones.
+     */
+    async getExistingQuestions(userId, courseId, topicId = null, taskId = null) {
+        try {
+            const mcpService = new MCPService();
+            const history = await mcpService.getReinforcementHistory(userId, courseId, topicId, taskId);
+
+            if (!Array.isArray(history) || history.length === 0) {
+                return Result.ok({ questions: [], count: 0 });
+            }
+
+            // Return structured question objects for client-side dedup
+            const questions = history.map(h => ({
+                question: h.question || '',
+                options: h.options || [],
+                correctIndex: h.answer_index ?? 0,
+                explanation: h.explanation || '',
+            }));
+
+            return Result.ok({ questions, count: questions.length });
+        } catch (error) {
+            console.error('[ReinforcementDomainService] getExistingQuestions error:', error.message);
+            return Result.ok({ questions: [], count: 0 });
+        }
+    }
+
+    /**
+     * Retrieve all raw text content from rag_documents for a task/topic/course.
+     * Used by the client to build RAG-grounded prompts that prevent hallucination.
+     * @param {number} courseId
+     * @param {number|null} topicId
+     * @param {number|null} taskId
+     * @returns {Promise<Result>} { content: string, chunks: number, files: string[] }
+     */
+    async getRagContent(courseId, topicId = null, taskId = null) {
+        try {
+            const ragService = new RAGService();
+            const filter = { courseId };
+            if (topicId) filter.topicId = topicId;
+            if (taskId) filter.taskId = taskId;
+
+            const result = await ragService.getRagContent(filter);
+            return Result.ok(result);
+        } catch (error) {
+            console.error('[ReinforcementDomainService] getRagContent error:', error.message);
+            return Result.ok({ content: '', chunks: 0, files: [] });
+        }
+    }
+
     async getHistory(userId, courseId, pagination = {}) {
         const sessions = await this.reinforcementRepo.findByUserAndCourse(userId, courseId, pagination);
         return Result.ok(sessions);
@@ -158,3 +249,4 @@ export class ReinforcementDomainService {
     }
 }
 export default ReinforcementDomainService;
+

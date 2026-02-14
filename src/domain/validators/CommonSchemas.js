@@ -216,6 +216,16 @@ export const initiatePaymentSchema = Joi.object({
     courseId: Joi.number().integer().required(),
     redirectUrl: Joi.string().uri().optional(),
     userId: Joi.number().integer().optional(), // Ignored — userId comes from JWT
+    // Fields sent by the Android client for legacy compatibility.
+    // They are stripped and NOT used — amount is fetched from DB, userId from JWT.
+    amount: Joi.number().optional(),
+    bankCode: Joi.string().allow('', null).optional(),
+    payerEmail: Joi.string().allow('', null).optional(),
+    payerName: Joi.string().allow('', null).optional(),
+    payerDocType: Joi.string().allow('', null).optional(),
+    payerDocNumber: Joi.string().allow('', null).optional(),
+    ipAddress: Joi.string().allow('', null).optional(),
+    userAgent: Joi.string().allow('', null).optional(),
 });
 
 // ─── Storage ─────────────────────────────────────────────
@@ -229,3 +239,4 @@ export const getUploadUrlSchema = Joi.object({
 export const idParamSchema = Joi.object({
     id: Joi.number().integer().required(),
 });
+

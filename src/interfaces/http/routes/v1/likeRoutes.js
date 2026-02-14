@@ -11,3 +11,4 @@ export function likeRoutes({ likeController }) {
     return router;
 }
 export default likeRoutes;
+

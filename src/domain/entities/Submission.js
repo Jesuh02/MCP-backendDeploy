@@ -14,7 +14,7 @@ export class Submission {
             fileUri: row.file_uri || row.fileUri || null,
             fileName: row.file_name || row.fileName || null,
             textContent: row.text_content || row.textContent || null,
-            grade: row.grade ? ? null,
+            grade: row.grade ?? null,
             feedback: row.feedback || null,
             status: row.status || 'pending',
             submittedAt: row.submitted_at || row.submittedAt || null,
@@ -25,3 +25,4 @@ export class Submission {
     }
 }
 export default Submission;
+

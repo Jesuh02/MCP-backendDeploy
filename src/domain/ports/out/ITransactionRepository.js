@@ -12,3 +12,4 @@ export class ITransactionRepository {
     async updateByTransactionId(transactionId, data) { throw new Error('Not implemented'); }
 }
 export default ITransactionRepository;
+

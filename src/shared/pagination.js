@@ -52,3 +52,4 @@ export function buildPaginatedResponse(data, total, page, pageSize) {
 }
 
 export default { parsePagination, buildPaginatedResponse };
+

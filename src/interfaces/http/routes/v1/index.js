@@ -19,15 +19,19 @@ import { personaRoutes } from './personaRoutes.js';
 import { rolRoutes } from './rolRoutes.js';
 import { fileContextRoutes } from './fileContextRoutes.js';
 import { reinforcementRoutes } from './reinforcementRoutes.js';
+import { chatMessageRoutes } from './chatMessageRoutes.js';
 
 // Nuevas rutas hexagonales (transición completa)
 import { ttsRoutes } from './ttsRoutes.js';
 import { llmRoutes } from './llmRoutes.js';
 import { videoProcessingRoutes } from './videoProcessingRoutes.js';
+import { videoStreamingRoutes } from './videoStreamingRoutes.js';
 import { ragRoutes } from './ragRoutes.js';
 import { mcpRoutes } from './mcpRoutes.js';
 import { appDistributionRoutes } from './appDistributionRoutes.js';
 import { excelRoutes } from './excelRoutes.js';
+import { publicRoutes } from './publicRoutes.js';
+import { whatsappRoutes } from './whatsappRoutes.js';
 
 /**
  * Monta todas las rutas v1 en un router.
@@ -41,12 +45,33 @@ export function createV1Router(deps) {
     router.use('/auth', authRoutes(deps));
     router.use('/', healthRoutes(deps));
 
-    // Webhook de pagos (sin auth)
+    // Feed público — lectura sin autenticación (browsing / discovery)
+    router.use('/public', publicRoutes(deps));
+
+    // Public streaming feed (no auth, for instant video loading before login)
+    router.get('/public/streaming/feed', deps.videoStreamingController.feed);
+
+    // Webhook de pagos (sin auth — Wompi llama directamente)
     router.post('/payment/webhook', deps.paymentController.webhook);
+
+    // Payment initiate con auth opcional — algunos clientes Android
+    // no envían JWT (PaymentApi.kt, SyncRepository.kt). El controlador
+    // usa req.user?.userId si hay JWT, o req.body.userId como fallback.
+    // La seguridad se mantiene: solo se crea una tx PENDING; el acceso
+    // al curso solo se otorga cuando el webhook de Wompi confirma el pago.
+    if (deps.optionalAuthMiddleware) {
+        router.post('/payment/initiate', deps.optionalAuthMiddleware, deps.paymentController.initiate);
+        router.get('/payment/status/:transactionId', deps.optionalAuthMiddleware, deps.paymentController.checkStatus);
+    }
 
     // MCP SSE (sin auth — los clientes VS Code se conectan directamente)
     router.use('/mcp', mcpRoutes(deps));
     router.use('/app', appDistributionRoutes(deps));
+
+    // WhatsApp (webhook público + rutas protegidas con auth inline)
+    if (deps.whatsAppController) {
+        router.use('/whatsapp', whatsappRoutes(deps));
+    }
 
     // Rutas protegidas (con auth)
     router.use(authMiddleware);
@@ -69,14 +94,17 @@ export function createV1Router(deps) {
     router.use('/roles', rolRoutes(deps));
     router.use('/file-contexts', fileContextRoutes(deps));
     router.use('/reinforcement', reinforcementRoutes(deps));
+    router.use('/chat-messages', chatMessageRoutes(deps));
 
     // Nuevas rutas hexagonales (antes legacy)
     router.use('/tts', ttsRoutes(deps));
     router.use('/llm', llmRoutes(deps));
     router.use('/video-processing', videoProcessingRoutes(deps));
+    router.use('/streaming', videoStreamingRoutes(deps));
     router.use('/rag', ragRoutes(deps));
     router.use('/excel', excelRoutes(deps));
 
     return router;
 }
 export default createV1Router;
+

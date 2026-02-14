@@ -1,5 +1,6 @@
 import { Result } from '../../shared/Result.js';
-import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
+import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
+import path from 'path';
 
 export class VideoDomainService {
     constructor({ videoRepository, fileStoragePort }) {
@@ -8,73 +9,39 @@ export class VideoDomainService {
     }
 
     /**
-     * Replace R2 URLs / object keys with signed download URLs so clients
-     * can access videos without the bucket being public.
+     * Resolves and signs all video/thumbnail URLs so clients receive
+     * ready-to-play pre-signed URLs in every response.
      *
-     * Split-bucket strategy:
-     *   - Videos  → bucket privado (coursev-files) → URL firmada con cache de 50 min
-     *   - Thumbnails → bucket público (coursev-fil) → URL pública directa, sin firmar
+     * Handles three URL formats stored in the DB:
+     *  1. Relative R2 object key  → "videos/123_file.mp4"
+     *  2. Public R2 HTTP URL      → "https://pub-xxx.r2.dev/videos/..."
+     *  3. Already-signed URL      → contains "X-Amz-Signature" (skip)
      *
-     * El campo video_uri_string puede ser:
-     *   1. Un object key sin esquema: "videos/mi_video"
-     *   2. Una URL pública R2: "https://pub-xxx.r2.dev/videos/mi_video"
-     *   3. Una URL ya firmada (contiene X-Amz-Signature)
+     * Principle: OCP — new URL formats can be added without modifying
+     * existing signing logic; just extend _resolveAndSign.
      */
     async _signUrls(videos) {
         if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return videos;
         const list = Array.isArray(videos) ? videos : [videos];
-        await Promise.all(list.map(async(v) => {
+        await Promise.all(list.map(async (v) => {
             if (!v) return;
             try {
-                // ── Video URL: siempre firmar (bucket privado) ──
+                // Sign video URL
                 const videoUrl = v.video_uri_string || v.videoUriString;
-                if (videoUrl && !videoUrl.includes('X-Amz-Signature')) {
-                    let key = null;
-
-                    if (videoUrl.startsWith('http')) {
-                        // Es una URL completa → extraer object key
-                        key = this.storage.extractObjectKey(videoUrl);
-                    } else if (!videoUrl.startsWith('file://') && !videoUrl.startsWith('content://')) {
-                        // Es un object key directo (e.g. "videos/mi_video")
-                        key = videoUrl;
-                    }
-
-                    if (key) {
-                        const signed = await this.storage.generateDownloadUrl(key, 3600);
+                if (videoUrl) {
+                    const signed = await this._resolveAndSign(videoUrl);
+                    if (signed) {
                         v.video_uri_string = signed;
                         v.videoUriString = signed;
                     }
                 }
-
-                // ── Thumbnail URL: bucket público, NO firmar ──
+                // Sign thumbnail URL
                 const thumbUrl = v.thumbnail_uri || v.thumbnailUri;
                 if (thumbUrl) {
-                    // Si ya es URL del bucket público de thumbnails, dejar como está
-                    if (this.storage.isThumbnailPublicUrl && this.storage.isThumbnailPublicUrl(thumbUrl)) {
-                        // Ya es pública, no hacer nada
-                    } else if (thumbUrl.startsWith('http') && !thumbUrl.includes('X-Amz-Signature')) {
-                        // Es una URL del bucket de videos (privado) → extraer key y construir URL pública de thumbnail
-                        const key = this.storage.extractObjectKey(thumbUrl);
-                        if (key && key.startsWith('thumbnails')) {
-                            // Pertenece a thumbnails → devolver URL pública
-                            const publicThumbUrl = this.storage.getThumbnailPublicUrl
-                                ? this.storage.getThumbnailPublicUrl(key)
-                                : thumbUrl; // fallback: dejar original
-                            v.thumbnail_uri = publicThumbUrl;
-                            v.thumbnailUri = publicThumbUrl;
-                        } else if (key) {
-                            // Thumbnail almacenado en bucket de videos → firmar como video
-                            const signed = await this.storage.generateDownloadUrl(key, 3600);
-                            v.thumbnail_uri = signed;
-                            v.thumbnailUri = signed;
-                        }
-                    } else if (!thumbUrl.startsWith('http') && !thumbUrl.startsWith('file://') && !thumbUrl.startsWith('content://')) {
-                        // Es un object key directo para thumbnail
-                        if (this.storage.getThumbnailPublicUrl) {
-                            const publicThumbUrl = this.storage.getThumbnailPublicUrl(thumbUrl);
-                            v.thumbnail_uri = publicThumbUrl;
-                            v.thumbnailUri = publicThumbUrl;
-                        }
+                    const signed = await this._resolveAndSign(thumbUrl);
+                    if (signed) {
+                        v.thumbnail_uri = signed;
+                        v.thumbnailUri = signed;
                     }
                 }
             } catch (e) {
@@ -82,6 +49,34 @@ export class VideoDomainService {
             }
         }));
         return Array.isArray(videos) ? list : list[0];
+    }
+
+    /**
+     * Resolves a raw URL/key to a pre-signed download URL.
+     *
+     * @param {string} raw — R2 object key, public URL, or signed URL.
+     * @returns {Promise<string|null>} Pre-signed URL or null if already signed.
+     * @private
+     */
+    async _resolveAndSign(raw) {
+        if (!raw) return null;
+
+        // Already signed — skip
+        if (raw.includes('X-Amz-Signature')) return null;
+
+        let objectKey = null;
+
+        if (raw.startsWith('http://') || raw.startsWith('https://')) {
+            // Full HTTP URL — extract R2 object key
+            objectKey = this.storage.extractObjectKey(raw);
+        } else if (!raw.startsWith('file://') && !raw.startsWith('content://')) {
+            // Relative R2 object key stored directly in DB (e.g. "videos/123.mp4")
+            objectKey = raw;
+        }
+
+        if (!objectKey) return null;
+
+        return this.storage.generateDownloadUrl(objectKey, 3600);
     }
 
     async getById(id) {
@@ -143,26 +138,68 @@ export class VideoDomainService {
     }
 
     /**
-     * Genera una URL firmada a partir de un objectKey directo.
-     * Usado por el frontend cuando ya conoce el key del video.
-     * Aprovecha el cache interno de R2StorageAdapter (50 min TTL).
+     * Upload video + optional thumbnail files to R2 and create the video record.
+     * All storage logic is centralized here — the mobile client only sends files.
      *
-     * @param {string} objectKey  e.g. "videos/mi_video"
-     * @param {number} [expiresIn=3600] Tiempo de expiración en segundos
-     * @returns {Result} { signedUrl, objectKey, expiresIn, cached }
+     * @param {Object} params
+     * @param {Buffer} params.videoBuffer - Raw video bytes
+     * @param {string} params.videoFilename - Original filename
+     * @param {string} params.videoMimeType - MIME type (e.g. video/mp4)
+     * @param {Buffer|null} params.thumbnailBuffer - Raw thumbnail bytes (optional)
+     * @param {string|null} params.thumbnailFilename - Thumbnail filename (optional)
+     * @param {string|null} params.thumbnailMimeType - Thumbnail MIME (optional)
+     * @param {Object} params.metadata - Video metadata (title, description, etc.)
+     * @param {number} params.userId - Authenticated user ID
+     * @returns {Promise<Result>}
      */
-    async getSignedUrlByKey(objectKey, expiresIn = 3600) {
-        try {
-            if (!this.storage) return Result.fail(new Error("Storage service not available"));
-            if (!objectKey) return Result.fail(new Error("objectKey is required"));
+    async uploadAndCreate({ videoBuffer, videoFilename, videoMimeType, thumbnailBuffer, thumbnailFilename, thumbnailMimeType, metadata, userId }) {
+        if (!videoBuffer || !videoBuffer.length) {
+            return Result.fail(new ValidationError('Video file is required'));
+        }
+        if (!metadata || !metadata.title) {
+            return Result.fail(new ValidationError('Title is required'));
+        }
+        if (!this.storage || !this.storage.isAvailable()) {
+            return Result.fail(new Error('Storage service not available'));
+        }
 
-            const signedUrl = await this.storage.generateDownloadUrl(objectKey, expiresIn);
-            return Result.ok({
-                signedUrl,
-                objectKey,
-                expiresIn,
-            });
+        try {
+            // 1. Upload video to R2
+            const sanitizedTitle = (metadata.title || 'video').replace(/[^a-zA-Z0-9._-]/g, '_');
+            const videoExt = path.extname(videoFilename || '.mp4') || '.mp4';
+            const videoKey = `videos/${Date.now()}_${sanitizedTitle}${videoExt}`;
+            const videoPublicUrl = await this.storage.uploadFile(videoBuffer, videoKey, videoMimeType || 'video/mp4');
+
+            // 2. Upload thumbnail if provided
+            let thumbnailUrl = null;
+            if (thumbnailBuffer && thumbnailBuffer.length > 0) {
+                const thumbExt = path.extname(thumbnailFilename || '.jpg') || '.jpg';
+                const thumbKey = `thumbnails/courses/thumb_${Date.now()}${thumbExt}`;
+                thumbnailUrl = await this.storage.uploadFile(thumbnailBuffer, thumbKey, thumbnailMimeType || 'image/jpeg');
+            }
+
+            // 3. Create video record in the database
+            const videoData = {
+                title: metadata.title,
+                description: metadata.description || '',
+                video_uri_string: videoKey, // Store the object key, not the full URL
+                thumbnail_uri: thumbnailUrl || null,
+                is_paid: metadata.isPaid || false,
+                price: metadata.price || null,
+                course_id: metadata.courseId || null,
+                user_id: userId,
+                remote_id: userId,
+                timestamp: metadata.timestamp || Date.now(),
+            };
+
+            const created = await this.videoRepo.create(videoData);
+
+            // Sign URLs before returning
+            await this._signUrls(created);
+
+            return Result.ok(created);
         } catch (error) {
+            console.error('[VideoDomainService] uploadAndCreate error:', error.message);
             return Result.fail(error);
         }
     }
@@ -192,6 +229,48 @@ export class VideoDomainService {
         return Result.ok({ message: 'Video eliminado' });
     }
 
+    /**
+     * Batch sign URLs for multiple video IDs in a single request.
+     * Optimized for mobile pre-loading: the client sends IDs of adjacent
+     * videos and receives all signed URLs at once, avoiding N+1 round trips.
+     *
+     * @param {number[]} videoIds - Array of video IDs to sign
+     * @returns {Promise<Result>} Map of { id -> { videoUrl, thumbnailUrl } }
+     */
+    async batchSignedUrls(videoIds) {
+        if (!Array.isArray(videoIds) || videoIds.length === 0) {
+            return Result.fail(new ValidationError('videoIds must be a non-empty array'));
+        }
+        // Cap at 20 to prevent abuse
+        const ids = videoIds.slice(0, 20).map(Number).filter(n => !isNaN(n) && n > 0);
+        if (ids.length === 0) {
+            return Result.fail(new ValidationError('No valid video IDs provided'));
+        }
+
+        try {
+            const videos = await this.videoRepo.findByIds(ids);
+            if (!videos || videos.length === 0) {
+                return Result.ok({});
+            }
+
+            // Sign all URLs in parallel for maximum speed
+            await this._signUrls(videos);
+
+            // Build a lookup map keyed by video ID
+            const urlMap = {};
+            for (const v of videos) {
+                urlMap[v.id] = {
+                    videoUrl: v.video_uri_string || v.videoUriString || null,
+                    thumbnailUrl: v.thumbnail_uri || v.thumbnailUri || null,
+                };
+            }
+            return Result.ok(urlMap);
+        } catch (error) {
+            console.error('[VideoDomainService] batchSignedUrls error:', error.message);
+            return Result.fail(error);
+        }
+    }
+
     async findByCourseIds(courseIds, pagination) {
         const videos = await this.videoRepo.findByCourseIds(courseIds, pagination);
         await this._signUrls(videos);
@@ -199,3 +278,4 @@ export class VideoDomainService {
     }
 }
 export default VideoDomainService;
+

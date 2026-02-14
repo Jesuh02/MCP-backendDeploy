@@ -8,3 +8,4 @@ export class IReinforcementRepository {
     async clearHistory(userId, courseId) { throw new Error('Not implemented'); }
 }
 export default IReinforcementRepository;
+

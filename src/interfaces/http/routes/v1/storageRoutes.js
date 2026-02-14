@@ -15,3 +15,4 @@ export function storageRoutes({ storageController }) {
     return router;
 }
 export default storageRoutes;
+

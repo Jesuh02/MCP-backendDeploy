@@ -9,3 +9,4 @@ export function healthRoutes({ healthController }) {
     return router;
 }
 export default healthRoutes;
+

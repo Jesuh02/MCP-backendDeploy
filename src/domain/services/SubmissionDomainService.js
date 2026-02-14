@@ -2,10 +2,11 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class SubmissionDomainService {
-    constructor({ submissionRepository, taskRepository, progressRepository, notificationService, courseService, topicService, userService, fileStoragePort }) {
+    constructor({ submissionRepository, taskRepository, progressRepository, progressService, notificationService, courseService, topicService, userService, fileStoragePort }) {
         this.subRepo = submissionRepository;
         this.taskRepo = taskRepository;
         this.progressRepo = progressRepository;
+        this.progressService = progressService || null;
         this.notificationService = notificationService || null;
         this.courseService = courseService || null;
         this.topicService = topicService || null;
@@ -43,10 +44,14 @@ export class SubmissionDomainService {
                 fileName: data.fileName,
                 submissionDate: Date.now()
             });
+
+            await this._updateProgress(data.userId, data.taskId);
             return Result.ok(updated);
         } else {
             // Create new submission
             const created = await this.subRepo.create(data);
+
+            await this._updateProgress(data.userId, data.taskId);
             return Result.ok(created);
         }
     }
@@ -125,7 +130,7 @@ export class SubmissionDomainService {
         });
 
         // Recalcular progreso del estudiante si es posible
-        await this._updateProgress(sub.user_id, sub.task_id);
+        await this._updateProgress(sub.student_id || sub.user_id || sub.userId, sub.task_id || sub.taskId);
 
         return Result.ok(updated);
     }
@@ -133,26 +138,50 @@ export class SubmissionDomainService {
     async delete(id, requesterId) {
         const sub = await this.subRepo.findById(id);
         if (!sub) return Result.fail(new NotFoundError('Entrega', id));
-        if (sub.user_id !== requesterId) {
+
+        const ownerId = sub.student_id || sub.user_id || sub.userId;
+        if (ownerId !== requesterId) {
             return Result.fail(new ForbiddenError('No puedes eliminar esta entrega'));
         }
+
+        const deletedTaskId = sub.task_id || sub.taskId;
         await this.subRepo.delete(id);
+
+        await this._updateProgress(ownerId, deletedTaskId);
+
         return Result.ok({ message: 'Entrega eliminada' });
     }
 
     async _updateProgress(userId, taskId) {
         try {
+            if (!userId || !taskId) return;
             const task = await this.taskRepo.findById(taskId);
-            if (!task || !task.course_id) return;
-            const courseId = task.course_id;
+            if (!task) return;
+
+            let courseId = task.courseId || task.course_id || null;
+            if (!courseId && task.topicId && this.topicService) {
+                const topicResult = await this.topicService.getById(task.topicId);
+                if (topicResult.isOk()) {
+                    const topic = topicResult.getValue();
+                    courseId = topic.courseId || topic.course_id || null;
+                }
+            }
+            if (!courseId) return;
+
+            // Prefer domain orchestration for progress recalculation (hexagonal use-case boundary)
+            if (this.progressService && typeof this.progressService.refreshForUserCourse === 'function') {
+                await this.progressService.refreshForUserCourse(userId, courseId);
+                return;
+            }
 
             const graded = await this.subRepo.getGradedByUserAndCourse(userId, courseId);
             const totalTasks = await this.taskRepo.countByCourse(courseId);
-            const completedTasks = graded.length;
+            const submittedTaskIds = await this.subRepo.getTaskIdsByUserAndCourse(userId, courseId);
+            const completedTasks = submittedTaskIds.length;
             const avgGrade = graded.length > 0 ?
                 graded.reduce((s, g) => s + (g.grade || 0), 0) / graded.length :
                 0;
-            const progressPercentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+            const progressPercentage = totalTasks > 0 ? Math.round(((completedTasks / totalTasks) * 100) * 100) / 100 : 0;
 
             await this.progressRepo.upsert({
                 userId,
@@ -256,7 +285,8 @@ export class SubmissionDomainService {
 
         // Fallback: HTTP directo
         if (fileUri.startsWith('http://') || fileUri.startsWith('https://')) {
-            const { default: axios } = await import('axios');
+            const { default: axios } = await
+            import ('axios');
             const response = await axios.get(fileUri, {
                 responseType: 'arraybuffer',
                 timeout: 60000,
@@ -290,12 +320,25 @@ export class SubmissionDomainService {
     _getFileType(fileName) {
         const lower = (fileName || '').toLowerCase();
         const map = {
-            '.pdf': 'pdf', '.docx': 'docx', '.doc': 'docx',
-            '.xlsx': 'excel', '.xls': 'excel', '.pptx': 'powerpoint',
-            '.txt': 'text', '.sql': 'sql', '.py': 'python',
-            '.js': 'javascript', '.ts': 'javascript', '.java': 'java',
-            '.kt': 'kotlin', '.html': 'html', '.css': 'css',
-            '.json': 'json', '.xml': 'xml', '.md': 'markdown', '.csv': 'csv',
+            '.pdf': 'pdf',
+            '.docx': 'docx',
+            '.doc': 'docx',
+            '.xlsx': 'excel',
+            '.xls': 'excel',
+            '.pptx': 'powerpoint',
+            '.txt': 'text',
+            '.sql': 'sql',
+            '.py': 'python',
+            '.js': 'javascript',
+            '.ts': 'javascript',
+            '.java': 'java',
+            '.kt': 'kotlin',
+            '.html': 'html',
+            '.css': 'css',
+            '.json': 'json',
+            '.xml': 'xml',
+            '.md': 'markdown',
+            '.csv': 'csv',
         };
         for (const [ext, type] of Object.entries(map)) {
             if (lower.endsWith(ext)) return type;
@@ -305,3 +348,4 @@ export class SubmissionDomainService {
 }
 
 export default SubmissionDomainService;
+

@@ -11,3 +11,4 @@ export class INotificationRepository {
     async delete(id) { throw new Error('Not implemented'); }
 }
 export default INotificationRepository;
+

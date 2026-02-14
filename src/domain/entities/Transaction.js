@@ -22,3 +22,4 @@ export class Transaction {
     }
 }
 export default Transaction;
+

@@ -13,3 +13,4 @@ export function mcpRoutes({ mcpController }) {
     return router;
 }
 export default mcpRoutes;
+

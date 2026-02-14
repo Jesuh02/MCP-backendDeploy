@@ -34,6 +34,7 @@ import { SupabasePersonaRepository } from '../infrastructure/database/repositori
 import { SupabaseRolRepository } from '../infrastructure/database/repositories/SupabaseRolRepository.js';
 import { SupabaseFileContextRepository } from '../infrastructure/database/repositories/SupabaseFileContextRepository.js';
 import { SupabaseReinforcementRepository } from '../infrastructure/database/repositories/SupabaseReinforcementRepository.js';
+import { SupabaseChatMessageRepository } from '../infrastructure/database/repositories/SupabaseChatMessageRepository.js';
 
 // Adaptadores externos
 import { R2StorageAdapter } from '../infrastructure/storage/R2StorageAdapter.js';
@@ -47,6 +48,8 @@ import { LLMAdapter } from '../infrastructure/ai/LLMAdapter.js';
 import { RAGAdapter } from '../infrastructure/ai/RAGAdapter.js';
 import { GitHubAdapter } from '../infrastructure/github/GitHubAdapter.js';
 import { CacheAdapter } from '../infrastructure/cache/CacheAdapter.js';
+import { MetaWhatsAppAdapter } from '../infrastructure/messaging/MetaWhatsAppAdapter.js';
+import { SupabaseWhatsAppSessionRepository } from '../infrastructure/database/repositories/SupabaseWhatsAppSessionRepository.js';
 
 // ── Dominio: Servicios (casos de uso) ───────────────────────
 import { AuthService } from '../domain/services/AuthService.js';
@@ -68,15 +71,18 @@ import { PersonaDomainService } from '../domain/services/PersonaDomainService.js
 import { RolDomainService } from '../domain/services/RolDomainService.js';
 import { FileContextDomainService } from '../domain/services/FileContextDomainService.js';
 import { ReinforcementDomainService } from '../domain/services/ReinforcementDomainService.js';
+import { ChatMessageDomainService } from '../domain/services/ChatMessageDomainService.js';
 
 import { TTSDomainService } from '../domain/services/TTSDomainService.js';
 import { VideoProcessingDomainService } from '../domain/services/VideoProcessingDomainService.js';
+import { VideoStreamingDomainService } from '../domain/services/VideoStreamingDomainService.js';
 import { LLMDomainService } from '../domain/services/LLMDomainService.js';
 import { RAGDomainService } from '../domain/services/RAGDomainService.js';
 import { MCPDomainService } from '../domain/services/MCPDomainService.js';
 import { AppDistributionDomainService } from '../domain/services/AppDistributionDomainService.js';
 import { ExcelDomainService } from '../domain/services/ExcelDomainService.js';
 import { MCPService } from '../domain/services/MCPService.js';
+import { WhatsAppDomainService } from '../domain/services/WhatsAppDomainService.js';
 
 // ── Interfaces: Controladores ───────────────────────────────
 import { AuthController } from '../interfaces/http/controllers/AuthController.js';
@@ -99,14 +105,17 @@ import { PersonaController } from '../interfaces/http/controllers/PersonaControl
 import { RolController } from '../interfaces/http/controllers/RolController.js';
 import { FileContextController } from '../interfaces/http/controllers/FileContextController.js';
 import { ReinforcementController } from '../interfaces/http/controllers/ReinforcementController.js';
+import { ChatMessageController } from '../interfaces/http/controllers/ChatMessageController.js';
 
 import { TTSController } from '../interfaces/http/controllers/TTSController.js';
 import { LLMController } from '../interfaces/http/controllers/LLMController.js';
 import { VideoProcessingController } from '../interfaces/http/controllers/VideoProcessingController.js';
+import { VideoStreamingController } from '../interfaces/http/controllers/VideoStreamingController.js';
 import { RAGController } from '../interfaces/http/controllers/RAGController.js';
 import { MCPController } from '../interfaces/http/controllers/MCPController.js';
 import { AppDistributionController } from '../interfaces/http/controllers/AppDistributionController.js';
 import { ExcelController } from '../interfaces/http/controllers/ExcelController.js';
+import { WhatsAppController } from '../interfaces/http/controllers/WhatsAppController.js';
 
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los
@@ -115,6 +124,20 @@ import { ExcelController } from '../interfaces/http/controllers/ExcelController.
  * @returns {object} Mapa de controladores y servicios disponibles.
  */
 export function createContainer() {
+    // ═══════════════════════════════════════════════════════════
+    // HELPER: Safe adapter initialization (Robustness Principle)
+    // Non-critical adapters failing must NOT crash the server.
+    // ═══════════════════════════════════════════════════════════
+
+    function safeInit(name, factory) {
+        try {
+            return factory();
+        } catch (e) {
+            console.warn(`⚠️ Container: ${name} failed to initialize — ${e.message}`);
+            return null;
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════
     // 1. INFRAESTRUCTURA — Instanciar adaptadores
     // ═══════════════════════════════════════════════════════════
@@ -129,17 +152,31 @@ export function createContainer() {
     }
 
     const jwtAdapter = new JWTAdapter();
-    const storageAdapter = new R2StorageAdapter();
-    const fcmAdapter = new FCMAdapter();
-    const emailAdapter = new EmailAdapter();
-    const paymentGateway = new WompiAdapter();
 
-    const ttsAdapter = new OpenAITTSAdapter();
-    const videoProcessingAdapter = new FFmpegVideoAdapter();
-    const llmAdapter = new LLMAdapter();
-    const ragAdapter = new RAGAdapter();
-    const githubAdapter = new GitHubAdapter();
-    const cacheAdapter = new CacheAdapter();
+    // Adapters are individually guarded to follow the Robustness Principle:
+    // failures in non-critical adapters (AI, TTS, video processing) must NOT
+    // prevent the core API (videos, users, courses) from starting.
+
+    const storageAdapter = safeInit('R2StorageAdapter', () => new R2StorageAdapter());
+    const fcmAdapter = safeInit('FCMAdapter', () => new FCMAdapter());
+    const emailAdapter = safeInit('EmailAdapter', () => new EmailAdapter());
+    const paymentGateway = safeInit('WompiAdapter', () => new WompiAdapter());
+
+    const ttsAdapter = safeInit('OpenAITTSAdapter', () => new OpenAITTSAdapter());
+    const videoProcessingAdapter = safeInit('FFmpegVideoAdapter', () => new FFmpegVideoAdapter());
+    const llmAdapter = safeInit('LLMAdapter', () => new LLMAdapter());
+    const ragAdapter = safeInit('RAGAdapter', () => new RAGAdapter());
+    const githubAdapter = safeInit('GitHubAdapter', () => new GitHubAdapter());
+    const cacheAdapter = safeInit('CacheAdapter', () => new CacheAdapter());
+
+    // WhatsApp adapter (non-critical — missing env vars will not crash)
+    const whatsAppAdapter = safeInit('MetaWhatsAppAdapter', () => new MetaWhatsAppAdapter({
+        accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
+        phoneId: process.env.WHATSAPP_PHONE_ID,
+        appSecret: process.env.WHATSAPP_APP_SECRET,
+        otpTemplateName: process.env.WHATSAPP_OTP_TEMPLATE || 'hello_world',
+        otpTemplateLanguage: process.env.WHATSAPP_OTP_TEMPLATE_LANG || 'en_US',
+    }));
 
     // ═══════════════════════════════════════════════════════════
     // 2. REPOSITORIOS — Inyectar cliente Supabase
@@ -162,6 +199,8 @@ export function createContainer() {
     const rolRepo = new SupabaseRolRepository(client);
     const fileContextRepo = new SupabaseFileContextRepository(client);
     const reinforcementRepo = new SupabaseReinforcementRepository(client);
+    const chatMessageRepo = new SupabaseChatMessageRepository(client);
+    const whatsAppSessionRepo = new SupabaseWhatsAppSessionRepository(client);
 
     // ═══════════════════════════════════════════════════════════
     // 3. SERVICIOS DE DOMINIO — Inyectar repositorios y adaptadores
@@ -177,23 +216,28 @@ export function createContainer() {
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo });
-    const progressService = new ProgressDomainService({ progressRepository: progressRepo });
+    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo });
     const notificationService = new NotificationDomainService({ notificationRepository: notificationRepo, userRepository: userRepo, pushNotificationPort: fcmAdapter, emailPort: emailAdapter });
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
-    const rolService = new RolDomainService({ rolRepository: rolRepo });
+    const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
     const fileContextService = new FileContextDomainService({ fileContextRepository: fileContextRepo });
     const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo });
+    const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios
     const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo, notificationService, courseService, progressService, userService });
-    const submissionService = new SubmissionDomainService({ submissionRepository: submissionRepo, taskRepository: taskRepo, progressRepository: progressRepo, notificationService, courseService, topicService, userService, fileStoragePort: storageAdapter });
+    const submissionService = new SubmissionDomainService({ submissionRepository: submissionRepo, taskRepository: taskRepo, progressRepository: progressRepo, progressService, notificationService, courseService, topicService, userService, fileStoragePort: storageAdapter });
     const likeService = new LikeDomainService({ likeRepository: likeRepo, notificationService, commentRepository: commentRepo, videoRepository: videoRepo, userRepository: userRepo });
     const commentService = new CommentDomainService({ commentRepository: commentRepo, videoRepository: videoRepo, notificationService, userRepository: userRepo });
 
     // Nivel 2: servicios de IA y procesamiento
     const ttsService = new TTSDomainService({ ttsPort: ttsAdapter });
     const videoProcessingService = new VideoProcessingDomainService({ videoProcessingPort: videoProcessingAdapter, fileStoragePort: storageAdapter });
+    const videoStreamingService = new VideoStreamingDomainService({ videoRepository: videoRepo, fileStoragePort: storageAdapter });
+
+    // Evict expired URL cache entries every 10 minutes
+    setInterval(() => videoStreamingService.evictExpiredCache(), 10 * 60 * 1000);
     const llmDomainService = new LLMDomainService({
         llmPort: llmAdapter,
         ragPort: ragAdapter,
@@ -217,6 +261,20 @@ export function createContainer() {
     // MCPService legacy (singleton interno) — se inyecta en ExcelDomainService
     const mcpServiceLegacy = new MCPService();
     const excelService = new ExcelDomainService({ mcpService: mcpServiceLegacy, fileStoragePort: storageAdapter });
+
+    // Nivel 3: WhatsApp (depende de MCP, LLM, repos)
+    const whatsAppDomainService = safeInit('WhatsAppDomainService', () => new WhatsAppDomainService({
+        whatsAppPort: whatsAppAdapter,
+        whatsAppSessionRepo,
+        userRepository: userRepo,
+        rolRepository: rolRepo,
+        mcpDomainService,
+        llmDomainService,
+        submissionRepository: submissionRepo,
+        progressRepository: progressRepo,
+        courseRepository: courseRepo,
+        chatMessageRepository: chatMessageRepo,
+    }));
 
     // ═══════════════════════════════════════════════════════════
     // 4. CONTROLADORES — Inyectar servicios de dominio
@@ -242,10 +300,12 @@ export function createContainer() {
     const rolController = new RolController({ rolService });
     const fileContextController = new FileContextController({ fileContextService });
     const reinforcementController = new ReinforcementController({ reinforcementService });
+    const chatMessageController = new ChatMessageController({ chatMessageService });
 
     const ttsController = new TTSController({ ttsService });
     const llmController = new LLMController({ llmService: llmDomainService });
     const videoProcessingController = new VideoProcessingController({ videoProcessingService });
+    const videoStreamingController = new VideoStreamingController({ videoStreamingService });
     const ragController = new RAGController({ ragService: ragDomainService });
     const mcpController = new MCPController({ mcpService: mcpDomainService });
 
@@ -255,6 +315,12 @@ export function createContainer() {
 
     // Excel
     const excelController = new ExcelController({ excelService });
+
+    // WhatsApp
+    const whatsAppController = safeInit('WhatsAppController', () => new WhatsAppController({
+        whatsAppService: whatsAppDomainService,
+        verifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
+    }));
 
     return {
         // Middleware
@@ -281,14 +347,17 @@ export function createContainer() {
         rolController,
         fileContextController,
         reinforcementController,
+        chatMessageController,
 
         ttsController,
         llmController,
         videoProcessingController,
+        videoStreamingController,
         ragController,
         mcpController,
         appDistributionController,
         excelController,
+        whatsAppController,
 
         // Servicios de dominio
         authService,
@@ -310,14 +379,17 @@ export function createContainer() {
         rolService,
         fileContextService,
         reinforcementService,
+        chatMessageService,
         ttsService,
         videoProcessingService,
+        videoStreamingService,
         llmDomainService,
         ragDomainService,
         mcpDomainService,
         appDistributionService,
         excelService,
         mcpServiceLegacy, // Injected for server.js legacy tools
+        whatsAppDomainService,
 
         // Adaptadores
         storageAdapter,
@@ -330,7 +402,9 @@ export function createContainer() {
         ragAdapter,
         githubAdapter,
         cacheAdapter,
+        whatsAppAdapter,
     };
 }
 
 export default createContainer;
+

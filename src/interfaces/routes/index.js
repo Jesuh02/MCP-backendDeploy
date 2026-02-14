@@ -1,41 +1,25 @@
-import notificationRoutes from './notificationRoutes.js';
-import llmRoutes from './llmRoutes.js';
-import excelRoutes from './excelRoutes.js';
-import mcpRoutes from './MCPRoutes.js';
-import courseRoutes from './courseRoutes.js';
-
 /**
- * routes/index.js
- * Exportaciones centralizadas de todas las rutas
+ * routes/index.js (Legacy)
+ *
+ * @deprecated Este archivo está DEPRECADO.
+ * Todas las rutas ahora se montan vía la arquitectura hexagonal en:
+ *   - src/interfaces/http/routes/v1/index.js (createV1Router)
+ *   - server.js monta v1Router bajo /api/v1
+ *
+ * Los archivos de rutas legacy en este directorio han sido:
+ *   - MCPRoutes.js → Refactorizado con factory function (DI)
+ *   - courseRoutes.js → Deprecado (migrado a v1/courseRoutes.js)
+ *   - notificationRoutes.js → Deprecado (migrado a v1/notificationRoutes.js)
+ *   - paymentRoutes.js → Deprecado (redirigido a v1/paymentRoutes.js)
+ *   - llmRoutes.js → Deprecado (migrado a v1/llmRoutes.js)
+ *   - excelRoutes.js → Deprecado (migrado a v1/excelRoutes.js)
+ *   - RAGRoutes.js → Deprecado (migrado a v1/ragRoutes.js)
+ *   - ttsRoutes.js → Deprecado (migrado a v1/ttsRoutes.js)
+ *   - videoProcessingRoutes.js → Deprecado (migrado a v1/videoProcessingRoutes.js)
+ *   - HealthRoutes.js → Deprecado (migrado a v1/healthRoutes.js)
+ *
+ * NO se importa ni se usa en la configuración actual del servidor.
  */
 
-export { notificationRoutes, llmRoutes, excelRoutes, mcpRoutes, courseRoutes };
+export default {};
 
-// Route configuration helper
-export function configureRoutes(app) {
-    const routes = [
-        { path: '/notifications', router: notificationRoutes, name: 'Notifications' },
-        { path: '/llm', router: llmRoutes, name: 'LLM' },
-        { path: '/excel', router: excelRoutes, name: 'Excel' },
-        { path: '/courses', router: courseRoutes, name: 'Courses' },
-        { path: '/', router: mcpRoutes, name: 'MCP' } // MCP routes are mounted at root to handle /tools/call etc.
-    ];
-
-    // Mount all at root for backward compatibility but log them clearly
-    // Also mount at specific paths for cleaner API structure if needed
-    routes.forEach(({ path, router, name }) => {
-        // Mount at root as requested by current app architecture
-        app.use('/', router);
-        console.log(`📍 Route configured: ${name} (mounted at /)`);
-    });
-
-    return app;
-}
-
-export default {
-    notificationRoutes,
-    llmRoutes,
-    excelRoutes,
-    mcpRoutes,
-    courseRoutes
-};

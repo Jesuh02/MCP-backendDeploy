@@ -4,6 +4,15 @@
 import Joi from 'joi';
 import { ValidationError } from '../../../shared/errors/index.js';
 
+const normalizeText = (value = '') => String(value).trim().toLowerCase().replace(/\s+/g, ' ');
+
+const questionItemSchema = Joi.object({
+    question: Joi.string().trim().min(8).required(),
+    options: Joi.array().items(Joi.string().trim().min(1).required()).min(4).required(),
+    correctIndex: Joi.number().integer().min(0).required(),
+    explanation: Joi.string().allow('', null).optional(),
+});
+
 // Accept both camelCase and snake_case field names from clients
 const saveSessionSchema = Joi.object({
     userId: Joi.number().integer().optional(),
@@ -31,12 +40,28 @@ const saveQuestionsSchema = Joi.object({
     taskId: Joi.number().integer().allow(null).optional(),
     task_id: Joi.number().integer().allow(null).optional(),
     questions: Joi.alternatives().try(
-        Joi.array().items(Joi.object({
-            question: Joi.string().required(),
-            options: Joi.array().items(Joi.string()).min(2).required(),
-            correctIndex: Joi.number().integer().min(0).required(),
-            explanation: Joi.string().allow('', null).optional(),
-        })),
+        Joi.array().items(questionItemSchema).length(10).custom((items, helpers) => {
+            const seenQuestions = new Set();
+
+            for (const item of items) {
+                const normalizedQuestion = normalizeText(item.question);
+                if (seenQuestions.has(normalizedQuestion)) {
+                    return helpers.error('any.invalid', { message: 'questions must be unique by question text' });
+                }
+                seenQuestions.add(normalizedQuestion);
+
+                const uniqueOptions = new Set(item.options.map(option => normalizeText(option)));
+                if (uniqueOptions.size < 4) {
+                    return helpers.error('any.invalid', { message: 'each question must contain at least 4 unique options' });
+                }
+
+                if (item.correctIndex >= item.options.length) {
+                    return helpers.error('any.invalid', { message: 'correctIndex is out of range for question options' });
+                }
+            }
+
+            return items;
+        }, 'strict question uniqueness validation'),
         Joi.string()
     ).required(),
 }).options({ allowUnknown: true });
@@ -46,7 +71,7 @@ export class ReinforcementController {
         this.reinforcementService = reinforcementService;
     }
 
-    saveSession = async (req, res, next) => {
+    saveSession = async(req, res, next) => {
         try {
             const { error, value } = saveSessionSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
@@ -78,7 +103,7 @@ export class ReinforcementController {
      * Called by Android after receiving questions from /procesar-prompt
      * Uses MCPService flow: session → hash check → embedding → semantic check → save
      */
-    saveQuestions = async (req, res, next) => {
+    saveQuestions = async(req, res, next) => {
         try {
             const { error, value } = saveQuestionsSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
@@ -111,7 +136,7 @@ export class ReinforcementController {
      * Manual trigger to ensure RAG documents exist for a task.
      * Checks content_items and ingests them into rag_documents if missing.
      */
-    ingestContext = async (req, res, next) => {
+    ingestContext = async(req, res, next) => {
         try {
             const taskId = parseInt(req.body.taskId || req.body.task_id);
             const courseId = parseInt(req.body.courseId || req.body.course_id);
@@ -122,13 +147,13 @@ export class ReinforcementController {
             }
 
             const result = await this.reinforcementService.ensureContentIngested(courseId, taskId, topicId);
-            
+
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
 
-    getHistory = async (req, res, next) => {
+    getHistory = async(req, res, next) => {
         try {
             const userId = parseInt(req.params.userId);
             const courseId = parseInt(req.params.courseId);
@@ -138,12 +163,55 @@ export class ReinforcementController {
         } catch (err) { next(err); }
     };
 
-    getMySessions = async (req, res, next) => {
+    /**
+     * GET /existing-questions?courseId=X&topicId=Y&taskId=Z
+     * Returns full question objects already stored for this user+course+topic+task
+     * so the client can use them for deduplication before LLM generation.
+     */
+    getExistingQuestions = async(req, res, next) => {
+        try {
+            const userId = req.user?.userId || req.user?.id;
+            const courseId = parseInt(req.query.courseId || req.query.course_id);
+            const topicId = req.query.topicId || req.query.topic_id ? parseInt(req.query.topicId || req.query.topic_id) : null;
+            const taskId = req.query.taskId || req.query.task_id ? parseInt(req.query.taskId || req.query.task_id) : null;
+
+            if (!userId) return next(new ValidationError('Authentication required'));
+            if (!courseId) return next(new ValidationError('courseId is required'));
+
+            const result = await this.reinforcementService.getExistingQuestions(userId, courseId, topicId, taskId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getMySessions = async(req, res, next) => {
         try {
             const result = await this.reinforcementService.getUserSessions(req.user.userId, req.query);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    /**
+     * GET /rag-content?courseId=X&topicId=Y&taskId=Z
+     * Returns raw text content from rag_documents for strict prompt grounding.
+     * The client uses this to build prompts that prevent LLM hallucination.
+     */
+    getRagContent = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.query.courseId || req.query.course_id);
+            const topicId = req.query.topicId || req.query.topic_id ? parseInt(req.query.topicId || req.query.topic_id) : null;
+            const taskId = req.query.taskId || req.query.task_id ? parseInt(req.query.taskId || req.query.task_id) : null;
+
+            if (!courseId) {
+                return next(new ValidationError('courseId is required'));
+            }
+
+            const result = await this.reinforcementService.getRagContent(courseId, topicId, taskId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ReinforcementController;
+

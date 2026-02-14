@@ -20,3 +20,4 @@ export function userRoutes({ userController, requireRoles }) {
     return router;
 }
 export default userRoutes;
+

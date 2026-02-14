@@ -11,3 +11,4 @@ export class ISubscriptionRepository {
     async countByCreator(creatorId) { throw new Error('Not implemented'); }
 }
 export default ISubscriptionRepository;
+

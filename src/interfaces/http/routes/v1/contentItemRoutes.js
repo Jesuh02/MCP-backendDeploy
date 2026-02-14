@@ -14,3 +14,4 @@ export function contentItemRoutes({ contentItemController }) {
     return router;
 }
 export default contentItemRoutes;
+

@@ -80,3 +80,4 @@ export class SupabaseRolRepository {
     }
 }
 export default SupabaseRolRepository;
+

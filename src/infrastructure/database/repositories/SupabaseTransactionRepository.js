@@ -7,7 +7,8 @@ export class SupabaseTransactionRepository {
     }
 
     async findByTransactionId(transactionId) {
-        const { data, error } = await this.client.from('transactions').select('*').eq('transaction_id', transactionId).single();
+        // Column is 'external_reference' in DB — kept for backward compatibility
+        const { data, error } = await this.client.from('transactions').select('*').eq('external_reference', transactionId).single();
         return error ? null : data;
     }
 
@@ -33,10 +34,10 @@ export class SupabaseTransactionRepository {
         const { data, error } = await this.client.from('transactions').insert({
             user_id: txData.userId,
             course_id: txData.courseId,
-            transaction_id: txData.transactionId || null,
+            external_reference: txData.externalReference || txData.transactionId || null,
             amount: txData.amount || 0,
             currency: txData.currency || 'COP',
-            status: txData.status || 'pending',
+            status: txData.status || 'PENDING',
             payment_method: txData.paymentMethod || null,
         }).select().single();
         if (error) throw new Error(error.message);
@@ -46,7 +47,8 @@ export class SupabaseTransactionRepository {
     async update(id, data) {
         const payload = {};
         if (data.status !== undefined) payload.status = data.status;
-        if (data.transactionId !== undefined) payload.transaction_id = data.transactionId;
+        if (data.transactionId !== undefined) payload.external_reference = data.transactionId;
+        if (data.externalReference !== undefined) payload.external_reference = data.externalReference;
         if (data.gatewayResponse !== undefined) payload.provider_response = data.gatewayResponse;
         payload.updated_at = new Date().toISOString();
         const { data: u, error } = await this.client.from('transactions').update(payload).eq('id', id).select().single();
@@ -60,7 +62,8 @@ export class SupabaseTransactionRepository {
         if (data.gatewayResponse !== undefined) payload.provider_response = data.gatewayResponse;
         if (data.wompiTransactionId !== undefined) payload.wompi_transaction_id = data.wompiTransactionId;
         payload.updated_at = new Date().toISOString();
-        const { error } = await this.client.from('transactions').update(payload).eq('transaction_id', transactionId);
+        // Column is 'external_reference' in DB
+        const { error } = await this.client.from('transactions').update(payload).eq('external_reference', transactionId);
         if (error) throw new Error(error.message);
         return true;
     }
@@ -171,3 +174,4 @@ export class SupabaseTransactionRepository {
     }
 }
 export default SupabaseTransactionRepository;
+

@@ -5,6 +5,7 @@
  * con { userId, username, roles } y rechaza con 401 si es inválido.
  *
  * Rutas públicas (sin autenticación) se configuran al crear el middleware.
+ * Las rutas bajo /api/v1/public/* son públicas por convención (browsing/discovery).
  */
 import { UnauthorizedError } from '../../shared/errors/index.js';
 
@@ -17,6 +18,7 @@ const DEFAULT_PUBLIC_PATHS = [
     '/api/v1/auth/login',
     '/api/v1/auth/register',
     '/api/v1/auth/refresh-token',
+    '/api/v1/public',
 ];
 
 /**
@@ -32,14 +34,20 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
         // ── Rutas públicas ──
         // Usamos originalUrl para obtener la ruta completa (incluyendo /api/v1)
         // y eliminamos query params si existen.
-        const path = req.originalUrl.split('?')[0];
+        const fullPath = req.originalUrl.split('?')[0];
 
-        if (publicPaths.some((p) => path === p || path.startsWith(p + '/'))) {
+        // Whitelist: rutas explícitamente públicas (browsing, auth, health)
+        if (publicPaths.some((p) => fullPath === p || fullPath.startsWith(p + '/'))) {
+            return next();
+        }
+
+        // Convención: cualquier ruta bajo /api/v1/public/ es pública por diseño
+        if (fullPath.startsWith('/api/v1/public/') || fullPath === '/api/v1/public') {
             return next();
         }
 
         // Permitir rutas legacy que no estén bajo /api/v1
-        if (!path.startsWith('/api/v1')) {
+        if (!fullPath.startsWith('/api/v1')) {
             return next();
         }
 
@@ -62,6 +70,40 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
             username: decoded.username,
             roles: decoded.roles || [],
         };
+
+        next();
+    };
+}
+
+/**
+ * Middleware de autenticación opcional (soft auth).
+ * Intenta extraer y validar el JWT si está presente, inyecta req.user.
+ * Si NO hay token o es inválido, simplemente continúa sin req.user.
+ *
+ * Útil para endpoints como payment/initiate donde:
+ *   - Si hay JWT → lo usamos (más seguro)
+ *   - Si no hay JWT → el controlador puede usar userId del body como fallback
+ *
+ * @param {import('../../infrastructure/auth/JWTAdapter.js').JWTAdapter} jwtAdapter
+ * @returns {import('express').RequestHandler}
+ */
+export function createOptionalAuthMiddleware(jwtAdapter) {
+    return (req, _res, next) => {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return next(); // No token — proceed without req.user
+        }
+
+        const token = authHeader.slice(7);
+        const { valid, decoded } = jwtAdapter.verifyAccessToken(token);
+
+        if (valid && decoded) {
+            req.user = {
+                userId: decoded.userId,
+                username: decoded.username,
+                roles: decoded.roles || [],
+            };
+        }
 
         next();
     };
@@ -92,4 +134,5 @@ export function requireRoles(...requiredRoles) {
     };
 }
 
-export default { createAuthMiddleware, requireRoles };
+export default { createAuthMiddleware, createOptionalAuthMiddleware, requireRoles };
+

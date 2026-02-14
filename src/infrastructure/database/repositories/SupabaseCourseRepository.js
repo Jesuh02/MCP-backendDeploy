@@ -13,7 +13,7 @@ export class SupabaseCourseRepository {
     async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc', excludeCreatorId = null } = {}) {
         let query = this.client.from('courses').select('*');
         if (excludeCreatorId) query = query.neq('creator_user_id', excludeCreatorId);
-        
+
         const { data, error } = await query.order(sortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
@@ -80,7 +80,7 @@ export class SupabaseCourseRepository {
         if (data.price !== undefined) payload.price = data.price;
         if (data.category !== undefined) payload.category = data.category;
         if (data.isPublished !== undefined) payload.is_published = data.isPublished;
-        payload.updated_at = new Date().toISOString();
+        payload.last_modified_date = new Date().toISOString();
 
         const { data: updated, error } = await this.client.from('courses').update(payload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando curso: ${error.message}`);
@@ -132,5 +132,61 @@ export class SupabaseCourseRepository {
         if (error) return [];
         return data || [];
     }
+
+    /**
+     * Finds courses created by a specific user that have at least one task submission.
+     * Used by ChatBot context filtering.
+     * @param {number} creatorUserId
+     * @returns {Promise<Object[]>}
+     */
+    async findCreatorCoursesWithSubmissions(creatorUserId) {
+        // Step 1: Get creator's courses
+        const { data: courses, error: coursesErr } = await this.client
+            .from('courses')
+            .select('*')
+            .eq('creator_user_id', creatorUserId)
+            .order('created_at', { ascending: false });
+
+        if (coursesErr || !courses || courses.length === 0) return [];
+
+        // Step 2: Get topics for these courses
+        const courseIds = courses.map(c => c.id);
+        const { data: topics } = await this.client
+            .from('topics')
+            .select('id, course_id')
+            .in('course_id', courseIds);
+
+        if (!topics || topics.length === 0) return [];
+
+        // Step 3: Get tasks for these topics
+        const topicIds = topics.map(t => t.id);
+        const { data: tasks } = await this.client
+            .from('tasks')
+            .select('id, topic_id')
+            .in('topic_id', topicIds);
+
+        if (!tasks || tasks.length === 0) return [];
+
+        // Step 4: Check which tasks have submissions
+        const taskIds = tasks.map(t => t.id);
+        const { data: submissions } = await this.client
+            .from('task_submissions')
+            .select('task_id')
+            .in('task_id', taskIds);
+
+        if (!submissions || submissions.length === 0) return [];
+
+        // Step 5: Map back to courses that have submissions
+        const taskIdsWithSubs = new Set(submissions.map(s => s.task_id));
+        const topicIdsWithSubs = new Set(
+            tasks.filter(t => taskIdsWithSubs.has(t.id)).map(t => t.topic_id)
+        );
+        const courseIdsWithSubs = new Set(
+            topics.filter(t => topicIdsWithSubs.has(t.id)).map(t => t.course_id)
+        );
+
+        return courses.filter(c => courseIdsWithSubs.has(c.id));
+    }
 }
 export default SupabaseCourseRepository;
+
