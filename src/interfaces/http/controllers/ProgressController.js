@@ -119,7 +119,7 @@ export class ProgressController {
 
     getTopStudents = async(req, res, next) => {
         try {
-            const limit = parseInt(req.query.limit) || 10;
+            const limit = parseInt(req.query.limit) || 5;
             const result = await this.progressService.getTopStudentsGlobal(limit);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });

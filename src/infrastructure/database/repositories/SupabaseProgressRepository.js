@@ -104,12 +104,13 @@ export class SupabaseProgressRepository {
         return this._mapToDomain(updated);
     }
 
-    async getTopStudentsGlobal(limit = 10) {
-        const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Number(limit) : 10;
+    async getTopStudentsGlobal(limit = 5) {
+        const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Number(limit) : 5;
 
         const { data: progressRows, error: progressError } = await this.client
             .from('progreso_estudiante')
-            .select('usuario_estudiante, estado, usuarios:usuario_estudiante(id, username, avatar)')
+            .select('usuario_estudiante, estado, calificacion_ponderada, promedio, usuarios:usuario_estudiante(id, username, avatar)')
+            .eq('estado', 'Ganado')
             .not('usuario_estudiante', 'is', null);
 
         if (progressError || !progressRows) return [];
@@ -123,6 +124,9 @@ export class SupabaseProgressRepository {
             const existing = aggregatedByUser.get(userId) || {
                 user_id: userId,
                 approved_courses: 0,
+                total_grade: 0,
+                graded_courses: 0,
+                average_grade: 0,
                 username: null,
                 avatar: null,
             };
@@ -130,6 +134,13 @@ export class SupabaseProgressRepository {
             const status = String(row?.estado || '').trim().toLowerCase();
             if (status === 'ganado') {
                 existing.approved_courses += 1;
+
+                const gradeRaw = row?.calificacion_ponderada ?? row?.promedio;
+                const grade = Number(gradeRaw);
+                if (Number.isFinite(grade)) {
+                    existing.total_grade += grade;
+                    existing.graded_courses += 1;
+                }
             }
 
             const relatedUser = Array.isArray(row?.usuarios) ?
@@ -146,9 +157,18 @@ export class SupabaseProgressRepository {
             aggregatedByUser.set(userId, existing);
         }
 
+        for (const student of aggregatedByUser.values()) {
+            if (student.graded_courses > 0) {
+                student.average_grade = Number((student.total_grade / student.graded_courses).toFixed(2));
+            }
+        }
+
         const ranked = [...aggregatedByUser.values()]
             .filter((student) => student.approved_courses > 0)
             .sort((a, b) => {
+                if (b.average_grade !== a.average_grade) {
+                    return b.average_grade - a.average_grade;
+                }
                 if (b.approved_courses !== a.approved_courses) {
                     return b.approved_courses - a.approved_courses;
                 }
@@ -181,6 +201,7 @@ export class SupabaseProgressRepository {
             username: student.username || `Usuario ${student.user_id}`,
             avatar: student.avatar || null,
             approved_courses: student.approved_courses,
+            average_grade: student.average_grade,
         }));
     }
 
