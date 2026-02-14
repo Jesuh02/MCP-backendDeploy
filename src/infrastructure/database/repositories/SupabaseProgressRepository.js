@@ -117,7 +117,7 @@ export class SupabaseProgressRepository {
         const aggregatedByUser = new Map();
 
         for (const row of progressRows) {
-            const userId = Number(row ? .usuario_estudiante);
+            const userId = Number(row?.usuario_estudiante);
             if (!Number.isInteger(userId) || userId <= 0) continue;
 
             const existing = aggregatedByUser.get(userId) || {
@@ -127,19 +127,19 @@ export class SupabaseProgressRepository {
                 avatar: null,
             };
 
-            const status = String(row ? .estado || '').trim().toLowerCase();
+            const status = String(row?.estado || '').trim().toLowerCase();
             if (status === 'ganado') {
                 existing.approved_courses += 1;
             }
 
-            const relatedUser = Array.isArray(row ? .usuarios) ?
+            const relatedUser = Array.isArray(row?.usuarios) ?
                 row.usuarios[0] :
-                row ? .usuarios;
+                row?.usuarios;
 
-            if (!existing.username && relatedUser ? .username) {
+            if (!existing.username && relatedUser?.username) {
                 existing.username = relatedUser.username;
             }
-            if (!existing.avatar && relatedUser ? .avatar) {
+            if (!existing.avatar && relatedUser?.avatar) {
                 existing.avatar = relatedUser.avatar;
             }
 
