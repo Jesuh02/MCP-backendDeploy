@@ -2911,3 +2911,4 @@ export function setUseRemoteLLM(flag) {
         console.warn('MCPService: Failed to set useRemoteLLM flag', e.message || e);
     }
 }
+

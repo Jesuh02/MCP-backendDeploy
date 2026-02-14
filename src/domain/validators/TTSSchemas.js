@@ -16,3 +16,4 @@ export const synthesizeSchema = Joi.object({
 });
 
 export default { synthesizeSchema };
+

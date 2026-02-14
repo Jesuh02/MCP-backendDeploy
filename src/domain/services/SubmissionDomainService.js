@@ -44,10 +44,14 @@ export class SubmissionDomainService {
                 fileName: data.fileName,
                 submissionDate: Date.now()
             });
+
+            await this._updateProgress(data.userId, data.taskId);
             return Result.ok(updated);
         } else {
             // Create new submission
             const created = await this.subRepo.create(data);
+
+            await this._updateProgress(data.userId, data.taskId);
             return Result.ok(created);
         }
     }
@@ -134,10 +138,17 @@ export class SubmissionDomainService {
     async delete(id, requesterId) {
         const sub = await this.subRepo.findById(id);
         if (!sub) return Result.fail(new NotFoundError('Entrega', id));
-        if (sub.user_id !== requesterId) {
+
+        const ownerId = sub.student_id || sub.user_id || sub.userId;
+        if (ownerId !== requesterId) {
             return Result.fail(new ForbiddenError('No puedes eliminar esta entrega'));
         }
+
+        const deletedTaskId = sub.task_id || sub.taskId;
         await this.subRepo.delete(id);
+
+        await this._updateProgress(ownerId, deletedTaskId);
+
         return Result.ok({ message: 'Entrega eliminada' });
     }
 
@@ -274,7 +285,8 @@ export class SubmissionDomainService {
 
         // Fallback: HTTP directo
         if (fileUri.startsWith('http://') || fileUri.startsWith('https://')) {
-            const { default: axios } = await import('axios');
+            const { default: axios } = await
+            import ('axios');
             const response = await axios.get(fileUri, {
                 responseType: 'arraybuffer',
                 timeout: 60000,
@@ -308,12 +320,25 @@ export class SubmissionDomainService {
     _getFileType(fileName) {
         const lower = (fileName || '').toLowerCase();
         const map = {
-            '.pdf': 'pdf', '.docx': 'docx', '.doc': 'docx',
-            '.xlsx': 'excel', '.xls': 'excel', '.pptx': 'powerpoint',
-            '.txt': 'text', '.sql': 'sql', '.py': 'python',
-            '.js': 'javascript', '.ts': 'javascript', '.java': 'java',
-            '.kt': 'kotlin', '.html': 'html', '.css': 'css',
-            '.json': 'json', '.xml': 'xml', '.md': 'markdown', '.csv': 'csv',
+            '.pdf': 'pdf',
+            '.docx': 'docx',
+            '.doc': 'docx',
+            '.xlsx': 'excel',
+            '.xls': 'excel',
+            '.pptx': 'powerpoint',
+            '.txt': 'text',
+            '.sql': 'sql',
+            '.py': 'python',
+            '.js': 'javascript',
+            '.ts': 'javascript',
+            '.java': 'java',
+            '.kt': 'kotlin',
+            '.html': 'html',
+            '.css': 'css',
+            '.json': 'json',
+            '.xml': 'xml',
+            '.md': 'markdown',
+            '.csv': 'csv',
         };
         for (const [ext, type] of Object.entries(map)) {
             if (lower.endsWith(ext)) return type;
@@ -323,3 +348,4 @@ export class SubmissionDomainService {
 }
 
 export default SubmissionDomainService;
+

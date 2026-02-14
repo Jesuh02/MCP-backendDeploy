@@ -56,3 +56,4 @@ export class IWhatsAppPort {
 }
 
 export default IWhatsAppPort;
+

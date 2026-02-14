@@ -103,3 +103,4 @@ export class IVideoProcessingPort {
     async generateThumbnail(inputPath, outputPath, timestamp = 1) { throw new Error('Not implemented'); }
 }
 export default IVideoProcessingPort;
+

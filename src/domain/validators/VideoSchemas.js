@@ -24,3 +24,4 @@ export const updateVideoSchema = Joi.object({
     hlsUrl: Joi.string().uri().allow(null, '').optional(),
     isPublished: Joi.boolean().optional(),
 }).min(1);
+

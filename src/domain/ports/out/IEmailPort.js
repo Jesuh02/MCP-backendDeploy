@@ -7,3 +7,4 @@ export class IEmailPort {
     isAvailable() { throw new Error('Not implemented'); }
 }
 export default IEmailPort;
+

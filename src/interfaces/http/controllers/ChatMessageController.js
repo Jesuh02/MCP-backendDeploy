@@ -74,3 +74,4 @@ export class ChatMessageController extends BaseController {
 }
 
 export default ChatMessageController;
+

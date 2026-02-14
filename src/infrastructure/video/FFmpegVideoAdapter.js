@@ -427,3 +427,4 @@ export class FFmpegVideoAdapter extends EventEmitter {
 
 export { QUALITY_PRESETS, COMPRESSION_THRESHOLDS };
 export default FFmpegVideoAdapter;
+

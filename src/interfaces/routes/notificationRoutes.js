@@ -24,3 +24,4 @@ const router = Router();
 // See: src/interfaces/http/routes/v1/notificationRoutes.js
 
 export default router;
+

@@ -1,4 +1,4 @@
-﻿export class SupabaseSubmissionRepository {
+export class SupabaseSubmissionRepository {
     constructor(client) { this.client = client; }
 
     async findById(id) {
@@ -119,3 +119,4 @@
     }
 }
 export default SupabaseSubmissionRepository;
+

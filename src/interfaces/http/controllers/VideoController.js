@@ -195,3 +195,4 @@ export class VideoController {
     };
 }
 export default VideoController;
+

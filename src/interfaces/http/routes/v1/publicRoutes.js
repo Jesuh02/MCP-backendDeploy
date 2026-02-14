@@ -78,3 +78,5 @@ export function publicRoutes({ videoService, courseService }) {
 }
 
 export default publicRoutes;
+
+

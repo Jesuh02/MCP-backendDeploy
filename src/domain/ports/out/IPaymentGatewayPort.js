@@ -9,3 +9,4 @@ export class IPaymentGatewayPort {
     isAvailable() { throw new Error('Not implemented'); }
 }
 export default IPaymentGatewayPort;
+

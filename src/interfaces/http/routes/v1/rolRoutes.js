@@ -24,3 +24,4 @@ export function rolRoutes({ rolController }) {
     return router;
 }
 export default rolRoutes;
+

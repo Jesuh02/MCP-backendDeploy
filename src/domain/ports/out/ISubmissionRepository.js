@@ -15,3 +15,4 @@ export class ISubmissionRepository {
     async getGradedByUserAndCourse(userId, courseId) { throw new Error('Not implemented'); }
 }
 export default ISubmissionRepository;
+

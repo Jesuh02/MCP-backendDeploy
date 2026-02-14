@@ -11,3 +11,4 @@ export class IProgressRepository {
     async getLeaderboard(courseId, limit) { throw new Error('Not implemented'); }
 }
 export default IProgressRepository;
+

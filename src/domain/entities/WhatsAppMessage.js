@@ -53,16 +53,16 @@ export class WhatsAppMessage {
      * @returns {WhatsAppMessage}
      */
     static fromSupabaseRow(row) {
-            return new WhatsAppMessage({
-                        id: row.id,
-                        sessionId: row.session_id,
-                        usuarioId: row.usuario_id,
-                        username: row.username,
-                        message: row.message,
-                        isFromUser: row.is_from_user ? ? false,
-                        messageType: row.message_type ? ? 'text',
-                        waMessageId: row.wa_message_id,
-                        origin: row.origin ? ? 'whatsapp',
+        return new WhatsAppMessage({
+            id: row.id,
+            sessionId: row.session_id,
+            usuarioId: row.usuario_id,
+            username: row.username,
+            message: row.message,
+            isFromUser: row.is_from_user ?? false,
+            messageType: row.message_type ?? 'text',
+            waMessageId: row.wa_message_id,
+            origin: row.origin ?? 'whatsapp',
             status: row.status ?? 'sent',
             submissionId: row.submission_id,
             timestamp: row.timestamp,
@@ -92,3 +92,4 @@ export class WhatsAppMessage {
 }
 
 export default WhatsAppMessage;
+

@@ -1,4 +1,4 @@
-﻿export class SupabaseSubscriptionRepository {
+export class SupabaseSubscriptionRepository {
     constructor(client) { this.client = client; }
 
     async findBySubscriberAndCreator(subscriberId, creatorId) {
@@ -52,3 +52,4 @@
     }
 }
 export default SupabaseSubscriptionRepository;
+

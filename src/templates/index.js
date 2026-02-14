@@ -1,4 +1,4 @@
-﻿/**
+/**
  * templates/index.js
  * Exportaciones centralizadas de todas las plantillas
  */
@@ -20,3 +20,5 @@ export default {
     generateGenericEmailHTML: () => import('./emailTemplates.js').then(m => m.generateGenericEmailHTML),
     generateChatResponseEmailHTML: () => import('./emailTemplates.js').then(m => m.generateChatResponseEmailHTML)
 };
+
+

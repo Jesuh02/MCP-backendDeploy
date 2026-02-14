@@ -24,3 +24,4 @@ export function courseRoutes({ courseController }) {
     return router;
 }
 export default courseRoutes;
+
