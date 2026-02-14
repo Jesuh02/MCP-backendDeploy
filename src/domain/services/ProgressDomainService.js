@@ -39,7 +39,13 @@ export class ProgressDomainService {
     }
 
     async upsert(data) {
-        let progress = await this.progressRepo.upsert(data);
+        let progress = null;
+
+        if (this.taskRepo && this.submissionRepo && data?.userId && data?.courseId) {
+            progress = await this._recalculateAndUpsertUserCourseProgress(data.userId, data.courseId);
+        } else {
+            progress = await this.progressRepo.upsert(data);
+        }
 
         // Auto-issue certificate if passed (status 'Ganado' or grade >= 6) and not yet issued
         // 'Ganado' logic is consistent with DB generated column
@@ -105,22 +111,42 @@ export class ProgressDomainService {
 
         const totalTasks = await this.taskRepo.countByCourse(courseId);
 
-        const enrolledStudents = await this.progressRepo.findByCourse(courseId);
-        if (!enrolledStudents || enrolledStudents.length === 0) {
+        const candidateUserIds = await this._resolveCandidateUserIdsForCourse(courseId);
+        if (!candidateUserIds || candidateUserIds.length === 0) {
             return Result.ok({ recalculated: 0, totalTasks });
         }
 
         let recalculated = 0;
-        for (const student of enrolledStudents) {
+        for (const userId of candidateUserIds) {
             try {
-                await this._recalculateAndUpsertUserCourseProgress(student.userId, courseId, totalTasks);
+                await this._recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasks);
                 recalculated++;
             } catch (err) {
-                console.error(`[ProgressService] Error recalculating for user ${student.userId}:`, err.message);
+                console.error(`[ProgressService] Error recalculating for user ${userId}:`, err.message);
             }
         }
 
         return Result.ok({ recalculated, totalTasks });
+    }
+
+    async _resolveCandidateUserIdsForCourse(courseId) {
+        const ids = new Set();
+
+        const existingProgress = await this.progressRepo.findByCourse(courseId);
+        for (const item of existingProgress || []) {
+            const userId = Number(item?.userId);
+            if (Number.isInteger(userId) && userId > 0) ids.add(userId);
+        }
+
+        if (typeof this.submissionRepo.getStudentIdsByCourse === 'function') {
+            const fromSubmissions = await this.submissionRepo.getStudentIdsByCourse(courseId);
+            for (const userId of fromSubmissions || []) {
+                const parsed = Number(userId);
+                if (Number.isInteger(parsed) && parsed > 0) ids.add(parsed);
+            }
+        }
+
+        return [...ids];
     }
 
     async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null) {
