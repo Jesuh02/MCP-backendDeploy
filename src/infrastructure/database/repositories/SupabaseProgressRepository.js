@@ -106,31 +106,24 @@ export class SupabaseProgressRepository {
 
     async getTopStudentsGlobal(limit = 5, creatorUserId = null) {
         const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Number(limit) : 5;
-
         const creatorId = Number(creatorUserId);
         if (!Number.isInteger(creatorId) || creatorId <= 0) return [];
 
-        const { data: creatorCourses, error: coursesError } = await this.client
-            .from('courses')
-            .select('id')
-            .eq('creator_user_id', creatorId);
-
-        if (coursesError || !creatorCourses || creatorCourses.length === 0) return [];
-
-        const creatorCourseIds = creatorCourses
-            .map((course) => Number(course?.id))
-            .filter((courseId) => Number.isInteger(courseId) && courseId > 0);
-
-        if (creatorCourseIds.length === 0) return [];
-
         const { data: progressRows, error: progressError } = await this.client
             .from('progreso_estudiante')
-            .select('usuario_estudiante, estado, calificacion_ponderada, promedio, usuarios:usuario_estudiante(id, username, avatar)')
+            .select(`
+                usuario_estudiante,
+                estado,
+                calificacion_ponderada,
+                promedio,
+                usuarios:usuario_estudiante(id, username, avatar),
+                courses!inner(id, creator_user_id)
+            `)
             .eq('estado', 'Ganado')
-            .in('curso_id', creatorCourseIds)
+            .eq('courses.creator_user_id', creatorId)
             .not('usuario_estudiante', 'is', null);
 
-        if (progressError || !progressRows) return [];
+        if (progressError || !progressRows || progressRows.length === 0) return [];
 
         const aggregatedByUser = new Map();
 
@@ -160,9 +153,9 @@ export class SupabaseProgressRepository {
                 }
             }
 
-            const relatedUser = Array.isArray(row?.usuarios) ?
-                row.usuarios[0] :
-                row?.usuarios;
+            const relatedUser = Array.isArray(row?.usuarios)
+                ? row.usuarios[0]
+                : row?.usuarios;
 
             if (!existing.username && relatedUser?.username) {
                 existing.username = relatedUser.username;
