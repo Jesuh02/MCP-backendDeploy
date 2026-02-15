@@ -3,7 +3,7 @@ export class SupabaseVideoRepository {
 
     /**
      * Guard: Throws a descriptive error if the Supabase client is not available.
-     * Follows Fail-Fast principle — callers get a clear message instead of NPE.
+     * Follows Fail-Fast principle ï¿½ callers get a clear message instead of NPE.
      */
     _requireClient() {
         if (!this.client) {
@@ -56,15 +56,21 @@ export class SupabaseVideoRepository {
 
     async findByCreator(username, { offset = 0, limit = 20 } = {}) {
         this._requireClient();
+        const normalizedUsername = String(username || '').trim().replace(/^@+/, '');
+        if (!normalizedUsername) {
+            console.warn('[SupabaseVideoRepository] findByCreator called with empty username');
+            return [];
+        }
+
         // First get the user ID using the username
         const { data: userData, error: userError } = await this.client
             .from('usuarios')
             .select('id')
-            .eq('username', username)
-            .single();
+            .ilike('username', normalizedUsername)
+            .maybeSingle();
 
         if (userError || !userData) {
-            console.warn(`[SupabaseVideoRepository] User not found for username: ${username}`);
+            console.warn(`[SupabaseVideoRepository] User not found for username: ${normalizedUsername}`);
             return [];
         }
 

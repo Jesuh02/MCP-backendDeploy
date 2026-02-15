@@ -57,7 +57,8 @@ export class SubmissionController extends BaseController {
 
     getByCourse = async(req, res, next) => {
         const pg = parsePagination(req.query);
-        this.store(req, res, next, () => this.subService.getByCourse(parseInt(req.params.courseId), pg));
+        const ungradedOnly = req.query.ungradedOnly === 'true';
+        this.store(req, res, next, () => this.subService.getByCourse(parseInt(req.params.courseId), pg, { ungradedOnly }));
     };
 
     /**
@@ -123,7 +124,7 @@ export class SubmissionController extends BaseController {
      * Obtiene el contenido de un archivo de entrega.
      * Migrado desde index.legacy.js para compatibilidad con Android.
      */
-    getSubmissionContent = async (req, res, next) => {
+    getSubmissionContent = async(req, res, next) => {
         try {
             const { submissionId, taskId, studentId } = req.body;
 
@@ -149,4 +150,3 @@ export class SubmissionController extends BaseController {
     };
 }
 export default SubmissionController;
-

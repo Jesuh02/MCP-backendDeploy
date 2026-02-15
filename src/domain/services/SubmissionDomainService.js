@@ -422,4 +422,3 @@ export class SubmissionDomainService {
 }
 
 export default SubmissionDomainService;
-
