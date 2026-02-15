@@ -67,8 +67,14 @@ const saveQuestionsSchema = Joi.object({
 }).options({ allowUnknown: true });
 
 export class ReinforcementController {
-    constructor({ reinforcementService }) {
+    /**
+     * @param {object} deps
+     * @param {import('../../../domain/services/ReinforcementDomainService.js').ReinforcementDomainService} deps.reinforcementService
+     * @param {import('../../../domain/services/LearningContextService.js').LearningContextService} [deps.learningContextService]
+     */
+    constructor({ reinforcementService, learningContextService = null }) {
         this.reinforcementService = reinforcementService;
+        this.learningContextService = learningContextService;
     }
 
     saveSession = async(req, res, next) => {
@@ -187,6 +193,50 @@ export class ReinforcementController {
     getMySessions = async(req, res, next) => {
         try {
             const result = await this.reinforcementService.getUserSessions(req.user.userId, req.query);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * GET /learning-context?courseId=X&topicId=Y&taskId=Z
+     *
+     * Endpoint unificado que retorna TODO el contexto de aprendizaje en una
+     * sola llamada: tema, tarea, contenido RAG, archivos procesados y
+     * preguntas existentes para deduplicación.
+     *
+     * El cliente Android usa esto para construir el prompt del LLM con datos
+     * completos y verificados, eliminando múltiples llamadas API separadas.
+     *
+     * Respuesta incluye:
+     *   - topic: { id, name, description }
+     *   - task: { id, title, description }
+     *   - ragContent: texto completo de documentos procesados
+     *   - ragFiles: lista de archivos fuente
+     *   - existingQuestions: preguntas previas para evitar duplicados
+     *   - contentItems: metadatos de archivos adjuntos
+     */
+    getLearningContext = async(req, res, next) => {
+        try {
+            if (!this.learningContextService) {
+                return next(new ValidationError('LearningContextService not configured'));
+            }
+
+            const courseId = parseInt(req.query.courseId || req.query.course_id);
+            const topicId = req.query.topicId || req.query.topic_id
+                ? parseInt(req.query.topicId || req.query.topic_id) : null;
+            const taskId = req.query.taskId || req.query.task_id
+                ? parseInt(req.query.taskId || req.query.task_id) : null;
+            const userId = req.user?.userId || req.user?.id || null;
+
+            if (!courseId) {
+                return next(new ValidationError('courseId is required'));
+            }
+
+            const result = await this.learningContextService.buildLearningContext({
+                courseId, topicId, taskId, userId,
+            });
+
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
