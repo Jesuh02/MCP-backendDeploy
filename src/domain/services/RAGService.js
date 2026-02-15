@@ -454,6 +454,243 @@ export class RAGService {
     }
 
     /**
+     * ═══════════════════════════════════════════════════════════════════
+     * HYBRID RETRIEVAL ARCHITECTURE
+     * Combines: Semantic Search + Window Expansion + Progressive Coverage
+     *
+     * This is the most advanced retrieval strategy:
+     *   1. Semantic Search:  finds the most relevant chunks for the query
+     *   2. Window Expansion: expands around each result to capture full context
+     *   3. Progressive (optional): applies session-based pagination for coverage
+     *
+     * Use cases:
+     *   - User questions → semantic + window
+     *   - Quizzes         → progressive (or hybrid for large documents)
+     *   - Chat            → semantic
+     *   - Large files     → hybrid (all three)
+     * ═══════════════════════════════════════════════════════════════════
+     */
+
+    /**
+     * Hybrid Retrieval: Semantic Search + Window Expansion (+ optional Progressive).
+     *
+     * @param {string} query - The question or topic to search for
+     * @param {{ courseId?: number, topicId?: number, taskId?: number }} filter
+     * @param {object} options
+     * @param {number} [options.semanticTopK=3]     - Number of semantic search results
+     * @param {number} [options.windowSize=3]       - Chunks to expand before/after each hit
+     * @param {number} [options.semanticThreshold=0.5] - Minimum similarity for semantic results
+     * @param {number} [options.sessionIndex]       - If set, mixes progressive coverage too
+     * @param {number} [options.maxTokens]          - Maximum estimated tokens in output
+     * @returns {Promise<{ content: string, chunks: number, files: string[], semanticHits: number, expandedChunks: number, page?: number, totalPages?: number, totalChunks?: number }>}
+     */
+    async getHybridRagContent(query, filter = {}, options = {}) {
+        const {
+            semanticTopK = 3,
+            windowSize = 3,
+            semanticThreshold = 0.5,
+            sessionIndex = null,
+            maxTokens = this.maxContextTokens,
+        } = options;
+
+        try {
+            if (!this.enabled) {
+                return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0 };
+            }
+
+            // ── Step 1: Semantic Search — find most relevant chunks ──
+            let semanticResults = [];
+            if (query && query.trim().length > 0) {
+                try {
+                    semanticResults = await this.search(query, {
+                        topK: semanticTopK,
+                        threshold: semanticThreshold,
+                        courseId: filter.courseId,
+                        topicId: filter.topicId,
+                        taskId: filter.taskId,
+                    });
+                } catch (searchErr) {
+                    logger.warn('[HybridRAG] Semantic search failed, falling back:', searchErr.message);
+                }
+            }
+
+            const semanticHits = semanticResults.length;
+
+            // ── Step 2: Extract chunk indices from semantic results ──
+            let seedIndices = [];
+            if (semanticHits > 0) {
+                try {
+                    seedIndices = semanticResults
+                        .map(r => {
+                            const meta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {});
+                            return meta.chunkIndex ?? meta.chunk_index ?? null;
+                        })
+                        .filter(idx => idx !== null && idx !== undefined);
+                } catch (metaErr) {
+                    logger.warn('[HybridRAG] Error extracting chunk indices:', metaErr.message);
+                }
+            }
+
+            // ── Step 3: Window Expansion — expand context around seed chunks ──
+            let expandedChunks = [];
+            if (seedIndices.length > 0) {
+                try {
+                    expandedChunks = await this.vectorStore.getChunksAround(filter, seedIndices, windowSize);
+                } catch (expandErr) {
+                    logger.warn('[HybridRAG] Window expansion failed:', expandErr.message);
+                }
+            }
+
+            // If window expansion returned nothing, fall back to raw semantic content
+            if (expandedChunks.length === 0 && semanticHits > 0) {
+                expandedChunks = semanticResults.map((r, i) => ({
+                    content: r.content || r.text || '',
+                    fileName: (typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {})).fileName || 'semantic_result',
+                    chunkIndex: i,
+                }));
+            }
+
+            // ── Step 4 (Optional): Progressive Coverage ──
+            let progressiveData = null;
+            if (sessionIndex !== null && sessionIndex !== undefined) {
+                try {
+                    progressiveData = await this.getProgressiveRagContent(filter, sessionIndex, {
+                        windowSize: 4,
+                        overlap: 1,
+                    });
+
+                    // Merge progressive chunks (avoiding duplicates)
+                    if (progressiveData && progressiveData.content) {
+                        const existingContents = new Set(expandedChunks.map(c => c.content.substring(0, 100)));
+                        const progressiveChunks = this._parseProgressiveContent(progressiveData.content);
+
+                        for (const chunk of progressiveChunks) {
+                            if (!existingContents.has(chunk.content.substring(0, 100))) {
+                                expandedChunks.push(chunk);
+                                existingContents.add(chunk.content.substring(0, 100));
+                            }
+                        }
+                    }
+                } catch (progressErr) {
+                    logger.warn('[HybridRAG] Progressive fallback failed:', progressErr.message);
+                }
+            }
+
+            // ── Step 5: If still no content, full fallback ──
+            if (expandedChunks.length === 0) {
+                logger.warn('[HybridRAG] No content from hybrid retrieval, falling back to full getRagContent');
+                const fallback = await this.getRagContent(filter);
+                return {
+                    ...fallback,
+                    semanticHits: 0,
+                    expandedChunks: 0,
+                    page: 0,
+                    totalPages: 1,
+                    totalChunks: fallback.chunks,
+                };
+            }
+
+            // ── Step 6: Build formatted content with token limit ──
+            const fileMap = new Map();
+            for (const chunk of expandedChunks) {
+                const key = chunk.fileName || 'unknown';
+                if (!fileMap.has(key)) fileMap.set(key, []);
+                fileMap.get(key).push(chunk);
+            }
+
+            let fullContent = '';
+            const fileNames = [];
+            const tokensPerChar = 0.25;
+            let estimatedTokens = 0;
+
+            for (const [fileName, fileChunks] of fileMap) {
+                fileNames.push(fileName);
+                fileChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+                // Deduplicate by content within each file
+                const seen = new Set();
+                const dedupedChunks = fileChunks.filter(c => {
+                    const key = c.content.substring(0, 100);
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                });
+
+                const fileText = dedupedChunks.map(c => c.content).join('\n');
+                const sectionLabel = progressiveData
+                    ? ` (Sección ${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages ?? '?'} + búsqueda semántica)`
+                    : ' (Búsqueda semántica + contexto expandido)';
+
+                const entry = `\n--- DOCUMENTO: ${fileName}${sectionLabel} ---\n${fileText}\n`;
+                const entryTokens = Math.ceil(entry.length * tokensPerChar);
+
+                if (maxTokens && estimatedTokens + entryTokens > maxTokens) {
+                    logger.info('[HybridRAG] Token limit reached, truncating output');
+                    break;
+                }
+
+                fullContent += entry;
+                estimatedTokens += entryTokens;
+            }
+
+            const result = {
+                content: fullContent.trim(),
+                chunks: expandedChunks.length,
+                files: fileNames,
+                semanticHits,
+                expandedChunks: expandedChunks.length,
+                page: progressiveData?.page ?? 0,
+                totalPages: progressiveData?.totalPages ?? 1,
+                totalChunks: progressiveData?.totalChunks ?? expandedChunks.length,
+            };
+
+            logger.info(
+                `📄 [HybridRAG] Result: semanticHits=${semanticHits}, expanded=${expandedChunks.length}, ` +
+                `files=${fileNames.length}, tokens≈${estimatedTokens}` +
+                (progressiveData ? `, progressivePage=${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages}` : '')
+            );
+
+            return result;
+        } catch (error) {
+            logger.error('[HybridRAG] getHybridRagContent error:', error);
+            try {
+                const fallback = await this.getProgressiveRagContent(filter, sessionIndex || 0);
+                return { ...fallback, semanticHits: 0, expandedChunks: 0 };
+            } catch (_) {
+                return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0 };
+            }
+        }
+    }
+
+    /**
+     * Parses progressive RAG content string back into chunk objects.
+     * @private
+     */
+    _parseProgressiveContent(contentString) {
+        if (!contentString) return [];
+
+        const chunks = [];
+        const sections = contentString.split(/--- DOCUMENTO: /);
+
+        for (const section of sections) {
+            if (!section.trim()) continue;
+            const headerEnd = section.indexOf('---\n');
+            const fileName = headerEnd > 0 ? section.substring(0, headerEnd).replace(/\s*\(.*\)\s*$/, '').trim() : 'unknown';
+            const body = headerEnd > 0 ? section.substring(headerEnd + 4) : section;
+
+            if (body.trim()) {
+                chunks.push({
+                    content: body.trim(),
+                    fileName,
+                    chunkIndex: chunks.length,
+                });
+            }
+        }
+
+        return chunks;
+    }
+
+    /**
      * Build smart context that analyzes the query to determine data needs
      */
     async buildSmartContext(query, options = {}) {
