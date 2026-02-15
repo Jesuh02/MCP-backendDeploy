@@ -90,7 +90,10 @@ export class LearningContextService {
 
             let ragData;
             if (effectiveMode === 'hybrid' || effectiveMode === 'semantic') {
-                const searchQuery = query || this._buildSearchQuery(topicDetails, taskDetails);
+                // ALWAYS build query from topic/task details (from DB) for accurate retrieval.
+                // Client-provided query may only contain courseName (too general).
+                const dbQuery = this._buildSearchQuery(topicDetails, taskDetails);
+                const searchQuery = dbQuery || query || '';
                 ragData = await this._getHybridRagContent(
                     courseId, topicId, taskId, searchQuery,
                     effectiveMode === 'hybrid' ? effectiveSessionIndex : null,
@@ -405,8 +408,9 @@ export class LearningContextService {
         if (requestedMode === 'hybrid' || requestedMode === 'semantic' || requestedMode === 'progressive') {
             return requestedMode;
         }
-        // 'auto' mode: use hybrid if a query is available, otherwise progressive
-        return (query && query.trim().length > 0) ? 'hybrid' : 'progressive';
+        // 'auto' mode: always prefer hybrid — _buildSearchQuery will build from topic/task details
+        // even if the client didn't provide a query
+        return 'hybrid';
     }
 
     /**
