@@ -93,7 +93,8 @@ export class LearningContextService {
                 const searchQuery = query || this._buildSearchQuery(topicDetails, taskDetails);
                 ragData = await this._getHybridRagContent(
                     courseId, topicId, taskId, searchQuery,
-                    effectiveMode === 'hybrid' ? effectiveSessionIndex : null
+                    effectiveMode === 'hybrid' ? effectiveSessionIndex : null,
+                    topicDetails, taskDetails
                 );
             } else {
                 ragData = await this._getProgressiveRagContent(courseId, topicId, taskId, effectiveSessionIndex);
@@ -126,6 +127,9 @@ export class LearningContextService {
                 retrievalMode: effectiveMode,
                 semanticHits: ragData.semanticHits ?? 0,
                 expandedChunks: ragData.expandedChunks ?? 0,
+                usedProgressiveFallback: ragData.usedProgressiveFallback ?? false,
+                reranked: ragData.reranked ?? false,
+                rerankMethod: ragData.rerankMethod ?? 'none',
                 existingQuestions: existingQuestions.map(q => ({
                     question: q.question || '',
                     options: q.options || [],
@@ -142,6 +146,7 @@ export class LearningContextService {
                 `task="${taskDetails?.title || 'N/A'}", mode=${effectiveMode}, ragChunks=${ragData.chunks}/${ragData.totalChunks || '?'}, ` +
                 `page=${(ragData.page ?? 0) + 1}/${ragData.totalPages ?? '?'}, ` +
                 `semanticHits=${ragData.semanticHits ?? 0}, expanded=${ragData.expandedChunks ?? 0}, ` +
+                `reranked=${ragData.reranked ?? false} (${ragData.rerankMethod ?? 'none'}), ` +
                 `files=${ragData.files?.length || 0}, topicFiles=${topicContentItems.length}, taskFiles=${taskContentItems.length}, ` +
                 `existingQ=${existingQuestions.length}`
             );
@@ -436,19 +441,21 @@ export class LearningContextService {
 
     /**
      * Obtiene contenido RAG usando Hybrid Retrieval Architecture.
-     * Combina búsqueda semántica + window expansion + progressive coverage.
+     * Combina búsqueda semántica + window expansion + reranking + progressive coverage.
      *
      * @param {number} courseId
      * @param {number|null} topicId
      * @param {number|null} taskId
      * @param {string} query - Search query for semantic component
      * @param {number|null} sessionIndex - If set, also applies progressive coverage
-     * @returns {Promise<{ content: string, chunks: number, files: string[], semanticHits: number, expandedChunks: number, page: number, totalPages: number, totalChunks: number }>}
+     * @param {object|null} topicDetails - Topic details for reranking context
+     * @param {object|null} taskDetails - Task details for reranking context
+     * @returns {Promise<{ content: string, chunks: number, files: string[], semanticHits: number, expandedChunks: number, reranked: boolean, rerankMethod: string, page: number, totalPages: number, totalChunks: number }>}
      * @private
      */
-    async _getHybridRagContent(courseId, topicId, taskId, query, sessionIndex = null) {
+    async _getHybridRagContent(courseId, topicId, taskId, query, sessionIndex = null, topicDetails = null, taskDetails = null) {
         if (!this.ragService) {
-            return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0, page: 0, totalPages: 0, totalChunks: 0 };
+            return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0, reranked: false, rerankMethod: 'none', page: 0, totalPages: 0, totalChunks: 0 };
         }
 
         try {
@@ -459,20 +466,24 @@ export class LearningContextService {
             // Use hybrid retrieval if the method exists, otherwise fall back to progressive
             if (typeof this.ragService.getHybridRagContent === 'function') {
                 return await this.ragService.getHybridRagContent(query, filter, {
-                    semanticTopK: 3,
-                    windowSize: 3,
-                    semanticThreshold: 0.5,
-                    sessionIndex,
+                    semanticTopK: 5,
+                    windowSize: 2,
+                    semanticThreshold: 0.45,
+                    sessionIndex,  // Only used as progressive fallback when semantic=0
+                    maxChunks: 12,
+                    rerank: true,  // Enable reranking for better relevance
+                    topicName: topicDetails?.name || null,
+                    taskTitle: taskDetails?.title || null,
                 });
             }
 
             // Fallback: progressive retrieval
             console.warn('[LearningContextService] getHybridRagContent not available, falling back to progressive');
             const result = await this.ragService.getProgressiveRagContent(filter, sessionIndex || 0);
-            return { ...result, semanticHits: 0, expandedChunks: 0 };
+            return { ...result, semanticHits: 0, expandedChunks: 0, reranked: false, rerankMethod: 'none' };
         } catch (error) {
             console.warn('[LearningContextService] getHybridRagContent error (non-blocking):', error.message);
-            return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0, page: 0, totalPages: 0, totalChunks: 0 };
+            return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0, reranked: false, rerankMethod: 'none', page: 0, totalPages: 0, totalChunks: 0 };
         }
     }
 }
