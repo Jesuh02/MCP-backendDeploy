@@ -277,17 +277,10 @@ export class LearningContextService {
         }
 
         try {
-            // Verificar si ya existe contenido RAG para este task (task-level check)
-            const exists = await this.ragService.vectorStore.exists({
-                taskId,
-                courseId,
-                ...(topicId ? { topicId } : {}),
-            });
-
-            if (exists) {
-                result.skipped = true;
-                return result;
-            }
+            // ⛔ NO hacer check a nivel task — si se ingirió un content_item pero
+            // otro se agregó después, el check task-level bloquearía la ingesta
+            // del nuevo archivo. Cada content_item se verifica individualmente
+            // dentro de ragService.ingestDocument() via contentItemId.
 
             // Filter items with body present (URLs are usually short, so no length filter here)
             const ingestableItems = contentItems.filter(item => {
