@@ -4,6 +4,15 @@
 export class SupabaseCourseRepository {
     constructor(client) { this.client = client; }
 
+    _escapeOrIlikeValue(raw = '') {
+        return String(raw)
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"')
+            .replace(/,/g, '\\,')
+            .replace(/\(/g, '\\(')
+            .replace(/\)/g, '\\)');
+    }
+
     async findById(id) {
         const { data, error } = await this.client.from('courses').select('*').eq('id', id).single();
         if (error || !data) return null;
@@ -47,7 +56,11 @@ export class SupabaseCourseRepository {
     }
 
     async search(query, { offset = 0, limit = 20 } = {}) {
-        const { data, error } = await this.client.from('courses').select('*').or(`title.ilike.%${query}%,description.ilike.%${query}%`).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        const rawQuery = (query || '').trim();
+        if (!rawQuery) return [];
+        const safeQuery = this._escapeOrIlikeValue(rawQuery);
+        const filter = `title.ilike."%${safeQuery}%",description.ilike."%${safeQuery}%"`;
+        const { data, error } = await this.client.from('courses').select('*').or(filter).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }
@@ -109,7 +122,12 @@ export class SupabaseCourseRepository {
             else return 0;
         }
         if (filters.isFree !== undefined) query = query.eq('is_premium', !filters.isFree);
-        if (filters.search) query = query.or(`title.ilike.%${filters.search}%,description.ilike.%${filters.search}%`);
+        if (filters.search) {
+            const safeSearch = this._escapeOrIlikeValue(String(filters.search).trim());
+            if (safeSearch) {
+                query = query.or(`title.ilike."%${safeSearch}%",description.ilike."%${safeSearch}%"`);
+            }
+        }
         const { count, error } = await query;
         return error ? 0 : count;
     }
