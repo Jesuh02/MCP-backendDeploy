@@ -16,9 +16,9 @@ services:
       - INTERFACE_HEARTBEAT_TIMEOUT_MS=3000
     volumes:
       - ./:/app
-      - /app/node_modules
-    # Run Node directly to avoid shell script encoding issues from Windows-mounted files
-    command: node index.js
+      - mcp_node_modules:/app/node_modules
+    # Ensure dependencies exist in mounted node_modules volume, then start server
+    command: sh -c "if [ ! -d node_modules/@octokit/rest ]; then npm install --omit=dev; fi; node index.js"
     restart: always
     extra_hosts:
       # Ensure containers can resolve the Docker host on systems that support host-gateway
@@ -30,3 +30,6 @@ services:
       timeout: 2s
       retries: 2
       start_period: 5s
+
+volumes:
+  mcp_node_modules:
