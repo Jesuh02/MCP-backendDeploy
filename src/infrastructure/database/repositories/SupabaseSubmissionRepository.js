@@ -148,4 +148,3 @@ export class SupabaseSubmissionRepository {
     }
 }
 export default SupabaseSubmissionRepository;
-

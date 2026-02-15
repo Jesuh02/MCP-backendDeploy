@@ -126,7 +126,7 @@ export class SubmissionController extends BaseController {
      * Obtiene el contenido de un archivo de entrega.
      * Migrado desde index.legacy.js para compatibilidad con Android.
      */
-    getSubmissionContent = async (req, res, next) => {
+    getSubmissionContent = async(req, res, next) => {
         try {
             const { submissionId, taskId, studentId } = req.body;
 
@@ -152,4 +152,3 @@ export class SubmissionController extends BaseController {
     };
 }
 export default SubmissionController;
-
