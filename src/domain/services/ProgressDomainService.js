@@ -91,10 +91,8 @@ export class ProgressDomainService {
             const courses = await this.courseRepo.findByCreatorUserId(creatorId);
             courseIds = (courses || []).map(c => c.id);
         } else {
-            // Fallback: delegar al repo de progreso (legacy)
-            console.warn('[ProgressService] courseRepo no disponible, delegando al progressRepo (legacy)');
-            const students = await this.progressRepo.getTopStudentsGlobal(safeLimit, creatorId);
-            return Result.ok(students);
+            console.error('[ProgressService] courseRepo no disponible; no se puede resolver top students por creador');
+            return Result.ok([]);
         }
 
         if (courseIds.length === 0) {
