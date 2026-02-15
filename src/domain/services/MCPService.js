@@ -1302,6 +1302,11 @@ export class MCPService {
     async processQueryToData(query, userId = null) {
             logger.info(`📊 Processing query to data (MCP Agent): "${query}" (User: ${userId})`);
 
+            // Ensure lazy initialization runs before checking model availability
+            if (this.llmService && typeof this.llmService._ensureInitialized === 'function') {
+                await this.llmService._ensureInitialized();
+            }
+
             if (!this.llmService || !this.llmService.model) {
                 throw new Error("LLM Service not available for SQL generation");
             }
@@ -1452,6 +1457,11 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
      */
     async processQueryWithAgent(query) {
         logger.info(`🤖 Processing query with MCP Agent: "${query}"`);
+
+        // Ensure lazy initialization runs before checking model availability
+        if (this.llmService && typeof this.llmService._ensureInitialized === 'function') {
+            await this.llmService._ensureInitialized();
+        }
 
         if (!this.llmService || !this.llmService.model) {
             logger.warn("⚠️ LLM Service not available. Returning fallback message.");
@@ -2188,6 +2198,11 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
             const gradingPrompt = this.buildGitHubGradingPrompt(analysis, taskDescription, criteria);
 
             // Step 4: Send to LLM for analysis
+            // Ensure lazy initialization runs before checking model availability
+            if (this.llmService && typeof this.llmService._ensureInitialized === 'function') {
+                await this.llmService._ensureInitialized();
+            }
+
             if (!this.llmService || !this.llmService.model) {
                 logger.warn("⚠️ LLM Service not available");
                 return {
