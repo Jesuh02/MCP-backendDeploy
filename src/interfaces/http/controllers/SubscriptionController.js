@@ -8,7 +8,7 @@ export class SubscriptionController {
             const creatorId = parseInt(req.params.creatorId);
             const result = await this.subService.subscribe(req.user.userId, creatorId);
             if (result.isFail()) return next(result.getError());
-            res.status(201).json({ success: true, data: result.getValue() });
+            res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
 

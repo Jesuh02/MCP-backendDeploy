@@ -36,9 +36,27 @@ export class LikeDomainService {
             if (entityType === 'video') {
                 if (!this.videoRepo) return;
                 const video = await this.videoRepo.findById(entityId);
-                // No notificar si se da like a sí mismo prop video
-                if (video && video.remote_id && video.remote_id !== userId) {
-                    await this.notificationService.send(video.remote_id, {
+                // Resolve creator id from any known shape (mapped + raw)
+                let creatorId =
+                    video?.userId ??
+                    video?.remoteId ??
+                    video?.remote_id ??
+                    video?.creatorId ??
+                    video?.creator_id ??
+                    null;
+
+                // Fallback: resolve creator by username when remote/user id is missing
+                if (!creatorId && video?.username && this.userRepo?.findByUsername) {
+                    const normalizedUsername = String(video.username).trim().replace(/^@+/, '');
+                    if (normalizedUsername) {
+                        const creatorUser = await this.userRepo.findByUsername(normalizedUsername);
+                        creatorId = creatorUser?.id ?? null;
+                    }
+                }
+
+                // No notificar si se da like a su propio video
+                if (video && creatorId && Number(creatorId) !== Number(userId)) {
+                    const notifResult = await this.notificationService.send(Number(creatorId), {
                         type: 'video_like',
                         title: 'Nuevo like',
                         message: `${senderUsername} le gustó tu video`,
@@ -46,25 +64,34 @@ export class LikeDomainService {
                         relatedId: entityId,
                         senderUsername: senderUsername,
                         senderAvatarUrl: senderAvatar,
-                        thumbnailUrl: video.thumbnail_uri
+                        thumbnailUrl: video.thumbnailUri || video.thumbnail_uri || '',
+                        metadata: JSON.stringify({ video_id: entityId })
                     });
+
+                    if (notifResult?.isFail?.()) {
+                        console.warn('video_like notification result failed:', notifResult.getError?.());
+                    }
+                } else if (video && !creatorId) {
+                    console.warn(`video_like notification skipped: missing creatorId for video ${entityId} (username=${video?.username || 'n/a'})`);
                 }
             } else if (entityType === 'comment' || entityType === 'video_comment') {
                 if (!this.commentRepo || !this.videoRepo) return;
                 const comment = await this.commentRepo.findById(entityId);
+                const commentOwnerId = comment?.userId ?? comment?.usuario_id ?? comment?.user_id ?? null;
+                const commentVideoId = comment?.videoId ?? comment?.video_id ?? null;
 
                 // Ensure target user exists and is not the same as the liker
-                if (comment && comment.usuario_id && comment.usuario_id !== userId) {
-                    const video = await this.videoRepo.findById(comment.video_id);
-                    await this.notificationService.send(comment.usuario_id, {
+                if (comment && commentOwnerId && Number(commentOwnerId) !== Number(userId)) {
+                    const video = commentVideoId ? await this.videoRepo.findById(commentVideoId) : null;
+                    await this.notificationService.send(Number(commentOwnerId), {
                         type: 'comment_like',
                         title: 'Like en tu comentario',
                         message: `${senderUsername} le gustó tu comentario`,
-                        data: { videoId: comment.video_id, commentId: entityId, type: 'comment_like' },
-                        relatedId: comment.video_id, // Link to video
+                        data: { videoId: commentVideoId, commentId: entityId, type: 'comment_like' },
+                        relatedId: commentVideoId, // Link to video
                         senderUsername: senderUsername,
                         senderAvatarUrl: senderAvatar,
-                        thumbnailUrl: video ? video.thumbnail_uri : '',
+                        thumbnailUrl: video ? (video.thumbnailUri || video.thumbnail_uri || '') : '',
                         metadata: JSON.stringify({ comment_id: entityId })
                     });
                 }

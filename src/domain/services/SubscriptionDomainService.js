@@ -12,10 +12,25 @@ export class SubscriptionDomainService {
             return Result.fail(new ConflictError('No puedes suscribirte a ti mismo'));
         }
         const existing = await this.subRepo.findBySubscriberAndCreator(subscriberId, creatorId);
-        if (existing) return Result.fail(new ConflictError('Ya estás suscrito'));
+        if (existing) return Result.ok(existing);
 
-        const sub = await this.subRepo.create({ subscriberId, creatorId });
-        return Result.ok(sub);
+        try {
+            const sub = await this.subRepo.create({ subscriberId, creatorId });
+            return Result.ok(sub);
+        } catch (error) {
+            const message = String(error?.message || '').toLowerCase();
+            const isDuplicate =
+                message.includes('duplicate') ||
+                message.includes('unique') ||
+                message.includes('23505');
+
+            if (isDuplicate) {
+                const sub = await this.subRepo.findBySubscriberAndCreator(subscriberId, creatorId);
+                if (sub) return Result.ok(sub);
+            }
+
+            throw error;
+        }
     }
 
     async unsubscribe(subscriberId, creatorId) {

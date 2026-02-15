@@ -34,9 +34,22 @@ export class CommentDomainService {
             const video = await this.videoRepo.findById(videoId);
             if (!video) return;
 
+            let videoOwnerId =
+                video.remote_id ??
+                video.remoteId ??
+                video.userId ??
+                video.creator_id ??
+                video.creatorId ??
+                null;
+
+            if (!videoOwnerId && video.username && this.userRepo?.findByUsername) {
+                const ownerUser = await this.userRepo.findByUsername(String(video.username).trim().replace(/^@+/, ''));
+                videoOwnerId = ownerUser?.id ?? null;
+            }
+
             const commenter = await this.userRepo.findById(userId);
             const avatar = commenter ? commenter.avatar : '';
-            const senderName = (commenter ? commenter.usuario : null) || comment.username || 'Alguien';
+            const senderName = commenter?.username || commenter?.usuario || comment.username || 'Alguien';
 
             // 1. Si es respuesta a otro comentario (reply)
             const parentId = comment.parentId || comment.parent_id;
@@ -60,9 +73,9 @@ export class CommentDomainService {
                 }
             }
             // 2. Si es comentario raíz, notificar al dueño del video
-            else if (video.remote_id && video.remote_id !== userId) {
+            else if (videoOwnerId && Number(videoOwnerId) !== Number(userId)) {
                 // Verificar si el dueño del video no es el mismo que comenta
-                await this.notificationService.send(video.remote_id, {
+                await this.notificationService.send(Number(videoOwnerId), {
                     type: 'video_comment',
                     title: 'Nuevo comentario',
                     message: `${senderName} comentó tu video`,
@@ -70,7 +83,7 @@ export class CommentDomainService {
                     relatedId: videoId,
                     senderUsername: senderName,
                     senderAvatarUrl: avatar,
-                    thumbnailUrl: video.thumbnail_uri,
+                    thumbnailUrl: video.thumbnailUri || video.thumbnail_uri || '',
                     metadata: JSON.stringify({ comment_id: comment.id, commentText: comment.comment || comment.content })
                 });
             }
