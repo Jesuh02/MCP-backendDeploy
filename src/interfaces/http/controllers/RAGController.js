@@ -206,6 +206,42 @@ export class RAGController {
             next(err);
         }
     };
+
+    /**
+     * POST /api/v1/rag/hybrid-search
+     * Hybrid Retrieval: Semantic Search + Window Expansion + Progressive Coverage.
+     *
+     * Body: { query, courseId, topicId?, taskId?, semanticTopK?, windowSize?, sessionIndex? }
+     * Returns: { content, chunks, files, semanticHits, expandedChunks, page?, totalPages?, totalChunks? }
+     */
+    hybridSearch = async (req, res, next) => {
+        try {
+            const { query, courseId, topicId, taskId, semanticTopK, windowSize, sessionIndex } = req.body;
+
+            if (!query || !courseId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'query and courseId are required',
+                });
+            }
+
+            const ragService = new RAGService();
+            const filter = { courseId: parseInt(courseId) };
+            if (topicId) filter.topicId = parseInt(topicId);
+            if (taskId) filter.taskId = parseInt(taskId);
+
+            const result = await ragService.getHybridRagContent(query, filter, {
+                semanticTopK: semanticTopK ? parseInt(semanticTopK) : 3,
+                windowSize: windowSize ? parseInt(windowSize) : 3,
+                sessionIndex: sessionIndex != null ? parseInt(sessionIndex) : null,
+            });
+
+            return res.json({ success: true, data: result });
+        } catch (err) {
+            logger.error(`❌ hybridSearch error: ${err.message}`, err);
+            next(err);
+        }
+    };
 }
 export default RAGController;
 

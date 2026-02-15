@@ -12,6 +12,7 @@ export function ragRoutes({ ragController }) {
     router.post('/ingest-task-content', ragController.ingestTaskContent);
     router.post('/search', ragController.search);
     router.post('/context', ragController.buildContext);
+    router.post('/hybrid-search', ragController.hybridSearch);
 
     return router;
 }

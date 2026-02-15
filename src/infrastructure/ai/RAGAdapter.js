@@ -115,6 +115,57 @@ export class RAGAdapter {
     }
 
     /**
+     * Hybrid Retrieval: Semantic Search + Window Expansion + Progressive Coverage.
+     * @param {string} query - Search query for semantic component
+     * @param {{ courseId?: number, topicId?: number, taskId?: number }} filter
+     * @param {{ semanticTopK?: number, windowSize?: number, sessionIndex?: number, maxTokens?: number }} options
+     * @returns {Promise<{ content: string, chunks: number, files: string[], semanticHits: number, expandedChunks: number, page?: number, totalPages?: number, totalChunks?: number }>}
+     */
+    async getHybridRagContent(query, filter = {}, options = {}) {
+        await this._ensureInitialized();
+        if (!this._rag || !this._rag.isReady()) {
+            return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0 };
+        }
+
+        try {
+            if (typeof this._rag.getHybridRagContent === 'function') {
+                return await this._rag.getHybridRagContent(query, filter, options);
+            }
+            // Fallback if RAGService doesn't have hybrid method yet
+            console.warn('[RAGAdapter] getHybridRagContent not available on RAGService, using buildContext');
+            const context = await this._rag.buildContext(query, { ...filter, maxTokens: options.maxTokens });
+            return { content: context, chunks: 0, files: [], semanticHits: 0, expandedChunks: 0 };
+        } catch (err) {
+            console.warn('[RAGAdapter] getHybridRagContent falló:', err.message);
+            return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0 };
+        }
+    }
+
+    /**
+     * Progressive RAG content retrieval.
+     * @param {{ courseId?: number, topicId?: number, taskId?: number }} filter
+     * @param {number} sessionIndex
+     * @returns {Promise<{ content: string, chunks: number, files: string[], page: number, totalPages: number, totalChunks: number }>}
+     */
+    async getProgressiveRagContent(filter = {}, sessionIndex = 0) {
+        await this._ensureInitialized();
+        if (!this._rag || !this._rag.isReady()) {
+            return { content: '', chunks: 0, files: [], page: 0, totalPages: 0, totalChunks: 0 };
+        }
+
+        try {
+            if (typeof this._rag.getProgressiveRagContent === 'function') {
+                return await this._rag.getProgressiveRagContent(filter, sessionIndex);
+            }
+            const fallback = await this._rag.getRagContent(filter);
+            return { ...fallback, page: 0, totalPages: 1, totalChunks: fallback.chunks };
+        } catch (err) {
+            console.warn('[RAGAdapter] getProgressiveRagContent falló:', err.message);
+            return { content: '', chunks: 0, files: [], page: 0, totalPages: 0, totalChunks: 0 };
+        }
+    }
+
+    /**
      * Obtiene estado del servicio.
      * @returns {Promise<{ available: boolean, documentsCount: number }>}
      */

@@ -57,15 +57,106 @@ export class LLMDomainService {
             }
 
             // 1. Build RAG context if available — pass topicId/taskId for scoped retrieval
+            // For reinforcement requests, use HYBRID RETRIEVAL to combine semantic search
+            // with window expansion and progressive coverage for maximum relevance.
             let ragContext = '';
             if (this.rag && courseId) {
                 try {
-                    ragContext = await this.rag.buildContext(prompt, {
-                        courseId,
-                        topicId: topicId || null,
-                        taskId: taskId || null,
-                        maxTokens: 2000
-                    });
+                    if (this._isReinforcementRequest(prompt) && userId) {
+                        // Count existing questions to determine which chunk page to use
+                        let existingCount = 0;
+                        try {
+                            const { MCPService } = await
+                            import ('./MCPService.js');
+                            const mcpService = new MCPService();
+                            const history = await mcpService.getReinforcementHistory(
+                                userId, courseId, topicId || null, taskId || null
+                            );
+                            existingCount = (history && history.length) || 0;
+                        } catch (_) { /* ignore — will use page 0 */ }
+
+                        const sessionIndex = Math.floor(existingCount / 10);
+
+                        // ═══ HYBRID RETRIEVAL: Semantic + Window + Progressive ═══
+                        // Use hybrid retrieval when available for reinforcement requests.
+                        // This provides: (1) semantically relevant chunks via embedding search,
+                        // (2) expanded context window around each hit, and
+                        // (3) progressive page rotation for document coverage.
+                        //
+                        // Build a composite search query from topic+task names embedded
+                        // in the prompt so RAG retrieves material relevant to BOTH sources.
+                        const compositeQuery = this._buildCompositeSearchQuery(prompt, topicId, taskId);
+
+                        if (typeof this.rag.getHybridRagContent === 'function') {
+                            const filter = { courseId };
+                            if (topicId) filter.topicId = topicId;
+                            if (taskId) filter.taskId = taskId;
+
+                            const hybridData = await this.rag.getHybridRagContent(compositeQuery, filter, {
+                                semanticTopK: 3,
+                                windowSize: 3,
+                                semanticThreshold: 0.5,
+                                sessionIndex,
+                                maxTokens: 4000,
+                            });
+
+                            if (hybridData && hybridData.content) {
+                                ragContext = `═══════════════════════════════════════════════════════════\n`;
+                                ragContext += `📚 CONTEXTO DEL MATERIAL — Hybrid Retrieval\n`;
+                                ragContext += `   Búsqueda semántica: ${hybridData.semanticHits || 0} coincidencias\n`;
+                                ragContext += `   Contexto expandido: ${hybridData.expandedChunks || 0} fragmentos\n`;
+                                if (hybridData.totalPages > 1) {
+                                    ragContext += `   Cobertura progresiva: Sección ${(hybridData.page ?? 0) + 1}/${hybridData.totalPages}\n`;
+                                }
+                                ragContext += `═══════════════════════════════════════════════════════════\n\n`;
+                                ragContext += hybridData.content;
+                                ragContext += `\n═══════════════════════════════════════════════════════════\n`;
+                                ragContext += `Total: ${hybridData.chunks} fragmentos de ${hybridData.totalChunks} totales.\n`;
+                                ragContext += `═══════════════════════════════════════════════════════════\n`;
+
+                                console.log(`[LLMDomainService] Hybrid RAG context: semanticHits=${hybridData.semanticHits}, expanded=${hybridData.expandedChunks}, chunks=${hybridData.chunks}/${hybridData.totalChunks}, session=${sessionIndex}`);
+                            }
+                        }
+
+                        // Fallback to progressive context if hybrid didn't produce results
+                        if (!ragContext && typeof this.rag.getProgressiveRagContent === 'function') {
+                            const filter = { courseId };
+                            if (topicId) filter.topicId = topicId;
+                            if (taskId) filter.taskId = taskId;
+
+                            const progressiveData = await this.rag.getProgressiveRagContent(filter, sessionIndex);
+
+                            if (progressiveData && progressiveData.content) {
+                                ragContext = `═══════════════════════════════════════════════════════════\n`;
+                                ragContext += `📚 CONTEXTO DEL MATERIAL (Sección ${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages ?? '?'})\n`;
+                                ragContext += `═══════════════════════════════════════════════════════════\n\n`;
+                                ragContext += progressiveData.content;
+                                ragContext += `\n═══════════════════════════════════════════════════════════\n`;
+                                ragContext += `Total: ${progressiveData.chunks} fragmentos de ${progressiveData.totalChunks} totales.\n`;
+                                ragContext += `═══════════════════════════════════════════════════════════\n`;
+
+                                console.log(`[LLMDomainService] Progressive RAG context: page=${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages}, chunks=${progressiveData.chunks}/${progressiveData.totalChunks}, session=${sessionIndex}`);
+                            }
+                        }
+
+                        // Fallback to standard context if progressive didn't produce results
+                        if (!ragContext) {
+                            ragContext = await this.rag.buildContext(prompt, {
+                                courseId,
+                                topicId: topicId || null,
+                                taskId: taskId || null,
+                                maxTokens: 4000
+                            });
+                        }
+                    } else {
+                        // Non-reinforcement: use standard semantic search context
+                        ragContext = await this.rag.buildContext(prompt, {
+                            courseId,
+                            topicId: topicId || null,
+                            taskId: taskId || null,
+                            maxTokens: 2000
+                        });
+                    }
                 } catch (ragErr) {
                     console.warn('[LLMDomainService] RAG context failed, proceeding without:', ragErr.message);
                 }
@@ -77,7 +168,8 @@ export class LLMDomainService {
             // INSTRUCCIÓN SEMÁNTICA: Detección de intención de calificación (Requerimiento estricto: NO usar regex en input usuario)
             // El LLM es responsable de señalizar si es una solicitud de nota válida.
             systemPrompt += `\n\nIMPORTANTE: Tu eres capaz de detectar la intención del usuario. Si el usuario te pide explícitamente CALIFICAR, EVALUAR o dar una NOTA a la entrega/tarea adjunta, debes iniciar tu respuesta con la etiqueta exacta: [GRADING_REQUEST].
-Si además determinas una nota numérica (0-100), usa el formato: [GRADING_REQUEST: <monto>] (Ejemplo: "[GRADING_REQUEST: 85]").
+Si además determinas una nota numérica (0-10), usa el formato: [GRADING_REQUEST: <monto>] (Ejemplo: "[GRADING_REQUEST: 8.5]").
+La escala de calificación es SIEMPRE del 0 al 10. NUNCA uses escala de 100.
 Si la solicitud es una pregunta general o no implica calificación formal (ej: "¿Qué nota tiene la escala musical?"), NO incluyas esta etiqueta.`;
 
             if (taskDescription) {
@@ -116,7 +208,8 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
             if (userId && courseId && this._isReinforcementRequest(prompt)) {
                 try {
                     // Use MCPService for topic/task-scoped history when available
-                    const { MCPService } = await import('./MCPService.js');
+                    const { MCPService } = await
+                    import ('./MCPService.js');
                     const mcpService = new MCPService();
                     const history = await mcpService.getReinforcementHistory(
                         userId, courseId, topicId || null, taskId || null
@@ -173,7 +266,7 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
 
             // 9. AUTO-SAVE GRADE: If LLM detected a grading request, persist to task_submissions
             if (esCalificacion && nota !== null && !isNaN(nota)) {
-                const gradeValue = Math.max(0, Math.min(100, nota));
+                const gradeValue = Math.max(0, Math.min(10, nota));
                 const feedbackText = content; // The LLM response is the feedback
 
                 try {
@@ -263,14 +356,14 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
             // 2. Build analysis prompt
             const systemPrompt = `Eres un profesor experto evaluando entregas de tareas.
 Analiza la entrega del estudiante y proporciona:
-1. Una nota del 0 al 100
+1. Una nota del 0 al 10
 2. Un resumen detallado del análisis
 3. Porcentaje de cumplimiento de los requisitos
 
 Descripción de la tarea: ${taskDescription}
 
 Responde SIEMPRE en formato JSON:
-{"nota": <0-100>, "resumen": "<análisis detallado>", "cumplimiento": <0-100>}`;
+{"nota": <0-10>, "resumen": "<análisis detallado>", "cumplimiento": <0-100>}`;
 
             const userPrompt = fileContent ?
                 `Contenido de la entrega:\n${fileContent}\n\n${prompt || 'Evalúa esta entrega.'}` :
@@ -647,6 +740,44 @@ Responde de forma clara y constructiva.`;
             return url;
         }
     }
+
+    /**
+     * Builds a composite search query for hybrid RAG retrieval.
+     * Extracts topic and task titles from the prompt and combines them
+     * to ensure retrieval covers material from BOTH sources.
+     *
+     * @private
+     * @param {string} prompt - The user's prompt (may contain TEMA/TAREA labels)
+     * @param {number|null} topicId
+     * @param {number|null} taskId
+     * @returns {string} - Composite search query
+     */
+    _buildCompositeSearchQuery(prompt, topicId, taskId) {
+        const parts = [];
+
+        // Extract topic name from prompt structure: TEMA: "..."
+        const topicMatch = prompt.match(/TEMA(?:\s+PRINCIPAL)?:\s*"([^"]+)"/i);
+        if (topicMatch && topicMatch[1] && topicMatch[1] !== 'General') {
+            parts.push(topicMatch[1]);
+        }
+
+        // Extract task name from prompt structure: TAREA: "..." or TAREA ESPECÍFICA: "..."
+        const taskMatch = prompt.match(/TAREA(?:\s+ESPEC[ÍI]FICA)?(?:\s*\([^)]*\))?:\s*"([^"]+)"/i);
+        if (taskMatch && taskMatch[1] && taskMatch[1] !== 'General') {
+            parts.push(taskMatch[1]);
+        }
+
+        // If both extracted, create a blended query for better semantic coverage
+        if (parts.length === 2) {
+            parts.push(`${parts[0]} ${parts[1]}`);
+        }
+
+        // Fallback to using the first 200 chars of the prompt
+        if (parts.length === 0) {
+            return prompt.substring(0, 200);
+        }
+
+        return parts.join(' ').trim();
+    }
 }
 export default LLMDomainService;
-

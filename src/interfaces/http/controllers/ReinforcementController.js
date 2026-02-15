@@ -231,13 +231,16 @@ export class ReinforcementController {
             // Optional: explicit chunk page override (auto-calculated from history if omitted)
             const sessionIndex = req.query.sessionIndex != null
                 ? parseInt(req.query.sessionIndex) : null;
+            // Hybrid Retrieval params: query for semantic search, mode selection
+            const query = req.query.query || req.query.q || null;
+            const retrievalMode = req.query.retrievalMode || req.query.mode || 'auto';
 
             if (!courseId) {
                 return next(new ValidationError('courseId is required'));
             }
 
             const result = await this.learningContextService.buildLearningContext({
-                courseId, topicId, taskId, userId, sessionIndex,
+                courseId, topicId, taskId, userId, sessionIndex, query, retrievalMode,
             });
 
             if (result.isFail()) return next(result.getError());

@@ -579,6 +579,113 @@ export class SupabaseVectorStore extends IVectorStore {
     }
 
     /**
+     * ═══════════════════════════════════════════════════════════
+     * HYBRID RETRIEVAL: Window Expansion around semantic results
+     * ═══════════════════════════════════════════════════════════
+     *
+     * Given a set of chunk indices returned by semantic search, expands
+     * a window of ±windowSize around each index to provide richer context
+     * to the LLM. Chunks are deduplicated and ordered by file + chunk_index.
+     *
+     * @param {object} filter - { courseId, topicId, taskId }
+     * @param {number[]} chunkIndices - Chunk indices from semantic search results
+     * @param {number} windowSize - How many chunks to include before/after each result (default 3)
+     * @returns {Promise<Array<{ content: string, fileName: string, chunkIndex: number }>>}
+     */
+    async getChunksAround(filter = {}, chunkIndices = [], windowSize = 3) {
+        await this.initialize();
+
+        if (!chunkIndices || chunkIndices.length === 0) return [];
+
+        try {
+            // Calculate expanded ranges for each chunk index
+            const expandedIndices = new Set();
+            for (const idx of chunkIndices) {
+                for (let i = Math.max(0, idx - windowSize); i <= idx + windowSize; i++) {
+                    expandedIndices.add(i);
+                }
+            }
+
+            const indicesArray = Array.from(expandedIndices).sort((a, b) => a - b);
+
+            let query = this.supabase.client
+                .from(this.tableName)
+                .select('content, file_name, chunk_index')
+                .in('chunk_index', indicesArray)
+                .order('file_name', { ascending: true })
+                .order('chunk_index', { ascending: true });
+
+            if (filter.courseId) query = query.eq('course_id', filter.courseId);
+            if (filter.topicId) query = query.eq('topic_id', filter.topicId);
+            if (filter.taskId) query = query.eq('task_id', filter.taskId);
+
+            const { data, error } = await query.limit(200);
+
+            if (error) {
+                logger.error('Error in getChunksAround:', error);
+                return [];
+            }
+
+            const chunks = (data || []).map(row => ({
+                content: row.content || '',
+                fileName: row.file_name || '',
+                chunkIndex: row.chunk_index ?? 0,
+            }));
+
+            logger.info(`📄 getChunksAround: ${chunkIndices.length} seed indices → ${indicesArray.length} expanded → ${chunks.length} chunks returned`);
+
+            return chunks;
+        } catch (error) {
+            logger.error('Error in getChunksAround:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Retrieves chunks by their exact indices for a given filter.
+     * Used by hybrid retrieval to fetch specific semantic search results
+     * with their metadata intact.
+     *
+     * @param {object} filter - { courseId, topicId, taskId }
+     * @param {number[]} chunkIndices - Specific chunk indices to retrieve
+     * @returns {Promise<Array<{ content: string, fileName: string, chunkIndex: number, id: number }>>}
+     */
+    async getChunksByIndices(filter = {}, chunkIndices = []) {
+        await this.initialize();
+
+        if (!chunkIndices || chunkIndices.length === 0) return [];
+
+        try {
+            let query = this.supabase.client
+                .from(this.tableName)
+                .select('id, content, file_name, chunk_index')
+                .in('chunk_index', chunkIndices)
+                .order('chunk_index', { ascending: true });
+
+            if (filter.courseId) query = query.eq('course_id', filter.courseId);
+            if (filter.topicId) query = query.eq('topic_id', filter.topicId);
+            if (filter.taskId) query = query.eq('task_id', filter.taskId);
+
+            const { data, error } = await query.limit(200);
+
+            if (error) {
+                logger.error('Error in getChunksByIndices:', error);
+                return [];
+            }
+
+            return (data || []).map(row => ({
+                id: row.id,
+                content: row.content || '',
+                fileName: row.file_name || '',
+                chunkIndex: row.chunk_index ?? 0,
+            }));
+        } catch (error) {
+            logger.error('Error in getChunksByIndices:', error);
+            return [];
+        }
+    }
+
+    /**
      * Check if documents exist for a specific context
      * @param {object} filter - Filter criteria
      * @returns {Promise<boolean>}
