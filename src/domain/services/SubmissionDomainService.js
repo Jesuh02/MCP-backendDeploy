@@ -17,16 +17,19 @@ export class SubmissionDomainService {
     async getById(id) {
         const sub = await this.subRepo.findById(id);
         if (!sub) return Result.fail(new NotFoundError('Entrega', id));
+        await this._signFileUrls(sub);
         return Result.ok(sub);
     }
 
     async getByTask(taskId, pagination) {
         const subs = await this.subRepo.findByTask(taskId, pagination);
+        await this._signFileUrls(subs);
         return Result.ok(subs);
     }
 
     async getByUser(userId, pagination) {
         const subs = await this.subRepo.findByUser(userId, pagination);
+        await this._signFileUrls(subs);
         return Result.ok(subs);
     }
 
@@ -198,12 +201,83 @@ export class SubmissionDomainService {
 
     async getByUserAndTask(userId, taskId) {
         const sub = await this.subRepo.findByUserAndTask(userId, taskId);
+        await this._signFileUrls(sub);
         return Result.ok(sub);
     }
 
     async getByCourse(courseId, pagination) {
         const subs = await this.subRepo.findByCourse(courseId, pagination);
+        await this._signFileUrls(subs);
         return Result.ok(subs);
+    }
+
+    // -- Pre-signed URL Resolution (análogo a VideoDomainService._signUrls) --
+
+    /**
+     * Firma las fileUri de las submissions para que el cliente reciba
+     * URLs pre-firmadas listas para descarga directa.
+     *
+     * Maneja tres formatos almacenados en BD:
+     *  1. Clave relativa de R2  → "submissions/123_file.pdf"
+     *  2. URL pública HTTP R2   → "https://pub-xxx.r2.dev/submissions/..."
+     *  3. URL ya firmada         → contiene "X-Amz-Signature" (skip)
+     *
+     * Principios: OCP — nuevos formatos de URL se añaden sin modificar
+     * la lógica de firma existente; solo se extiende _resolveAndSign.
+     *
+     * @param {Object|Object[]} submissions — una o varias submissions
+     * @returns {Promise<Object|Object[]>}
+     * @private
+     */
+    async _signFileUrls(submissions) {
+        if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return submissions;
+        if (!submissions) return submissions;
+
+        const list = Array.isArray(submissions) ? submissions : [submissions];
+        await Promise.all(list.map(async (sub) => {
+            if (!sub) return;
+            try {
+                const fileUri = sub.file_uri || sub.fileUri;
+                if (fileUri) {
+                    const signed = await this._resolveAndSign(fileUri);
+                    if (signed) {
+                        sub.file_uri = signed;
+                        sub.fileUri = signed;
+                    }
+                }
+            } catch (e) {
+                console.warn('[SubmissionDomainService] Error signing URL for submission', sub.id, e.message);
+            }
+        }));
+        return Array.isArray(submissions) ? list : list[0];
+    }
+
+    /**
+     * Resuelve una URL/clave cruda a una URL pre-firmada de descarga.
+     *
+     * @param {string} raw — clave de objeto R2, URL pública, o URL ya firmada.
+     * @returns {Promise<string|null>} URL pre-firmada o null si ya está firmada.
+     * @private
+     */
+    async _resolveAndSign(raw) {
+        if (!raw) return null;
+
+        // Ya firmada — skip
+        if (raw.includes('X-Amz-Signature')) return null;
+
+        let objectKey = null;
+
+        if (raw.startsWith('http://') || raw.startsWith('https://')) {
+            // URL HTTP completa — extraer clave de objeto R2
+            objectKey = this.storage.extractObjectKey(raw);
+        } else if (!raw.startsWith('file://') && !raw.startsWith('content://')) {
+            // Clave relativa almacenada directamente en BD (e.g. "submissions/123.pdf")
+            objectKey = raw;
+        }
+
+        if (!objectKey) return null;
+
+        return this.storage.generateDownloadUrl(objectKey, 3600);
     }
 
     /**
