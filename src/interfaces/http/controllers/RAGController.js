@@ -209,14 +209,14 @@ export class RAGController {
 
     /**
      * POST /api/v1/rag/hybrid-search
-     * Hybrid Retrieval: Semantic Search + Window Expansion + Progressive Coverage.
+     * Hybrid Retrieval: Semantic Search + Window Expansion + Reranking + Progressive Coverage.
      *
-     * Body: { query, courseId, topicId?, taskId?, semanticTopK?, windowSize?, sessionIndex? }
-     * Returns: { content, chunks, files, semanticHits, expandedChunks, page?, totalPages?, totalChunks? }
+     * Body: { query, courseId, topicId?, taskId?, semanticTopK?, windowSize?, sessionIndex?, rerank?, topicName?, taskTitle? }
+     * Returns: { content, chunks, files, semanticHits, expandedChunks, reranked, rerankMethod, page?, totalPages?, totalChunks? }
      */
     hybridSearch = async (req, res, next) => {
         try {
-            const { query, courseId, topicId, taskId, semanticTopK, windowSize, sessionIndex } = req.body;
+            const { query, courseId, topicId, taskId, semanticTopK, windowSize, sessionIndex, rerank, topicName, taskTitle } = req.body;
 
             if (!query || !courseId) {
                 return res.status(400).json({
@@ -234,6 +234,9 @@ export class RAGController {
                 semanticTopK: semanticTopK ? parseInt(semanticTopK) : 3,
                 windowSize: windowSize ? parseInt(windowSize) : 3,
                 sessionIndex: sessionIndex != null ? parseInt(sessionIndex) : null,
+                rerank: rerank !== false, // default true
+                topicName: topicName || null,
+                taskTitle: taskTitle || null,
             });
 
             return res.json({ success: true, data: result });

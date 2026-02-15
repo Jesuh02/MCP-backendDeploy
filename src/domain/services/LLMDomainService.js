@@ -77,14 +77,9 @@ export class LLMDomainService {
 
                         const sessionIndex = Math.floor(existingCount / 10);
 
-                        // ═══ HYBRID RETRIEVAL: Semantic + Window + Progressive ═══
-                        // Use hybrid retrieval when available for reinforcement requests.
-                        // This provides: (1) semantically relevant chunks via embedding search,
-                        // (2) expanded context window around each hit, and
-                        // (3) progressive page rotation for document coverage.
-                        //
-                        // Build a composite search query from topic+task names embedded
-                        // in the prompt so RAG retrieves material relevant to BOTH sources.
+                        // ═══ HYBRID RETRIEVAL v2: Semantic + Window ONLY ═══
+                        // Progressive is used as fallback ONLY when semantic returns 0 results.
+                        // This prevents polluting relevant context with unrelated document chunks.
                         const compositeQuery = this._buildCompositeSearchQuery(prompt, topicId, taskId);
 
                         if (typeof this.rag.getHybridRagContent === 'function') {
@@ -93,11 +88,12 @@ export class LLMDomainService {
                             if (taskId) filter.taskId = taskId;
 
                             const hybridData = await this.rag.getHybridRagContent(compositeQuery, filter, {
-                                semanticTopK: 3,
-                                windowSize: 3,
-                                semanticThreshold: 0.5,
-                                sessionIndex,
+                                semanticTopK: 5,
+                                windowSize: 2,
+                                semanticThreshold: 0.45,
+                                sessionIndex, // Only used as progressive fallback if semantic=0
                                 maxTokens: 4000,
+                                maxChunks: 12,
                             });
 
                             if (hybridData && hybridData.content) {

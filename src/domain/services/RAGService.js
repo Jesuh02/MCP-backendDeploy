@@ -17,6 +17,7 @@ import { SupabaseService } from '../../infrastructure/database/SupabaseService.j
 import { SupabaseVectorStore } from '../../infrastructure/database/SupabaseVectorStore.js';
 import { CacheService } from '../../infrastructure/cache/CacheService.js';
 import { EmbeddingService } from '../../infrastructure/ai/EmbeddingService.js';
+import { RerankService } from '../../infrastructure/ai/RerankService.js';
 import { DocumentProcessor } from './DocumentProcessor.js';
 import { logger } from '../../infrastructure/logging/Logger.js';
 
@@ -455,42 +456,49 @@ export class RAGService {
 
     /**
      * ═══════════════════════════════════════════════════════════════════
-     * HYBRID RETRIEVAL ARCHITECTURE
-     * Combines: Semantic Search + Window Expansion + Progressive Coverage
+     * HYBRID RETRIEVAL ARCHITECTURE (v2 — Clean Context)
+     * Primary: Semantic Search + Window Expansion
+     * Fallback: Progressive Coverage (ONLY when semantic returns 0 results)
      *
-     * This is the most advanced retrieval strategy:
+     * Architecture:
      *   1. Semantic Search:  finds the most relevant chunks for the query
-     *   2. Window Expansion: expands around each result to capture full context
-     *   3. Progressive (optional): applies session-based pagination for coverage
+     *   2. Window Expansion: expands ±N around each semantic hit for full context
+     *   3. Deduplication:    removes overlapping chunks
+     *   4. Token Limit:      caps output at maxTokens
      *
-     * Use cases:
-     *   - User questions → semantic + window
-     *   - Quizzes         → progressive (or hybrid for large documents)
-     *   - Chat            → semantic
-     *   - Large files     → hybrid (all three)
+     * Progressive coverage is ONLY used as a fallback when semantic search
+     * returns zero results (e.g., no embeddings, bad query, or empty index).
+     * Mixing progressive with semantic pollutes the LLM context with
+     * irrelevant document sections, causing poor question generation.
      * ═══════════════════════════════════════════════════════════════════
      */
 
     /**
-     * Hybrid Retrieval: Semantic Search + Window Expansion (+ optional Progressive).
+     * Hybrid Retrieval: Semantic Search + Window Expansion.
+     * Progressive coverage is used ONLY as fallback when semantic returns 0 results.
      *
      * @param {string} query - The question or topic to search for
      * @param {{ courseId?: number, topicId?: number, taskId?: number }} filter
      * @param {object} options
-     * @param {number} [options.semanticTopK=3]     - Number of semantic search results
-     * @param {number} [options.windowSize=3]       - Chunks to expand before/after each hit
-     * @param {number} [options.semanticThreshold=0.5] - Minimum similarity for semantic results
-     * @param {number} [options.sessionIndex]       - If set, mixes progressive coverage too
+     * @param {number} [options.semanticTopK=5]     - Number of semantic search results
+     * @param {number} [options.windowSize=2]       - Chunks to expand before/after each hit (±N)
+     * @param {number} [options.semanticThreshold=0.45] - Minimum similarity for semantic results
+     * @param {number} [options.sessionIndex]       - Page index for progressive fallback (only used if semantic=0)
      * @param {number} [options.maxTokens]          - Maximum estimated tokens in output
+     * @param {number} [options.maxChunks=12]       - Maximum number of chunks in final output
      * @returns {Promise<{ content: string, chunks: number, files: string[], semanticHits: number, expandedChunks: number, page?: number, totalPages?: number, totalChunks?: number }>}
      */
     async getHybridRagContent(query, filter = {}, options = {}) {
         const {
-            semanticTopK = 3,
-            windowSize = 3,
-            semanticThreshold = 0.5,
+            semanticTopK = 5,
+            windowSize = 2,
+            semanticThreshold = 0.45,
             sessionIndex = null,
             maxTokens = this.maxContextTokens,
+            maxChunks = 12,
+            rerank = process.env.RERANK_ENABLED !== 'false',
+            topicName = null,
+            taskTitle = null,
         } = options;
 
         try {
@@ -498,7 +506,10 @@ export class RAGService {
                 return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0 };
             }
 
-            // ── Step 1: Semantic Search — find most relevant chunks ──
+            // ══════════════════════════════════════════════════════════════
+            // Step 1: Semantic Search — find most relevant chunks
+            // Filters by courseId + topicId + taskId metadata BEFORE search
+            // ══════════════════════════════════════════════════════════════
             let semanticResults = [];
             if (query && query.trim().length > 0) {
                 try {
@@ -509,14 +520,34 @@ export class RAGService {
                         topicId: filter.topicId,
                         taskId: filter.taskId,
                     });
+                    logger.info(`[HybridRAG] Semantic search: ${semanticResults.length} hits for query="${query.substring(0, 80)}..." (filter: courseId=${filter.courseId}, topicId=${filter.topicId}, taskId=${filter.taskId})`);
                 } catch (searchErr) {
-                    logger.warn('[HybridRAG] Semantic search failed, falling back:', searchErr.message);
+                    logger.warn('[HybridRAG] Semantic search failed:', searchErr.message);
+                }
+
+                // If filtered search returned 0 results and we had topicId/taskId filters,
+                // retry WITHOUT topicId/taskId to catch chunks with null metadata (ingestion fallback)
+                if (semanticResults.length === 0 && (filter.topicId || filter.taskId)) {
+                    try {
+                        logger.info('[HybridRAG] Retrying semantic search without topicId/taskId filters (null metadata fallback)');
+                        semanticResults = await this.search(query, {
+                            topK: semanticTopK,
+                            threshold: semanticThreshold,
+                            courseId: filter.courseId,
+                            // Omit topicId and taskId to catch chunks with null FKs
+                        });
+                        logger.info(`[HybridRAG] Unfiltered semantic retry: ${semanticResults.length} hits`);
+                    } catch (retryErr) {
+                        logger.warn('[HybridRAG] Unfiltered semantic retry also failed:', retryErr.message);
+                    }
                 }
             }
 
             const semanticHits = semanticResults.length;
 
-            // ── Step 2: Extract chunk indices from semantic results ──
+            // ══════════════════════════════════════════════════════════════
+            // Step 2: Extract chunk indices from semantic results
+            // ══════════════════════════════════════════════════════════════
             let seedIndices = [];
             if (semanticHits > 0) {
                 try {
@@ -531,7 +562,9 @@ export class RAGService {
                 }
             }
 
-            // ── Step 3: Window Expansion — expand context around seed chunks ──
+            // ══════════════════════════════════════════════════════════════
+            // Step 3: Window Expansion — expand ±N around each semantic hit
+            // ══════════════════════════════════════════════════════════════
             let expandedChunks = [];
             if (seedIndices.length > 0) {
                 try {
@@ -550,49 +583,133 @@ export class RAGService {
                 }));
             }
 
-            // ── Step 4 (Optional): Progressive Coverage ──
+            // ══════════════════════════════════════════════════════════════
+            // Step 4: Progressive — ONLY as FALLBACK when semantic = 0
+            // This prevents polluting relevant context with unrelated chunks.
+            // ══════════════════════════════════════════════════════════════
             let progressiveData = null;
-            if (sessionIndex !== null && sessionIndex !== undefined) {
+            const usedProgressiveFallback = expandedChunks.length === 0;
+
+            if (usedProgressiveFallback && sessionIndex !== null && sessionIndex !== undefined) {
+                logger.info(`[HybridRAG] Semantic returned 0 results → using progressive fallback (sessionIndex=${sessionIndex})`);
                 try {
                     progressiveData = await this.getProgressiveRagContent(filter, sessionIndex, {
                         windowSize: 4,
                         overlap: 1,
                     });
 
-                    // Merge progressive chunks (avoiding duplicates)
                     if (progressiveData && progressiveData.content) {
-                        const existingContents = new Set(expandedChunks.map(c => c.content.substring(0, 100)));
                         const progressiveChunks = this._parseProgressiveContent(progressiveData.content);
-
-                        for (const chunk of progressiveChunks) {
-                            if (!existingContents.has(chunk.content.substring(0, 100))) {
-                                expandedChunks.push(chunk);
-                                existingContents.add(chunk.content.substring(0, 100));
-                            }
-                        }
+                        expandedChunks = progressiveChunks;
                     }
                 } catch (progressErr) {
                     logger.warn('[HybridRAG] Progressive fallback failed:', progressErr.message);
                 }
+            } else if (expandedChunks.length > 0 && sessionIndex !== null) {
+                // Semantic DID return results — DO NOT mix progressive.
+                // Just fetch progressive metadata for page info (without merging content).
+                try {
+                    progressiveData = await this.getProgressiveRagContent(filter, sessionIndex, {
+                        windowSize: 4,
+                        overlap: 1,
+                    });
+                    // Only keep metadata (page, totalPages, totalChunks), NOT content
+                    if (progressiveData) {
+                        progressiveData = {
+                            page: progressiveData.page,
+                            totalPages: progressiveData.totalPages,
+                            totalChunks: progressiveData.totalChunks,
+                            content: null, // Explicitly null — we don't want this content
+                        };
+                    }
+                } catch (_) {
+                    // Non-critical — page metadata is nice-to-have
+                }
             }
 
-            // ── Step 5: If still no content, full fallback ──
+            // ══════════════════════════════════════════════════════════════
+            // Step 5: If still no content, full fallback
+            // ══════════════════════════════════════════════════════════════
             if (expandedChunks.length === 0) {
-                logger.warn('[HybridRAG] No content from hybrid retrieval, falling back to full getRagContent');
+                logger.warn('[HybridRAG] No content from any retrieval strategy, falling back to full getRagContent');
                 const fallback = await this.getRagContent(filter);
                 return {
                     ...fallback,
                     semanticHits: 0,
                     expandedChunks: 0,
+                    reranked: false,
+                    rerankMethod: 'none',
                     page: 0,
                     totalPages: 1,
                     totalChunks: fallback.chunks,
                 };
             }
 
-            // ── Step 6: Build formatted content with token limit ──
-            const fileMap = new Map();
+            // ══════════════════════════════════════════════════════════════
+            // Step 5.5: RERANKING — reorder chunks by TRUE relevance
+            // Semantic search embeddings approximate relevance but can
+            // return wrong ordering (e.g. "mitosis animales" above
+            // "mitosis plantas" for query "mitosis en plantas").
+            //
+            // Provider cascade (auto mode):
+            //   1. Cohere cross-encoder (rerank-v3.5) — BEST accuracy
+            //   2. Jina cross-encoder (v2-multilingual) — great free tier
+            //   3. Voyage AI cross-encoder (rerank-2)
+            //   4. Embedding semantic (bi-encoder + BM25) — FREE, uses existing embeddings
+            //   5. TF-IDF + BM25 keyword fallback — always available
+            // ══════════════════════════════════════════════════════════════
+            let reranked = false;
+            let rerankMethod = 'none';
+
+            if (rerank && expandedChunks.length >= 3 && query && query.trim().length > 0) {
+                try {
+                    const rerankService = RerankService.getInstance();
+                    const rerankResult = await rerankService.rerank(query, expandedChunks, {
+                        topK: maxChunks,
+                        topicName: topicName || null,
+                        taskTitle: taskTitle || null,
+                    });
+
+                    if (rerankResult.reranked) {
+                        expandedChunks = rerankResult.chunks;
+                        reranked = true;
+                        rerankMethod = rerankResult.method;
+                        logger.info(
+                            `🔄 [HybridRAG] Reranked ${expandedChunks.length} chunks via ${rerankMethod}. ` +
+                            `Top score: ${expandedChunks[0]?.rerankScore ?? 'N/A'}`
+                        );
+                    }
+                } catch (rerankErr) {
+                    logger.warn(`[HybridRAG] Reranking failed (non-blocking): ${rerankErr.message}`);
+                }
+            }
+
+            // ══════════════════════════════════════════════════════════════
+            // Step 6: Deduplicate + Limit chunks
+            // If reranked, preserve rerank order; otherwise sort by chunkIndex.
+            // ══════════════════════════════════════════════════════════════
+            const deduped = [];
+            const seenContents = new Set();
             for (const chunk of expandedChunks) {
+                const sig = chunk.content.substring(0, 150).trim();
+                if (!seenContents.has(sig)) {
+                    deduped.push(chunk);
+                    seenContents.add(sig);
+                }
+            }
+            // If reranked, preserve rerank order (most relevant first).
+            // Otherwise, sort by chunkIndex for coherent reading order.
+            if (!reranked) {
+                deduped.sort((a, b) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
+            }
+            // else: deduped already in rerank order (highest rerankScore first)
+            const finalChunks = deduped.slice(0, maxChunks);
+
+            // ══════════════════════════════════════════════════════════════
+            // Step 7: Build formatted content with token limit
+            // ══════════════════════════════════════════════════════════════
+            const fileMap = new Map();
+            for (const chunk of finalChunks) {
                 const key = chunk.fileName || 'unknown';
                 if (!fileMap.has(key)) fileMap.set(key, []);
                 fileMap.get(key).push(chunk);
@@ -605,23 +722,14 @@ export class RAGService {
 
             for (const [fileName, fileChunks] of fileMap) {
                 fileNames.push(fileName);
-                fileChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+                fileChunks.sort((a, b) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
 
-                // Deduplicate by content within each file
-                const seen = new Set();
-                const dedupedChunks = fileChunks.filter(c => {
-                    const key = c.content.substring(0, 100);
-                    if (seen.has(key)) return false;
-                    seen.add(key);
-                    return true;
-                });
+                const fileText = fileChunks.map(c => c.content).join('\n');
+                const retrievalLabel = usedProgressiveFallback
+                    ? ` (Cobertura progresiva — Sección ${(progressiveData?.page ?? 0) + 1}/${progressiveData?.totalPages ?? '?'})`
+                    : ` (Búsqueda semántica: ${semanticHits} coincidencias + contexto expandido ±${windowSize}${reranked ? ` + reranking ${rerankMethod}` : ''})`;
 
-                const fileText = dedupedChunks.map(c => c.content).join('\n');
-                const sectionLabel = progressiveData
-                    ? ` (Sección ${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages ?? '?'} + búsqueda semántica)`
-                    : ' (Búsqueda semántica + contexto expandido)';
-
-                const entry = `\n--- DOCUMENTO: ${fileName}${sectionLabel} ---\n${fileText}\n`;
+                const entry = `\n--- DOCUMENTO: ${fileName}${retrievalLabel} ---\n${fileText}\n`;
                 const entryTokens = Math.ceil(entry.length * tokensPerChar);
 
                 if (maxTokens && estimatedTokens + entryTokens > maxTokens) {
@@ -635,19 +743,22 @@ export class RAGService {
 
             const result = {
                 content: fullContent.trim(),
-                chunks: expandedChunks.length,
+                chunks: finalChunks.length,
                 files: fileNames,
                 semanticHits,
-                expandedChunks: expandedChunks.length,
+                expandedChunks: finalChunks.length,
+                reranked,
+                rerankMethod,
                 page: progressiveData?.page ?? 0,
                 totalPages: progressiveData?.totalPages ?? 1,
-                totalChunks: progressiveData?.totalChunks ?? expandedChunks.length,
+                totalChunks: progressiveData?.totalChunks ?? finalChunks.length,
+                usedProgressiveFallback,
             };
 
             logger.info(
-                `📄 [HybridRAG] Result: semanticHits=${semanticHits}, expanded=${expandedChunks.length}, ` +
-                `files=${fileNames.length}, tokens≈${estimatedTokens}` +
-                (progressiveData ? `, progressivePage=${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages}` : '')
+                `📄 [HybridRAG] Result: semanticHits=${semanticHits}, finalChunks=${finalChunks.length}/${deduped.length} deduped, ` +
+                `reranked=${reranked} (${rerankMethod}), ` +
+                `files=${fileNames.length}, tokens≈${estimatedTokens}, strategy=${usedProgressiveFallback ? 'PROGRESSIVE_FALLBACK' : 'SEMANTIC+WINDOW+RERANK'}`
             );
 
             return result;
@@ -655,9 +766,9 @@ export class RAGService {
             logger.error('[HybridRAG] getHybridRagContent error:', error);
             try {
                 const fallback = await this.getProgressiveRagContent(filter, sessionIndex || 0);
-                return { ...fallback, semanticHits: 0, expandedChunks: 0 };
+                return { ...fallback, semanticHits: 0, expandedChunks: 0, usedProgressiveFallback: true };
             } catch (_) {
-                return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0 };
+                return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0, usedProgressiveFallback: false };
             }
         }
     }
