@@ -179,7 +179,8 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
 - NO inventes, infieras ni añadas información que NO aparezca explícitamente en los fragmentos.
 - Si un concepto NO está en los fragmentos, NO generes preguntas sobre él.
 - Las explicaciones deben citar o parafrasear directamente el contenido del material.
-- Extrae conceptos específicos, definiciones, procesos y datos del material para formular preguntas de diferentes niveles de dificultad.`;
+- Extrae conceptos específicos, definiciones, procesos y datos del material para formular preguntas de diferentes niveles de dificultad.
+- PROHIBIDO generar preguntas generales basadas en el nombre del curso. Las preguntas DEBEN basarse en el TEMA y TAREA específicos.`;
             }
 
             // 2.5. JSON format enforcement for reinforcement/quiz requests
