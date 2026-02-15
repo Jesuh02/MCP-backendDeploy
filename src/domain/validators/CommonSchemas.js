@@ -214,7 +214,12 @@ export const sendNotificationSchema = Joi.object({
     senderUsername: Joi.string().max(100).allow(null, '').optional(),
     senderAvatarUrl: Joi.string().max(1000).allow(null, '').optional(),
     thumbnailUrl: Joi.string().max(1000).allow(null, '').optional(),
+    thumbnail_url: Joi.string().max(1000).allow(null, '').optional(),
     metadata: Joi.string().max(5000).allow(null, '').optional(),
+}).custom((value) => {
+    if (!value.thumbnailUrl && value.thumbnail_url) value.thumbnailUrl = value.thumbnail_url;
+    delete value.thumbnail_url;
+    return value;
 });
 
 // ─── Payment ─────────────────────────────────────────────
