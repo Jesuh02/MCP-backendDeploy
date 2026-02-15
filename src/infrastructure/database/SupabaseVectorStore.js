@@ -125,6 +125,23 @@ export class SupabaseVectorStore extends IVectorStore {
      * @returns {Promise<object>} - Stored document
      */
     /**
+     * Extract the specific FK field name from a 23503 constraint violation error.
+     * @param {object} error - Supabase/Postgres error with details/message
+     * @returns {string|null} - The column name (e.g., 'content_item_id') or null
+     */
+    _extractFailedFKField(error) {
+        const msg = (error.details || error.message || '').toLowerCase();
+        const fkColumns = ['content_item_id', 'task_id', 'topic_id', 'course_id'];
+        for (const col of fkColumns) {
+            if (msg.includes(col)) return col;
+        }
+        // Try to extract from constraint name pattern like "rag_documents_task_id_fkey"
+        const constraintMatch = msg.match(/rag_documents_(\w+)_fkey/);
+        if (constraintMatch) return constraintMatch[1];
+        return null;
+    }
+
+    /**
      * Validate that foreign key references exist in the database before inserting.
      * Returns an object with only the valid FK values (invalid ones set to null).
      */
@@ -217,16 +234,18 @@ export class SupabaseVectorStore extends IVectorStore {
                 // HANDLE FOREIGN KEY VIOLATIONS (Code 23503)
                 // This happens when inserting a record with a reference ID (taskId, topicId) that doesn't exist in DB
                 if (error.code === '23503') {
-                    logger.warn(`Constraint violation detected (${error.details || error.message}). Retrying with ALL FK fields nullified...`);
+                    // Instead of nullifying ALL FKs (which makes records invisible to queries),
+                    // identify and nullify only the specific FK that failed.
+                    const failedField = this._extractFailedFKField(error);
+                    logger.warn(`Constraint violation on field '${failedField}' (${error.details || error.message}). Retrying with only that FK nullified...`);
 
-                    // Nullify ALL FK fields at once to avoid cascading failures
-                    const retryRecord = {
-                        ...record,
-                        task_id: null,
-                        topic_id: null,
-                        course_id: null,
-                        content_item_id: null
-                    };
+                    const retryRecord = { ...record };
+                    if (failedField) {
+                        retryRecord[failedField] = null;
+                    } else {
+                        // Fallback: nullify only content_item_id (most likely to be missing)
+                        retryRecord.content_item_id = null;
+                    }
 
                     const retry = await this.supabase.client
                         .from(this.tableName)
@@ -234,11 +253,28 @@ export class SupabaseVectorStore extends IVectorStore {
                         .select();
 
                     if (!retry.error) {
-                        logger.info('✅ Retry successful with all FK fields nullified');
+                        logger.info(`✅ Retry successful with ${failedField || 'content_item_id'} nullified. Record still has task_id=${retryRecord.task_id}, course_id=${retryRecord.course_id}`);
                         return retry.data[0];
                     }
-                    // If fails again, log and continue to throw/fallback
-                    logger.warn('❌ Retry failed:', retry.error);
+
+                    // Second fallback: nullify all FKs (last resort)
+                    logger.warn(`❌ Retry failed (${retry.error.message}). Attempting last resort with all FKs nullified...`);
+                    const lastResortRecord = {
+                        ...record,
+                        task_id: null,
+                        topic_id: null,
+                        course_id: null,
+                        content_item_id: null
+                    };
+                    const lastRetry = await this.supabase.client
+                        .from(this.tableName)
+                        .insert([lastResortRecord])
+                        .select();
+                    if (!lastRetry.error) {
+                        logger.warn('⚠️ Last resort insert succeeded but record has NULL FKs — it will be invisible to filtered queries');
+                        return lastRetry.data[0];
+                    }
+                    logger.error('❌ All insert attempts failed:', lastRetry.error);
                 }
 
                 // If table doesn't exist, try knowledge_base as fallback
@@ -927,12 +963,19 @@ export class SupabaseVectorStore extends IVectorStore {
             if (filter.courseId) query = query.eq('course_id', filter.courseId);
             if (filter.topicId) query = query.eq('topic_id', filter.topicId);
             if (filter.taskId) query = query.eq('task_id', filter.taskId);
+            if (filter.contentItemId) query = query.eq('content_item_id', filter.contentItemId);
             if (filter.fileName) query = query.eq('file_name', filter.fileName);
 
             const { count, error } = await query;
 
-            return !error && count > 0;
+            if (error) {
+                logger.warn(`⚠️ exists() query error: ${error.message}`);
+                return false;
+            }
+
+            return count > 0;
         } catch (error) {
+            logger.warn(`⚠️ exists() exception: ${error.message}`);
             return false;
         }
     }

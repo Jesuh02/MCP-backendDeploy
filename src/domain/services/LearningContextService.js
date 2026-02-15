@@ -16,6 +16,11 @@
  *   - Los repositorios y servicios RAG se inyectan como puertos.
  */
 import { Result } from '../../shared/Result.js';
+import { R2StorageAdapter } from '../../infrastructure/storage/R2StorageAdapter.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+let pdfParse;
+try { pdfParse = require('pdf-parse'); } catch (_) { pdfParse = null; }
 
 export class LearningContextService {
     /**
@@ -259,18 +264,20 @@ export class LearningContextService {
 
     /**
      * Asegura que los content_items estén ingestados en rag_documents.
-     * Solo procesa items con body > 50 chars que no estén ya ingestados.
+     * Procesa items con body suficiente que no estén ya ingestados.
+     * Si el body es una URL, descarga el archivo y extrae su texto (PDF, etc).
      * @private
      */
     async _ensureRagIngestion(courseId, topicId, taskId, contentItems) {
-        const result = { ingested: false, filesProcessed: 0, skipped: false };
+        const result = { ingested: false, filesProcessed: 0, skipped: false, errors: [] };
 
         if (!this.ragService || !taskId || taskId <= 0) {
+            console.warn('[LearningContextService] Skipping RAG ingestion: ragService missing or invalid taskId');
             return result;
         }
 
         try {
-            // Verificar si ya existe contenido RAG para este task
+            // Verificar si ya existe contenido RAG para este task (task-level check)
             const exists = await this.ragService.vectorStore.exists({
                 taskId,
                 courseId,
@@ -282,20 +289,75 @@ export class LearningContextService {
                 return result;
             }
 
-            // Ingestar cada content_item con body suficiente
-            const ingestableItems = contentItems.filter(item => item.body && item.body.length > 50);
+            // Filter items with body present (URLs are usually short, so no length filter here)
+            const ingestableItems = contentItems.filter(item => {
+                const body = (item.body || '').trim();
+                return body.length > 10;
+            });
+
+            if (ingestableItems.length === 0) {
+                console.warn(`[LearningContextService] No ingestable content_items for task=${taskId}`);
+                return result;
+            }
+
+            // Lazily create R2 adapter only when needed for URL downloads
+            let r2Service = null;
 
             for (const item of ingestableItems) {
+                const body = (item.body || '').trim();
+                const fileName = item.title || `content_item_${item.id}`;
+                const isUrl = body.startsWith('http://') || body.startsWith('https://');
                 const effectiveTopicId = topicId || item.topic_id;
-                await this.ragService.ingestDocument(item.body, {
-                    courseId,
-                    taskId,
-                    topicId: effectiveTopicId,
-                    contentItemId: item.id,
-                    fileName: item.title || `content_${item.id}`,
-                    fileType: 'txt',
-                });
-                result.filesProcessed++;
+                let textToIngest = null;
+
+                if (isUrl) {
+                    // Download file content from URL (same logic as RAGController.ingestTaskContent)
+                    try {
+                        if (!r2Service) r2Service = new R2StorageAdapter();
+                        const fileData = await r2Service.getSubmissionFileContent(body, fileName);
+                        if (!fileData || !fileData.content) {
+                            result.errors.push({ file: fileName, error: 'No content from download' });
+                            continue;
+                        }
+
+                        const nameLower = fileName.toLowerCase();
+                        const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+
+                        if (isPdf && pdfParse) {
+                            try {
+                                const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                const pdfData = await pdfParse(pdfBuffer);
+                                textToIngest = pdfData.text;
+                                if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
+                            } catch (pdfErr) {
+                                result.errors.push({ file: fileName, error: `PDF parse: ${pdfErr.message}` });
+                            }
+                        } else if (!fileData.isBase64) {
+                            textToIngest = fileData.content;
+                        }
+                    } catch (dlErr) {
+                        result.errors.push({ file: fileName, error: `Download: ${dlErr.message}` });
+                    }
+                } else {
+                    // Body is plain text content
+                    textToIngest = body;
+                }
+
+                if (textToIngest && textToIngest.length >= 50) {
+                    try {
+                        await this.ragService.ingestDocument(textToIngest, {
+                            courseId,
+                            taskId,
+                            topicId: effectiveTopicId,
+                            contentItemId: item.id,
+                            fileName,
+                            fileType: 'txt',
+                        });
+                        result.filesProcessed++;
+                    } catch (ingestErr) {
+                        result.errors.push({ file: fileName, error: ingestErr.message });
+                    }
+                }
             }
 
             result.ingested = result.filesProcessed > 0;
