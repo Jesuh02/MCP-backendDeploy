@@ -54,8 +54,9 @@ export class NotificationController {
                 res.status(201).json({ success: true, data: result.getValue() });
             } catch (err) {
                 // Return 404 if user not found (from repository error)
-                if (err.message.includes('User with ID') && err.message.includes('does not exist')) {
-                     return res.status(404).json({ success: false, error: err.message });
+                 const message = err?.message || '';
+                 if (message.includes('User with ID') && message.includes('does not exist')) {
+                     return res.status(404).json({ success: false, error: message });
                 }
                 throw err;
             }

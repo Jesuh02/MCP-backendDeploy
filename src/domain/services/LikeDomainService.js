@@ -37,13 +37,22 @@ export class LikeDomainService {
                 if (!this.videoRepo) return;
                 const video = await this.videoRepo.findById(entityId);
                 // Resolve creator id from any known shape (mapped + raw)
-                const creatorId =
+                let creatorId =
                     video?.userId ??
                     video?.remoteId ??
                     video?.remote_id ??
                     video?.creatorId ??
                     video?.creator_id ??
                     null;
+
+                // Fallback: resolve creator by username when remote/user id is missing
+                if (!creatorId && video?.username && this.userRepo?.findByUsername) {
+                    const normalizedUsername = String(video.username).trim().replace(/^@+/, '');
+                    if (normalizedUsername) {
+                        const creatorUser = await this.userRepo.findByUsername(normalizedUsername);
+                        creatorId = creatorUser?.id ?? null;
+                    }
+                }
 
                 // No notificar si se da like a su propio video
                 if (video && creatorId && Number(creatorId) !== Number(userId)) {
@@ -63,7 +72,7 @@ export class LikeDomainService {
                         console.warn('video_like notification result failed:', notifResult.getError?.());
                     }
                 } else if (video && !creatorId) {
-                    console.warn(`video_like notification skipped: missing creatorId for video ${entityId}`);
+                    console.warn(`video_like notification skipped: missing creatorId for video ${entityId} (username=${video?.username || 'n/a'})`);
                 }
             } else if (entityType === 'comment' || entityType === 'video_comment') {
                 if (!this.commentRepo || !this.videoRepo) return;
