@@ -125,8 +125,6 @@ export class SubmissionDomainService {
         const updated = await this.subRepo.update(id, {
             grade,
             feedback,
-            status: 'graded',
-            gradedAt: new Date().toISOString(),
         });
 
         // Recalcular progreso del estudiante si es posible
