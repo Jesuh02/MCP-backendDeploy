@@ -95,6 +95,34 @@ export class SupabaseProgressRepository {
         return data.map(p => p.curso_id);
     }
 
+    /**
+     * Obtiene registros de progreso con estado 'Ganado' para los cursos indicados.
+     * Responsabilidad única: solo consulta progreso_estudiante.
+     * @param {number[]} courseIds  IDs de los cursos a consultar.
+     * @returns {Promise<Array<{userId:number, courseId:number, grade:number}>>}
+     */
+    async findWonProgressByCourseIds(courseIds) {
+        if (!Array.isArray(courseIds) || courseIds.length === 0) return [];
+
+        const { data, error } = await this.client
+            .from('progreso_estudiante')
+            .select('usuario_estudiante, curso_id, calificacion_ponderada, promedio')
+            .in('curso_id', courseIds)
+            .eq('estado', 'Ganado')
+            .not('usuario_estudiante', 'is', null);
+
+        if (error) {
+            console.error('[ProgressRepo] findWonProgressByCourseIds error:', error.message);
+            return [];
+        }
+
+        return (data || []).map(row => ({
+            userId: Number(row.usuario_estudiante),
+            courseId: Number(row.curso_id),
+            grade: Number(row.calificacion_ponderada ?? row.promedio ?? 0),
+        }));
+    }
+
     async updateCertificate(userId, courseId, data) {
         const payload = {};
         if (data.certificateIssuedAt) payload.certificado_emitido_en = data.certificateIssuedAt;
@@ -104,27 +132,44 @@ export class SupabaseProgressRepository {
         return this._mapToDomain(updated);
     }
 
+    /**
+     * Obtiene los estudiantes destacados de los cursos de un creador.
+     *
+     * Flujo (3 consultas independientes — no depende de FK implícitas):
+     *  1. courses  → IDs de cursos del creador  (creator_user_id)
+     *  2. progreso_estudiante → registros con estado 'Ganado' en esos cursos
+     *  3. usuarios → perfil (username, avatar) de los estudiantes encontrados
+     *
+     * @param {number} limit        Máximo de estudiantes a devolver.
+     * @param {number} creatorUserId  ID del creador autenticado.
+     * @returns {Promise<Array<{user_id,username,avatar,approved_courses,average_grade}>>}
+     */
     async getTopStudentsGlobal(limit = 5, creatorUserId = null) {
         const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Number(limit) : 5;
         const creatorId = Number(creatorUserId);
         if (!Number.isInteger(creatorId) || creatorId <= 0) return [];
 
+        // ── Paso 1: Obtener IDs de cursos creados por el usuario ──
+        const { data: creatorCourses, error: coursesError } = await this.client
+            .from('courses')
+            .select('id')
+            .eq('creator_user_id', creatorId);
+
+        if (coursesError || !creatorCourses || creatorCourses.length === 0) return [];
+
+        const courseIds = creatorCourses.map(c => c.id);
+
+        // ── Paso 2: Obtener progreso 'Ganado' en esos cursos ──
         const { data: progressRows, error: progressError } = await this.client
             .from('progreso_estudiante')
-            .select(`
-                usuario_estudiante,
-                estado,
-                calificacion_ponderada,
-                promedio,
-                usuarios:usuario_estudiante(id, username, avatar),
-                courses!inner(id, creator_user_id)
-            `)
+            .select('usuario_estudiante, estado, calificacion_ponderada, promedio')
+            .in('curso_id', courseIds)
             .eq('estado', 'Ganado')
-            .eq('courses.creator_user_id', creatorId)
             .not('usuario_estudiante', 'is', null);
 
         if (progressError || !progressRows || progressRows.length === 0) return [];
 
+        // ── Agregar métricas por estudiante ──
         const aggregatedByUser = new Map();
 
         for (const row of progressRows) {
@@ -141,27 +186,13 @@ export class SupabaseProgressRepository {
                 avatar: null,
             };
 
-            const status = String(row?.estado || '').trim().toLowerCase();
-            if (status === 'ganado') {
-                existing.approved_courses += 1;
+            existing.approved_courses += 1;
 
-                const gradeRaw = row?.calificacion_ponderada ?? row?.promedio;
-                const grade = Number(gradeRaw);
-                if (Number.isFinite(grade)) {
-                    existing.total_grade += grade;
-                    existing.graded_courses += 1;
-                }
-            }
-
-            const relatedUser = Array.isArray(row?.usuarios)
-                ? row.usuarios[0]
-                : row?.usuarios;
-
-            if (!existing.username && relatedUser?.username) {
-                existing.username = relatedUser.username;
-            }
-            if (!existing.avatar && relatedUser?.avatar) {
-                existing.avatar = relatedUser.avatar;
+            const gradeRaw = row?.calificacion_ponderada ?? row?.promedio;
+            const grade = Number(gradeRaw);
+            if (Number.isFinite(grade)) {
+                existing.total_grade += grade;
+                existing.graded_courses += 1;
             }
 
             aggregatedByUser.set(userId, existing);
@@ -176,33 +207,28 @@ export class SupabaseProgressRepository {
         const ranked = [...aggregatedByUser.values()]
             .filter((student) => student.approved_courses > 0)
             .sort((a, b) => {
-                if (b.average_grade !== a.average_grade) {
-                    return b.average_grade - a.average_grade;
-                }
-                if (b.approved_courses !== a.approved_courses) {
-                    return b.approved_courses - a.approved_courses;
-                }
+                if (b.average_grade !== a.average_grade) return b.average_grade - a.average_grade;
+                if (b.approved_courses !== a.approved_courses) return b.approved_courses - a.approved_courses;
                 return a.user_id - b.user_id;
             })
             .slice(0, safeLimit);
 
-        const missingProfileIds = ranked
-            .filter((student) => !student.username)
-            .map((student) => student.user_id);
+        // ── Paso 3: Obtener perfiles de los estudiantes encontrados ──
+        const studentIds = ranked.map(s => s.user_id);
 
-        if (missingProfileIds.length > 0) {
+        if (studentIds.length > 0) {
             const { data: usersData } = await this.client
                 .from('usuarios')
                 .select('id, username, avatar')
-                .in('id', missingProfileIds);
+                .in('id', studentIds);
 
             const usersById = new Map((usersData || []).map((user) => [Number(user.id), user]));
 
             for (const student of ranked) {
                 const user = usersById.get(student.user_id);
                 if (!user) continue;
-                if (!student.username && user.username) student.username = user.username;
-                if (!student.avatar && user.avatar) student.avatar = user.avatar;
+                if (user.username) student.username = user.username;
+                if (user.avatar) student.avatar = user.avatar;
             }
         }
 

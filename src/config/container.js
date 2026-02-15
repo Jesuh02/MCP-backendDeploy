@@ -82,6 +82,8 @@ import { MCPDomainService } from '../domain/services/MCPDomainService.js';
 import { AppDistributionDomainService } from '../domain/services/AppDistributionDomainService.js';
 import { ExcelDomainService } from '../domain/services/ExcelDomainService.js';
 import { MCPService } from '../domain/services/MCPService.js';
+import { LearningContextService } from '../domain/services/LearningContextService.js';
+import { RAGService } from '../domain/services/RAGService.js';
 import { WhatsAppDomainService } from '../domain/services/WhatsAppDomainService.js';
 
 // ── Interfaces: Controladores ───────────────────────────────
@@ -216,13 +218,14 @@ export function createContainer() {
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo });
-    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo });
+    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo });
     const notificationService = new NotificationDomainService({ notificationRepository: notificationRepo, userRepository: userRepo, pushNotificationPort: fcmAdapter, emailPort: emailAdapter });
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
     const fileContextService = new FileContextDomainService({ fileContextRepository: fileContextRepo });
     const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo });
+
     const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios
@@ -262,6 +265,16 @@ export function createContainer() {
     const mcpServiceLegacy = new MCPService();
     const excelService = new ExcelDomainService({ mcpService: mcpServiceLegacy, fileStoragePort: storageAdapter });
 
+    // LearningContextService — contexto de aprendizaje unificado (SRP)
+    const ragServiceInstance = safeInit('RAGService', () => new RAGService());
+    const learningContextService = new LearningContextService({
+        topicRepository: topicRepo,
+        taskRepository: taskRepo,
+        contentItemRepository: contentItemRepo,
+        ragService: ragServiceInstance,
+        mcpService: mcpServiceLegacy,
+    });
+
     // Nivel 3: WhatsApp (depende de MCP, LLM, repos)
     const whatsAppDomainService = safeInit('WhatsAppDomainService', () => new WhatsAppDomainService({
         whatsAppPort: whatsAppAdapter,
@@ -299,7 +312,7 @@ export function createContainer() {
     const personaController = new PersonaController({ personaService });
     const rolController = new RolController({ rolService });
     const fileContextController = new FileContextController({ fileContextService });
-    const reinforcementController = new ReinforcementController({ reinforcementService });
+    const reinforcementController = new ReinforcementController({ reinforcementService, learningContextService });
     const chatMessageController = new ChatMessageController({ chatMessageService });
 
     const ttsController = new TTSController({ ttsService });
@@ -389,6 +402,7 @@ export function createContainer() {
         appDistributionService,
         excelService,
         mcpServiceLegacy, // Injected for server.js legacy tools
+        learningContextService,
         whatsAppDomainService,
 
         // Adaptadores
