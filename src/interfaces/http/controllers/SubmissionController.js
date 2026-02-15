@@ -57,7 +57,8 @@ export class SubmissionController extends BaseController {
 
     getByCourse = async(req, res, next) => {
         const pg = parsePagination(req.query);
-        this.store(req, res, next, () => this.subService.getByCourse(parseInt(req.params.courseId), pg));
+        const ungradedOnly = req.query.ungradedOnly === 'true';
+        this.store(req, res, next, () => this.subService.getByCourse(parseInt(req.params.courseId), pg, { ungradedOnly }));
     };
 
     /**

@@ -25,7 +25,7 @@ export class SupabaseSubmissionRepository {
         return data;
     }
 
-    async findByCourse(courseId, { offset = 0, limit = 50 } = {}) {
+    async findByCourse(courseId, { offset = 0, limit = 50, ungradedOnly = false } = {}) {
         // Enforce strict filtering: 1. Get tasks for the course, 2. Get submissions for those tasks
         // This avoids deep nesting issues with Supabase filters
         const { data: tasks, error: taskError } = await this.client
@@ -41,10 +41,17 @@ export class SupabaseSubmissionRepository {
         const taskIds = tasks.map(t => t.id);
         if (taskIds.length === 0) return [];
 
-        const { data, error } = await this.client
+        let query = this.client
             .from('task_submissions')
             .select('*, tasks!inner(*, topics!inner(*))')
-            .in('task_id', taskIds)
+            .in('task_id', taskIds);
+
+        // Filter only ungraded submissions at the database level
+        if (ungradedOnly) {
+            query = query.is('grade', null);
+        }
+
+        const { data, error } = await query
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
 
