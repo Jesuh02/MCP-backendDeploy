@@ -391,7 +391,31 @@ export class SupabaseVectorStore extends IVectorStore {
                 });
 
             if (error) {
-                // Fallback to simpler search
+                logger.warn(`match_rag_documents RPC failed: ${error.message}. Trying auto-provision & direct SQL fallback...`);
+
+                // If the function doesn't exist, try to create it automatically
+                if (error.message.includes('function') || error.message.includes('does not exist') || error.code === 'PGRST202') {
+                    const created = await this._ensureMatchFunction(queryEmbedding.length);
+                    if (created) {
+                        // Retry after creating the function
+                        const retry = await this.supabase.client
+                            .rpc('match_rag_documents', {
+                                query_embedding: `[${queryEmbedding.join(',')}]`,
+                                match_threshold: threshold,
+                                match_count: topK,
+                                filter_course_id: filter.courseId || null,
+                                filter_topic_id: filter.topicId || null,
+                                filter_task_id: filter.taskId || null,
+                                filter_content_item_id: filter.contentItemId || null
+                            });
+                        if (!retry.error && retry.data) {
+                            logger.info(`✅ match_rag_documents auto-provisioned and working! ${retry.data.length} results`);
+                            return retry.data;
+                        }
+                    }
+                }
+
+                // Fallback to direct SQL search
                 return this._fallbackSearch(queryEmbedding, topK, threshold, filter);
             }
 
@@ -403,29 +427,233 @@ export class SupabaseVectorStore extends IVectorStore {
     }
 
     /**
-     * Fallback search using knowledge_base table
+     * Auto-create the match_rag_documents function in the database.
+     * This solves the root cause: the RPC function was never created.
+     * @param {number} dims - Embedding dimensions (e.g., 4096)
+     * @returns {Promise<boolean>} - true if function was created successfully
+     */
+    async _ensureMatchFunction(dims = 4096) {
+        if (this._matchFunctionAttempted) return false; // Only try once per instance
+        this._matchFunctionAttempted = true;
+
+        const createFunctionSQL = `
+            CREATE OR REPLACE FUNCTION match_rag_documents(
+                query_embedding vector(${dims}),
+                match_threshold float DEFAULT 0.7,
+                match_count int DEFAULT 5,
+                filter_course_id bigint DEFAULT NULL,
+                filter_topic_id bigint DEFAULT NULL,
+                filter_task_id bigint DEFAULT NULL,
+                filter_content_item_id bigint DEFAULT NULL
+            ) RETURNS TABLE (
+                id bigint,
+                content text,
+                metadata jsonb,
+                similarity float
+            ) LANGUAGE plpgsql AS $$
+            BEGIN
+                RETURN QUERY
+                SELECT
+                    rd.id,
+                    rd.content,
+                    rd.metadata,
+                    1 - (rd.embedding <=> query_embedding) as similarity
+                FROM rag_documents rd
+                WHERE
+                    (filter_course_id IS NULL OR rd.course_id = filter_course_id)
+                    AND (filter_topic_id IS NULL OR rd.topic_id = filter_topic_id)
+                    AND (filter_task_id IS NULL OR rd.task_id = filter_task_id)
+                    AND (filter_content_item_id IS NULL OR rd.content_item_id = filter_content_item_id)
+                    AND rd.embedding IS NOT NULL
+                    AND 1 - (rd.embedding <=> query_embedding) > match_threshold
+                ORDER BY rd.embedding <=> query_embedding
+                LIMIT match_count;
+            END;
+            $$;
+        `;
+
+        try {
+            // Try exec_sql RPC (common in Supabase setups)
+            const { error: err1 } = await this.supabase.client.rpc('exec_sql', { sql: createFunctionSQL });
+            if (!err1) {
+                logger.info(`✅ Auto-created match_rag_documents function (${dims} dims) via exec_sql`);
+                return true;
+            }
+
+            // Try execute_sql RPC
+            const { error: err2 } = await this.supabase.client.rpc('execute_sql', { query: createFunctionSQL });
+            if (!err2) {
+                logger.info(`✅ Auto-created match_rag_documents function (${dims} dims) via execute_sql`);
+                return true;
+            }
+
+            logger.warn(`⚠️ Could not auto-create match_rag_documents (no exec_sql/execute_sql RPC). Please run the SQL manually in Supabase SQL Editor.`);
+            return false;
+        } catch (e) {
+            logger.warn(`⚠️ Auto-create match_rag_documents failed: ${e.message}`);
+            return false;
+        }
+    }
+
+    /**
+     * Direct SQL fallback search — performs cosine similarity search WITHOUT
+     * needing the match_rag_documents RPC function.
+     * 
+     * Uses Supabase PostgREST ordering with pgvector's <=> operator via raw RPC,
+     * or falls back to fetching all embeddings and computing similarity in JS.
      */
     async _fallbackSearch(queryEmbedding, topK, threshold, filter) {
         try {
-            // Try search_knowledge_base RPC
-            const { data, error } = await this.supabase.client
-                .rpc('search_knowledge_base', {
-                    query_embedding: `[${queryEmbedding.join(',')}]`,
-                    match_threshold: threshold,
-                    match_count: topK
+            logger.info(`[FallbackSearch] Attempting direct vector similarity search (filter: courseId=${filter.courseId}, topicId=${filter.topicId}, taskId=${filter.taskId})`);
+
+            // Strategy 1: Use a lightweight inline SQL via Supabase RPC
+            // This avoids needing a pre-created function — we call a generic SQL executor if available
+            const inlineSQL = `
+                SELECT id, content, metadata,
+                       1 - (embedding <=> $1::vector) as similarity
+                FROM rag_documents
+                WHERE embedding IS NOT NULL
+                  ${filter.courseId ? `AND course_id = ${parseInt(filter.courseId)}` : ''}
+                  ${filter.topicId ? `AND topic_id = ${parseInt(filter.topicId)}` : ''}
+                  ${filter.taskId ? `AND task_id = ${parseInt(filter.taskId)}` : ''}
+                  AND 1 - (embedding <=> $1::vector) > ${parseFloat(threshold)}
+                ORDER BY embedding <=> $1::vector
+                LIMIT ${parseInt(topK)};
+            `;
+
+            // Try exec_sql
+            try {
+                const { data, error } = await this.supabase.client.rpc('exec_sql', {
+                    sql: inlineSQL.replace(/\$1/g, `'[${queryEmbedding.join(',')}]'`)
                 });
+                if (!error && data && data.length > 0) {
+                    logger.info(`✅ [FallbackSearch] exec_sql returned ${data.length} results`);
+                    return data;
+                }
+            } catch (_) { /* exec_sql not available */ }
 
-            if (!error && data) {
-                return data;
-            }
+            // Strategy 2: Fetch candidate chunks (with embeddings) and compute similarity in JavaScript
+            // This is slower but ALWAYS works as long as the table and pgvector are set up
+            logger.info('[FallbackSearch] exec_sql not available. Computing similarity in JavaScript...');
+            return await this._jsSimilaritySearch(queryEmbedding, topK, threshold, filter);
 
-            // Ultimate fallback: return empty
-            logger.warn('All vector search methods failed, returning empty results');
-            return [];
         } catch (e) {
             logger.error('Fallback search failed:', e);
             return [];
         }
+    }
+
+    /**
+     * JavaScript-side cosine similarity search.
+     * Fetches embeddings from the database and computes similarity locally.
+     * This is the ultimate fallback that works without ANY database functions.
+     * 
+     * Optimization: Fetches in batches and filters by course/topic/task first
+     * to reduce data transfer.
+     */
+    async _jsSimilaritySearch(queryEmbedding, topK, threshold, filter) {
+        try {
+            let query = this.supabase.client
+                .from(this.tableName)
+                .select('id, content, metadata, embedding')
+                .not('embedding', 'is', null);
+
+            if (filter.courseId) query = query.eq('course_id', filter.courseId);
+            if (filter.topicId) query = query.eq('topic_id', filter.topicId);
+            if (filter.taskId) query = query.eq('task_id', filter.taskId);
+
+            // Limit to reasonable batch to avoid memory issues
+            const { data, error } = await query.limit(500);
+
+            if (error) {
+                logger.error(`[JS Similarity] Query error: ${error.message}`);
+                return [];
+            }
+
+            if (!data || data.length === 0) {
+                logger.warn('[JS Similarity] No documents with embeddings found for the given filter');
+                return [];
+            }
+
+            logger.info(`[JS Similarity] Computing similarity for ${data.length} candidate documents...`);
+
+            // Compute cosine similarity for each document
+            const results = [];
+            for (const doc of data) {
+                try {
+                    const docEmbedding = this._parseEmbedding(doc.embedding);
+                    if (!docEmbedding || docEmbedding.length === 0) continue;
+
+                    const similarity = this._cosineSimilarity(queryEmbedding, docEmbedding);
+                    if (similarity >= threshold) {
+                        results.push({
+                            id: doc.id,
+                            content: doc.content,
+                            metadata: typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}),
+                            similarity: parseFloat(similarity.toFixed(4))
+                        });
+                    }
+                } catch (parseErr) {
+                    // Skip documents with unparseable embeddings
+                    continue;
+                }
+            }
+
+            // Sort by similarity descending and take top K
+            results.sort((a, b) => b.similarity - a.similarity);
+            const topResults = results.slice(0, topK);
+
+            logger.info(`✅ [JS Similarity] Found ${topResults.length} results above threshold ${threshold} (from ${data.length} candidates)`);
+            return topResults;
+
+        } catch (e) {
+            logger.error('[JS Similarity] Error:', e);
+            return [];
+        }
+    }
+
+    /**
+     * Parse a pgvector embedding string into a float array.
+     * Handles formats: "[1,2,3]", [1,2,3], or raw array.
+     */
+    _parseEmbedding(embedding) {
+        if (!embedding) return null;
+        if (Array.isArray(embedding)) return embedding;
+        if (typeof embedding === 'string') {
+            try {
+                // pgvector returns "[0.1,0.2,...]"
+                const cleaned = embedding.replace(/^\[|\]$/g, '');
+                return cleaned.split(',').map(Number);
+            } catch (_) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Compute cosine similarity between two vectors.
+     * Returns a value between -1 and 1 (1 = identical).
+     */
+    _cosineSimilarity(vecA, vecB) {
+        if (!vecA || !vecB || vecA.length === 0 || vecB.length === 0) return 0;
+
+        // Handle dimension mismatch by using the shorter length
+        const len = Math.min(vecA.length, vecB.length);
+        let dotProduct = 0;
+        let normA = 0;
+        let normB = 0;
+
+        for (let i = 0; i < len; i++) {
+            dotProduct += vecA[i] * vecB[i];
+            normA += vecA[i] * vecA[i];
+            normB += vecB[i] * vecB[i];
+        }
+
+        const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+        if (denominator === 0) return 0;
+
+        return dotProduct / denominator;
     }
 
     /**
