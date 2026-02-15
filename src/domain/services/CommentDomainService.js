@@ -36,7 +36,7 @@ export class CommentDomainService {
 
             const commenter = await this.userRepo.findById(userId);
             const avatar = commenter ? commenter.avatar : '';
-            const senderName = (commenter ? commenter.usuario : null) || comment.username || 'Alguien';
+            const senderName = commenter?.username || commenter?.usuario || comment.username || 'Alguien';
 
             // 1. Si es respuesta a otro comentario (reply)
             const parentId = comment.parentId || comment.parent_id;
