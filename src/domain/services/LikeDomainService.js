@@ -36,9 +36,18 @@ export class LikeDomainService {
             if (entityType === 'video') {
                 if (!this.videoRepo) return;
                 const video = await this.videoRepo.findById(entityId);
-                // No notificar si se da like a sí mismo prop video
-                if (video && video.remote_id && video.remote_id !== userId) {
-                    await this.notificationService.send(video.remote_id, {
+                // Resolve creator id from any known shape (mapped + raw)
+                const creatorId =
+                    video?.userId ??
+                    video?.remoteId ??
+                    video?.remote_id ??
+                    video?.creatorId ??
+                    video?.creator_id ??
+                    null;
+
+                // No notificar si se da like a su propio video
+                if (video && creatorId && Number(creatorId) !== Number(userId)) {
+                    const notifResult = await this.notificationService.send(Number(creatorId), {
                         type: 'video_like',
                         title: 'Nuevo like',
                         message: `${senderUsername} le gustó tu video`,
@@ -46,8 +55,15 @@ export class LikeDomainService {
                         relatedId: entityId,
                         senderUsername: senderUsername,
                         senderAvatarUrl: senderAvatar,
-                        thumbnailUrl: video.thumbnail_uri
+                        thumbnailUrl: video.thumbnailUri || video.thumbnail_uri || '',
+                        metadata: JSON.stringify({ video_id: entityId })
                     });
+
+                    if (notifResult?.isFail?.()) {
+                        console.warn('video_like notification result failed:', notifResult.getError?.());
+                    }
+                } else if (video && !creatorId) {
+                    console.warn(`video_like notification skipped: missing creatorId for video ${entityId}`);
                 }
             } else if (entityType === 'comment' || entityType === 'video_comment') {
                 if (!this.commentRepo || !this.videoRepo) return;
