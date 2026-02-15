@@ -55,4 +55,6 @@ export { IGitHubPort }
 from './IGitHubPort.js';
 export { ICachePort }
 from './ICachePort.js';
+export { ILearningContextPort }
+from './ILearningContextPort.js';
 

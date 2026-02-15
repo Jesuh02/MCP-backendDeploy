@@ -82,12 +82,32 @@ export class SupabaseChatMessageRepository {
             is_graph_response: messageData.isGraphResponse ?? false,
         };
 
-        // Include id if provided (for upsert on conflict)
-        if (messageData.id) payload.id = messageData.id;
+        // NEVER include id in the payload — the column is GENERATED ALWAYS AS IDENTITY.
+        // If a remote id is provided, update the existing row; otherwise insert a new one.
+        if (messageData.id && typeof messageData.id === 'number') {
+            // Try to update by id first (only valid remote/Supabase ids)
+            const { data: existing } = await this.client
+                .from('chat_messages')
+                .select('id')
+                .eq('id', messageData.id)
+                .maybeSingle();
 
+            if (existing) {
+                const { data, error } = await this.client
+                    .from('chat_messages')
+                    .update(payload)
+                    .eq('id', messageData.id)
+                    .select()
+                    .single();
+                if (error) throw new Error(error.message);
+                return this._mapToDomain(data);
+            }
+        }
+
+        // No existing row found (or no id provided) — insert without id
         const { data, error } = await this.client
             .from('chat_messages')
-            .upsert(payload, { onConflict: 'id' })
+            .insert(payload)
             .select()
             .single();
         if (error) throw new Error(error.message);
