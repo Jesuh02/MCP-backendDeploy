@@ -42,7 +42,9 @@ export class LearningContextService {
      * 2. Obtiene detalles de la tarea (título, descripción)
      * 3. Obtiene content_items asociados a la tarea y al tema
      * 4. Asegura que el contenido esté ingestado en RAG (rag_documents)
-     * 5. Obtiene el contenido RAG procesado (texto completo reconstruido)
+     * 5. Obtiene el contenido RAG de forma PROGRESIVA — cada sesión usa
+     *    una ventana diferente de chunks del documento, evitando que
+     *    el LLM vea siempre el mismo contenido y genere duplicados.
      * 6. Obtiene preguntas existentes para deduplicación
      *
      * @param {object} params
@@ -50,9 +52,10 @@ export class LearningContextService {
      * @param {number} [params.topicId]
      * @param {number} [params.taskId]
      * @param {number} [params.userId] — Para obtener preguntas existentes.
+     * @param {number} [params.sessionIndex] — Explicit page override (auto-calculated from history if omitted).
      * @returns {Promise<Result<LearningContext>>}
      */
-    async buildLearningContext({ courseId, topicId = null, taskId = null, userId = null }) {
+    async buildLearningContext({ courseId, topicId = null, taskId = null, userId = null, sessionIndex = null }) {
             try {
                 if (!courseId) {
                     return Result.fail(new Error('courseId es requerido'));
@@ -69,11 +72,14 @@ export class LearningContextService {
             // ── 4. Asegurar ingesta RAG ──
             const ingestionResult = await this._ensureRagIngestion(courseId, topicId, taskId, contentItems);
 
-            // ── 5. Obtener contenido RAG procesado ──
-            const ragData = await this._getRagContent(courseId, topicId, taskId);
-
-            // ── 6. Obtener preguntas existentes ──
+            // ── 5. Obtener preguntas existentes (needed BEFORE RAG to compute sessionIndex) ──
             const existingQuestions = await this._getExistingQuestions(userId, courseId, topicId, taskId);
+
+            // ── 6. Obtener contenido RAG de forma PROGRESIVA ──
+            // Auto-calculate session index: each session generates ~10 questions,
+            // so sessionIndex = floor(existingCount / 10) advances through the document.
+            const effectiveSessionIndex = sessionIndex ?? Math.floor(existingQuestions.length / 10);
+            const ragData = await this._getProgressiveRagContent(courseId, topicId, taskId, effectiveSessionIndex);
 
             // ── 7. Construir respuesta estructurada ──
             const learningContext = {
@@ -88,6 +94,9 @@ export class LearningContextService {
                 ragContent: ragData.content || '',
                 ragFiles: ragData.files || [],
                 ragChunks: ragData.chunks || 0,
+                ragPage: ragData.page ?? 0,
+                ragTotalPages: ragData.totalPages ?? 1,
+                ragTotalChunks: ragData.totalChunks ?? ragData.chunks ?? 0,
                 existingQuestions: existingQuestions.map(q => ({
                     question: q.question || '',
                     options: q.options || [],
@@ -101,7 +110,8 @@ export class LearningContextService {
 
             console.log(
                 `📚 [LearningContextService] Context built: topic="${topicDetails?.name || 'N/A'}", ` +
-                `task="${taskDetails?.title || 'N/A'}", ragChunks=${ragData.chunks}, ` +
+                `task="${taskDetails?.title || 'N/A'}", ragChunks=${ragData.chunks}/${ragData.totalChunks || '?'}, ` +
+                `page=${(ragData.page ?? 0) + 1}/${ragData.totalPages ?? '?'}, ` +
                 `files=${ragData.files?.length || 0}, existingQ=${existingQuestions.length}`
             );
 
@@ -268,6 +278,44 @@ export class LearningContextService {
         } catch (error) {
             console.warn('[LearningContextService] getRagContent error (non-blocking):', error.message);
             return { content: '', chunks: 0, files: [] };
+        }
+    }
+
+    /**
+     * Obtiene contenido RAG de forma progresiva — cada sesión devuelve una
+     * ventana diferente de chunks del documento.
+     *
+     * Esto resuelve el problema de que el LLM siempre ve el mismo contenido
+     * y genera preguntas duplicadas.
+     *
+     * @param {number} courseId
+     * @param {number|null} topicId
+     * @param {number|null} taskId
+     * @param {number} sessionIndex — Controla qué ventana de chunks retornar.
+     * @returns {Promise<{ content: string, chunks: number, files: string[], page: number, totalPages: number, totalChunks: number }>}
+     * @private
+     */
+    async _getProgressiveRagContent(courseId, topicId, taskId, sessionIndex) {
+        if (!this.ragService) {
+            return { content: '', chunks: 0, files: [], page: 0, totalPages: 0, totalChunks: 0 };
+        }
+
+        try {
+            const filter = { courseId };
+            if (topicId && topicId > 0) filter.topicId = topicId;
+            if (taskId && taskId > 0) filter.taskId = taskId;
+
+            // Use progressive chunking if the method exists, otherwise fall back
+            if (typeof this.ragService.getProgressiveRagContent === 'function') {
+                return await this.ragService.getProgressiveRagContent(filter, sessionIndex);
+            }
+
+            // Fallback for backward compatibility
+            const result = await this.ragService.getRagContent(filter);
+            return { ...result, page: 0, totalPages: 1, totalChunks: result.chunks };
+        } catch (error) {
+            console.warn('[LearningContextService] getProgressiveRagContent error (non-blocking):', error.message);
+            return { content: '', chunks: 0, files: [], page: 0, totalPages: 0, totalChunks: 0 };
         }
     }
 

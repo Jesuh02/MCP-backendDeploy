@@ -384,6 +384,76 @@ export class RAGService {
     }
 
     /**
+     * Returns a progressive window of RAG content for quiz generation.
+     *
+     * Instead of always returning ALL chunks (which causes the LLM to see
+     * the same content and generate duplicate questions), this method returns
+     * a different "page" of chunks based on the sessionIndex.
+     *
+     * Chunk Windowing:
+     *   Session 0 → chunks [0..7]
+     *   Session 1 → chunks [6..13]   (2-chunk overlap for context continuity)
+     *   Session 2 → chunks [12..19]
+     *   ... wraps around when document is exhausted.
+     *
+     * @param {{ courseId?: number, topicId?: number, taskId?: number }} filter
+     * @param {number} sessionIndex - Zero-based session counter (e.g. existingQuestions / 10)
+     * @param {{ windowSize?: number, overlap?: number }} options
+     * @returns {Promise<{ content: string, chunks: number, files: string[], page: number, totalPages: number, totalChunks: number }>}
+     */
+    async getProgressiveRagContent(filter = {}, sessionIndex = 0, options = {}) {
+        const windowSize = options.windowSize || 8;
+        const overlap = options.overlap || 2;
+
+        try {
+            const result = await this.vectorStore.getChunkPage(filter, sessionIndex, windowSize, overlap);
+
+            if (!result.chunks || result.chunks.length === 0) {
+                // Fallback: if paginated retrieval returns nothing, try all chunks
+                logger.warn('Progressive chunk page empty, falling back to full content');
+                const fallback = await this.getRagContent(filter);
+                return { ...fallback, page: 0, totalPages: 1, totalChunks: fallback.chunks };
+            }
+
+            // Group chunks by file and reassemble in order
+            const fileMap = new Map();
+            for (const chunk of result.chunks) {
+                const key = chunk.fileName || 'unknown';
+                if (!fileMap.has(key)) fileMap.set(key, []);
+                fileMap.get(key).push(chunk);
+            }
+
+            let fullContent = '';
+            const fileNames = [];
+
+            for (const [fileName, fileChunks] of fileMap) {
+                fileNames.push(fileName);
+                fileChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+                const fileText = fileChunks.map(c => c.content).join('\n');
+                fullContent += `\n--- DOCUMENTO: ${fileName} (Sección ${result.page + 1}/${result.totalPages}) ---\n${fileText}\n`;
+            }
+
+            logger.info(
+                `📄 getProgressiveRagContent: page=${result.page + 1}/${result.totalPages}, ` +
+                `chunks=${result.chunks.length}/${result.totalChunks}, files=${fileNames.length}`
+            );
+
+            return {
+                content: fullContent.trim(),
+                chunks: result.chunks.length,
+                files: fileNames,
+                page: result.page,
+                totalPages: result.totalPages,
+                totalChunks: result.totalChunks,
+            };
+        } catch (error) {
+            logger.error('Error in getProgressiveRagContent:', error);
+            // Graceful degradation — return full content on error
+            return { ...(await this.getRagContent(filter)), page: 0, totalPages: 1, totalChunks: 0 };
+        }
+    }
+
+    /**
      * Build smart context that analyzes the query to determine data needs
      */
     async buildSmartContext(query, options = {}) {
