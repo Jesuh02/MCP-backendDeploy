@@ -2,10 +2,12 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
 export class ProgressDomainService {
-    constructor({ progressRepository, taskRepository, submissionRepository }) {
+    constructor({ progressRepository, taskRepository, submissionRepository, courseRepository, userRepository }) {
         this.progressRepo = progressRepository;
         this.taskRepo = taskRepository || null;
         this.submissionRepo = submissionRepository || null;
+        this.courseRepo = courseRepository || null;
+        this.userRepo = userRepository || null;
     }
 
     async getByUserAndCourse(userId, courseId) {
@@ -74,8 +76,107 @@ export class ProgressDomainService {
     }
 
     async getTopStudentsByCreator(creatorUserId, limit = 5) {
-        const students = await this.progressRepo.getTopStudentsGlobal(limit, creatorUserId);
-        return Result.ok(students);
+        const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Number(limit) : 5;
+        const creatorId = Number(creatorUserId);
+        if (!Number.isInteger(creatorId) || creatorId <= 0) {
+            console.warn('[ProgressService] getTopStudentsByCreator: creatorUserId inválido', creatorUserId);
+            return Result.ok([]);
+        }
+
+        // ── 1. Obtener IDs de cursos del creador (via CourseRepository) ──
+        let courseIds = [];
+        if (this.courseRepo && typeof this.courseRepo.findCourseIdsByCreatorUserId === 'function') {
+            courseIds = await this.courseRepo.findCourseIdsByCreatorUserId(creatorId);
+        } else if (this.courseRepo && typeof this.courseRepo.findByCreatorUserId === 'function') {
+            const courses = await this.courseRepo.findByCreatorUserId(creatorId);
+            courseIds = (courses || []).map(c => c.id);
+        } else {
+            // Fallback: delegar al repo de progreso (legacy)
+            console.warn('[ProgressService] courseRepo no disponible, delegando al progressRepo (legacy)');
+            const students = await this.progressRepo.getTopStudentsGlobal(safeLimit, creatorId);
+            return Result.ok(students);
+        }
+
+        if (courseIds.length === 0) {
+            console.info(`[ProgressService] Creador ${creatorId} no tiene cursos registrados`);
+            return Result.ok([]);
+        }
+
+        console.info(`[ProgressService] Creador ${creatorId} → ${courseIds.length} cursos: [${courseIds.join(', ')}]`);
+
+        // ── 2. Obtener progreso 'Ganado' en esos cursos (via ProgressRepository) ──
+        const wonProgress = await this.progressRepo.findWonProgressByCourseIds(courseIds);
+
+        if (!wonProgress || wonProgress.length === 0) {
+            console.info(`[ProgressService] Sin progreso 'Ganado' en cursos del creador ${creatorId}`);
+            return Result.ok([]);
+        }
+
+        // ── 3. Agregar métricas por estudiante (excluir al propio creador) ──
+        const aggregated = new Map();
+        for (const row of wonProgress) {
+            if (!Number.isInteger(row.userId) || row.userId <= 0) continue;
+            if (row.userId === creatorId) continue; // No incluir al creador como su propio estudiante destacado
+
+            const existing = aggregated.get(row.userId) || {
+                user_id: row.userId,
+                approved_courses: 0,
+                total_grade: 0,
+                graded_courses: 0,
+                average_grade: 0,
+                username: null,
+                avatar: null,
+            };
+
+            existing.approved_courses += 1;
+            if (Number.isFinite(row.grade)) {
+                existing.total_grade += row.grade;
+                existing.graded_courses += 1;
+            }
+            aggregated.set(row.userId, existing);
+        }
+
+        // Calcular promedio
+        for (const student of aggregated.values()) {
+            if (student.graded_courses > 0) {
+                student.average_grade = Number((student.total_grade / student.graded_courses).toFixed(2));
+            }
+        }
+
+        // Ranking: mayor promedio → más cursos aprobados → menor ID
+        const ranked = [...aggregated.values()]
+            .filter(s => s.approved_courses > 0)
+            .sort((a, b) => {
+                if (b.average_grade !== a.average_grade) return b.average_grade - a.average_grade;
+                if (b.approved_courses !== a.approved_courses) return b.approved_courses - a.approved_courses;
+                return a.user_id - b.user_id;
+            })
+            .slice(0, safeLimit);
+
+        // ── 4. Enriquecer con perfil de usuario (via UserRepository) ──
+        const studentIds = ranked.map(s => s.user_id);
+        if (studentIds.length > 0 && this.userRepo && typeof this.userRepo.findByIds === 'function') {
+            const usersData = await this.userRepo.findByIds(studentIds);
+            const usersById = new Map((usersData || []).map(u => [Number(u.id), u]));
+
+            for (const student of ranked) {
+                const user = usersById.get(student.user_id);
+                if (!user) continue;
+                if (user.username) student.username = user.username;
+                if (user.avatar) student.avatar = user.avatar;
+            }
+        }
+
+        const result = ranked.map(s => ({
+            user_id: s.user_id,
+            username: s.username || `Usuario ${s.user_id}`,
+            avatar: s.avatar || null,
+            approved_courses: s.approved_courses,
+            average_grade: s.average_grade,
+        }));
+
+        console.info(`[ProgressService] Top students para creador ${creatorId}: ${result.length} encontrados`);
+        return Result.ok(result);
     }
 
     async getTopStudentsGlobal(limit = 5, creatorUserId = null) {

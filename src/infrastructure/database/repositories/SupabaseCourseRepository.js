@@ -138,6 +138,24 @@ export class SupabaseCourseRepository {
         return data || [];
     }
 
+    /**
+     * Devuelve únicamente los IDs de cursos creados por un usuario.
+     * Consulta ligera — solo proyecta la columna `id`.
+     * @param {number} creatorUserId
+     * @returns {Promise<number[]>}
+     */
+    async findCourseIdsByCreatorUserId(creatorUserId) {
+        const { data, error } = await this.client
+            .from('courses')
+            .select('id')
+            .eq('creator_user_id', creatorUserId);
+        if (error) {
+            console.error('[CourseRepo] findCourseIdsByCreatorUserId error:', error.message);
+            return [];
+        }
+        return (data || []).map(c => c.id);
+    }
+
     async findByIds(ids) {
         if (!ids || ids.length === 0) return [];
         const { data, error } = await this.client.from('courses').select('*').in('id', ids);

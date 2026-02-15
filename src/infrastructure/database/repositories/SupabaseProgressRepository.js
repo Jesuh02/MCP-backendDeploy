@@ -95,6 +95,34 @@ export class SupabaseProgressRepository {
         return data.map(p => p.curso_id);
     }
 
+    /**
+     * Obtiene registros de progreso con estado 'Ganado' para los cursos indicados.
+     * Responsabilidad única: solo consulta progreso_estudiante.
+     * @param {number[]} courseIds  IDs de los cursos a consultar.
+     * @returns {Promise<Array<{userId:number, courseId:number, grade:number}>>}
+     */
+    async findWonProgressByCourseIds(courseIds) {
+        if (!Array.isArray(courseIds) || courseIds.length === 0) return [];
+
+        const { data, error } = await this.client
+            .from('progreso_estudiante')
+            .select('usuario_estudiante, curso_id, calificacion_ponderada, promedio')
+            .in('curso_id', courseIds)
+            .eq('estado', 'Ganado')
+            .not('usuario_estudiante', 'is', null);
+
+        if (error) {
+            console.error('[ProgressRepo] findWonProgressByCourseIds error:', error.message);
+            return [];
+        }
+
+        return (data || []).map(row => ({
+            userId: Number(row.usuario_estudiante),
+            courseId: Number(row.curso_id),
+            grade: Number(row.calificacion_ponderada ?? row.promedio ?? 0),
+        }));
+    }
+
     async updateCertificate(userId, courseId, data) {
         const payload = {};
         if (data.certificateIssuedAt) payload.certificado_emitido_en = data.certificateIssuedAt;
