@@ -526,21 +526,19 @@ export class RAGService {
                     logger.warn('[HybridRAG] Semantic search failed:', searchErr.message);
                 }
 
-                // If filtered search returned 0 results and we had topicId/taskId filters,
-                // retry WITHOUT topicId/taskId to catch chunks with null metadata (ingestion fallback)
+                // ⛔ NEVER remove topicId/taskId filters — doing so returns documents
+                // from OTHER topics/tasks, causing the LLM to generate questions
+                // based on wrong content (structural hallucination).
+                // If 0 results with filters: the content likely isn't ingested yet.
+                // Let it fall through to progressive/full content fallback which
+                // uses the same filters and retrieves from rag_documents directly.
                 if (semanticResults.length === 0 && (filter.topicId || filter.taskId)) {
-                    try {
-                        logger.info('[HybridRAG] Retrying semantic search without topicId/taskId filters (null metadata fallback)');
-                        semanticResults = await this.search(query, {
-                            topK: semanticTopK,
-                            threshold: semanticThreshold,
-                            courseId: filter.courseId,
-                            // Omit topicId and taskId to catch chunks with null FKs
-                        });
-                        logger.info(`[HybridRAG] Unfiltered semantic retry: ${semanticResults.length} hits`);
-                    } catch (retryErr) {
-                        logger.warn('[HybridRAG] Unfiltered semantic retry also failed:', retryErr.message);
-                    }
+                    logger.warn(
+                        `[HybridRAG] Semantic search returned 0 results with filters ` +
+                        `(courseId=${filter.courseId}, topicId=${filter.topicId}, taskId=${filter.taskId}). ` +
+                        `This likely means the content has not been ingested into rag_documents yet. ` +
+                        `Falling through to direct content retrieval (NO unfiltered retry).`
+                    );
                 }
             }
 

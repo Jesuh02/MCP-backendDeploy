@@ -257,21 +257,21 @@ export class SupabaseVectorStore extends IVectorStore {
                         return retry.data[0];
                     }
 
-                    // Second fallback: nullify all FKs (last resort)
-                    logger.warn(`❌ Retry failed (${retry.error.message}). Attempting last resort with all FKs nullified...`);
+                    // Second fallback: nullify only content_item_id (most likely FK problem)
+                    // ⛔ NEVER nullify ALL FKs — this makes documents invisible to filtered queries,
+                    // which is the root cause of the "wrong document" RAG bug.
+                    logger.warn(`❌ Retry failed (${retry.error.message}). Attempting with content_item_id=null only...`);
                     const lastResortRecord = {
                         ...record,
-                        task_id: null,
-                        topic_id: null,
-                        course_id: null,
                         content_item_id: null
+                        // KEEP task_id, topic_id, course_id — these are essential for filtering
                     };
                     const lastRetry = await this.supabase.client
                         .from(this.tableName)
                         .insert([lastResortRecord])
                         .select();
                     if (!lastRetry.error) {
-                        logger.warn('⚠️ Last resort insert succeeded but record has NULL FKs — it will be invisible to filtered queries');
+                        logger.info(`✅ Insert succeeded with content_item_id nullified. FKs preserved: task_id=${lastResortRecord.task_id}, topic_id=${lastResortRecord.topic_id}, course_id=${lastResortRecord.course_id}`);
                         return lastRetry.data[0];
                     }
                     logger.error('❌ All insert attempts failed:', lastRetry.error);
@@ -371,30 +371,56 @@ export class SupabaseVectorStore extends IVectorStore {
      */
     async _storeToKnowledgeBase(content, embedding, metadata) {
         try {
-            // Note: We use rag_documents as the fallback table name too, just passing metadata in JSONB
-            // This handles cases where specific columns (course_id, topic_id) might be missing
-            // IMPORTANT: Do NOT set FK fields here — they already failed validation or caused constraint errors.
-            // Store context IDs only inside the metadata JSONB column for reference.
+            // Fallback insert — PRESERVE FK fields so documents remain visible
+            // to filtered queries. Only nullify the specific FK that failed.
+            // Storing with null FKs makes documents invisible to all filtered
+            // searches, causing the system to return wrong content.
+            const validatedFKs = await this._validateForeignKeys(metadata);
+
             const { data, error } = await this.supabase.client
                 .from('rag_documents')
                 .insert([{
                     content,
                     embedding: embedding ? `[${embedding.join(',')}]` : null,
-                    metadata,
+                    metadata: JSON.stringify(metadata),
                     file_name: metadata.fileName || null,
                     file_type: metadata.fileType || metadata.originalFileType || null,
                     chunk_index: metadata.chunkIndex != null ? metadata.chunkIndex : 0,
                     total_chunks: metadata.totalChunks != null ? metadata.totalChunks : 1,
                     created_at: new Date().toISOString(),
                     updated_at: new Date().toISOString(),
-                    course_id: null,
-                    topic_id: null,
-                    task_id: null,
-                    content_item_id: null
+                    course_id: validatedFKs.course_id,
+                    topic_id: validatedFKs.topic_id,
+                    task_id: validatedFKs.task_id,
+                    content_item_id: validatedFKs.content_item_id
                 }])
                 .select();
 
-            if (error) throw error;
+            if (error) {
+                // If FK validation passed but insert still fails, try with nullified FKs as absolute last resort
+                logger.warn(`⚠️ Fallback insert with validated FKs failed: ${error.message}. Trying with null FKs (last resort)...`);
+                const { data: lastData, error: lastError } = await this.supabase.client
+                    .from('rag_documents')
+                    .insert([{
+                        content,
+                        embedding: embedding ? `[${embedding.join(',')}]` : null,
+                        metadata: JSON.stringify(metadata),
+                        file_name: metadata.fileName || null,
+                        file_type: metadata.fileType || metadata.originalFileType || null,
+                        chunk_index: metadata.chunkIndex != null ? metadata.chunkIndex : 0,
+                        total_chunks: metadata.totalChunks != null ? metadata.totalChunks : 1,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                        course_id: null,
+                        topic_id: null,
+                        task_id: null,
+                        content_item_id: null
+                    }])
+                    .select();
+                if (lastError) throw lastError;
+                logger.warn('⚠️ Last resort insert succeeded but record has NULL FKs — it will be invisible to filtered queries');
+                return lastData[0];
+            }
             return data[0];
         } catch (e) {
             logger.error('Fallback storage (rag_documents plain) also failed:', e);

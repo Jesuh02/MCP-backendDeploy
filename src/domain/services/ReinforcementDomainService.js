@@ -10,6 +10,11 @@ import { Result } from '../../shared/Result.js';
 import { MCPService } from './MCPService.js';
 import { RAGService } from './RAGService.js';
 import { SupabaseService } from '../../infrastructure/database/SupabaseService.js';
+import { R2StorageAdapter } from '../../infrastructure/storage/R2StorageAdapter.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+let pdfParse;
+try { pdfParse = require('pdf-parse'); } catch (_) { pdfParse = null; }
 
 export class ReinforcementDomainService {
     constructor({ reinforcementRepository }) {
@@ -26,49 +31,91 @@ export class ReinforcementDomainService {
             const ragService = new RAGService();
             const supabase = SupabaseService.getInstance();
             
-            // 1. Check if RAG documents exist for this task
-            const ragExists = await ragService.vectorStore.exists({
-                taskId: taskId,
-                courseId: courseId,
-                ...(topicId ? { topicId } : {})
-            });
+            // ⛔ NO hacer check a nivel task — si un content_item fue ingresado
+            // pero se agregó otro archivo después, el check task-level bloquearía
+            // la ingesta del nuevo archivo. ingestDocument() verifica por contentItemId.
 
-            if (ragExists) {
-                return Result.ok({ message: 'RAG content already exists', ingested: false });
-            }
-
-            console.log(`📝 [ReinforcementService] No RAG docs for Task ${taskId}. Fetching content_items...`);
+            console.log(`📝 [ReinforcementService] Checking RAG ingestion for Task ${taskId}. Fetching content_items...`);
 
             // 2. Fetch source content from content_items
-            // We select items linked to this task
-            const { data: items, error } = await supabase.client
+            // Also fetch items linked to the topic (not just task) so ALL relevant files are ingested
+            let queryBuilder = supabase.client
                 .from('content_items')
-                .select('*')
-                .eq('task_id', taskId);
+                .select('*');
+            
+            if (taskId && topicId) {
+                // Fetch items for BOTH task AND topic
+                queryBuilder = queryBuilder.or(`task_id.eq.${taskId},topic_id.eq.${topicId}`);
+            } else if (taskId) {
+                queryBuilder = queryBuilder.eq('task_id', taskId);
+            } else if (topicId) {
+                queryBuilder = queryBuilder.eq('topic_id', topicId);
+            }
+
+            const { data: items, error } = await queryBuilder;
 
             if (error) throw error;
 
             if (!items || items.length === 0) {
-                return Result.ok({ message: 'No content_items found for this task', ingested: false });
+                return Result.ok({ message: 'No content_items found for this task/topic', ingested: false });
             }
 
             let ingestedCount = 0;
+            let r2Service = null;
 
-            // 3. Ingest each item
+            // 3. Ingest each item (handles both plain text and URL-based content)
             for (const item of items) {
-                if (item.body && item.body.length > 50) {
-                    console.log(`💾 Ingesting content_item ${item.id} into RAG...`);
-                    
-                    // Use item.topic_id as fallback if not passed
-                    const effectiveTopicId = topicId || item.topic_id;
+                const body = (item.body || '').trim();
+                const fileName = item.title || `content_${item.id}`;
+                const isUrl = body.startsWith('http://') || body.startsWith('https://');
+                const effectiveTopicId = topicId || item.topic_id;
+                let textToIngest = null;
 
-                    await ragService.ingestDocument(item.body, {
+                if (!body || body.length < 10) continue;
+
+                if (isUrl) {
+                    // Download file content from URL
+                    try {
+                        if (!r2Service) r2Service = new R2StorageAdapter();
+                        const fileData = await r2Service.getSubmissionFileContent(body, fileName);
+                        if (!fileData || !fileData.content) {
+                            console.warn(`[ReinforcementService] No content from download: ${fileName}`);
+                            continue;
+                        }
+
+                        const nameLower = fileName.toLowerCase();
+                        const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+
+                        if (isPdf && pdfParse) {
+                            try {
+                                const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                const pdfData = await pdfParse(pdfBuffer);
+                                textToIngest = pdfData.text;
+                                if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
+                            } catch (pdfErr) {
+                                console.warn(`[ReinforcementService] PDF parse error for ${fileName}: ${pdfErr.message}`);
+                            }
+                        } else if (!fileData.isBase64) {
+                            textToIngest = fileData.content;
+                        }
+                    } catch (dlErr) {
+                        console.warn(`[ReinforcementService] Download error for ${fileName}: ${dlErr.message}`);
+                    }
+                } else {
+                    // Body is plain text content
+                    textToIngest = body;
+                }
+
+                if (textToIngest && textToIngest.length >= 50) {
+                    console.log(`💾 Ingesting content_item ${item.id} (${fileName}) into RAG...`);
+
+                    await ragService.ingestDocument(textToIngest, {
                         courseId: courseId,
                         taskId: taskId,
                         topicId: effectiveTopicId,
                         contentItemId: item.id,
-                        fileName: item.title || `content_${item.id}`,
-                        fileType: 'txt' // Assuming text body
+                        fileName,
+                        fileType: 'txt'
                     });
                     ingestedCount++;
                 }
