@@ -64,23 +64,24 @@ export class RAGService {
             return { success: false, chunksStored: 0, error: 'RAG is disabled' };
         }
 
-        // Prevent duplicate processing if content already exists for this task/topic
-        // This solves the issue of re-processing chunks when revisiting the screen
-        if (metadata.courseId && (metadata.topicId || metadata.taskId)) {
+        // Prevent duplicate processing — check per content_item (not per task).
+        // Previous task-level check blocked all items after the first one was ingested.
+        if (metadata.contentItemId) {
             try {
                 const exists = await this.vectorStore.exists({
                     courseId: metadata.courseId,
                     topicId: metadata.topicId,
-                    taskId: metadata.taskId
+                    taskId: metadata.taskId,
+                    contentItemId: metadata.contentItemId
                 });
 
                 if (exists) {
-                    logger.info(`ℹ️ Skipping RAG ingestion: Content already exists for Course=${metadata.courseId} Topic=${metadata.topicId} Task=${metadata.taskId}`);
+                    logger.info(`ℹ️ Skipping RAG ingestion: Content already exists for contentItem=${metadata.contentItemId} Task=${metadata.taskId}`);
                     return {
                         success: true,
                         chunksStored: 0,
                         skipped: true,
-                        message: `Content already exists for task_id=${metadata.taskId}`
+                        message: `Content already exists for content_item_id=${metadata.contentItemId}`
                     };
                 }
             } catch (checkError) {
