@@ -201,8 +201,8 @@ export class SubmissionDomainService {
         return Result.ok(sub);
     }
 
-    async getByCourse(courseId, pagination) {
-        const subs = await this.subRepo.findByCourse(courseId, pagination);
+    async getByCourse(courseId, pagination, { ungradedOnly = false } = {}) {
+        const subs = await this.subRepo.findByCourse(courseId, { ...pagination, ungradedOnly });
         return Result.ok(subs);
     }
 
