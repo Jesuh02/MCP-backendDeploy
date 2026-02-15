@@ -228,13 +228,16 @@ export class ReinforcementController {
             const taskId = req.query.taskId || req.query.task_id
                 ? parseInt(req.query.taskId || req.query.task_id) : null;
             const userId = req.user?.userId || req.user?.id || null;
+            // Optional: explicit chunk page override (auto-calculated from history if omitted)
+            const sessionIndex = req.query.sessionIndex != null
+                ? parseInt(req.query.sessionIndex) : null;
 
             if (!courseId) {
                 return next(new ValidationError('courseId is required'));
             }
 
             const result = await this.learningContextService.buildLearningContext({
-                courseId, topicId, taskId, userId,
+                courseId, topicId, taskId, userId, sessionIndex,
             });
 
             if (result.isFail()) return next(result.getError());

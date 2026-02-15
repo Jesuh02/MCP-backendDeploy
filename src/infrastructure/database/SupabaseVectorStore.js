@@ -505,6 +505,80 @@ export class SupabaseVectorStore extends IVectorStore {
     }
 
     /**
+     * Fetches a paginated window of chunks for progressive context building.
+     * Instead of returning all chunks (which causes the LLM to always see
+     * the same content), this returns a specific "page" of chunks.
+     *
+     * Chunk Windowing Strategy:
+     *   - windowSize: how many chunks per page (default 8)
+     *   - overlap: chunks shared between consecutive pages (default 2)
+     *   - stride = windowSize - overlap
+     *   - Page N starts at offset = N * stride
+     *   - When page exceeds available pages, wraps around (modulo)
+     *
+     * @param {object} filter - { courseId, topicId, taskId }
+     * @param {number} page - Zero-based page index (wraps around if exceeds total)
+     * @param {number} windowSize - Chunks per page (default 8)
+     * @param {number} overlap - Overlap between pages (default 2)
+     * @returns {Promise<{ chunks: Array, totalChunks: number, page: number, totalPages: number }>}
+     */
+    async getChunkPage(filter = {}, page = 0, windowSize = 8, overlap = 2) {
+        await this.initialize();
+
+        try {
+            // First get total count
+            let countQuery = this.supabase.client
+                .from(this.tableName)
+                .select('id', { count: 'exact', head: true });
+
+            if (filter.courseId) countQuery = countQuery.eq('course_id', filter.courseId);
+            if (filter.topicId) countQuery = countQuery.eq('topic_id', filter.topicId);
+            if (filter.taskId) countQuery = countQuery.eq('task_id', filter.taskId);
+
+            const { count: totalChunks, error: countError } = await countQuery;
+
+            if (countError || !totalChunks || totalChunks === 0) {
+                return { chunks: [], totalChunks: 0, page: 0, totalPages: 0 };
+            }
+
+            const stride = Math.max(1, windowSize - overlap);
+            const totalPages = Math.max(1, Math.ceil((totalChunks - overlap) / stride));
+            const effectivePage = page % totalPages;
+            const offset = effectivePage * stride;
+
+            let query = this.supabase.client
+                .from(this.tableName)
+                .select('content, file_name, chunk_index')
+                .order('file_name', { ascending: true })
+                .order('chunk_index', { ascending: true });
+
+            if (filter.courseId) query = query.eq('course_id', filter.courseId);
+            if (filter.topicId) query = query.eq('topic_id', filter.topicId);
+            if (filter.taskId) query = query.eq('task_id', filter.taskId);
+
+            const { data, error } = await query.range(offset, offset + windowSize - 1);
+
+            if (error) {
+                logger.error('Error fetching chunk page:', error);
+                return { chunks: [], totalChunks, page: effectivePage, totalPages };
+            }
+
+            const chunks = (data || []).map(row => ({
+                content: row.content || '',
+                fileName: row.file_name || '',
+                chunkIndex: row.chunk_index ?? 0,
+            }));
+
+            logger.info(`📄 getChunkPage: page=${effectivePage}/${totalPages}, chunks=${chunks.length}/${totalChunks}, offset=${offset}`);
+
+            return { chunks, totalChunks, page: effectivePage, totalPages };
+        } catch (error) {
+            logger.error('Error in getChunkPage:', error);
+            return { chunks: [], totalChunks: 0, page: 0, totalPages: 0 };
+        }
+    }
+
+    /**
      * Check if documents exist for a specific context
      * @param {object} filter - Filter criteria
      * @returns {Promise<boolean>}
