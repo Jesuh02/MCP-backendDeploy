@@ -13,7 +13,22 @@ export class NotificationController {
             const pg = parsePagination(req.query);
             const result = await this.notifService.getByUser(req.user.userId, pg);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const value = result.getValue();
+            const notifications = (value?.notifications || []).map((notif) => {
+                const thumbnail = notif?.thumbnail_url || notif?.thumbnailUrl || null;
+                return {
+                    ...notif,
+                    thumbnail_url: thumbnail,
+                    thumbnailUrl: thumbnail,
+                };
+            });
+            res.json({
+                success: true,
+                data: {
+                    ...value,
+                    notifications,
+                },
+            });
         } catch (err) { next(err); }
     };
 
@@ -47,7 +62,7 @@ export class NotificationController {
                     relatedId: value.relatedId,
                     senderUsername: value.senderUsername,
                     senderAvatarUrl: value.senderAvatarUrl,
-                    thumbnailUrl: value.thumbnailUrl,
+                    thumbnailUrl: value.thumbnailUrl || value.thumbnail_url,
                     metadata: value.metadata,
                 });
                 if (result.isFail()) return next(result.getError());
