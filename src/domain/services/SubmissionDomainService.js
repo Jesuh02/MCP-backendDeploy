@@ -202,7 +202,7 @@ export class SubmissionDomainService {
     }
 
     async getByCourse(courseId, pagination, { ungradedOnly = false } = {}) {
-        const subs = await this.subRepo.findByCourse(courseId, { ...pagination, ungradedOnly });
+        const subs = await this.subRepo.findByCourse(courseId, {...pagination, ungradedOnly });
         return Result.ok(subs);
     }
 
@@ -348,4 +348,3 @@ export class SubmissionDomainService {
 }
 
 export default SubmissionDomainService;
-

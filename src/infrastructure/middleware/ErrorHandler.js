@@ -7,14 +7,23 @@ import { logger } from '../logging/Logger.js';
 import { AppError } from '../../shared/errors/AppError.js';
 
 export function errorHandler(err, req, res, _next) {
-    // Log the error
-    logger.error('Error:', {
+    const statusCode = err.statusCode || err.status || 500;
+
+    // Log expected 4xx operational errors as warnings to reduce noise.
+    // Keep unexpected/server failures as error.
+    const logPayload = {
         message: err.message,
         stack: err.stack,
         path: req.path,
         method: req.method,
         ip: req.ip
-    });
+    };
+
+    if ((err instanceof AppError || err.isOperational) && statusCode >= 400 && statusCode < 500) {
+        logger.warn('Request warning:', logPayload);
+    } else {
+        logger.error('Error:', logPayload);
+    }
 
     // AppError (errores operacionales controlados)
     if (err instanceof AppError || err.isOperational) {
@@ -48,7 +57,6 @@ export function errorHandler(err, req, res, _next) {
     }
 
     // Error inesperado
-    const statusCode = err.statusCode || err.status || 500;
     const isProduction = process.env.NODE_ENV === 'production';
 
     const errorResponse = {
