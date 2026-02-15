@@ -77,19 +77,21 @@ export class LikeDomainService {
             } else if (entityType === 'comment' || entityType === 'video_comment') {
                 if (!this.commentRepo || !this.videoRepo) return;
                 const comment = await this.commentRepo.findById(entityId);
+                const commentOwnerId = comment?.userId ?? comment?.usuario_id ?? comment?.user_id ?? null;
+                const commentVideoId = comment?.videoId ?? comment?.video_id ?? null;
 
                 // Ensure target user exists and is not the same as the liker
-                if (comment && comment.usuario_id && comment.usuario_id !== userId) {
-                    const video = await this.videoRepo.findById(comment.video_id);
-                    await this.notificationService.send(comment.usuario_id, {
+                if (comment && commentOwnerId && Number(commentOwnerId) !== Number(userId)) {
+                    const video = commentVideoId ? await this.videoRepo.findById(commentVideoId) : null;
+                    await this.notificationService.send(Number(commentOwnerId), {
                         type: 'comment_like',
                         title: 'Like en tu comentario',
                         message: `${senderUsername} le gustó tu comentario`,
-                        data: { videoId: comment.video_id, commentId: entityId, type: 'comment_like' },
-                        relatedId: comment.video_id, // Link to video
+                        data: { videoId: commentVideoId, commentId: entityId, type: 'comment_like' },
+                        relatedId: commentVideoId, // Link to video
                         senderUsername: senderUsername,
                         senderAvatarUrl: senderAvatar,
-                        thumbnailUrl: video ? video.thumbnail_uri : '',
+                        thumbnailUrl: video ? (video.thumbnailUri || video.thumbnail_uri || '') : '',
                         metadata: JSON.stringify({ comment_id: entityId })
                     });
                 }
