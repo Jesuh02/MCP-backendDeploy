@@ -26,7 +26,7 @@ Stack tecnológico:
   - Base de datos: Supabase (PostgreSQL via PostgREST)
   - Storage:       Cloudflare R2 (S3-compatible, presigned URLs)
   - Auth:          JWT (bcryptjs), RBAC
-  - AI/LLM:        DeepSeek / OpenRouter / Ollama
+  - AI/LLM:        DeepSeek / OpenRouter / qwen embedding
   - TTS:           OpenAI Text-to-Speech API
   - Video:         FFmpeg (análisis + compresión)
   - RAG:           pgvector embeddings + búsqueda semántica
