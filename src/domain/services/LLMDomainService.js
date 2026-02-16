@@ -179,7 +179,8 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
 - NO inventes, infieras ni añadas información que NO aparezca explícitamente en los fragmentos.
 - Si un concepto NO está en los fragmentos, NO generes preguntas sobre él.
 - Las explicaciones deben citar o parafrasear directamente el contenido del material.
-- Extrae conceptos específicos, definiciones, procesos y datos del material para formular preguntas de diferentes niveles de dificultad.
+- Extrae conceptos específicos, definiciones, procesos y datos del material para formular preguntas de APLICACIÓN y ANÁLISIS, no solo de recuerdo directo.
+- Usa la información del material para crear ESCENARIOS realistas donde el estudiante deba aplicar los conceptos.
 - PROHIBIDO generar preguntas generales basadas en el nombre del curso. Las preguntas DEBEN basarse en el TEMA y TAREA específicos.`;
             }
 
@@ -193,6 +194,34 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
 - Asegúrate de poner comas entre campos y entre objetos.
 - Genera EXACTAMENTE 10 preguntas que se puedan verificar DIRECTAMENTE en el contexto RAG proporcionado.
 - Cada explicación DEBE referenciar el texto específico del material que justifica la respuesta correcta.`;
+
+                // 2.6. PEDAGOGICAL QUALITY: Scenario-based, application-level questions
+                systemPrompt += `\n\nINSTRUCCIÓN PEDAGÓGICA — CALIDAD DE PREGUNTAS (OBLIGATORIO):
+
+1. CONTEXTUALIZACIÓN Y ESCENARIOS:
+   - Cada pregunta DEBE presentar un ESCENARIO o CONTEXTO real antes de formular la interrogante.
+   - PROHIBIDO preguntas directas tipo "¿Qué es X?" o "¿Cuál es la definición de Y?".
+   - En su lugar, plantea situaciones como: "Un desarrollador está construyendo...", "En una empresa que necesita...", "Durante la revisión de un proyecto se detectó que...".
+   - El escenario debe ser verosímil y reflejar un caso de uso real del concepto evaluado.
+
+2. APLICACIÓN DEL CONOCIMIENTO (TAXONOMÍA DE BLOOM — Niveles 3-5):
+   - Las preguntas DEBEN evaluar APLICACIÓN, ANÁLISIS o EVALUACIÓN, NO solo RECUERDO o COMPRENSIÓN.
+   - Distribución obligatoria de las 10 preguntas:
+     • 4 de APLICACIÓN: El estudiante debe usar un concepto para resolver un problema concreto.
+     • 3 de ANÁLISIS: El estudiante debe descomponer, comparar o identificar relaciones causa-efecto.
+     • 3 de EVALUACIÓN: El estudiante debe juzgar, decidir o seleccionar la mejor solución entre alternativas válidas.
+   - Verbos recomendados: implementar, resolver, diagnosticar, comparar, optimizar, predecir, justificar, diseñar.
+
+3. DISTRACTORES PLAUSIBLES (OBLIGATORIO):
+   - Las 3 opciones incorrectas DEBEN ser plausibles y reflejar errores comunes de comprensión.
+   - Tipos de distractores efectivos:
+     a) Confusión entre conceptos similares (ej: confundir stack con heap).
+     b) Aplicación parcialmente correcta (ej: solución que funciona pero no es eficiente).
+     c) Inversión de causa-efecto o de orden de pasos.
+     d) Generalización excesiva o sobresimplificación de un concepto.
+   - PROHIBIDO distractores obviamente absurdos, irrelevantes o fácilmente descartables.
+   - Un estudiante que NO domina el material debería encontrar los distractores tentadores.
+   - La explicación DEBE indicar POR QUÉ cada distractor es incorrecto, no solo por qué la correcta es correcta.`;
             }
 
             // 3. Build user prompt with file content if available
