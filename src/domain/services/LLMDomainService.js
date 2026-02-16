@@ -204,7 +204,9 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
 - Eso es nivel medio. El nivel 10/10 exige ANALIZAR, INTERPRETAR y DECIDIR.
 - Cada pregunta debe requerir que el estudiante ENTIENDA un mecanismo, compare alternativas o prediga consecuencias.
 - Ejemplo PROHIBIDO: "¿Cuál es el valor de X?" → solo buscar.
-- Ejemplo CORRECTO: "Un ingeniero debe elegir un modelo que mantenga arquitectura MoE y reduzca el tiempo respecto a SMoE. ¿Cuál cumple esa condición?" → el estudiante debe entender qué es SMoE, comparar y elegir.
+- Ejemplo CORRECTO: "Te encuentras en el caso de elegir un modelo que mantenga arquitectura MoE y reduzca el tiempo respecto a SMoE. ¿Cuál cumple esa condición?" → debes entender qué es SMoE, comparar y elegir.
+- OBLIGATORIO en escenarios hipotéticos: redacta en SEGUNDA PERSONA ("tú", "te", "tu").
+- PROHIBIDO iniciar escenarios con tercera persona genérica como "un investigador", "un estudiante", "un ingeniero".
 
 ═══ PRINCIPIO #2: OPCIONES QUE REQUIEREN COMPRENSIÓN REAL, NO COINCIDENCIA VISUAL ═══
 - PROHIBIDO opciones que sean datos literales copiados del material (ej: "Dense – 41h30m", "SMoE – 42h11m").
