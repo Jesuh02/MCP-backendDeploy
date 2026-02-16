@@ -222,19 +222,24 @@ export class ReinforcementController {
                 return next(new ValidationError('LearningContextService not configured'));
             }
 
-            const courseId = parseInt(req.query.courseId || req.query.course_id);
-            const topicId = req.query.topicId || req.query.topic_id
-                ? parseInt(req.query.topicId || req.query.topic_id) : null;
-            const taskId = req.query.taskId || req.query.task_id
-                ? parseInt(req.query.taskId || req.query.task_id) : null;
+            const _parseId = (v) => { const n = parseInt(v); return isNaN(n) ? null : n; };
+            const courseId = _parseId(req.query.courseId || req.query.course_id);
+            const topicId = _parseId(req.query.topicId || req.query.topic_id);
+            const taskId = _parseId(req.query.taskId || req.query.task_id);
             const userId = req.user?.userId || req.user?.id || null;
+            // Optional: explicit chunk page override (auto-calculated from history if omitted)
+            const sessionIndex = req.query.sessionIndex != null
+                ? _parseId(req.query.sessionIndex) : null;
+            // Hybrid Retrieval params: query for semantic search, mode selection
+            const query = req.query.query || req.query.q || null;
+            const retrievalMode = req.query.retrievalMode || req.query.mode || 'auto';
 
             if (!courseId) {
                 return next(new ValidationError('courseId is required'));
             }
 
             const result = await this.learningContextService.buildLearningContext({
-                courseId, topicId, taskId, userId,
+                courseId, topicId, taskId, userId, sessionIndex, query, retrievalMode,
             });
 
             if (result.isFail()) return next(result.getError());

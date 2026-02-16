@@ -73,6 +73,15 @@ if (result.error) {
     if (presentWA.length > 0) {
         console.log(`📱 WhatsApp keys present: ${presentWA.length}/${whatsappKeys.length}`);
     }
+
+    // Log Reranker provider keys presence
+    const rerankKeys = ['COHERE_API_KEY', 'JINA_API_KEY', 'VOYAGE_API_KEY'];
+    const presentRerank = rerankKeys.filter(k => keys.includes(k) || process.env[k]);
+    if (presentRerank.length > 0) {
+        console.log(`🔄 Reranker keys present: ${presentRerank.map(k => k.replace('_API_KEY', '')).join(', ')} (${presentRerank.length}/${rerankKeys.length})`);
+    } else {
+        console.log(`🔄 Reranker: Embedding-Semantic + TF-IDF (no cross-encoder keys set)`);
+    }
 } else {
     // In production (Railway), environment variables are set directly
     console.log('ℹ️  No .env file found — using system environment variables (Railway mode)');

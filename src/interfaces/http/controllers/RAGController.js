@@ -85,25 +85,24 @@ export class RAGController {
             const ragService = new RAGService();
             const supabase = SupabaseService.getInstance();
 
-            // Step 1: Check if rag_documents already exist
-            const existsFilter = { taskId };
-            if (topicId) existsFilter.topicId = topicId;
-            if (courseId) existsFilter.courseId = courseId;
+            // ⛔ Removed task-level existence check — it blocked new content_items
+            // from being ingested when other items for the same task already existed.
+            // Each content_item is checked individually inside ragService.ingestDocument()
+            // via its contentItemId, which is the correct granularity.
 
-            const alreadyExists = await ragService.vectorStore.exists(existsFilter);
-            if (alreadyExists) {
-                logger.info(`ℹ️ RAG docs exist for task=${taskId}, topic=${topicId}. Skipping.`);
-                return res.json({
-                    success: true,
-                    data: { skipped: true, reason: 'RAG documents already exist', taskId, topicId, courseId }
-                });
+            // Step 1: Fetch content_items for BOTH task AND topic
+            // This ensures ALL relevant files are ingested, not just task-specific ones
+            let ciQuery = supabase.client
+                .from('content_items')
+                .select('id, topic_id, title, body, content_type, task_id');
+            
+            if (taskId && topicId) {
+                ciQuery = ciQuery.or(`task_id.eq.${taskId},topic_id.eq.${topicId}`);
+            } else {
+                ciQuery = ciQuery.eq('task_id', taskId);
             }
 
-            // Step 2: Fetch content_items
-            const { data: contentItems, error: ciError } = await supabase.client
-                .from('content_items')
-                .select('id, topic_id, title, body, content_type, task_id')
-                .eq('task_id', taskId);
+            const { data: contentItems, error: ciError } = await ciQuery;
 
             if (ciError) {
                 return res.status(500).json({ success: false, error: ciError.message });
@@ -203,6 +202,45 @@ export class RAGController {
 
         } catch (err) {
             logger.error(`❌ ingestTaskContent error: ${err.message}`, err);
+            next(err);
+        }
+    };
+
+    /**
+     * POST /api/v1/rag/hybrid-search
+     * Hybrid Retrieval: Semantic Search + Window Expansion + Reranking + Progressive Coverage.
+     *
+     * Body: { query, courseId, topicId?, taskId?, semanticTopK?, windowSize?, sessionIndex?, rerank?, topicName?, taskTitle? }
+     * Returns: { content, chunks, files, semanticHits, expandedChunks, reranked, rerankMethod, page?, totalPages?, totalChunks? }
+     */
+    hybridSearch = async (req, res, next) => {
+        try {
+            const { query, courseId, topicId, taskId, semanticTopK, windowSize, sessionIndex, rerank, topicName, taskTitle } = req.body;
+
+            if (!query || !courseId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'query and courseId are required',
+                });
+            }
+
+            const ragService = new RAGService();
+            const filter = { courseId: parseInt(courseId) };
+            if (topicId) filter.topicId = parseInt(topicId);
+            if (taskId) filter.taskId = parseInt(taskId);
+
+            const result = await ragService.getHybridRagContent(query, filter, {
+                semanticTopK: semanticTopK ? parseInt(semanticTopK) : 3,
+                windowSize: windowSize ? parseInt(windowSize) : 3,
+                sessionIndex: sessionIndex != null ? parseInt(sessionIndex) : null,
+                rerank: rerank !== false, // default true
+                topicName: topicName || null,
+                taskTitle: taskTitle || null,
+            });
+
+            return res.json({ success: true, data: result });
+        } catch (err) {
+            logger.error(`❌ hybridSearch error: ${err.message}`, err);
             next(err);
         }
     };
