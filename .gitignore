@@ -61,3 +61,5 @@ scripts/ddlpro.sql
 scripts/ddlqa.sql
 scripts/diagram.mermaid
 scripts/migration_whatsapp_sessions.sql
+scripts/fix_vector_dimensions_corrected.sql
+scripts/fix_vector_dimensions_v2.sql

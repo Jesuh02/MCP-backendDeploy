@@ -2259,7 +2259,7 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
 **IDIOMA: TODAS TUS RESPUESTAS DEBEN SER EN ESPAÑOL.**
 
 Tu tarea es analizar el código del repositorio y proporcionar:
-1. **NOTA** (0-100): Calificación numérica justificada
+1. **NOTA** (0-10): Calificación numérica justificada
 2. **FORTALEZAS**: Lo que está bien hecho (mínimo 3 puntos)
 3. **ÁREAS DE MEJORA**: Sugerencias constructivas (mínimo 3 puntos)
 4. **FEEDBACK DETALLADO**: Análisis técnico completo
@@ -2280,7 +2280,7 @@ FORMATO DE RESPUESTA OBLIGATORIO:
 
 ## 📊 CALIFICACIÓN
 
-**NOTA FINAL: XX/100**
+**NOTA FINAL: XX/10**
 
 ## ✅ FORTALEZAS
 1. [Fortaleza 1]
@@ -2328,17 +2328,17 @@ A continuación se muestra el contenido del repositorio para análisis:`;
 
         // Extract grade (look for patterns like "NOTA: 85/100", "85/100", "Nota Final: 85")
         const gradePatterns = [
-            /NOTA\s*(?:FINAL)?[:\s]*(\d{1,3})\s*(?:\/\s*100)?/i,
-            /(\d{1,3})\s*\/\s*100/,
-            /calificaci[oó]n[:\s]*(\d{1,3})/i,
-            /puntuaci[oó]n[:\s]*(\d{1,3})/i
+            /NOTA\s*(?:FINAL)?[:\s]*(\d{1,2}(?:\.\d+)?)\s*(?:\/\s*10)?/i,
+            /(\d{1,2}(?:\.\d+)?)\s*\/\s*10(?!0)/,
+            /calificaci[oó]n[:\s]*(\d{1,2}(?:\.\d+)?)/i,
+            /puntuaci[oó]n[:\s]*(\d{1,2}(?:\.\d+)?)/i
         ];
 
         for (const pattern of gradePatterns) {
             const match = response.match(pattern);
             if (match) {
-                const grade = parseInt(match[1]);
-                if (grade >= 0 && grade <= 100) {
+                const grade = parseFloat(match[1]);
+                if (grade >= 0 && grade <= 10) {
                     result.grade = grade;
                     break;
                 }

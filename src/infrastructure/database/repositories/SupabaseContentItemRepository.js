@@ -1,6 +1,27 @@
 export class SupabaseContentItemRepository {
     constructor(client) { this.client = client; }
 
+    async _deleteRagDocumentsByContentItemIds(contentItemIds = []) {
+        const ids = (contentItemIds || []).filter((id) => Number.isInteger(id) || (typeof id === 'string' && id.trim() !== ''));
+        if (ids.length === 0) return;
+
+        const { error } = await this.client
+            .from('rag_documents')
+            .delete()
+            .in('content_item_id', ids);
+
+        if (error) throw new Error(error.message);
+    }
+
+    async _deleteRagDocumentsByTask(taskId) {
+        const { error } = await this.client
+            .from('rag_documents')
+            .delete()
+            .eq('task_id', taskId);
+
+        if (error) throw new Error(error.message);
+    }
+
     async findById(id) {
         const { data, error } = await this.client.from('content_items').select('*').eq('id', id).single();
         if (error || !data) return null;
@@ -47,12 +68,29 @@ export class SupabaseContentItemRepository {
     }
 
     async delete(id) {
+        // Delete dependent RAG rows first to satisfy FK constraint:
+        // fk_rag_documents_content_item (rag_documents.content_item_id -> content_items.id)
+        await this._deleteRagDocumentsByContentItemIds([id]);
+
         const { error } = await this.client.from('content_items').delete().eq('id', id);
         if (error) throw new Error(error.message);
         return true;
     }
 
     async deleteByTask(taskId) {
+        // 1) Collect content_item IDs for this task
+        const { data: items, error: listError } = await this.client
+            .from('content_items')
+            .select('id')
+            .eq('task_id', taskId);
+        if (listError) throw new Error(listError.message);
+
+        // 2) Delete RAG rows tied to task OR tied to those specific content items
+        // task-level delete handles rows with content_item_id null
+        await this._deleteRagDocumentsByTask(taskId);
+        await this._deleteRagDocumentsByContentItemIds((items || []).map(i => i.id));
+
+        // 3) Delete content items
         const { error } = await this.client.from('content_items').delete().eq('task_id', taskId);
         if (error) throw new Error(error.message);
         return true;
