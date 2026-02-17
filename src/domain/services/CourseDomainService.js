@@ -2,11 +2,12 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
-    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort }) {
+    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService }) {
         this.courseRepo = courseRepository;
         this.transactionRepo = transactionRepository;
         this.progressRepo = progressRepository;
         this.storage = fileStoragePort || null;
+        this.courseNotificationService = courseNotificationService || null;
     }
 
     _validateCourseId(id) {
@@ -206,6 +207,14 @@ export class CourseDomainService {
     async create(courseData, requesterId) {
         courseData.creatorUserId = requesterId;
         const created = await this.courseRepo.create(courseData);
+        
+        // Fire-and-forget: Notificar a los suscriptores del creador sobre el nuevo curso
+        if (this.courseNotificationService) {
+            await this.courseNotificationService.notifySubscribersAboutNewCourse(created, requesterId).catch(err =>
+                console.warn('[CourseDomainService] Error notifying subscribers about new course:', err.message)
+            );
+        }
+        
         return Result.ok(created);
     }
 
@@ -328,5 +337,7 @@ export class CourseDomainService {
             return Result.fail(new Error(`Error fetching courses with submissions: ${err.message}`));
         }
     }
+
+
 }
 export default CourseDomainService;
