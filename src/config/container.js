@@ -40,6 +40,7 @@ import { SupabaseChatMessageRepository } from '../infrastructure/database/reposi
 import { R2StorageAdapter } from '../infrastructure/storage/R2StorageAdapter.js';
 import { FCMAdapter } from '../infrastructure/notifications/FCMAdapter.js';
 import { EmailAdapter } from '../infrastructure/notifications/EmailAdapter.js';
+import { EmailQueueService } from '../infrastructure/notifications/EmailQueueService.js';
 import { WompiAdapter } from '../infrastructure/payment/WompiAdapter.js';
 
 import { OpenAITTSAdapter } from '../infrastructure/tts/OpenAITTSAdapter.js';
@@ -163,6 +164,7 @@ export function createContainer() {
     const storageAdapter = safeInit('R2StorageAdapter', () => new R2StorageAdapter());
     const fcmAdapter = safeInit('FCMAdapter', () => new FCMAdapter());
     const emailAdapter = safeInit('EmailAdapter', () => new EmailAdapter());
+    const emailQueueService = new EmailQueueService(); // Instancia singleton
     const paymentGateway = safeInit('WompiAdapter', () => new WompiAdapter());
 
     const ttsAdapter = safeInit('OpenAITTSAdapter', () => new OpenAITTSAdapter());
@@ -233,7 +235,8 @@ export function createContainer() {
     const courseNotificationService = new CourseNotificationService({ 
         subscriptionRepository: subscriptionRepo, 
         notificationService, 
-        userService 
+        userService,
+        emailQueueService
     });
 
     // courseService necesita courseNotificationService, por lo que se instancia aquí
