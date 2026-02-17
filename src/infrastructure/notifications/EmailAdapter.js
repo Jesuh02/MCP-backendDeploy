@@ -47,7 +47,7 @@ export class EmailAdapter {
         try {
             const { default: axios } = await
             import ('axios');
-            const from = process.env.EMAIL_FROM || 'noreply@yisuscompany.com';
+            const from = process.env.EMAIL_FROM || 'coursev@yisuscompany.com';
             const response = await axios.post(
                 'https://api.resend.com/emails', { from, to: Array.isArray(to) ? to : [to], subject, html, text }, { headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' } },
             );
@@ -65,7 +65,7 @@ export class EmailAdapter {
         try {
             const { default: axios } = await
             import ('axios');
-            const from = process.env.EMAIL_FROM || 'noreply@yisuscompany.com';
+            const from = process.env.EMAIL_FROM || 'coursev@yisuscompany.com';
             const personalizations = [{ to: (Array.isArray(to) ? to : [to]).map(email => ({ email })) }];
             const payload = {
                 personalizations,
