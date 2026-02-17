@@ -175,12 +175,13 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
                 systemPrompt += `\n\nContexto relevante del curso (extraído de rag_documents):\n${ragContext}`;
                 systemPrompt += `\nINSTRUCCIÓN DE GROUNDING ESTRICTO:
 - Usa EXCLUSIVAMENTE la información contenida en los fragmentos RAG anteriores.
-- Cada pregunta y cada respuesta correcta DEBE poder verificarse directamente en el texto de los fragmentos.
-- NO inventes, infieras ni añadas información que NO aparezca explícitamente en los fragmentos.
+- Cada pregunta y cada respuesta correcta DEBE poder verificarse en el texto de los fragmentos.
+- NO inventes ni añadas información que NO aparezca en los fragmentos.
 - Si un concepto NO está en los fragmentos, NO generes preguntas sobre él.
 - Las explicaciones deben citar o parafrasear directamente el contenido del material.
-- Extrae conceptos específicos, definiciones, procesos y datos del material para formular preguntas de APLICACIÓN y ANÁLISIS, no solo de recuerdo directo.
-- Usa la información del material para crear ESCENARIOS realistas donde el estudiante deba aplicar los conceptos.
+- Extrae mecanismos, relaciones causa-efecto, comparaciones e implicaciones del material para formular preguntas que evalúen CONSECUENCIAS y COMPRENSIÓN PROFUNDA, nunca solo recuerdo de datos.
+- Usa la información del material para crear ESCENARIOS donde el estudiante deba PENSAR y DECIDIR, no solo localizar una respuesta.
+- PROHIBIDO preguntas que se respondan buscando un dato literal. Las preguntas deben requerir ENTENDER el mecanismo detrás del dato.
 - PROHIBIDO generar preguntas generales basadas en el nombre del curso. Las preguntas DEBEN basarse en el TEMA y TAREA específicos.`;
             }
 
@@ -195,33 +196,54 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
 - Genera EXACTAMENTE 10 preguntas que se puedan verificar DIRECTAMENTE en el contexto RAG proporcionado.
 - Cada explicación DEBE referenciar el texto específico del material que justifica la respuesta correcta.`;
 
-                // 2.6. PEDAGOGICAL QUALITY: Scenario-based, application-level questions
-                systemPrompt += `\n\nINSTRUCCIÓN PEDAGÓGICA — CALIDAD DE PREGUNTAS (OBLIGATORIO):
+                // 2.6. PEDAGOGICAL QUALITY: 10/10 questions — thinking, not searching
+                systemPrompt += `\n\nINSTRUCCIÓN PEDAGÓGICA — NIVEL 10/10 (OBLIGATORIO ESTRICTO):
 
-1. CONTEXTUALIZACIÓN Y ESCENARIOS:
-   - Cada pregunta DEBE presentar un ESCENARIO o CONTEXTO real antes de formular la interrogante.
-   - PROHIBIDO preguntas directas tipo "¿Qué es X?" o "¿Cuál es la definición de Y?".
-   - En su lugar, plantea situaciones como: "Un desarrollador está construyendo...", "En una empresa que necesita...", "Durante la revisión de un proyecto se detectó que...".
-   - El escenario debe ser verosímil y reflejar un caso de uso real del concepto evaluado.
+═══ PRINCIPIO #1: EL ESTUDIANTE DEBE PENSAR, NO BUSCAR ═══
+- PROHIBIDO preguntas donde el estudiante solo localiza un dato en el material (ej: "¿Qué modelo tiene menor tiempo?").
+- Eso es nivel medio. El nivel 10/10 exige ANALIZAR, INTERPRETAR y DECIDIR.
+- Cada pregunta debe requerir que el estudiante ENTIENDA un mecanismo, compare alternativas o prediga consecuencias.
+- Ejemplo PROHIBIDO: "¿Cuál es el valor de X?" → solo buscar.
+- Ejemplo CORRECTO: "Te encuentras en el caso de elegir un modelo que mantenga arquitectura MoE y reduzca el tiempo respecto a SMoE. ¿Cuál cumple esa condición?" → debes entender qué es SMoE, comparar y elegir.
+- OBLIGATORIO en escenarios hipotéticos: redacta en SEGUNDA PERSONA ("tú", "te", "tu").
+- PROHIBIDO iniciar escenarios con tercera persona genérica como "un investigador", "un estudiante", "un ingeniero".
 
-2. APLICACIÓN DEL CONOCIMIENTO (TAXONOMÍA DE BLOOM — Niveles 3-5):
-   - Las preguntas DEBEN evaluar APLICACIÓN, ANÁLISIS o EVALUACIÓN, NO solo RECUERDO o COMPRENSIÓN.
-   - Distribución obligatoria de las 10 preguntas:
-     • 4 de APLICACIÓN: El estudiante debe usar un concepto para resolver un problema concreto.
-     • 3 de ANÁLISIS: El estudiante debe descomponer, comparar o identificar relaciones causa-efecto.
-     • 3 de EVALUACIÓN: El estudiante debe juzgar, decidir o seleccionar la mejor solución entre alternativas válidas.
-   - Verbos recomendados: implementar, resolver, diagnosticar, comparar, optimizar, predecir, justificar, diseñar.
+═══ PRINCIPIO #2: OPCIONES QUE REQUIEREN COMPRENSIÓN REAL, NO COINCIDENCIA VISUAL ═══
+- PROHIBIDO opciones que sean datos literales copiados del material (ej: "Dense – 41h30m", "SMoE – 42h11m").
+  El estudiante solo buscaría coincidencia visual. Eso es nivel medio.
+- Las opciones deben ser CONCEPTOS, ESTRATEGIAS o INTERPRETACIONES que obliguen a pensar.
+- Ejemplo CORRECTO: "¿Qué modelo demuestra mayor eficiencia dentro de su categoría?"
+  Opciones: nombres de modelos sin sus métricas → el estudiante debe saber qué significa "eficiencia" y comparar mentalmente.
+- Las opciones correctas e incorrectas deben estar al MISMO NIVEL de plausibilidad visual.
 
-3. DISTRACTORES PLAUSIBLES (OBLIGATORIO):
-   - Las 3 opciones incorrectas DEBEN ser plausibles y reflejar errores comunes de comprensión.
-   - Tipos de distractores efectivos:
-     a) Confusión entre conceptos similares (ej: confundir stack con heap).
-     b) Aplicación parcialmente correcta (ej: solución que funciona pero no es eficiente).
-     c) Inversión de causa-efecto o de orden de pasos.
-     d) Generalización excesiva o sobresimplificación de un concepto.
-   - PROHIBIDO distractores obviamente absurdos, irrelevantes o fácilmente descartables.
-   - Un estudiante que NO domina el material debería encontrar los distractores tentadores.
-   - La explicación DEBE indicar POR QUÉ cada distractor es incorrecto, no solo por qué la correcta es correcta.`;
+═══ PRINCIPIO #3: EVALUAR CONSECUENCIAS E IMPLICACIONES, NO SOLO DATOS ═══
+- Este es EL CRITERIO MÁS IMPORTANTE.
+- PROHIBIDO: "¿Cuál es el tiempo de X?" (solo dato).
+- OBLIGATORIO: "¿Qué IMPLICA ese tiempo?" / "¿Qué EFECTO tiene?" / "¿Qué CONSECUENCIA produce?"
+- Ejemplo: "Si un modelo elimina cálculo de routing por token, ¿qué efecto directo tiene en el entrenamiento?"
+  Opciones: "reduce tiempo ✓", "aumenta parámetros", "reduce GPU", "aumenta dataset"
+  → El estudiante debe ENTENDER EL MECANISMO, no solo el número.
+- Usa verbos como: implica, causa, produce, permite, impide, optimiza, degrada.
+
+═══ PRINCIPIO #4: TRAMPAS CONCEPTUALES SUTILES ═══
+- No se trata de confundir al estudiante, sino de evaluar comprensión REAL.
+- Los 4 distractores deben ser TODOS plausibles a primera vista.
+- Solo quien ENTIENDE el concepto puede distinguir la correcta.
+- Tipos de trampas efectivas:
+  a) Opción que suena técnicamente correcta pero invierte causa-efecto.
+  b) Opción que aplica el concepto correcto al contexto equivocado.
+  c) Opción que es verdadera en general pero NO responde la pregunta específica.
+  d) Opción que confunde dos conceptos del mismo dominio (ej: optimización kernel vs optimización de arquitectura).
+- PROHIBIDO opciones descartables por absurdas o fuera de tema.
+
+═══ RESUMEN DE NIVEL 10/10 vs NIVEL MEDIO ═══
+| Nivel Medio (PROHIBIDO)           | Nivel 10/10 (OBLIGATORIO)                    |
+|-----------------------------------|----------------------------------------------|
+| Buscar dato en el material        | Analizar y comparar datos                    |
+| Coincidencia visual en opciones   | Interpretación conceptual en opciones        |
+| Preguntar "¿Cuál es el valor?"    | Preguntar "¿Qué implica ese valor?"          |
+| Distractores obvios               | Trampas conceptuales donde TODO parece válido|
+| Responder sin entender            | Imposible responder sin comprender           |`;
             }
 
             // 3. Build user prompt with file content if available

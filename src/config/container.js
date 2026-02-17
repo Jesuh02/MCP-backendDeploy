@@ -40,6 +40,7 @@ import { SupabaseChatMessageRepository } from '../infrastructure/database/reposi
 import { R2StorageAdapter } from '../infrastructure/storage/R2StorageAdapter.js';
 import { FCMAdapter } from '../infrastructure/notifications/FCMAdapter.js';
 import { EmailAdapter } from '../infrastructure/notifications/EmailAdapter.js';
+import { EmailQueueService } from '../infrastructure/notifications/EmailQueueService.js';
 import { WompiAdapter } from '../infrastructure/payment/WompiAdapter.js';
 
 import { OpenAITTSAdapter } from '../infrastructure/tts/OpenAITTSAdapter.js';
@@ -55,6 +56,7 @@ import { SupabaseWhatsAppSessionRepository } from '../infrastructure/database/re
 import { AuthService } from '../domain/services/AuthService.js';
 import { UserDomainService } from '../domain/services/UserDomainService.js';
 import { CourseDomainService } from '../domain/services/CourseDomainService.js';
+import { CourseNotificationService } from '../domain/services/CourseNotificationService.js';
 import { VideoDomainService } from '../domain/services/VideoDomainService.js';
 import { TopicDomainService } from '../domain/services/TopicDomainService.js';
 import { TaskDomainService } from '../domain/services/TaskDomainService.js';
@@ -162,6 +164,7 @@ export function createContainer() {
     const storageAdapter = safeInit('R2StorageAdapter', () => new R2StorageAdapter());
     const fcmAdapter = safeInit('FCMAdapter', () => new FCMAdapter());
     const emailAdapter = safeInit('EmailAdapter', () => new EmailAdapter());
+    const emailQueueService = new EmailQueueService(); // Instancia singleton
     const paymentGateway = safeInit('WompiAdapter', () => new WompiAdapter());
 
     const ttsAdapter = safeInit('OpenAITTSAdapter', () => new OpenAITTSAdapter());
@@ -213,7 +216,6 @@ export function createContainer() {
     const authService = new AuthService({ userRepository: userRepo, jwtAdapter });
     const userService = new UserDomainService({ userRepository: userRepo, fileStoragePort: storageAdapter });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
-    const courseService = new CourseDomainService({ courseRepository: courseRepo, transactionRepository: transactionRepo, progressRepository: progressRepo, fileStoragePort: storageAdapter });
     const videoService = new VideoDomainService({ videoRepository: videoRepo, fileStoragePort: storageAdapter });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
@@ -227,6 +229,24 @@ export function createContainer() {
     const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo });
 
     const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
+
+    // Nivel 1: servicios que dependen de servicios del Nivel 0
+    // Crear courseNotificationService primero (depende de nivel 0)
+    const courseNotificationService = new CourseNotificationService({ 
+        subscriptionRepository: subscriptionRepo, 
+        notificationService, 
+        userService,
+        emailQueueService
+    });
+
+    // courseService necesita courseNotificationService, por lo que se instancia aquí
+    const courseService = new CourseDomainService({ 
+        courseRepository: courseRepo, 
+        transactionRepository: transactionRepo, 
+        progressRepository: progressRepo, 
+        fileStoragePort: storageAdapter, 
+        courseNotificationService 
+    });
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios
     const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo, notificationService, courseService, progressService, userService });
