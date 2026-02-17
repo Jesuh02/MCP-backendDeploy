@@ -1,5 +1,6 @@
 import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
+import { generateGradeEmailHTML } from '../../templates/emailTemplates.js';
 
 export class SubmissionDomainService {
     constructor({ submissionRepository, taskRepository, progressRepository, progressService, notificationService, courseService, topicService, userService, fileStoragePort }) {
@@ -118,6 +119,55 @@ export class SubmissionDomainService {
         });
     }
 
+    /**
+     * Notifica al estudiante que su tarea ha sido calificada por email.
+     * @private
+     */
+    async _notifyGrade(submission, grade, feedback, graderId) {
+        if (!this.notificationService || !this.userService || !this.taskRepo) return;
+
+        const studentId = submission.student_id || submission.user_id || submission.userId;
+        const taskId = submission.task_id || submission.taskId;
+
+        if (!studentId || !taskId) return;
+
+        // Obtener datos del estudiante
+        const studentResult = await this.userService.getById(studentId);
+        if (studentResult.isFail()) return;
+        const student = studentResult.getValue();
+        const studentEmail = student.email || student.email_address;
+
+        if (!studentEmail) {
+            console.warn(`[SubmissionDomainService] Student ${studentId} has no email address`);
+            return;
+        }
+
+        // Obtener datos de la tarea
+        const task = await this.taskRepo.findById(taskId);
+        if (!task) return;
+
+        // Obtener datos del usuario que calificó (quien es el teacher/admin)
+        let graderUsername = 'Instructor';
+        if (graderId) {
+            const graderResult = await this.userService.getById(graderId);
+            if (graderResult.isOk()) {
+                graderUsername = graderResult.getValue().username || 'Instructor';
+            }
+        }
+
+        // Generar HTML del email
+        const studentName = student.name || student.username || 'Estudiante';
+        const taskName = task.title || task.name || 'Tarea sin título';
+        const htmlContent = generateGradeEmailHTML(studentName, taskName, grade, feedback, graderUsername);
+
+        // Enviar email
+        await this.notificationService.sendEmail(studentId, {
+            subject: `📝 Tu tarea "${taskName}" ha sido calificada - Calificación: ${grade}`,
+            html: htmlContent,
+            text: `Tu tarea "${taskName}" ha sido calificada con ${grade}. ${feedback ? `Retroalimentación: ${feedback}` : ''}`
+        });
+    }
+
     async grade(id, { grade, feedback }, graderId) {
         const sub = await this.subRepo.findById(id);
         if (!sub) return Result.fail(new NotFoundError('Entrega', id));
@@ -129,6 +179,13 @@ export class SubmissionDomainService {
 
         // Recalcular progreso del estudiante si es posible
         await this._updateProgress(sub.student_id || sub.user_id || sub.userId, sub.task_id || sub.taskId);
+
+        // Fire-and-forget: Enviar email de calificación al estudiante
+        if (this.notificationService && this.userService && this.taskRepo) {
+            await this._notifyGrade(sub, grade, feedback, graderId).catch(err =>
+                console.warn('[SubmissionDomainService] Error notificando calificación:', err.message)
+            );
+        }
 
         return Result.ok(updated);
     }
