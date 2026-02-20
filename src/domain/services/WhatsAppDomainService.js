@@ -536,9 +536,9 @@ export class WhatsAppDomainService {
                 case 'MY_PROGRESS':
                     response = await this._handleMyProgress(user);
                     break;
-                case 'GENERAL_QUESTION':
-                default:
-                    response = await this._handleGeneralQuestion(text, session, user);
+                    case 'GENERAL_QUESTION':
+                    default:
+                        response = await this._handleGeneralQuestion(text, session, user, userRoles);
                     break;
             }
 
@@ -1011,13 +1011,24 @@ export class WhatsAppDomainService {
      * Handler: Preguntas generales (todos los roles).
      * Usa LLMDomainService.processPrompt() existente.
      */
-    async _handleGeneralQuestion(text, session, user) {
+    async _handleGeneralQuestion(text, session, user, userRoles = []) {
         try {
             if (!this.llmService) return 'El servicio de IA no está disponible en este momento.';
 
+            // If the user is an admin (role 3) prefer a BI/DatabaseQuery persona so
+            // WhatsApp responses mimic the behavior of the Android `DatabaseQueryFragment`.
+            // We keep the prompt small and focused to avoid token inflation.
+            const isAdmin = Array.isArray(userRoles) && userRoles.includes(3);
             const context = session.conversationContext || [];
+
+            let promptToSend = text;
+            if (isAdmin) {
+                const biPrefix = `CONSULTA DE BUSINESS INTELLIGENCE: ${text}\n\nINSTRUCCIONES: Eres un experto en Business Intelligence y Marketing. Responde con hallazgos basados en DATOS reales consultando la base de datos cuando sea necesario. Usa formato Markdown con secciones: Resumen ejecutivo, Decisiones críticas, KPIs priorizados, Ejemplos de SQL, Acción inmediata. Si necesitas métricas reales llama a la herramienta \"query_database\" a través del agente MCP.`;
+                promptToSend = biPrefix;
+            }
+
             const result = await this.llmService.processPrompt({
-                prompt: text,
+                prompt: promptToSend,
                 conversationHistory: context.map(c => ({ role: c.role, content: c.content })),
                 userId: user.id,
                 username: user.username,
@@ -1181,12 +1192,19 @@ export class WhatsAppDomainService {
             // - Domain-level MCPDomainService (not expected here)
             let result;
             try {
-                if (typeof this.mcpService.processQuery === 'function') {
-                    // call legacy signature
-                    result = await this.mcpService.processQuery(query, { includeSchema: true, userId: user.id, username: user.username });
+                // Prefer agent-based processing when available so the LLM can call tools
+                if (typeof this.mcpService.processQueryWithAgent === 'function') {
+                    result = await this.mcpService.processQueryWithAgent(query, { userId: user.id, username: user.username });
+                } else if (typeof this.mcpService.processQuery === 'function') {
+                    // legacy signature (may accept query + options or an object)
+                    try {
+                        result = await this.mcpService.processQuery(query, { includeSchema: true, userId: user.id, username: user.username });
+                    } catch (e) {
+                        // fallback to object-shaped call
+                        result = await this.mcpService.processQuery({ query, includeSchema: true, userId: user.id, username: user.username });
+                    }
                 } else {
-                    // fallback: try passing object
-                    result = await this.mcpService.processQuery({ query, userId: user.id, username: user.username });
+                    return '❌ El servicio MCP no expone una API conocida.';
                 }
             } catch (e) {
                 console.error('[WhatsApp] MCP processQuery failed:', e && (e.message || e));
