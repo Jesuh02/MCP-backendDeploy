@@ -283,7 +283,53 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
             }
 
             // 5. Call LLM
-            const response = await this.llm.chat(systemPrompt, fullPrompt, { model });
+            // If the prompt asks for database queries or BI instructions, expose MCP tools
+            const promptLc = String(fullPrompt || '').toLowerCase();
+            const needsMCPTools = /query[_ ]database|consulta de business intelligence|usa \'query_database\'|usa "query_database"/i.test(promptLc);
+            const tools = needsMCPTools ? [
+                { name: 'query_database', description: 'Execute queries on Supabase database', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+                { name: 'get_database_schema', description: 'Get complete database schema', parameters: { type: 'object', properties: {} } },
+            ] : [];
+
+            let response = await this.llm.chat(systemPrompt, fullPrompt, { model, tools });
+
+            // If the model returned tool_calls, execute them using MCPService and feed results back.
+            try {
+                const extractToolCalls = (r) => r?.tool_calls || r?.toolCalls || (r?.raw && (r.raw.tool_calls || r.raw.toolCalls)) || null;
+                let toolCalls = extractToolCalls(response);
+                let loop = 0;
+                const MAX_TOOL_ITERS = 3;
+                while (toolCalls && toolCalls.length > 0 && loop < MAX_TOOL_ITERS) {
+                    loop++;
+                    // Process each tool call sequentially
+                    for (const tc of toolCalls) {
+                        const toolName = tc.name || tc.id || (tc.function && tc.function.name) || null;
+                        let toolArgs = {};
+                        try {
+                            if (typeof tc.arguments === 'string') toolArgs = JSON.parse(tc.arguments);
+                            else toolArgs = tc.arguments || tc.args || tc.input || {};
+                        } catch (e) {
+                            toolArgs = { raw: tc.arguments };
+                        }
+
+                        try {
+                            const { MCPService } = await import('./MCPService.js');
+                            const mcp = new MCPService();
+                            const toolResult = await mcp.executeMCPTool(toolName, toolArgs);
+                            // Append tool result to system prompt to allow the model to continue reasoning
+                            const toolResultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools });
+                        } catch (execErr) {
+                            const errStr = String(execErr && (execErr.message || execErr));
+                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_ERROR name=${toolName}]\n${errStr}`, fullPrompt, { model, tools });
+                        }
+                    }
+
+                    toolCalls = extractToolCalls(response);
+                }
+            } catch (toolLoopErr) {
+                console.warn('[LLMDomainService] Tool execution loop failed:', toolLoopErr && (toolLoopErr.message || toolLoopErr));
+            }
 
             // 6. Post-process response to detect Grading Signal
             let content = response.content;
@@ -425,7 +471,15 @@ Responde SIEMPRE en formato JSON:
             }
 
             // 4. Call LLM
-            const response = await this.llm.chat(systemPrompt, userPrompt);
+            // detect DB tool needs for this userPrompt
+            const userPromptLc = String(userPrompt || '').toLowerCase();
+            const needsTools2 = /query[_ ]database|consulta de business intelligence|query database/.test(userPromptLc);
+            const tools2 = needsTools2 ? [
+                { name: 'query_database', description: 'Execute queries on Supabase database', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+                { name: 'get_database_schema', description: 'Get complete database schema', parameters: { type: 'object', properties: {} } },
+            ] : [];
+
+            const response = await this.llm.chat(systemPrompt, userPrompt, { tools: tools2 });
 
             // 5. Parse response
             let analysis;
@@ -468,7 +522,14 @@ Responde SIEMPRE en formato JSON:
 ${cachedAnalysis ? `Análisis previo: Nota=${cachedAnalysis.nota}, Resumen=${cachedAnalysis.resumen}` : 'No hay análisis previo disponible.'}
 Responde de forma clara y constructiva.`;
 
-            const response = await this.llm.chat(systemPrompt, question);
+            const questionLc = String(question || '').toLowerCase();
+            const needsTools3 = /query[_ ]database|consulta de business intelligence|query database/.test(questionLc);
+            const tools3 = needsTools3 ? [
+                { name: 'query_database', description: 'Execute queries on Supabase database', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+                { name: 'get_database_schema', description: 'Get complete database schema', parameters: { type: 'object', properties: {} } },
+            ] : [];
+
+            const response = await this.llm.chat(systemPrompt, question, { tools: tools3 });
 
             return Result.ok({
                 response: response.content,
