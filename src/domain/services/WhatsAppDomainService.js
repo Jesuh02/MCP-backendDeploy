@@ -591,6 +591,10 @@ export class WhatsAppDomainService {
         const user = await this.userRepo.findById(userId);
         if (!user) return Result.fail(new NotFoundError('Usuario', userId));
 
+        // Determine if user can use MCP (role 3 = admin)
+        const userRoleIds = (user.roles || []).map(r => r.id || r.rol_id || r);
+        const canUseMCP = userRoleIds.includes(3);
+
         // 3. Verificar que el número no esté vinculado a otro usuario
         const existingByPhone = await this.sessionRepo.findByPhoneNumber(normalized);
         if (existingByPhone && existingByPhone.userId !== userId) {
@@ -791,6 +795,7 @@ export class WhatsAppDomainService {
             phoneNumber: normalized,
             message: 'Código de verificación enviado a WhatsApp',
             providerResponse: providerResp,
+            canUseMCP,
         });
     }
 
@@ -851,9 +856,15 @@ export class WhatsAppDomainService {
             // ignore send errors for welcome
         }
 
+        // Determine admin/MCP capability from user roles
+        const updatedUser = await this.userRepo.findById(userId);
+        const updatedRoleIds = (updatedUser?.roles || []).map(r => r.id || r.rol_id || r);
+        const canUseMCPAfterVerify = updatedRoleIds.includes(3);
+
         return Result.ok({
             verified: true,
             message: 'WhatsApp vinculado correctamente',
+            canUseMCP: canUseMCPAfterVerify,
         });
     }
 
