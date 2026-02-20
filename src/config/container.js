@@ -302,7 +302,10 @@ export function createContainer() {
         whatsAppSessionRepo,
         userRepository: userRepo,
         rolRepository: rolRepo,
-        mcpDomainService,
+        // Pass the legacy MCPService implementation so the WhatsApp flow can
+        // execute SQL queries and generate Excel via existing MCP APIs.
+        mcpDomainService: mcpServiceLegacy,
+        excelService,
         llmDomainService,
         submissionRepository: submissionRepo,
         progressRepository: progressRepo,

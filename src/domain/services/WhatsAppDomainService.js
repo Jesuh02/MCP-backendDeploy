@@ -45,6 +45,7 @@ export class WhatsAppDomainService {
         progressRepository,
         courseRepository,
         chatMessageRepository,
+        excelService,
     }) {
         this.whatsAppPort = whatsAppPort;
         this.sessionRepo = whatsAppSessionRepo;
@@ -56,6 +57,7 @@ export class WhatsAppDomainService {
         this.progressRepo = progressRepository;
         this.courseRepo = courseRepository;
         this.chatMessageRepo = chatMessageRepository;
+        this.excelService = excelService;
 
         this.channelAvailabilityCache = {
             checkedAt: 0,
@@ -1174,20 +1176,53 @@ export class WhatsAppDomainService {
                 return '❌ Consulta no permitida. Solo se permiten consultas de lectura (SELECT).';
             }
 
-            const result = await this.mcpService.processQuery({
-                query,
-                userId: user.id,
-                username: user.username,
-            });
-
-            if (result && result.isOk && result.isOk()) {
-                const data = result.getValue();
-                const responseText = typeof data === 'string' ? data : (data?.response || JSON.stringify(data, null, 2));
-                return markdownToWhatsApp(responseText);
+            // Support two MCPService shapes:
+            // - Legacy MCPService.processQuery(query, options)
+            // - Domain-level MCPDomainService (not expected here)
+            let result;
+            try {
+                if (typeof this.mcpService.processQuery === 'function') {
+                    // call legacy signature
+                    result = await this.mcpService.processQuery(query, { includeSchema: true, userId: user.id, username: user.username });
+                } else {
+                    // fallback: try passing object
+                    result = await this.mcpService.processQuery({ query, userId: user.id, username: user.username });
+                }
+            } catch (e) {
+                console.error('[WhatsApp] MCP processQuery failed:', e && (e.message || e));
+                return '❌ Error al ejecutar la consulta. Intenta con otra formulación.';
             }
 
-            if (typeof result === 'string') return markdownToWhatsApp(result);
-            return '❌ No se pudo procesar la consulta.';
+            // If the user asked for an Excel (keyword /excel or contains 'excel'), generate a file
+            if (/^\/excel\b/i.test(text) || /\bexcel\b/i.test(text)) {
+                if (!this.excelService) return '❌ Servicio de generación de Excel no disponible.';
+                try {
+                    const q = query.replace(/^\/excel\s*/i, '').trim() || query;
+                    const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id });
+                    if (gen && gen.isOk && gen.isOk()) {
+                        const v = gen.getValue();
+                        return `✅ Excel generado: ${v.url} (filas: ${v.rows})`;
+                    }
+                    return '❌ No se pudo generar el Excel para esa consulta.';
+                } catch (e) {
+                    console.error('[WhatsApp] Excel generation failed:', e);
+                    return '❌ Error generando Excel. Intenta de nuevo más tarde.';
+                }
+            }
+
+            // Normalize result shapes
+            if (!result) return '❌ No se obtuvo respuesta de MCP.';
+
+            // Legacy MCPService returns object { data, sqlScript, schema }
+            if (result.error) {
+                const msg = result.message || 'Error ejecutando la consulta.';
+                const hint = result.hint ? `\nHint: ${result.hint}` : '';
+                return `❌ ${msg}${hint}`;
+            }
+
+            const data = result.data ?? result;
+            const responseText = typeof data === 'string' ? data : (data?.response || JSON.stringify(data, null, 2));
+            return markdownToWhatsApp(responseText);
         } catch (error) {
             console.error('[WhatsApp] Error in MCP query:', error.message);
             return '❌ Error al procesar la consulta. Intenta de nuevo.';
