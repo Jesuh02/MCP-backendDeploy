@@ -24,14 +24,28 @@ export class MetaWhatsAppAdapter {
      */
     constructor({ accessToken, phoneId, appSecret = null, otpTemplateName = null, otpTemplateLanguage = null }) {
         if (!accessToken) throw new Error('WHATSAPP_ACCESS_TOKEN is required');
-        if (!phoneId) throw new Error('WHATSAPP_PHONE_ID is required');
+        // Allow using an explicit phone_number_id override from env var
+        const envPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || null;
+        if (!phoneId && !envPhoneNumberId) throw new Error('WHATSAPP_PHONE_ID is required (or set WHATSAPP_PHONE_NUMBER_ID)');
 
         this.accessToken = accessToken;
-        this.phoneId = phoneId;
+        this.phoneId = envPhoneNumberId || phoneId;
         this.appSecret = appSecret;
         this.otpTemplateName = otpTemplateName || 'hello_world';
         this.otpTemplateLanguage = otpTemplateLanguage || 'en_US';
-        this.messagesUrl = `${META_BASE_URL}/${phoneId}/messages`;
+        this.messagesUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
+    }
+
+    /**
+     * Allow setting phone_number_id at runtime.
+     * Useful when discovery finds the correct id or for manual override.
+     * @param {string} phoneNumberId
+     */
+    setPhoneNumberId(phoneNumberId) {
+        if (!phoneNumberId) return;
+        this.phoneId = phoneNumberId;
+        this.messagesUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
+        console.log(`[MetaWhatsAppAdapter] phone_number_id set to ${this.phoneId}`);
     }
 
     /**
@@ -310,8 +324,23 @@ export class MetaWhatsAppAdapter {
                         }
                         return retryData;
                     }
-                    // If we got here and reattempted but still failing, add actionable guidance to error
-                    // (handled below if retry fails)
+                    // If discovery returned false, attempt to fetch phone_numbers for diagnostics
+                    try {
+                        const diagUrl = `${META_BASE_URL}/${this.phoneId}/phone_numbers`;
+                        const diagResp = await fetch(diagUrl, { method: 'GET', headers: { Authorization: `Bearer ${this.accessToken}` } });
+                        const diagJson = await diagResp.json();
+                        console.warn('[MetaWhatsAppAdapter] Discovery diagnostics:', diagJson);
+                        if (diagResp.ok && Array.isArray(diagJson.data) && diagJson.data.length > 0) {
+                            const ids = diagJson.data.map(d => d.id).join(', ');
+                            error.message += ` Discovered candidate phone_number ids: ${ids}.`;
+                        } else if (diagJson?.error) {
+                            error.message += ` Discovery diagnostic error: ${diagJson.error.message}`;
+                        } else {
+                            error.message += ' No phone_numbers found during discovery.';
+                        }
+                    } catch (dErr) {
+                        console.warn('[MetaWhatsAppAdapter] Discovery diagnostic request failed:', dErr?.message || dErr);
+                    }
                 } catch (discErr) {
                     console.warn('[MetaWhatsAppAdapter] Phone number discovery failed:', discErr?.message || discErr);
                     // Fall through to throw original error with guidance
@@ -339,6 +368,8 @@ export class MetaWhatsAppAdapter {
         const tryUrls = [
             `${META_BASE_URL}/${this.phoneId}/phone_numbers`,
             `${META_BASE_URL}/${this.phoneId}?fields=phone_numbers{display_phone_number,id}`,
+            // Some Graph shapes may return phone_numbers under different fields
+            `${META_BASE_URL}/${this.phoneId}?fields=owned_phone_numbers{display_phone_number,id}`,
         ];
 
         for (const u of tryUrls) {
@@ -347,25 +378,38 @@ export class MetaWhatsAppAdapter {
                 const json = await resp.json();
                 if (!resp.ok) continue;
 
-                // Graph returns list under `data` for /phone_numbers
-                const candidates = json?.data || (json?.phone_numbers ? json.phone_numbers.data || json.phone_numbers : null);
+                // Try several shapes where phone numbers may be present
+                const rawCandidates = json?.data || json?.phone_numbers || json?.phone_numbers?.data || json?.owned_phone_numbers || json?.owned_phone_numbers?.data || null;
+
+                let candidates = null;
+                if (Array.isArray(rawCandidates)) candidates = rawCandidates;
+                else if (rawCandidates && typeof rawCandidates === 'object') {
+                    // Graph sometimes nests under { data: [...] }
+                    if (Array.isArray(rawCandidates.data)) candidates = rawCandidates.data;
+                    else candidates = [rawCandidates];
+                }
+
                 if (Array.isArray(candidates) && candidates.length > 0) {
-                    const first = candidates[0];
-                    const discoveredId = first.id || first.phone_number_id || null;
-                    if (discoveredId) {
-                        this.phoneId = discoveredId;
-                        this.messagesUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
-                        console.log(`[MetaWhatsAppAdapter] Discovered phone_number_id=${this.phoneId} from ${u}`);
-                        return true;
+                    // Log candidates for diagnostics
+                    try { console.log('[MetaWhatsAppAdapter] Discovery candidates:', JSON.stringify(candidates)); } catch (e) { /* ignore */ }
+
+                    // Prefer explicit id fields
+                    for (const c of candidates) {
+                        const discoveredId = c.id || c.phone_number_id || c.phone_number_id || c.phone_number || null;
+                        if (discoveredId) {
+                            this.phoneId = discoveredId;
+                            this.messagesUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
+                            console.log(`[MetaWhatsAppAdapter] Discovered phone_number_id=${this.phoneId} from ${u}`);
+                            return true;
+                        }
                     }
                 }
 
-                // Try alternative shape: json?.phone_numbers?.data
-                const alt = json?.phone_numbers?.data;
-                if (Array.isArray(alt) && alt.length > 0 && alt[0].id) {
-                    this.phoneId = alt[0].id;
+                // Fallback: if response contains a top-level numeric id, use it
+                if (json && json.id && String(json.id).match(/^\d+$/)) {
+                    this.phoneId = json.id;
                     this.messagesUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
-                    console.log(`[MetaWhatsAppAdapter] Discovered phone_number_id=${this.phoneId} from ${u}`);
+                    console.log(`[MetaWhatsAppAdapter] Using top-level id=${this.phoneId} from ${u}`);
                     return true;
                 }
             } catch (e) {
