@@ -164,6 +164,33 @@ export class WhatsAppDomainService {
             text: { body: String(text || '') },
         };
 
+        // Diagnostic checks: DNS resolution and optional node-fetch fallback
+        try {
+            const parsed = new URL(baseUrl);
+            const dns = await import('dns').then(m => m.promises).catch(() => null);
+            if (dns) {
+                try {
+                    const addrs = await dns.lookup(parsed.hostname, { all: true });
+                    if (process.env.WHATSAPP_DEBUG === 'true') console.log('[WhatsApp] YCloud DNS lookup:', parsed.hostname, addrs);
+                } catch (dErr) {
+                    console.warn('[WhatsApp] YCloud DNS lookup failed:', dErr && (dErr.code || dErr.message));
+                }
+            }
+        } catch (e) {
+            // ignore URL parse errors
+        }
+
+        if (typeof fetch === 'undefined') {
+            try {
+                const nf = await import('node-fetch');
+                // node-fetch v3 exports default
+                globalThis.fetch = nf.default || nf;
+                if (process.env.WHATSAPP_DEBUG === 'true') console.log('[WhatsApp] Polyfilled global fetch with node-fetch');
+            } catch (impErr) {
+                console.warn('[WhatsApp] Could not polyfill fetch:', impErr && impErr.message);
+            }
+        }
+
         // Use small retry loop with AbortController timeout to surface network errors
         const maxAttempts = 3;
         const timeoutMs = Number(process.env.YCLOUD_REQUEST_TIMEOUT_MS || 8000);
