@@ -49,11 +49,16 @@ export class LLMAdapter {
                     new SystemMessage(systemPrompt),
                     new HumanMessage(userPrompt),
                 ];
-                const response = await this._llmService.generateResponse(messages);
+                // Forward tools from options to LLMService so the model can call them
+                const tools = options.tools || [];
+                const response = await this._llmService.generateResponse(messages, tools);
+                // Return full response so callers can inspect tool_calls and metadata
                 return {
                     content: response.content,
                     model: options.model || this._provider,
                     usage: response.usage_metadata || null,
+                    tool_calls: response.tool_calls || response.toolCalls || null,
+                    raw: response,
                 };
             } catch (err) {
                 console.warn(`[LLMAdapter] LLMService falló, intentando fallback remoto: ${err.message}`);
