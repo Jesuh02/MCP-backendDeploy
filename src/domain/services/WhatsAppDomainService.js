@@ -311,26 +311,37 @@ export class WhatsAppDomainService {
                 // 3) Try native https request
                 try {
                     const https = await import('node:https');
+                    const tls = await import('node:tls');
                     const urlObj = new URL(candidate.url);
                     const bodyStr = JSON.stringify(candidate.payload);
 
                     const nativeResp = await new Promise((resolve, reject) => {
+                        const hostHeader = urlObj.port ? `${urlObj.hostname}:${urlObj.port}` : urlObj.hostname;
                         const opts = {
                             protocol: urlObj.protocol,
                             hostname: urlObj.hostname,
                             port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
                             path: urlObj.pathname + (urlObj.search || ''),
                             method: 'POST',
-                            // Ensure SNI is sent and prefer TLS 1.2+
-                            servername: urlObj.hostname,
-                            minVersion: 'TLSv1.2',
                             headers: {
                                 'Content-Type': 'application/json',
                                 'Authorization': `Bearer ${apiKey}`,
                                 'Content-Length': Buffer.byteLength(bodyStr),
-                                'Host': urlObj.hostname,
+                                'Host': hostHeader,
                             },
                             timeout: timeoutMs,
+                            // Use a custom TLS connector to guarantee the SNI `servername` value
+                            createConnection: (connectionOptions, callback) => {
+                                const connectOpts = {
+                                    host: urlObj.hostname,
+                                    port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+                                    servername: urlObj.hostname,
+                                    minVersion: 'TLSv1.2',
+                                    // include any socket options passed by https
+                                    ...connectionOptions,
+                                };
+                                return tls.connect(connectOpts, callback);
+                            },
                         };
 
                         const req = https.request(opts, (res) => {
