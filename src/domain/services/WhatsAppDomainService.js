@@ -157,7 +157,6 @@ export class WhatsAppDomainService {
         const apiKey = process.env.YCLOUD_API_KEY;
         const baseUrl = process.env.YCLOUD_BASE_URL || 'https://api.ycloud.io/v1';
         if (!instanceId || !apiKey) throw new Error('YCloud credentials not configured');
-
         const url = `${baseUrl.replace(/\/$/, '')}/instances/${instanceId}/messages`;
         const payload = {
             to: (to || '').replace(/^\+/, ''),
@@ -165,25 +164,62 @@ export class WhatsAppDomainService {
             text: { body: String(text || '') },
         };
 
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify(payload),
-        });
+        // Use small retry loop with AbortController timeout to surface network errors
+        const maxAttempts = 3;
+        const timeoutMs = Number(process.env.YCLOUD_REQUEST_TIMEOUT_MS || 8000);
+        let lastErr = null;
 
-        const j = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-            const errMsg = j?.error?.message || j?.message || `YCloud API error: ${resp.status}`;
-            const e = new Error(errMsg);
-            e.meta = j;
-            e.httpStatus = resp.status;
-            throw e;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            const signal = controller ? controller.signal : undefined;
+
+            if (controller) {
+                setTimeout(() => {
+                    try { controller.abort(); } catch (_) { }
+                }, timeoutMs);
+            }
+
+            try {
+                if (process.env.WHATSAPP_DEBUG === 'true') console.log(`[WhatsApp] YCloud POST ${url} attempt=${attempt}`);
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                    },
+                    body: JSON.stringify(payload),
+                    signal,
+                });
+
+                const j = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    const errMsg = j?.error?.message || j?.message || `YCloud API error: ${resp.status}`;
+                    const e = new Error(errMsg);
+                    e.meta = j;
+                    e.httpStatus = resp.status;
+                    throw e;
+                }
+
+                return j;
+            } catch (err) {
+                lastErr = err;
+                // Normalize abort error
+                const isAbort = err && (err.name === 'AbortError' || String(err).toLowerCase().includes('aborted'));
+                const errMsg = isAbort ? `request timeout after ${timeoutMs}ms` : (err.message || String(err));
+                console.warn(`[WhatsApp] YCloud POST failed (attempt=${attempt}): ${errMsg}`);
+
+                // Small backoff before retrying (exponential)
+                if (attempt < maxAttempts) {
+                    const backoff = 200 * Math.pow(2, attempt - 1);
+                    await new Promise(r => setTimeout(r, backoff));
+                    continue;
+                }
+            }
         }
 
-        return j;
+        const finalErr = new Error(`YCloud fetch failed: ${lastErr?.message || String(lastErr)}`);
+        finalErr.meta = lastErr;
+        throw finalErr;
     }
 
     // ═══════════════════════════════════════════════════════════
