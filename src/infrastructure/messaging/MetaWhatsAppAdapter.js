@@ -238,6 +238,15 @@ export class MetaWhatsAppAdapter {
         const response = await fetch(url, options);
         const data = await response.json();
 
+        // Optional verbose debug output controlled by env var
+        if (process.env.WHATSAPP_DEBUG === 'true') {
+            try {
+                console.debug('[MetaWhatsAppAdapter] Response data:', JSON.stringify(data));
+            } catch (e) {
+                console.debug('[MetaWhatsAppAdapter] Response data (non-serializable)');
+            }
+        }
+
         if (!response.ok) {
             const metaError = data?.error || {};
             const rawErrorMsg = metaError.message || `Meta API error: ${response.status}`;
@@ -265,6 +274,8 @@ export class MetaWhatsAppAdapter {
             }
 
             console.error(`[MetaWhatsAppAdapter] ${method} ${url} → ${response.status}:`, errorMsg);
+            // Log raw error object for diagnosis when debug enabled
+            if (process.env.WHATSAPP_DEBUG === 'true') console.error('[MetaWhatsAppAdapter] raw error object:', metaError, 'response body:', data);
             const error = new Error(errorMsg);
             if (isRecipientNotAllowed || treatAsTestModeRestriction) {
                 error.code = 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE';
@@ -278,7 +289,8 @@ export class MetaWhatsAppAdapter {
             // when calling /{phone_number_id}/messages. Attempt automatic discovery
             // of phone_number_id and retry once if permissions error is detected.
             const permissionMsg = String(rawErrorMsg || '').toLowerCase();
-            if (response.status === 403 && permissionMsg.includes('you do not have the necessary permissions') && url.includes('/messages')) {
+            const isPermissionError = (response.status === 403 && permissionMsg.includes('you do not have the necessary permissions')) || (metaError?.code === 200 && permissionMsg.includes('necessary permissions'));
+            if (isPermissionError && url.includes('/messages')) {
                 try {
                     const discovered = await this._discoverPhoneNumberId();
                     if (discovered) {
@@ -298,10 +310,16 @@ export class MetaWhatsAppAdapter {
                         }
                         return retryData;
                     }
+                    // If we got here and reattempted but still failing, add actionable guidance to error
+                    // (handled below if retry fails)
                 } catch (discErr) {
                     console.warn('[MetaWhatsAppAdapter] Phone number discovery failed:', discErr?.message || discErr);
                     // Fall through to throw original error with guidance
                 }
+            }
+            // Augment error message with guidance when permission-related
+            if (isPermissionError) {
+                error.message += ' — Possible causes: wrong ID (use phone_number_id instead of WABA id), token lacks whatsapp_business_messaging/whatsapp_business_management scopes, or phone number not assigned/verified in WhatsApp Manager.';
             }
             throw error;
         }
