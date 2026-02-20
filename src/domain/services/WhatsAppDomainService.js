@@ -45,20 +45,14 @@ export class WhatsAppDomainService {
         progressRepository,
         courseRepository,
         chatMessageRepository,
-        try {
-            // If YCloud is configured, send OTP via YCloud
-            const useYCloud = Boolean(process.env.YCLOUD_INSTANCE_ID && process.env.YCLOUD_API_KEY);
-            if (useYCloud) {
-                await this._sendViaYCloud(normalized, otpMessage);
-            } else {
-                // Prefer template message (requerido por Meta fuera de la ventana de 24h)
-                if (typeof this.whatsAppPort.sendOtpMessage === 'function') {
-                    await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
-                } else {
-                    // Fallback a texto libre (solo funciona si hay conversación abierta)
-                    await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
-                }
-            }
+    }) {
+        this.whatsAppPort = whatsAppPort;
+        this.sessionRepo = whatsAppSessionRepo;
+        this.userRepo = userRepository;
+        this.rolRepo = rolRepository;
+        this.mcpService = mcpDomainService;
+        this.llmService = llmDomainService;
+        this.submissionRepo = submissionRepository;
         this.progressRepo = progressRepository;
         this.courseRepo = courseRepository;
         this.chatMessageRepo = chatMessageRepository;
