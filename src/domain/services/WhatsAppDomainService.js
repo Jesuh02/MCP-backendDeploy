@@ -65,6 +65,17 @@ export class WhatsAppDomainService {
     }
 
     /**
+     * Return true when YCloud is configured in any supported env var shape.
+     * Accepts YCLOUD_INSTANCE_ID or legacy YCLOUD_ID, or YCLOUD_WHATSAPP_NUMBER for v2 sends.
+     */
+    _isYCloudEnabled() {
+        const apiKey = process.env.YCLOUD_API_KEY;
+        const instance = process.env.YCLOUD_INSTANCE_ID || process.env.YCLOUD_ID;
+        const fromNumber = process.env.YCLOUD_WHATSAPP_NUMBER || process.env.YCLOUD_PHONE;
+        return Boolean(apiKey && (instance || fromNumber));
+    }
+
+    /**
      * Verifica disponibilidad del canal WhatsApp (con caché breve).
      * @param {boolean} [forceRefresh=false]
      * @returns {Promise<{available: boolean, reason?: string}>}
@@ -557,7 +568,7 @@ export class WhatsAppDomainService {
         const otpMessage = `🔐 Tu código de verificación CourseV es: *${otpCode}*\n\nEste código expira en 10 minutos.`;
         try {
             // If YCloud is configured prefer it for OTP delivery to avoid Meta Cloud permissions issues
-            if (process.env.YCLOUD_API_KEY && process.env.YCLOUD_INSTANCE_ID) {
+            if (this._isYCloudEnabled()) {
                 try {
                     await this._sendViaYCloud(normalized, otpMessage);
                 } catch (yErr) {
@@ -672,7 +683,7 @@ export class WhatsAppDomainService {
         const name = user?.username || 'usuario';
         const welcomeText = MESSAGES.WELCOME(name);
         try {
-            if (process.env.YCLOUD_API_KEY && process.env.YCLOUD_INSTANCE_ID) {
+            if (this._isYCloudEnabled()) {
                 await this._sendViaYCloud(session.phoneNumber, welcomeText).catch(() => {});
             } else if (this.whatsAppPort) {
                 await this.whatsAppPort.sendTextMessage(session.phoneNumber, welcomeText).catch(() => {});
@@ -701,7 +712,7 @@ export class WhatsAppDomainService {
         // Enviar mensaje de despedida antes de desactivar (usar YCloud si está configurado)
         if (session.phoneNumber && session.isActive) {
             try {
-                if (process.env.YCLOUD_API_KEY && process.env.YCLOUD_INSTANCE_ID) {
+                if (this._isYCloudEnabled()) {
                     await this._sendViaYCloud(session.phoneNumber, MESSAGES.UNLINKED).catch(() => {});
                 } else if (this.whatsAppPort) {
                     await this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.UNLINKED).catch(() => {});
@@ -1027,7 +1038,7 @@ export class WhatsAppDomainService {
             return;
         }
             // If YCloud configured, use it as the primary sender
-            if (process.env.YCLOUD_API_KEY && process.env.YCLOUD_INSTANCE_ID) {
+            if (this._isYCloudEnabled()) {
                 await this._sendViaYCloud(to, text).catch(() => {});
                 return;
             }
