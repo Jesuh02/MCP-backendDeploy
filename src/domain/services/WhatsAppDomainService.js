@@ -642,6 +642,28 @@ export class WhatsAppDomainService {
                             const status = await this._fetchYCloudMessageStatus(mid);
                             providerResp.delivery = status || null;
                             console.log('[WhatsApp] YCloud delivery status:', status);
+                            // If YCloud reports a failure due to 24h window (Meta code 131047),
+                            // try to fallback to Meta template send (if configured) so we can
+                            // start a template conversation.
+                            try {
+                                const ds = providerResp.delivery || {};
+                                const dstatus = (ds.status || ds.state || '').toLowerCase();
+                                const derr = String(ds.errorCode || ds.error_code || ds.error?.code || ds.errorCode || ds.errorMessage || ds.error_message || '').trim();
+                                const derrMsg = String(ds.errorMessage || ds.error_message || ds.error?.message || '').toLowerCase();
+                                const is24h = dstatus === 'failed' && (derr === '131047' || derrMsg.includes('24 hours') || derrMsg.includes('24 horas'));
+                                if (is24h && this.whatsAppPort && typeof this.whatsAppPort.sendOtpMessage === 'function') {
+                                    console.warn('[WhatsApp] YCloud send failed due to 24h window — falling back to Meta template');
+                                    try {
+                                        const metaResp = await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
+                                        providerResp.fallback = { provider: 'Meta', response: metaResp };
+                                        console.log('[WhatsApp] Fallback OTP sent via Meta:', metaResp && (metaResp.messageId || metaResp));
+                                    } catch (mf) {
+                                        console.error('[WhatsApp] Meta fallback also failed:', mf && (mf.message || mf));
+                                    }
+                                }
+                            } catch (e) {
+                                /* ignore fallback errors */
+                            }
                         }
                     } catch (e) {
                         console.warn('[WhatsApp] Failed to fetch YCloud delivery status:', e && (e.message || e));
