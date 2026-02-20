@@ -569,6 +569,9 @@ export class WhatsAppDomainService {
             session = await this.sessionRepo.save(sessionData);
         }
 
+        // Prepare variable to hold provider response for diagnostics
+        let providerResp = null;
+
         // 7. Enviar OTP vía WhatsApp (usa template message para iniciar conversación)
         const otpMessage = `🔐 Tu código de verificación CourseV es: *${otpCode}*\n\nEste código expira en 10 minutos.`;
         try {
