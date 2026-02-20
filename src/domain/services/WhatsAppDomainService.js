@@ -351,12 +351,29 @@ export class WhatsAppDomainService {
         // 7. Enviar OTP vía WhatsApp (usa template message para iniciar conversación)
         const otpMessage = `🔐 Tu código de verificación CourseV es: *${otpCode}*\n\nEste código expira en 10 minutos.`;
         try {
-            // Preferir template message (requerido por Meta fuera de la ventana de 24h)
-            if (typeof this.whatsAppPort.sendOtpMessage === 'function') {
-                await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
+            // If YCloud is configured prefer it for OTP delivery to avoid Meta Cloud permissions issues
+            if (process.env.YCLOUD_API_KEY && process.env.YCLOUD_INSTANCE_ID) {
+                try {
+                    await this._sendViaYCloud(normalized, otpMessage);
+                } catch (yErr) {
+                    // If YCloud fails, fall back to existing port implementation
+                    console.warn('[WhatsApp] YCloud OTP send failed, falling back to port:', yErr.message);
+                    if (typeof this.whatsAppPort?.sendOtpMessage === 'function') {
+                        await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
+                    } else if (typeof this.whatsAppPort?.sendTextMessage === 'function') {
+                        await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
+                    } else {
+                        throw yErr; // rethrow original YCloud error if no fallback available
+                    }
+                }
             } else {
-                // Fallback a texto libre (solo funciona si hay conversación abierta)
-                await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
+                // Preferir template message (requerido por Meta fuera de la ventana de 24h)
+                if (typeof this.whatsAppPort.sendOtpMessage === 'function') {
+                    await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
+                } else {
+                    // Fallback a texto libre (solo funciona si hay conversación abierta)
+                    await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
+                }
             }
         } catch (err) {
             const errorMessage = String(err?.message || '');
