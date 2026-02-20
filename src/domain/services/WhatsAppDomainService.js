@@ -471,6 +471,7 @@ export class WhatsAppDomainService {
      */
     async handleIncomingMessage({ from, messageBody, messageType, waMessageId }) {
         try {
+            console.log(`[WhatsApp] Incoming message from=${from} waMessageId=${waMessageId} type=${messageType} bodyPreview=${String(messageBody).slice(0,200)}`);
             // 1. Marcar mensaje como leído
             if (waMessageId && this.whatsAppPort) {
                 await this.whatsAppPort.markAsRead(waMessageId).catch((e) => {
@@ -490,6 +491,7 @@ export class WhatsAppDomainService {
 
             // 4. Buscar sesión activa por número de teléfono
             const session = await this.sessionRepo.findByPhoneNumber(from);
+            console.log('[WhatsApp] session lookup result:', !!session, session && { id: session.id, userId: session.userId, isActive: session.isActive });
             if (!session || !session.isActive) {
                 await this._sendReply(from, MESSAGES.NOT_LINKED);
                 return;
@@ -506,6 +508,7 @@ export class WhatsAppDomainService {
 
             // 6. Clasificar intención
             const intent = this._classifyIntent(text, userRoles);
+            console.log('[WhatsApp] classified intent:', intent, 'userRoles:', userRoles);
 
             // 7. Verificar permisos
             if (intent.requiresRole && !this._hasPermission(userRoles, intent.requiresRole)) {
@@ -517,7 +520,8 @@ export class WhatsAppDomainService {
 
             // 8. Enrutar al handler correspondiente
             let response;
-            switch (intent.intent) {
+            try {
+                switch (intent.intent) {
                 case 'HELP':
                     response = MESSAGES.HELP;
                     break;
@@ -540,9 +544,17 @@ export class WhatsAppDomainService {
                     default:
                         response = await this._handleGeneralQuestion(text, session, user, userRoles);
                     break;
+            } catch (handlerErr) {
+                console.error('[WhatsApp] handler threw error:', handlerErr && (handlerErr.message || handlerErr));
+                response = MESSAGES.ERROR;
             }
 
             // 9. Enviar respuesta (dividida si es muy larga)
+            if (!response || (typeof response === 'string' && response.trim().length === 0)) {
+                console.warn('[WhatsApp] Empty response from handler — sending fallback notice');
+                response = 'Estoy procesando tu solicitud. Si esto persiste, intenta de nuevo o escribe /ayuda.';
+            }
+
             const chunks = truncateResponse(response);
             for (const chunk of chunks) {
                 await this._sendReply(from, chunk);
