@@ -260,6 +260,7 @@ export class WhatsAppDomainService {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
+                            'X-API-Key': apiKey,
                             'Authorization': `Bearer ${apiKey}`,
                         },
                         body: JSON.stringify(candidate.payload),
@@ -287,7 +288,7 @@ export class WhatsAppDomainService {
                     if (axiosModule) {
                         try {
                             const axiosResp = await axiosModule.post(candidate.url, candidate.payload, {
-                                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                                headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey, 'Authorization': `Bearer ${apiKey}` },
                                 timeout: timeoutMs,
                                 validateStatus: null,
                             });
@@ -325,6 +326,7 @@ export class WhatsAppDomainService {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
+                                'X-API-Key': apiKey,
                                 'Authorization': `Bearer ${apiKey}`,
                                 'Content-Length': Buffer.byteLength(bodyStr),
                                 'Host': hostHeader,
