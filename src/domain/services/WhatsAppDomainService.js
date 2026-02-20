@@ -321,10 +321,14 @@ export class WhatsAppDomainService {
                             port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
                             path: urlObj.pathname + (urlObj.search || ''),
                             method: 'POST',
+                            // Ensure SNI is sent and prefer TLS 1.2+
+                            servername: urlObj.hostname,
+                            minVersion: 'TLSv1.2',
                             headers: {
                                 'Content-Type': 'application/json',
                                 'Authorization': `Bearer ${apiKey}`,
                                 'Content-Length': Buffer.byteLength(bodyStr),
+                                'Host': urlObj.hostname,
                             },
                             timeout: timeoutMs,
                         };
