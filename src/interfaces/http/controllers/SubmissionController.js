@@ -81,6 +81,9 @@ export class SubmissionController extends BaseController {
     /**
      * Proxy/stream a submission file from R2 storage.
      * This avoids exposing the R2 bucket URL to clients.
+     *
+     * Refactored: delegates key extraction to R2StorageAdapter.extractObjectKey()
+     * instead of duplicating URL-parsing logic here (DIP + DRY).
      */
     getFile = async(req, res, next) => {
         try {
@@ -95,20 +98,15 @@ export class SubmissionController extends BaseController {
                 return res.status(404).json({ success: false, error: 'No file associated with this submission' });
             }
 
-            let key = fileUri;
-            if (fileUri.includes('.r2.dev/')) {
-                key = fileUri.split('.r2.dev/')[1];
-            } else if (fileUri.includes('.r2.cloudflarestorage.com/')) {
-                const parts = fileUri.split('.r2.cloudflarestorage.com/');
-                key = parts[1];
-            }
-
-            if (fileUri.startsWith('file:///')) {
+            if (fileUri.startsWith('file:///') || fileUri.startsWith('content://')) {
                 return res.status(404).json({
                     success: false,
                     error: 'Archivo almacenado localmente en el dispositivo, no disponible remotamente'
                 });
             }
+
+            // Delegate key extraction to the storage adapter (DIP)
+            const key = this.storageAdapter.extractObjectKey(fileUri) || fileUri;
 
             const { buffer, contentType } = await this.storageAdapter.fetchFile(key);
             const fileName = submission.file_name || submission.fileName || path.basename(key);
