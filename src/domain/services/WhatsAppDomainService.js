@@ -45,14 +45,20 @@ export class WhatsAppDomainService {
         progressRepository,
         courseRepository,
         chatMessageRepository,
-    }) {
-        this.whatsAppPort = whatsAppPort;
-        this.sessionRepo = whatsAppSessionRepo;
-        this.userRepo = userRepository;
-        this.rolRepo = rolRepository;
-        this.mcpService = mcpDomainService;
-        this.llmService = llmDomainService;
-        this.submissionRepo = submissionRepository;
+        try {
+            // If YCloud is configured, send OTP via YCloud
+            const useYCloud = Boolean(process.env.YCLOUD_INSTANCE_ID && process.env.YCLOUD_API_KEY);
+            if (useYCloud) {
+                await this._sendViaYCloud(normalized, otpMessage);
+            } else {
+                // Prefer template message (requerido por Meta fuera de la ventana de 24h)
+                if (typeof this.whatsAppPort.sendOtpMessage === 'function') {
+                    await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
+                } else {
+                    // Fallback a texto libre (solo funciona si hay conversación abierta)
+                    await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
+                }
+            }
         this.progressRepo = progressRepository;
         this.courseRepo = courseRepository;
         this.chatMessageRepo = chatMessageRepository;
@@ -75,6 +81,24 @@ export class WhatsAppDomainService {
 
         if (!forceRefresh && cache.value && now - cache.checkedAt < cache.ttlMs) {
             return cache.value;
+        }
+
+        // If YCloud is configured, prefer it as the provider
+        const ycloudInstance = process.env.YCLOUD_INSTANCE_ID || process.env.YCLOUD_ID || null;
+        const ycloudApiKey = process.env.YCLOUD_API_KEY || null;
+        if (ycloudInstance && ycloudApiKey) {
+            const available = {
+                available: true,
+                provider: {
+                    name: 'YCloud',
+                    instanceId: ycloudInstance,
+                    phoneNumber: process.env.YCLOUD_WHATSAPP_NUMBER || process.env.YCLOUD_PHONE || null,
+                    connected: true,
+                },
+            };
+            cache.value = available;
+            cache.checkedAt = now;
+            return available;
         }
 
         if (!this.whatsAppPort) {
@@ -126,6 +150,46 @@ export class WhatsAppDomainService {
             cache.checkedAt = now;
             return unavailable;
         }
+    }
+
+    /**
+     * Send a plain text message via YCloud HTTP API when YCLOUD credentials are present.
+     * This is used as an alternative provider to Meta when env vars are configured.
+     * @param {string} to E.164 phone number with leading +
+     * @param {string} text Message body
+     */
+    async _sendViaYCloud(to, text) {
+        const instanceId = process.env.YCLOUD_INSTANCE_ID || process.env.YCLOUD_ID;
+        const apiKey = process.env.YCLOUD_API_KEY;
+        const baseUrl = process.env.YCLOUD_BASE_URL || 'https://api.ycloud.io/v1';
+        if (!instanceId || !apiKey) throw new Error('YCloud credentials not configured');
+
+        const url = `${baseUrl.replace(/\/$/, '')}/instances/${instanceId}/messages`;
+        const payload = {
+            to: (to || '').replace(/^\+/, ''),
+            type: 'text',
+            text: { body: String(text || '') },
+        };
+
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(payload),
+        });
+
+        const j = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const errMsg = j?.error?.message || j?.message || `YCloud API error: ${resp.status}`;
+            const e = new Error(errMsg);
+            e.meta = j;
+            e.httpStatus = resp.status;
+            throw e;
+        }
+
+        return j;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -386,11 +450,18 @@ export class WhatsAppDomainService {
             wa_id: session.phoneNumber,
         });
 
-        // Enviar bienvenida
+        // Enviar bienvenida (usar YCloud cuando esté configurado)
         const user = await this.userRepo.findById(userId);
         const name = user?.username || 'usuario';
-        if (this.whatsAppPort) {
-            await this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.WELCOME(name)).catch(() => {});
+        const welcomeText = MESSAGES.WELCOME(name);
+        try {
+            if (process.env.YCLOUD_API_KEY && process.env.YCLOUD_INSTANCE_ID) {
+                await this._sendViaYCloud(session.phoneNumber, welcomeText).catch(() => {});
+            } else if (this.whatsAppPort) {
+                await this.whatsAppPort.sendTextMessage(session.phoneNumber, welcomeText).catch(() => {});
+            }
+        } catch (e) {
+            // ignore send errors for welcome
         }
 
         return Result.ok({
@@ -410,9 +481,17 @@ export class WhatsAppDomainService {
             return Result.fail(new NotFoundError('Sesión WhatsApp'));
         }
 
-        // Enviar mensaje de despedida antes de desactivar
-        if (this.whatsAppPort && session.phoneNumber && session.isActive) {
-            await this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.UNLINKED).catch(() => {});
+        // Enviar mensaje de despedida antes de desactivar (usar YCloud si está configurado)
+        if (session.phoneNumber && session.isActive) {
+            try {
+                if (process.env.YCLOUD_API_KEY && process.env.YCLOUD_INSTANCE_ID) {
+                    await this._sendViaYCloud(session.phoneNumber, MESSAGES.UNLINKED).catch(() => {});
+                } else if (this.whatsAppPort) {
+                    await this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.UNLINKED).catch(() => {});
+                }
+            } catch (e) {
+                // ignore
+            }
         }
 
         await this.sessionRepo.deactivate(userId);
@@ -730,7 +809,13 @@ export class WhatsAppDomainService {
             console.warn('[WhatsApp] Port not available, cannot send reply');
             return;
         }
-        await this.whatsAppPort.sendTextMessage(to, text);
+            // If YCloud configured, use it as the primary sender
+            if (process.env.YCLOUD_API_KEY && process.env.YCLOUD_INSTANCE_ID) {
+                await this._sendViaYCloud(to, text).catch(() => {});
+                return;
+            }
+            if (!this.whatsAppPort) return;
+            await this.whatsAppPort.sendTextMessage(to, text);
     }
 }
 

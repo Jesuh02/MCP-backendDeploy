@@ -225,16 +225,6 @@ export class MetaWhatsAppAdapter {
         );
     }
 
-    async getProviderInfo() {
-        return {
-            provider: 'meta',
-            name: process.env.WHATSAPP_PROVIDER_NAME || null,
-            businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || null,
-            phoneNumber: this.phoneId,
-            connected: await this.isAvailable(),
-        };
-    }
-
     // ═══════════════════════════════════════════════════════════
     // HTTP interno
     // ═══════════════════════════════════════════════════════════
