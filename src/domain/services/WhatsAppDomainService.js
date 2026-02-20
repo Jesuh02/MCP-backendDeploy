@@ -123,6 +123,7 @@ export class WhatsAppDomainService {
             return available;
         }
 
+        let providerResp = null;
         try {
             const isAvailable = await this.whatsAppPort.isAvailable();
             const result = isAvailable ? { available: true } : { available: false, reason: 'Canal WhatsApp temporalmente no disponible' };
@@ -575,6 +576,7 @@ export class WhatsAppDomainService {
             if (this._isYCloudEnabled()) {
                 try {
                     const yresp = await this._sendViaYCloud(normalized, otpMessage);
+                    providerResp = { provider: 'YCloud', response: yresp };
                     console.log('[WhatsApp] OTP sent via YCloud:', yresp && (yresp.messageId || yresp));
                 } catch (yErr) {
                     // When YCloud is explicitly configured we should NOT silently fallback to Meta.
@@ -591,10 +593,12 @@ export class WhatsAppDomainService {
             } else {
                 // Preferir template message (requerido por Meta fuera de la ventana de 24h)
                 if (typeof this.whatsAppPort.sendOtpMessage === 'function') {
-                    await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
+                    const mresp = await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
+                    providerResp = { provider: 'Meta', response: mresp };
                 } else {
                     // Fallback a texto libre (solo funciona si hay conversación abierta)
-                    await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
+                    const mresp = await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
+                    providerResp = { provider: 'Meta', response: mresp };
                 }
             }
         } catch (err) {
@@ -647,6 +651,7 @@ export class WhatsAppDomainService {
             sessionId: session?.id,
             phoneNumber: normalized,
             message: 'Código de verificación enviado a WhatsApp',
+            providerResponse: providerResp,
         });
     }
 
