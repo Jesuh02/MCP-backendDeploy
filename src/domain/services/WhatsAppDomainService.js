@@ -1023,12 +1023,19 @@ export class WhatsAppDomainService {
 
             let promptToSend = text;
             if (isAdmin) {
-                const biPrefix = `CONSULTA DE BUSINESS INTELLIGENCE: ${text}\n\nINSTRUCCIONES: Eres un experto en Business Intelligence y Marketing. Responde con hallazgos basados en DATOS reales consultando la base de datos cuando sea necesario. Usa formato Markdown con secciones: Resumen ejecutivo, Decisiones críticas, KPIs priorizados, Ejemplos de SQL, Acción inmediata. Si necesitas métricas reales llama a la herramienta \"query_database\" a través del agente MCP.`;
-                promptToSend = biPrefix;
+                const username = user?.username || 'usuario';
+                // Use the same BI-style instructions the Android client provides so
+                // WhatsApp responses mimic `DatabaseQueryFragment` behavior.
+                const biPrompt = `CONSULTA DE BUSINESS INTELLIGENCE: ${text}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema'.\n2. Usa 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.).\n3. Genera un reporte con el siguiente formato EXACTO (Markdown):\n\n## Resumen ejecutivo\n[Objetivo y hallazgos principales]\n\n## Decisiones críticas\n1. [Decisión 1]\n2. [Decisión 2]\n\n## KPIs priorizados\n1. [KPI 1]\n2. [KPI 2]\n\n## Ejemplos de SQL\n\`\`\`sql\n-- Ejemplo relevante\nSELECT ...\n\`\`\`\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\n🎯 ¡Bienvenido/a, ${username}!`;
+                promptToSend = biPrompt;
             }
+
+            // Prefer DeepSeek model when configured (LLMDomainService will forward this to the infra adapter)
+            const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
 
             const result = await this.llmService.processPrompt({
                 prompt: promptToSend,
+                model: preferredModel,
                 conversationHistory: context.map(c => ({ role: c.role, content: c.content })),
                 userId: user.id,
                 username: user.username,
