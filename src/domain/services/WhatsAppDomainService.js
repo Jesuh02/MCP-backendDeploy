@@ -416,24 +416,43 @@ export class WhatsAppDomainService {
 
             const baseUrl = process.env.YCLOUD_BASE_URL || 'https://api.ycloud.com/v2';
             const root = baseUrl.replace(/\/$/, '');
-            const candidates = [
-                `${root}/whatsapp/messages/${encodeURIComponent(messageId)}`,
-                `${root}/messages/${encodeURIComponent(messageId)}`,
-                `${root}/whatsapp/message/${encodeURIComponent(messageId)}`,
+            const instanceId = process.env.YCLOUD_INSTANCE_ID || process.env.YCLOUD_ID || null;
+
+            // Candidate URL patterns (include instance scoping variants)
+            const candidates = [];
+            if (instanceId) {
+                candidates.push(`${root}/instances/${encodeURIComponent(instanceId)}/messages/${encodeURIComponent(messageId)}`);
+                candidates.push(`${root}/instances/${encodeURIComponent(instanceId)}/messages/${encodeURIComponent(messageId)}/status`);
+            }
+            candidates.push(`${root}/whatsapp/messages/${encodeURIComponent(messageId)}`);
+            candidates.push(`${root}/messages/${encodeURIComponent(messageId)}`);
+            candidates.push(`${root}/whatsapp/message/${encodeURIComponent(messageId)}`);
+
+            // Try multiple auth header styles (some YCloud setups expect X-API-KEY)
+            const headerVariants = [
+                { name: 'Authorization:Bearer', build: () => ({ 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' }) },
+                { name: 'X-API-KEY', build: () => ({ 'X-API-KEY': apiKey, 'Accept': 'application/json' }) },
+                { name: 'x-api-key', build: () => ({ 'x-api-key': apiKey, 'Accept': 'application/json' }) },
             ];
 
             for (const url of candidates) {
-                try {
-                    const res = await fetch(url, {
-                        method: 'GET',
-                        headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
-                    });
-                    if (!res.ok) continue;
-                    const data = await res.json();
-                    return data;
-                } catch (e) {
-                    // Continue to next candidate
-                    continue;
+                for (const hv of headerVariants) {
+                    try {
+                        const headers = hv.build();
+                        const res = await fetch(url, { method: 'GET', headers });
+                        if (process.env.WHATSAPP_DEBUG === 'true') {
+                            try {
+                                const preview = await res.clone().text().then(t => t.slice(0, 1000)).catch(() => '');
+                                console.log(`[WhatsApp][YCloudStatus] GET ${url} via ${hv.name} => ${res.status} bodyPreview=${preview}`);
+                            } catch (e) { /* ignore logging errors */ }
+                        }
+                        if (!res.ok) continue;
+                        const data = await res.json();
+                        return data;
+                    } catch (e) {
+                        if (process.env.WHATSAPP_DEBUG === 'true') console.warn('[WhatsApp][YCloudStatus] request failed', e && (e.message || e));
+                        continue;
+                    }
                 }
             }
 
