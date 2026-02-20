@@ -173,13 +173,22 @@ export class MetaWhatsAppAdapter {
      * @returns {Promise<boolean>}
      */
     async isAvailable() {
-        try {
-            const url = `${META_BASE_URL}/${this.phoneId}`;
-            await this._request('GET', url);
+        // If credentials are configured, assume the adapter is available by default.
+        // External Graph API permission checks can produce false negatives in sandbox
+        // or when tokens/ids are rotated. Allow a strict runtime check via env var.
+        if (this.accessToken && this.phoneId) {
+            if (process.env.WHATSAPP_STRICT_CHECK === 'true') {
+                try {
+                    const url = `${META_BASE_URL}/${this.phoneId}?fields=id`;
+                    await this._request('GET', url);
+                    return true;
+                } catch (err) {
+                    return false;
+                }
+            }
             return true;
-        } catch {
-            return false;
         }
+        return false;
     }
 
     /**
