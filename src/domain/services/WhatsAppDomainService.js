@@ -261,7 +261,6 @@ export class WhatsAppDomainService {
                         headers: {
                             'Content-Type': 'application/json',
                             'X-API-Key': apiKey,
-                            'Authorization': `Bearer ${apiKey}`,
                         },
                         body: JSON.stringify(candidate.payload),
                         signal,
@@ -288,7 +287,7 @@ export class WhatsAppDomainService {
                     if (axiosModule) {
                         try {
                             const axiosResp = await axiosModule.post(candidate.url, candidate.payload, {
-                                headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey, 'Authorization': `Bearer ${apiKey}` },
+                                headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
                                 timeout: timeoutMs,
                                 validateStatus: null,
                             });
@@ -318,7 +317,7 @@ export class WhatsAppDomainService {
 
                     const nativeResp = await new Promise((resolve, reject) => {
                         const hostHeader = urlObj.port ? `${urlObj.hostname}:${urlObj.port}` : urlObj.hostname;
-                        const opts = {
+                            const opts = {
                             protocol: urlObj.protocol,
                             hostname: urlObj.hostname,
                             port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
@@ -327,7 +326,6 @@ export class WhatsAppDomainService {
                             headers: {
                                 'Content-Type': 'application/json',
                                 'X-API-Key': apiKey,
-                                'Authorization': `Bearer ${apiKey}`,
                                 'Content-Length': Buffer.byteLength(bodyStr),
                                 'Host': hostHeader,
                             },
