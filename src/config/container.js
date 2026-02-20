@@ -50,7 +50,6 @@ import { RAGAdapter } from '../infrastructure/ai/RAGAdapter.js';
 import { GitHubAdapter } from '../infrastructure/github/GitHubAdapter.js';
 import { CacheAdapter } from '../infrastructure/cache/CacheAdapter.js';
 import { MetaWhatsAppAdapter } from '../infrastructure/messaging/MetaWhatsAppAdapter.js';
-import { YCloudWhatsAppAdapter } from '../infrastructure/messaging/YCloudWhatsAppAdapter.js';
 import { SupabaseWhatsAppSessionRepository } from '../infrastructure/database/repositories/SupabaseWhatsAppSessionRepository.js';
 
 // ── Dominio: Servicios (casos de uso) ───────────────────────
@@ -176,25 +175,14 @@ export function createContainer() {
     const cacheAdapter = safeInit('CacheAdapter', () => new CacheAdapter());
 
     // WhatsApp adapter (non-critical — missing env vars will not crash)
-    // Prefer YCloud if configured, otherwise fall back to Meta WhatsApp Cloud
-    let whatsAppAdapter = null;
-    if (process.env.YCLOUD_API_KEY) {
-        whatsAppAdapter = safeInit('YCloudWhatsAppAdapter', () => new YCloudWhatsAppAdapter({
-            apiKey: process.env.YCLOUD_API_KEY,
-            accountId: process.env.YCLOUD_ACCOUNT_ID,
-            phoneNumberId: process.env.YCLOUD_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_NUMBER_ID,
-        }));
-    }
-    if (!whatsAppAdapter) {
-        whatsAppAdapter = safeInit('MetaWhatsAppAdapter', () => new MetaWhatsAppAdapter({
-            accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
-            // Prefer explicit phone_number_id when available to avoid using a WABA ID
-            phoneId: process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID,
-            appSecret: process.env.WHATSAPP_APP_SECRET,
-            otpTemplateName: process.env.WHATSAPP_OTP_TEMPLATE || 'hello_world',
-            otpTemplateLanguage: process.env.WHATSAPP_OTP_TEMPLATE_LANG || 'en_US',
-        }));
-    }
+    const whatsAppAdapter = safeInit('MetaWhatsAppAdapter', () => new MetaWhatsAppAdapter({
+        accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
+        // Prefer explicit phone_number_id when available to avoid using a WABA ID
+        phoneId: process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID,
+        appSecret: process.env.WHATSAPP_APP_SECRET,
+        otpTemplateName: process.env.WHATSAPP_OTP_TEMPLATE || 'hello_world',
+        otpTemplateLanguage: process.env.WHATSAPP_OTP_TEMPLATE_LANG || 'en_US',
+    }));
 
     // ═══════════════════════════════════════════════════════════
     // 2. REPOSITORIOS — Inyectar cliente Supabase

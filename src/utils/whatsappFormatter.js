@@ -69,6 +69,16 @@ export function truncateResponse(text, maxLength = MAX_MESSAGE_LENGTH) {
 }
 
 /**
+ * Format message text for YCloud (uses same WhatsApp-compatible formatting for now)
+ * @param {string} text
+ * @returns {string}
+ */
+export function formatForYCloud(text) {
+    // YCloud expects plain/text similar to WhatsApp Cloud — reuse markdownToWhatsApp
+    return markdownToWhatsApp(text);
+}
+
+/**
  * Formatea una tabla de datos como texto plano legible en WhatsApp.
  * @param {object[]} rows — Array de objetos.
  * @param {string[]} columns — Nombres de columnas a mostrar.
@@ -175,6 +185,7 @@ export default {
     formatTable,
     formatProgressReport,
     formatGradeConfirmation,
+    formatForYCloud,
     MESSAGES,
 };
 
