@@ -29,6 +29,7 @@ export class WhatsAppController {
 
     ensureServiceAvailable(res) {
         if (this.service) return true;
+        console.warn('[WhatsAppController] Service unavailable when handling request');
         res.status(503).json({
             success: false,
             error: 'Servicio de WhatsApp no disponible temporalmente',
@@ -128,6 +129,7 @@ export class WhatsAppController {
      */
     linkAccount = async(req, res, next) => {
         try {
+            console.log('[WhatsAppController] linkAccount called by user:', req.user?.userId, 'body:', req.body);
             if (!this.ensureServiceAvailable(res)) return;
 
             if (typeof this.service.getChannelAvailability === 'function') {
@@ -157,6 +159,7 @@ export class WhatsAppController {
             if (!userId) return res.status(401).json({ success: false, error: 'No autorizado' });
 
             const result = await this.service.linkAccount(userId, value.phoneNumber);
+            console.log('[WhatsAppController] linkAccount service result:', result && (result.isOk ? (result.isOk() ? 'ok' : 'fail') : 'unknown'));
             if (result.isFail()) {
                 const domainError = result.getError();
 
@@ -209,6 +212,7 @@ export class WhatsAppController {
      */
     verifyOtp = async(req, res, next) => {
         try {
+            console.log('[WhatsAppController] verifyOtp called by user:', req.user?.userId, 'body:', req.body);
             if (!this.ensureServiceAvailable(res)) return;
 
             const { error, value } = verifyWhatsAppSchema.validate(req.body);
