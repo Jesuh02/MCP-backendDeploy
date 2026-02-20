@@ -543,7 +543,8 @@ export class WhatsAppDomainService {
                     case 'GENERAL_QUESTION':
                     default:
                         response = await this._handleGeneralQuestion(text, session, user, userRoles);
-                    break;
+                        break;
+                }
             } catch (handlerErr) {
                 console.error('[WhatsApp] handler threw error:', handlerErr && (handlerErr.message || handlerErr));
                 response = MESSAGES.ERROR;
