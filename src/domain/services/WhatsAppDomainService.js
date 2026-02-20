@@ -415,7 +415,9 @@ export class WhatsAppDomainService {
         try {
             // 1. Marcar mensaje como leído
             if (waMessageId && this.whatsAppPort) {
-                await this.whatsAppPort.markAsRead(waMessageId).catch(() => {});
+                await this.whatsAppPort.markAsRead(waMessageId).catch((e) => {
+                    console.warn('[WhatsApp] markAsRead failed:', e && (e.message || e));
+                });
             }
 
             // 2. Solo procesar mensajes de texto
@@ -497,7 +499,9 @@ export class WhatsAppDomainService {
             });
         } catch (error) {
             console.error('[WhatsAppDomainService] Error handling message:', error);
-            await this._sendReply(from, MESSAGES.ERROR).catch(() => {});
+            await this._sendReply(from, MESSAGES.ERROR).catch((e) => {
+                console.warn('[WhatsApp] failed to send error reply:', e && (e.message || e));
+            });
         }
     }
 
@@ -570,7 +574,8 @@ export class WhatsAppDomainService {
             // If YCloud is configured prefer it for OTP delivery to avoid Meta Cloud permissions issues
             if (this._isYCloudEnabled()) {
                 try {
-                    await this._sendViaYCloud(normalized, otpMessage);
+                    const yresp = await this._sendViaYCloud(normalized, otpMessage);
+                    console.log('[WhatsApp] OTP sent via YCloud:', yresp && (yresp.messageId || yresp));
                 } catch (yErr) {
                     // When YCloud is explicitly configured we should NOT silently fallback to Meta.
                     // Return a clear error so the client can inform the user and operators can
@@ -684,9 +689,19 @@ export class WhatsAppDomainService {
         const welcomeText = MESSAGES.WELCOME(name);
         try {
             if (this._isYCloudEnabled()) {
-                await this._sendViaYCloud(session.phoneNumber, welcomeText).catch(() => {});
+                try {
+                    const resp = await this._sendViaYCloud(session.phoneNumber, welcomeText);
+                    console.log('[WhatsApp] Sent welcome via YCloud:', resp && (resp.messageId || resp));
+                } catch (e) {
+                    console.warn('[WhatsApp] welcome via YCloud failed:', e && (e.message || e));
+                }
             } else if (this.whatsAppPort) {
-                await this.whatsAppPort.sendTextMessage(session.phoneNumber, welcomeText).catch(() => {});
+                try {
+                    const r = await this.whatsAppPort.sendTextMessage(session.phoneNumber, welcomeText);
+                    console.log('[WhatsApp] Sent welcome via Meta:', r && r.messageId);
+                } catch (e) {
+                    console.warn('[WhatsApp] welcome via Meta failed:', e && (e.message || e));
+                }
             }
         } catch (e) {
             // ignore send errors for welcome
@@ -713,9 +728,19 @@ export class WhatsAppDomainService {
         if (session.phoneNumber && session.isActive) {
             try {
                 if (this._isYCloudEnabled()) {
-                    await this._sendViaYCloud(session.phoneNumber, MESSAGES.UNLINKED).catch(() => {});
+                    try {
+                        const resp = await this._sendViaYCloud(session.phoneNumber, MESSAGES.UNLINKED);
+                        console.log('[WhatsApp] Sent unlink message via YCloud:', resp && (resp.messageId || resp));
+                    } catch (e) {
+                        console.warn('[WhatsApp] Unlink via YCloud failed:', e && (e.message || e));
+                    }
                 } else if (this.whatsAppPort) {
-                    await this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.UNLINKED).catch(() => {});
+                    try {
+                        const r = await this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.UNLINKED);
+                        console.log('[WhatsApp] Sent unlink via Meta:', r && r.messageId);
+                    } catch (e) {
+                        console.warn('[WhatsApp] Unlink via Meta failed:', e && (e.message || e));
+                    }
                 }
             } catch (e) {
                 // ignore
@@ -1039,7 +1064,12 @@ export class WhatsAppDomainService {
         }
             // If YCloud configured, use it as the primary sender
             if (this._isYCloudEnabled()) {
-                await this._sendViaYCloud(to, text).catch(() => {});
+                try {
+                    const resp = await this._sendViaYCloud(to, text);
+                    console.log('[WhatsApp] Sent reply via YCloud:', resp && (resp.messageId || resp));
+                } catch (e) {
+                    console.warn('[WhatsApp] reply via YCloud failed:', e && (e.message || e));
+                }
                 return;
             }
             if (!this.whatsAppPort) return;
