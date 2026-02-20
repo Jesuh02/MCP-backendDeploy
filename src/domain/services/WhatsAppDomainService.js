@@ -403,6 +403,42 @@ export class WhatsAppDomainService {
         throw finalErr;
     }
 
+        /**
+         * Consulta el estado de un mensaje en YCloud usando el message id retornado.
+         * Intenta varios endpoints compatibles para maximizar compatibilidad con versiones.
+         * @param {string} messageId
+         * @returns {Promise<object|null>}
+         */
+        async _fetchYCloudMessageStatus(messageId) {
+            if (!messageId) return null;
+            const apiKey = process.env.YCLOUD_API_KEY;
+            if (!apiKey) return null;
+
+            const baseUrl = process.env.YCLOUD_BASE_URL || 'https://api.ycloud.com/v2';
+            const root = baseUrl.replace(/\/$/, '');
+            const candidates = [
+                `${root}/whatsapp/messages/${encodeURIComponent(messageId)}`,
+                `${root}/messages/${encodeURIComponent(messageId)}`,
+                `${root}/whatsapp/message/${encodeURIComponent(messageId)}`,
+            ];
+
+            for (const url of candidates) {
+                try {
+                    const res = await fetch(url, {
+                        method: 'GET',
+                        headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
+                    });
+                    if (!res.ok) continue;
+                    const data = await res.json();
+                    return data;
+                } catch (e) {
+                    // Continue to next candidate
+                    continue;
+                }
+            }
+
+            return null;
+        }
     // ═══════════════════════════════════════════════════════════
     // CASO DE USO: Manejo de mensajes entrantes (webhook)
     // ═══════════════════════════════════════════════════════════
@@ -581,6 +617,16 @@ export class WhatsAppDomainService {
                     const yresp = await this._sendViaYCloud(normalized, otpMessage);
                     providerResp = { provider: 'YCloud', response: yresp };
                     console.log('[WhatsApp] OTP sent via YCloud:', yresp && (yresp.messageId || yresp));
+                    try {
+                        const mid = yresp?.id || yresp?.messageId || yresp?.wamid || yresp?.waMessageId || null;
+                        if (mid) {
+                            const status = await this._fetchYCloudMessageStatus(mid);
+                            providerResp.delivery = status || null;
+                            console.log('[WhatsApp] YCloud delivery status:', status);
+                        }
+                    } catch (e) {
+                        console.warn('[WhatsApp] Failed to fetch YCloud delivery status:', e && (e.message || e));
+                    }
                 } catch (yErr) {
                     // When YCloud is explicitly configured we should NOT silently fallback to Meta.
                     // Return a clear error so the client can inform the user and operators can
