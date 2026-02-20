@@ -88,6 +88,16 @@ export class YCloudWhatsAppAdapter {
         return true;
     }
 
+    async getProviderInfo() {
+        return {
+            provider: 'ycloud',
+            name: process.env.YCLOUD_PROVIDER_NAME || null,
+            accountId: this.accountId,
+            phoneNumber: this.phoneId,
+            connected: await this.isAvailable(),
+        };
+    }
+
     async _post(url, body) {
         const options = { method: 'POST', headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' } };
         options.body = JSON.stringify(body);

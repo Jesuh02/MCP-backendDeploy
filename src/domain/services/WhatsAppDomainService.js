@@ -98,6 +98,15 @@ export class WhatsAppDomainService {
             const isAvailable = await this.whatsAppPort.isAvailable();
             const result = isAvailable ? { available: true } : { available: false, reason: 'Canal WhatsApp temporalmente no disponible' };
 
+            // Attach provider info when available
+            try {
+                if (typeof this.whatsAppPort.getProviderInfo === 'function') {
+                    result.provider = await this.whatsAppPort.getProviderInfo();
+                }
+            } catch (e) {
+                // ignore provider info errors
+            }
+
             cache.value = result;
             cache.checkedAt = now;
             return result;
@@ -106,6 +115,13 @@ export class WhatsAppDomainService {
                 available: false,
                 reason: 'No se pudo validar disponibilidad del canal WhatsApp',
             };
+            try {
+                if (typeof this.whatsAppPort.getProviderInfo === 'function') {
+                    unavailable.provider = await this.whatsAppPort.getProviderInfo();
+                }
+            } catch (e) {
+                // ignore
+            }
             cache.value = unavailable;
             cache.checkedAt = now;
             return unavailable;
@@ -418,6 +434,7 @@ export class WhatsAppDomainService {
                 linkedAt: null,
                 otpPending: false,
                 channelAvailable: channelAvailability.available,
+                provider: channelAvailability.provider || null,
             });
         }
 
@@ -427,6 +444,7 @@ export class WhatsAppDomainService {
             linkedAt: session.linkedAt,
             otpPending: !session.isActive && Boolean(session.otpCode) && Boolean(session.otpExpiresAt),
             channelAvailable: channelAvailability.available,
+            provider: channelAvailability.provider || null,
         });
     }
 
