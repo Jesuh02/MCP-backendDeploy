@@ -356,15 +356,16 @@ export class WhatsAppDomainService {
                 try {
                     await this._sendViaYCloud(normalized, otpMessage);
                 } catch (yErr) {
-                    // If YCloud fails, fall back to existing port implementation
-                    console.warn('[WhatsApp] YCloud OTP send failed, falling back to port:', yErr.message);
-                    if (typeof this.whatsAppPort?.sendOtpMessage === 'function') {
-                        await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
-                    } else if (typeof this.whatsAppPort?.sendTextMessage === 'function') {
-                        await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
-                    } else {
-                        throw yErr; // rethrow original YCloud error if no fallback available
-                    }
+                    // When YCloud is explicitly configured we should NOT silently fallback to Meta.
+                    // Return a clear error so the client can inform the user and operators can
+                    // diagnose YCloud connectivity/credentials. Include limited error details.
+                    console.error('[WhatsApp] YCloud OTP send failed:', yErr?.message || yErr);
+                    return Result.fail(new AppError(
+                        'No se pudo enviar el código de verificación vía YCloud. Contacta al administrador del sistema.',
+                        502,
+                        true,
+                        'YCLOUD_OTP_SEND_FAILED'
+                    ));
                 }
             } else {
                 // Preferir template message (requerido por Meta fuera de la ventana de 24h)
