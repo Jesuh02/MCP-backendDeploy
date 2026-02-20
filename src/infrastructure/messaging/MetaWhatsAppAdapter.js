@@ -306,7 +306,9 @@ export class MetaWhatsAppAdapter {
                 const isPermissionError = (response.status === 403 && permissionMsg.includes('you do not have the necessary permissions')) || (metaError?.code === 200 && permissionMsg.includes('necessary permissions'));
             if (isPermissionError && url.includes('/messages')) {
                 try {
-                    const discovered = await this._discoverPhoneNumberId();
+                    // If a Business Account ID is provided in env, prefer it as discovery target
+                    const discoveryTarget = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || this.phoneId;
+                    const discovered = await this._discoverPhoneNumberId(discoveryTarget);
                     if (discovered) {
                         const newUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
                         console.log(`[MetaWhatsAppAdapter] Retrying ${method} ${newUrl} after discovering phone_number_id=${this.phoneId}`);
@@ -326,7 +328,9 @@ export class MetaWhatsAppAdapter {
                     }
                     // If discovery returned false, attempt to fetch phone_numbers for diagnostics
                     try {
-                        const diagUrl = `${META_BASE_URL}/${this.phoneId}/phone_numbers`;
+                        // Prefer using the configured Business Account ID for diagnostics
+                        const diagTarget = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || this.phoneId;
+                        const diagUrl = `${META_BASE_URL}/${diagTarget}/phone_numbers`;
                         const diagResp = await fetch(diagUrl, { method: 'GET', headers: { Authorization: `Bearer ${this.accessToken}` } });
                         const diagJson = await diagResp.json();
                         console.warn('[MetaWhatsAppAdapter] Discovery diagnostics:', diagJson);
@@ -334,7 +338,13 @@ export class MetaWhatsAppAdapter {
                             const ids = diagJson.data.map(d => d.id).join(', ');
                             error.message += ` Discovered candidate phone_number ids: ${ids}.`;
                         } else if (diagJson?.error) {
-                            error.message += ` Discovery diagnostic error: ${diagJson.error.message}`;
+                            // Avoid appending confusing field errors coming from querying a phone_number_id
+                            const diagMsg = String(diagJson.error.message || '').trim();
+                            if (diagMsg && !diagMsg.includes('Tried accessing nonexisting field')) {
+                                error.message += ` Discovery diagnostic error: ${diagMsg}`;
+                            } else {
+                                error.message += ' Discovery diagnostic did not return usable phone number ids.';
+                            }
                         } else {
                             error.message += ' No phone_numbers found during discovery.';
                         }
@@ -362,14 +372,15 @@ export class MetaWhatsAppAdapter {
      * If discovery succeeds, updates `this.phoneId` and `this.messagesUrl`.
      * @returns {Promise<boolean>} true if a phone_number_id was found and set
      */
-    async _discoverPhoneNumberId() {
-        if (!this.accessToken || !this.phoneId) return false;
+    async _discoverPhoneNumberId(targetId = null) {
+        const target = targetId || this.phoneId;
+        if (!this.accessToken || !target) return false;
 
         const tryUrls = [
-            `${META_BASE_URL}/${this.phoneId}/phone_numbers`,
-            `${META_BASE_URL}/${this.phoneId}?fields=phone_numbers{display_phone_number,id}`,
+            `${META_BASE_URL}/${target}/phone_numbers`,
+            `${META_BASE_URL}/${target}?fields=phone_numbers{display_phone_number,id}`,
             // Some Graph shapes may return phone_numbers under different fields
-            `${META_BASE_URL}/${this.phoneId}?fields=owned_phone_numbers{display_phone_number,id}`,
+            `${META_BASE_URL}/${target}?fields=owned_phone_numbers{display_phone_number,id}`,
         ];
 
         for (const u of tryUrls) {
