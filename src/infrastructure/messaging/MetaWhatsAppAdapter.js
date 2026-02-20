@@ -66,7 +66,7 @@ export class MetaWhatsAppAdapter {
         };
 
         const response = await this._request('POST', this.messagesUrl, body);
-        const messageId = response?.messages?.[0]?.id || null;
+        const messageId = response ? .messages ? .[0] ? .id || null;
         return { messageId };
     }
 
@@ -101,7 +101,7 @@ export class MetaWhatsAppAdapter {
         };
 
         const response = await this._request('POST', this.messagesUrl, payload);
-        const messageId = response?.messages?.[0]?.id || null;
+        const messageId = response ? .messages ? .[0] ? .id || null;
         return { messageId };
     }
 
@@ -135,7 +135,7 @@ export class MetaWhatsAppAdapter {
         };
 
         const response = await this._request('POST', this.messagesUrl, body);
-        const messageId = response?.messages?.[0]?.id || null;
+        const messageId = response ? .messages ? .[0] ? .id || null;
         return { messageId };
     }
 
@@ -262,11 +262,11 @@ export class MetaWhatsAppAdapter {
         }
 
         if (!response.ok) {
-            const metaError = data?.error || {};
+            const metaError = data ? .error || {};
             const rawErrorMsg = metaError.message || `Meta API error: ${response.status}`;
             const metaCode = Number(metaError.code);
             const metaSubcode = Number(metaError.error_subcode);
-            const isHelloWorldTemplate = body?.type === 'template' && body?.template?.name === 'hello_world';
+            const isHelloWorldTemplate = body ? .type === 'template' && body ? .template ? .name === 'hello_world';
             const isRecipientNotAllowed =
                 metaCode === 131030 ||
                 String(rawErrorMsg).includes('131030') ||
@@ -303,7 +303,7 @@ export class MetaWhatsAppAdapter {
             // when calling /{phone_number_id}/messages. Attempt automatic discovery
             // of phone_number_id and retry once if permissions error is detected.
             const permissionMsg = String(rawErrorMsg || '').toLowerCase();
-            const isPermissionError = (response.status === 403 && permissionMsg.includes('you do not have the necessary permissions')) || (metaError?.code === 200 && permissionMsg.includes('necessary permissions'));
+            const isPermissionError = (response.status === 403 && permissionMsg.includes('you do not have the necessary permissions')) || (metaError ? .code === 200 && permissionMsg.includes('necessary permissions'));
             if (isPermissionError && url.includes('/messages')) {
                 try {
                     const discovered = await this._discoverPhoneNumberId();
@@ -316,7 +316,7 @@ export class MetaWhatsAppAdapter {
                         const retryResp = await fetch(newUrl, retryOptions);
                         const retryData = await retryResp.json();
                         if (!retryResp.ok) {
-                            const retryErrMsg = retryData?.error?.message || `Meta API error: ${retryResp.status}`;
+                            const retryErrMsg = retryData ? .error ? .message || `Meta API error: ${retryResp.status}`;
                             console.error(`[MetaWhatsAppAdapter] Retry failed: ${retryResp.status} ${retryErrMsg}`);
                             const retryError = new Error(retryErrMsg);
                             retryError.httpStatus = retryResp.status;
@@ -333,16 +333,16 @@ export class MetaWhatsAppAdapter {
                         if (diagResp.ok && Array.isArray(diagJson.data) && diagJson.data.length > 0) {
                             const ids = diagJson.data.map(d => d.id).join(', ');
                             error.message += ` Discovered candidate phone_number ids: ${ids}.`;
-                        } else if (diagJson?.error) {
+                        } else if (diagJson ? .error) {
                             error.message += ` Discovery diagnostic error: ${diagJson.error.message}`;
                         } else {
                             error.message += ' No phone_numbers found during discovery.';
                         }
                     } catch (dErr) {
-                        console.warn('[MetaWhatsAppAdapter] Discovery diagnostic request failed:', dErr?.message || dErr);
+                        console.warn('[MetaWhatsAppAdapter] Discovery diagnostic request failed:', dErr ? .message || dErr);
                     }
                 } catch (discErr) {
-                    console.warn('[MetaWhatsAppAdapter] Phone number discovery failed:', discErr?.message || discErr);
+                    console.warn('[MetaWhatsAppAdapter] Phone number discovery failed:', discErr ? .message || discErr);
                     // Fall through to throw original error with guidance
                 }
             }
@@ -379,7 +379,7 @@ export class MetaWhatsAppAdapter {
                 if (!resp.ok) continue;
 
                 // Try several shapes where phone numbers may be present
-                const rawCandidates = json?.data || json?.phone_numbers || json?.phone_numbers?.data || json?.owned_phone_numbers || json?.owned_phone_numbers?.data || null;
+                const rawCandidates = json ? .data || json ? .phone_numbers || json ? .phone_numbers ? .data || json ? .owned_phone_numbers || json ? .owned_phone_numbers ? .data || null;
 
                 let candidates = null;
                 if (Array.isArray(rawCandidates)) candidates = rawCandidates;
@@ -422,4 +422,3 @@ export class MetaWhatsAppAdapter {
 }
 
 export default MetaWhatsAppAdapter;
-
