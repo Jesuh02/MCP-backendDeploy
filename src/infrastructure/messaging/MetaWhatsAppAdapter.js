@@ -316,7 +316,7 @@ export class MetaWhatsAppAdapter {
                         const retryResp = await fetch(newUrl, retryOptions);
                         const retryData = await retryResp.json();
                         if (!retryResp.ok) {
-                            const retryErrMsg = retryData ? .error ? .message || `Meta API error: ${retryResp.status}`;
+                            const retryErrMsg = retryData?.error?.message || `Meta API error: ${retryResp.status}`;
                             console.error(`[MetaWhatsAppAdapter] Retry failed: ${retryResp.status} ${retryErrMsg}`);
                             const retryError = new Error(retryErrMsg);
                             retryError.httpStatus = retryResp.status;
