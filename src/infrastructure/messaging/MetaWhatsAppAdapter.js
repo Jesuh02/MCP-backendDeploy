@@ -274,10 +274,88 @@ export class MetaWhatsAppAdapter {
             error.metaCode = metaError.code;
             error.metaSubcode = metaError.error_subcode;
             error.httpStatus = response.status;
+            // Common root cause: using a Business Account ID instead of a Phone Number ID
+            // when calling /{phone_number_id}/messages. Attempt automatic discovery
+            // of phone_number_id and retry once if permissions error is detected.
+            const permissionMsg = String(rawErrorMsg || '').toLowerCase();
+            if (response.status === 403 && permissionMsg.includes('you do not have the necessary permissions') && url.includes('/messages')) {
+                try {
+                    const discovered = await this._discoverPhoneNumberId();
+                    if (discovered) {
+                        const newUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
+                        console.log(`[MetaWhatsAppAdapter] Retrying ${method} ${newUrl} after discovering phone_number_id=${this.phoneId}`);
+                        // Retry once with the discovered phoneId
+                        const retryOptions = { method, headers: options.headers };
+                        if (body && method !== 'GET') retryOptions.body = JSON.stringify(body);
+                        const retryResp = await fetch(newUrl, retryOptions);
+                        const retryData = await retryResp.json();
+                        if (!retryResp.ok) {
+                            const retryErrMsg = retryData?.error?.message || `Meta API error: ${retryResp.status}`;
+                            console.error(`[MetaWhatsAppAdapter] Retry failed: ${retryResp.status} ${retryErrMsg}`);
+                            const retryError = new Error(retryErrMsg);
+                            retryError.httpStatus = retryResp.status;
+                            throw retryError;
+                        }
+                        return retryData;
+                    }
+                } catch (discErr) {
+                    console.warn('[MetaWhatsAppAdapter] Phone number discovery failed:', discErr?.message || discErr);
+                    // Fall through to throw original error with guidance
+                }
+            }
             throw error;
         }
 
         return data;
+    }
+
+    /**
+     * Attempt to discover a phone_number_id when the configured `phoneId`
+     * appears to be a WhatsApp Business Account ID.
+     * If discovery succeeds, updates `this.phoneId` and `this.messagesUrl`.
+     * @returns {Promise<boolean>} true if a phone_number_id was found and set
+     */
+    async _discoverPhoneNumberId() {
+        if (!this.accessToken || !this.phoneId) return false;
+
+        const tryUrls = [
+            `${META_BASE_URL}/${this.phoneId}/phone_numbers`,
+            `${META_BASE_URL}/${this.phoneId}?fields=phone_numbers{display_phone_number,id}`,
+        ];
+
+        for (const u of tryUrls) {
+            try {
+                const resp = await fetch(u, { method: 'GET', headers: { Authorization: `Bearer ${this.accessToken}` } });
+                const json = await resp.json();
+                if (!resp.ok) continue;
+
+                // Graph returns list under `data` for /phone_numbers
+                const candidates = json?.data || (json?.phone_numbers ? json.phone_numbers.data || json.phone_numbers : null);
+                if (Array.isArray(candidates) && candidates.length > 0) {
+                    const first = candidates[0];
+                    const discoveredId = first.id || first.phone_number_id || null;
+                    if (discoveredId) {
+                        this.phoneId = discoveredId;
+                        this.messagesUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
+                        console.log(`[MetaWhatsAppAdapter] Discovered phone_number_id=${this.phoneId} from ${u}`);
+                        return true;
+                    }
+                }
+
+                // Try alternative shape: json?.phone_numbers?.data
+                const alt = json?.phone_numbers?.data;
+                if (Array.isArray(alt) && alt.length > 0 && alt[0].id) {
+                    this.phoneId = alt[0].id;
+                    this.messagesUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
+                    console.log(`[MetaWhatsAppAdapter] Discovered phone_number_id=${this.phoneId} from ${u}`);
+                    return true;
+                }
+            } catch (e) {
+                // Ignore and try next
+            }
+        }
+
+        return false;
     }
 }
 
