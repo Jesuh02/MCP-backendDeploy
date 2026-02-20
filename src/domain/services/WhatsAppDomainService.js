@@ -197,17 +197,19 @@ export class WhatsAppDomainService {
         let lastErr = null;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-            const signal = controller ? controller.signal : undefined;
+            if (process.env.WHATSAPP_DEBUG === 'true') console.log(`[WhatsApp] YCloud POST ${url} attempt=${attempt}`);
 
-            if (controller) {
-                setTimeout(() => {
-                    try { controller.abort(); } catch (_) { }
-                }, timeoutMs);
-            }
+            // Try sequence: fetch -> axios -> native https
+            let attemptErr = null;
 
+            // 1) Try fetch (global or polyfilled)
             try {
-                if (process.env.WHATSAPP_DEBUG === 'true') console.log(`[WhatsApp] YCloud POST ${url} attempt=${attempt}`);
+                const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                const signal = controller ? controller.signal : undefined;
+                if (controller) {
+                    setTimeout(() => { try { controller.abort(); } catch (_) {} }, timeoutMs);
+                }
+
                 const resp = await fetch(url, {
                     method: 'POST',
                     headers: {
@@ -217,7 +219,6 @@ export class WhatsAppDomainService {
                     body: JSON.stringify(payload),
                     signal,
                 });
-
                 const j = await resp.json().catch(() => ({}));
                 if (!resp.ok) {
                     const errMsg = j?.error?.message || j?.message || `YCloud API error: ${resp.status}`;
@@ -226,21 +227,94 @@ export class WhatsAppDomainService {
                     e.httpStatus = resp.status;
                     throw e;
                 }
-
                 return j;
             } catch (err) {
-                lastErr = err;
-                // Normalize abort error
-                const isAbort = err && (err.name === 'AbortError' || String(err).toLowerCase().includes('aborted'));
-                const errMsg = isAbort ? `request timeout after ${timeoutMs}ms` : (err.message || String(err));
-                console.warn(`[WhatsApp] YCloud POST failed (attempt=${attempt}): ${errMsg}`);
+                attemptErr = err;
+                if (process.env.WHATSAPP_DEBUG === 'true') console.warn(`[WhatsApp] fetch failed: ${err?.code || ''} ${err?.message || err}`);
+            }
 
-                // Small backoff before retrying (exponential)
-                if (attempt < maxAttempts) {
-                    const backoff = 200 * Math.pow(2, attempt - 1);
-                    await new Promise(r => setTimeout(r, backoff));
-                    continue;
+            // 2) Try axios if available
+            try {
+                const axiosModule = await import('axios').then(m => m.default || m).catch(() => null);
+                if (axiosModule) {
+                    try {
+                        const axiosResp = await axiosModule.post(url, payload, {
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                            timeout: timeoutMs,
+                            validateStatus: null,
+                        });
+                        if (axiosResp.status && axiosResp.status >= 200 && axiosResp.status < 300) {
+                            return axiosResp.data;
+                        }
+                        const errMsg = axiosResp.data?.error?.message || axiosResp.data?.message || `YCloud API error: ${axiosResp.status}`;
+                        const e = new Error(errMsg);
+                        e.meta = axiosResp.data;
+                        e.httpStatus = axiosResp.status;
+                        throw e;
+                    } catch (aErr) {
+                        attemptErr = aErr;
+                        if (process.env.WHATSAPP_DEBUG === 'true') console.warn('[WhatsApp] axios failed:', aErr && (aErr.code || aErr.message));
+                    }
                 }
+            } catch (_) { /* ignore import errors */ }
+
+            // 3) Try native https request
+            try {
+                const https = await import('node:https');
+                const urlObj = new URL(url);
+                const bodyStr = JSON.stringify(payload);
+
+                const nativeResp = await new Promise((resolve, reject) => {
+                    const opts = {
+                        protocol: urlObj.protocol,
+                        hostname: urlObj.hostname,
+                        port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+                        path: urlObj.pathname + (urlObj.search || ''),
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                            'Content-Length': Buffer.byteLength(bodyStr),
+                        },
+                        timeout: timeoutMs,
+                    };
+
+                    const req = https.request(opts, (res) => {
+                        let data = '';
+                        res.on('data', (c) => data += c);
+                        res.on('end', () => resolve({ status: res.statusCode, body: data }));
+                    });
+
+                    req.on('error', (e) => reject(e));
+                    req.on('timeout', () => { req.destroy(new Error('request timeout')); });
+                    req.write(bodyStr);
+                    req.end();
+                });
+
+                const parsedBody = (() => {
+                    try { return JSON.parse(nativeResp.body || '{}'); } catch (_) { return {}; }
+                })();
+                if (nativeResp.status >= 200 && nativeResp.status < 300) return parsedBody;
+                const errMsg = parsedBody?.error?.message || parsedBody?.message || `YCloud API error: ${nativeResp.status}`;
+                const e = new Error(errMsg);
+                e.meta = parsedBody;
+                e.httpStatus = nativeResp.status;
+                throw e;
+            } catch (nErr) {
+                attemptErr = nErr;
+                if (process.env.WHATSAPP_DEBUG === 'true') console.warn('[WhatsApp] native https failed:', nErr && (nErr.code || nErr.message));
+            }
+
+            // record last attempt error and backoff
+            lastErr = attemptErr;
+            const code = attemptErr && (attemptErr.code || attemptErr.httpStatus || attemptErr.name) || 'UNKNOWN';
+            const msg = attemptErr && (attemptErr.message || String(attemptErr));
+            console.warn(`[WhatsApp] YCloud POST failed (attempt=${attempt}): ${code} ${msg}`);
+
+            if (attempt < maxAttempts) {
+                const backoff = 200 * Math.pow(2, attempt - 1);
+                await new Promise(r => setTimeout(r, backoff));
+                continue;
             }
         }
 
