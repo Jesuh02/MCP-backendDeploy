@@ -737,6 +737,55 @@ export class WhatsAppDomainService {
             ));
         }
 
+        // If we obtained a delivery status and it indicates failure, surface a clear error
+        try {
+            const delivery = providerResp?.delivery;
+            const fallback = providerResp?.fallback;
+            const deliveryStatus = delivery?.status || (delivery?.state) || null;
+            const deliveryErr = String(delivery?.errorCode || delivery?.error_code || delivery?.error?.code || delivery?.errorMessage || delivery?.error_message || '').trim();
+
+            if (deliveryStatus && String(deliveryStatus).toLowerCase() === 'failed') {
+                // Known undeliverable codes (Meta/YCloud mappings)
+                if (deliveryErr === '131026') {
+                    console.warn('[WhatsApp] Message undeliverable (131026) for', normalized, providerResp);
+                    return Result.fail(new AppError(
+                        'No fue posible entregar el código de verificación: el número objetivo no acepta mensajes (undeliverable). Verifica el número e inténtalo nuevamente.',
+                        400,
+                        true,
+                        'WHATSAPP_UNDELIVERABLE'
+                    ));
+                }
+
+                // If YCloud failed due to 24h window but we attempted a Meta fallback and it succeeded, continue.
+                if (deliveryErr === '131047') {
+                    const metaOk = fallback && fallback.provider === 'Meta' && (fallback.response?.messageId || fallback.response?.message_id);
+                    if (metaOk) {
+                        console.log('[WhatsApp] Meta fallback succeeded after 131047');
+                    } else {
+                        console.warn('[WhatsApp] YCloud failed 131047 and Meta fallback did not succeed', providerResp);
+                        return Result.fail(new AppError(
+                            'No se pudo iniciar la conversación por WhatsApp (fuera de ventana de 24h). Pide al usuario que envíe un mensaje al número de la empresa para activar la conversación, o agrega el número como tester.',
+                            400,
+                            true,
+                            'WHATSAPP_24H_WINDOW'
+                        ));
+                    }
+                }
+
+                // Generic failed case: surface provider info
+                console.warn('[WhatsApp] Delivery failed for', normalized, providerResp);
+                return Result.fail(new AppError(
+                    'No se pudo entregar el código de verificación. Verifica el número y que el destinatario tenga WhatsApp o no haya bloqueado al remitente.',
+                    400,
+                    true,
+                    'WHATSAPP_DELIVERY_FAILED'
+                ));
+            }
+        } catch (e) {
+            // If any error occurs during delivery inspection, log and continue to return ok with providerResponse
+            console.warn('[WhatsApp] Error inspecting delivery status:', e && (e.message || e));
+        }
+
         return Result.ok({
             sessionId: session?.id,
             phoneNumber: normalized,
