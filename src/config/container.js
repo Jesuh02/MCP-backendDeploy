@@ -177,7 +177,8 @@ export function createContainer() {
     // WhatsApp adapter (non-critical — missing env vars will not crash)
     const whatsAppAdapter = safeInit('MetaWhatsAppAdapter', () => new MetaWhatsAppAdapter({
         accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
-        phoneId: process.env.WHATSAPP_PHONE_ID,
+        // Prefer explicit phone_number_id when available to avoid using a WABA ID
+        phoneId: process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID,
         appSecret: process.env.WHATSAPP_APP_SECRET,
         otpTemplateName: process.env.WHATSAPP_OTP_TEMPLATE || 'hello_world',
         otpTemplateLanguage: process.env.WHATSAPP_OTP_TEMPLATE_LANG || 'en_US',
