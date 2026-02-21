@@ -64,26 +64,38 @@ export class ExcelDomainService {
         }
 
         if (!dataToExport || dataToExport.length === 0) {
-            // don't treat "no rows" as an error; users may still want an Excel file
-            // with the appropriate column headers.  We'll continue to generate an
-            // empty workbook so that the WhatsApp handler can return a valid URL.
-            console.warn('ExcelDomainService: query returned no rows, generating blank file');
+            // no rows returned from the query.  Instead of generating a completely
+            // empty workbook (which yields a file with no headers at all and is
+            // confusing for users), create a placeholder sheet containing either
+            // the query text or a descriptive message.  This ensures the resulting
+            // Excel file is never completely blank and provides context for the
+            // issue.
+            console.warn('ExcelDomainService: query returned no rows, creating placeholder sheet');
             dataToExport = dataToExport || [];
-            // Note: further down the code will still compute ws from json_to_sheet,
-            // which creates only a header row when given an empty array and a header
-            // array.  If we can't infer headers we'll just return a blank sheet.
+            // we will build a special worksheet later below when dataToExport is
+            // empty, so leave it as an empty array here.
         }
 
         //  3. Generar Excel 
         try {
             const wb = xlsx.utils.book_new();
-            const ws = xlsx.utils.json_to_sheet(dataToExport);
+            let ws;
 
-            // Auto-width columns
-            const colWidths = Object.keys(dataToExport[0] || {}).map(key => ({
-                wch: Math.max(key.length, 15)
-            }));
-            ws["!cols"] = colWidths;
+            if (dataToExport.length === 0) {
+                // build a one‑row sheet with a message (the query text gives context)
+                const msg = `No se encontraron filas para la consulta:\n${query}`;
+                ws = xlsx.utils.aoa_to_sheet([[msg]]);
+                // make column wide enough for the message
+                ws["!cols"] = [{ wch: Math.max(msg.length, 15) }];
+            } else {
+                ws = xlsx.utils.json_to_sheet(dataToExport);
+
+                // Auto-width columns
+                const colWidths = Object.keys(dataToExport[0] || {}).map(key => ({
+                    wch: Math.max(key.length, 15)
+                }));
+                ws["!cols"] = colWidths;
+            }
 
             xlsx.utils.book_append_sheet(wb, ws, "Results");
             const excelBuffer = xlsx.write(wb, { type: "buffer", bookType: "xlsx" });
