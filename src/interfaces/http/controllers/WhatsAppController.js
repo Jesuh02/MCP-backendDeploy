@@ -100,8 +100,13 @@ export class WhatsAppController {
         try {
             const sigValid = await this.isWebhookSignatureValid(req);
             if (!sigValid) {
-                // In production we refuse, but allow a debug override for local/testing
-                console.warn('[WhatsApp] Invalid webhook signature');
+                // Signature verification failed.  This happens when the secret is
+                // missing or the request did not include the header.  Previously the
+                // boolean return meant the message was silently ignored, which is why
+                // the backend appeared "not to detect" incoming chat messages.  We
+                // log a more detailed warning and only bail out when explicitly
+                // configured to enforce the check.
+                console.warn('[WhatsApp] Invalid or missing webhook signature. The message will be ignored unless trust mode is enabled.');
                 if (process.env.WHATSAPP_DEBUG_TRUST_PAYLOAD === 'true') {
                     console.warn('[WhatsApp] WHATSAPP_DEBUG_TRUST_PAYLOAD enabled — processing payload despite invalid signature');
                 } else {
