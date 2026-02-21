@@ -1193,7 +1193,19 @@ export class WhatsAppDomainService {
             return '❌ Servicio de generación de Excel no disponible.';
         }
 
-        const q = text.replace(/^\/excel\s*/i, '').trim() || text;
+        // strip leading command and any stray mentions of "excel" so the
+        // MCP agent receives only the business query text.  Leaving the word
+        // "excel" in the prompt was confusing the agent and often resulted in
+        // aggregated count responses instead of detailed row data.
+        let q = text.replace(/^\/excel\s*/i, '');
+        q = q.replace(/\bexcel\b/gi, '').trim();
+        // also remove common filler phrases that users type when requesting an
+        // Excel file.  We keep keywords like "pagos"/"username" so that the
+        // database agent can still detect them.
+        q = q.replace(/dame un\s+excel/gi, '').trim();
+        if (!q) q = text; // fallback to original message if we stripped everything
+        console.log("[WhatsApp] Excel query sanitized to:", q);
+
         try {
             const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id });
             if (gen && gen.isOk && gen.isOk()) {

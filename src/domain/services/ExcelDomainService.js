@@ -40,8 +40,10 @@ export class ExcelDomainService {
         //  1. Obtener datos 
         let result;
         try {
-            console.log("Starting processQueryToData...");
+            console.log("[ExcelDomainService] query requested:", query);
+            console.log("[ExcelDomainService] Starting processQueryToData...");
             result = await this.mcpService.processQueryToData(query, userId);
+            console.log("[ExcelDomainService] raw data result:", JSON.stringify(result).slice(0,1000));
         } catch (e) {
             console.warn("processQueryToData failed, falling back to processQuery:", e.message);
             try {
