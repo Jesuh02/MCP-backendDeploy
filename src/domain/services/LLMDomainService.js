@@ -286,7 +286,25 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
             // If the prompt asks for database queries or BI instructions, expose MCP tools
             const promptLc = String(fullPrompt || '').toLowerCase();
             // Allow caller to force enabling MCP tools (useful for channel integrations)
-            const needsMCPTools = forceMCPTools || /query[_ ]database|consulta de business intelligence|usa \'query_database\'|usa "query_database"/i.test(promptLc);
+            const needsMCPTools = forceMCPTools || /query[_ ]database|consulta de business intelligence|consulta de business inteligencia|usa \'query_database\'|usa "query_database"/i.test(promptLc);
+            // When tools are required we also augment the system prompt with explicit
+            // instructions to use them.  This is important because some LLM models
+            // (including deepseek-chat) may otherwise ignore the tool definitions.
+            if (needsMCPTools) {
+                systemPrompt += `\n\nINSTRUCCIONES DE HERRAMIENTA:\n` +
+                    `Cuando necesites datos reales de la base de datos, DEBES llamar a la ` +
+                    `herramienta \`query_database\` y esperar su respuesta antes de dar la ` +
+                    `respuesta final. No inventes valores. Para solicitarla, emite exactamente ` +
+                    `un bloque JSON como el siguiente en tu mensaje inicial (antes de cualquier ` +
+                    `explicación):\n\n` +
+                    "```json\n" +
+                    "{\"tool\": \"query_database\", \"arguments\": {\"query\": \"<tu SQL aquí>\"}}\n" +
+                    "```\n" +
+                    `Luego, una vez que el backend devuelva los resultados, formula tu reporte ` +
+                    `o conclusión en Markdown. No intentes responder directamente sin usar la ` +
+                    `herramienta. Puedes usar también \`get_database_schema\` si necesitas ver ` +
+                    `el esquema.`;
+            }
             const tools = needsMCPTools ? [
                 { name: 'query_database', description: 'Execute queries on Supabase database', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
                 { name: 'get_database_schema', description: 'Get complete database schema', parameters: { type: 'object', properties: {} } },
@@ -330,6 +348,23 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
                 }
             } catch (toolLoopErr) {
                 console.warn('[LLMDomainService] Tool execution loop failed:', toolLoopErr && (toolLoopErr.message || toolLoopErr));
+            }
+
+            // If we expected tools but never actually got any calls and the model
+            // returned an empty or clearly placeholder answer, try one more time with
+            // an even stronger reminder. This handles cases like the one reported
+            // where deepseek-chat ignored the initial instruction and returned no
+            // content at all.
+            if (needsMCPTools) {
+                const hadToolCalls = Array.isArray(response.tool_calls) && response.tool_calls.length > 0;
+                const textContent = String(response.content || '').trim();
+                if (!hadToolCalls && textContent.length === 0) {
+                    // append a reminder to the system prompt
+                    const extra = `\n\n**RECUERDA:** si la pregunta requiere datos de la base de datos, ` +
+                        `¡DEBES usar la herramienta query_database! Emite primero el JSON ` +
+                        `correspondiente y luego elabora la respuesta con los resultados.`;
+                    response = await this.llm.chat(systemPrompt + extra, fullPrompt, { model, tools });
+                }
             }
 
             // 6. Post-process response to detect Grading Signal
