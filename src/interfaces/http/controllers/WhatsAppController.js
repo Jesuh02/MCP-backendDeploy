@@ -153,12 +153,46 @@ export class WhatsAppController {
 
             const dispatchMessage = (message, contact) => {
                 const rawFrom = message.from || (contact && contact.wa_id) || '';
-                const messageBody = message.text?.body || message.caption || '';
-                const messageType = message.type || 'text';
+                // extract text from a variety of possible message shapes (text, interactive, list, etc.)
+                let messageBody = '';
+                // plain text
+                if (message.text && typeof message.text.body === 'string') {
+                    messageBody = message.text.body;
+                }
+                // interactive buttons or list replies
+                else if (message.interactive) {
+                    const interactive = message.interactive;
+                    if (interactive.button_reply && interactive.button_reply.title) {
+                        messageBody = interactive.button_reply.title;
+                    } else if (interactive.list_reply && interactive.list_reply.title) {
+                        messageBody = interactive.list_reply.title;
+                    } else if (interactive.type === 'product_list' && interactive.product_list_reply && interactive.product_list_reply.product_items) {
+                        // just convert to string representation
+                        messageBody = JSON.stringify(interactive.product_list_reply);
+                    }
+                }
+                // fallback captions (media messages with caption)
+                if (!messageBody && message.caption) {
+                    messageBody = message.caption;
+                }
+                const messageType = message.type || (messageBody ? 'text' : 'unknown');
                 const waMessageId = message.id || message.message_id || null;
 
                 let normalizedFrom = String(rawFrom).trim();
-                if (!normalizedFrom.startsWith('+')) normalizedFrom = '+' + normalizedFrom;
+                // ensure leading plus and default country code if necessary
+                if (!normalizedFrom.startsWith('+')) {
+                    normalizedFrom = '+' + normalizedFrom;
+                }
+                // add default country code when number appears to be missing one
+                const defaultCC = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '';
+                if (defaultCC) {
+                    const digits = normalizedFrom.replace(/^\+/, '');
+                    // if the digits length matches local mobile without country code (e.g. 10)
+                    // and it does not already start with defaultCC, prepend it
+                    if (!digits.startsWith(defaultCC) && digits.length <= 11) {
+                        normalizedFrom = `+${defaultCC}${digits}`;
+                    }
+                }
 
                 this.service.handleIncomingMessage({
                     from: normalizedFrom,
