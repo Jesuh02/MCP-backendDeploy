@@ -146,11 +146,10 @@ export const MESSAGES = {
         `Puedo ayudarte con:\n` +
         `📚 Preguntas generales\n` +
         `📊 Progreso de tus estudiantes\n` +
-        `✏️ Calificar entregas\n\n` +
         `Escribe */ayuda* para ver todos los comandos.`,
 
+
     HELP: `*Comandos disponibles:*\n\n` +
-        `*/calificar* <id> <nota> [feedback]\n→ Califica una entrega\n\n` +
         `*/progreso* [curso]\n→ Ver progreso de estudiantes\n\n` +
         `*/consulta* <pregunta> *(solo admin)*\n→ Consultar base de datos\n\n` +
         `*/desvincular*\n→ Desvincular tu cuenta\n\n` +
