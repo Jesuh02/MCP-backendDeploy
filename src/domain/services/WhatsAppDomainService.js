@@ -18,7 +18,6 @@ import { NotFoundError, ValidationError, ForbiddenError } from '../../shared/err
 import { WhatsAppSession } from '../entities/WhatsAppSession.js';
 import {
     validatePhoneNumber,
-    validateGradeCommand,
     sanitizeInput,
     containsSQLInjection,
 } from '../validators/WhatsAppSchemas.js';
@@ -26,7 +25,6 @@ import {
     markdownToWhatsApp,
     truncateResponse,
     formatProgressReport,
-    formatGradeConfirmation,
     MESSAGES,
 } from '../../utils/whatsappFormatter.js';
 
@@ -616,9 +614,9 @@ export class WhatsAppDomainService {
                 case 'UNLINK':
                     response = await this._handleUnlinkCommand(session.userId);
                     break;
-                case 'GRADE_TASK':
-                    response = await this._handleGradeTask(text, user, userRoles);
-                    break;
+                // grading is disabled for WhatsApp, so we never route here. If
+                // the intent somehow is set to GRADE_TASK we fall through to the
+                // general question handler as a safety measure.
                 case 'STUDENT_PROGRESS':
                     response = await this._handleStudentProgress(text, user);
                     break;
@@ -1074,17 +1072,15 @@ export class WhatsAppDomainService {
         const text = message.trim().toLowerCase();
 
         // 1. Comandos explícitos (mayor prioridad)
-        if (text.startsWith('/calificar')) return { intent: 'GRADE_TASK', requiresRole: 'teacher' };
+        // grading commands have been disabled for WhatsApp: everything else
+        // falls back to the LLM general question handler.
         if (text.startsWith('/progreso')) return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
         if (text.startsWith('/consulta')) return { intent: 'MCP_QUERY', requiresRole: 'admin' };
         if (text.startsWith('/ayuda')) return { intent: 'HELP', requiresRole: null };
         if (text.startsWith('/desvincular')) return { intent: 'UNLINK', requiresRole: null };
         if (text.startsWith('/mi_progreso')) return { intent: 'MY_PROGRESS', requiresRole: null };
 
-        // 2. Detección por palabras clave para calificación
-        if (this._isGradeIntent(text) && (userRoles.includes(2) || userRoles.includes(3))) {
-            return { intent: 'GRADE_TASK', requiresRole: 'teacher' };
-        }
+        // 2. Calificación desactivada: nunca retornamos GRADE_TASK aquí.
 
         // 3. Detección de progreso
         if (this._isProgressIntent(text)) {
@@ -1105,26 +1101,7 @@ export class WhatsAppDomainService {
         return { intent: 'GENERAL_QUESTION', requiresRole: null };
     }
 
-    _isGradeIntent(text) {
-        // Detect only explicit grading commands/verbs.  The previous
-        // implementation matched the naked word "nota", which caused a
-        // general query containing the word "notas" (e.g. "suma de las
-        // notas") to be classified as a grading intent when the sender had
-        // teacher/admin roles.  That misclassification produced a handler
-        // error because the message wasn't actually a `/calificar` command.
-        //
-        // New behaviour:
-        //   * always recognise the slash command /calificar
-        //   * recognise verbs such as calificar, califica, evaluar, evalúa,
-        //     or the phrase "poner nota"
-        //   * **do not** treat the bare word "nota" as a signal by itself
-        //     (it is too general and appears in many innocuous queries).
-        //
-        const lower = text.toLowerCase();
-        if (/\b\/calificar\b/.test(lower)) return true;
-        const keywords = ['calificar', 'califica', 'poner nota', 'evaluar', 'evalúa'];
-        return keywords.some(kw => lower.includes(kw));
-    }
+
 
     _isProgressIntent(text) {
         const keywords = ['progreso', 'avance', 'cómo van', 'como van', 'estudiantes', 'mi progreso'];
@@ -1241,6 +1218,10 @@ export class WhatsAppDomainService {
             let promptToSend = text;
             let forceTools = false;
 
+            // Always instruct the model not to grade tasks when queries come from
+            // WhatsApp. This channel is for open-ended Q&A only.
+            promptToSend = `Por favor responde como un asistente general. NO califiques tareas ni asumas el rol de evaluador.\n\n${promptToSend}`;
+
             // For administrators we always engage the Business Intelligence persona
             // that mirrors the behaviour of DatabaseQueryFragment.kt.  This means every
             // message is sent to the LLM with instructions to use `query_database` when
@@ -1270,7 +1251,10 @@ export class WhatsAppDomainService {
 
             if (result && result.isOk && result.isOk()) {
                 const answer = result.getValue();
-                const responseText = typeof answer === 'string' ? answer : (answer?.response || answer?.text || JSON.stringify(answer));
+                let responseText = typeof answer === 'string' ? answer : (answer?.response || answer?.text || JSON.stringify(answer));
+                // strip any grading signal the LLM may have included; WhatsApp should
+                // behave as a general Q&A channel only
+                responseText = responseText.replace(/\[GRADING_REQUEST(?::\s*\d+(?:\.\d+)?)?\]\s*/gi, '');
                 return markdownToWhatsApp(responseText);
             }
 
@@ -1282,53 +1266,15 @@ export class WhatsAppDomainService {
         }
     }
 
-    /**
-     * Handler: Calificación de tareas (docente + admin).
+    /*
+     * Grade handler is disabled for WhatsApp channel. The method is retained
+     * for reference but should never be invoked because intent classification
+     * no longer returns GRADE_TASK.
      */
     async _handleGradeTask(text, user, userRoles) {
-        try {
-            const parsed = validateGradeCommand(text);
-            if (!parsed.valid) {
-                return `❌ ${parsed.error}\n\nFormato: */calificar* <id_entrega> <nota> [feedback]\nEjemplo: /calificar 45 8.5 Buen trabajo`;
-            }
-
-            const { submissionId, grade, feedback } = parsed;
-
-            // Verificar que la entrega existe
-            const submission = await this.submissionRepo.findById(submissionId);
-            if (!submission) {
-                return `❌ No se encontró la entrega con ID *#${submissionId}*.`;
-            }
-
-            // Verificar que la tarea pertenece a un curso del docente (si no es admin)
-            if (!userRoles.includes(3)) {
-                const isOwner = await this._isSubmissionFromOwnCourse(submission, user.id);
-                if (!isOwner) {
-                    return '❌ Esta entrega no pertenece a ninguno de tus cursos.';
-                }
-            }
-
-            // Actualizar calificación
-            await this.submissionRepo.update(submissionId, {
-                grade,
-                feedback: feedback || null,
-            });
-
-            // Obtener información para la confirmación
-            const taskTitle = submission.taskTitle || submission.task_title || `Tarea #${submission.task_id}`;
-            const studentName = submission.studentName || submission.student_name || `Estudiante #${submission.student_id}`;
-
-            return formatGradeConfirmation({
-                submissionId,
-                taskTitle,
-                studentName,
-                grade,
-                feedback,
-            });
-        } catch (error) {
-            console.error('[WhatsApp] Error grading task:', error.message);
-            return '❌ Error al registrar la calificación. Intenta de nuevo.';
-        }
+        // This should not be called anymore. Log if it ever happens.
+        console.warn('[WhatsApp] _handleGradeTask invoked unexpectedly; grading disabled.');
+        return 'La funcionalidad de calificar tareas no está disponible en WhatsApp.';
     }
 
     /**
