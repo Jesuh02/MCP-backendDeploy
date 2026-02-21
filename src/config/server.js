@@ -86,6 +86,17 @@ export function createApp() {
         app.handle(req, res, next);
     });
 
+    // WhatsApp webhook legacy support: some deployments configured
+    // the callback as /api/whatsapp/webhook instead of /api/v1/whatsapp/webhook.
+    // Add a transparent redirect so the backend still processes the message
+    // and logs appear even when the URL is off-by-one.
+    app.use('/api/whatsapp', (req, res, next) => {
+        const suffix = req.url; // e.g. '/webhook'
+        req.originalUrl = `/api/v1/whatsapp${suffix}`;
+        req.url = `/api/v1/whatsapp${suffix}`;
+        app.handle(req, res, next);
+    });
+
     // Legacy Payment routes → redirect /api/payment/* to /api/v1/payment/*
     // Android PaymentApi.kt uses /api/payment/* endpoints directly.
     // IMPORTANT: Override originalUrl so AuthMiddleware sees '/api/v1/...' and enforces JWT.
