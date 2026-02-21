@@ -25,17 +25,55 @@ export class SupabaseWhatsAppSessionRepository {
      * @returns {Promise<WhatsAppSession|null>}
      */
     async findByPhoneNumber(phoneNumber) {
-        const { data, error } = await this.client
-            .from(this.table)
-            .select('*')
-            .eq('phone_number', phoneNumber)
-            .maybeSingle();
+        // Try multiple normalized variants to be resilient to incoming formats
+        const variants = new Set();
+        if (!phoneNumber) return null;
+        const raw = String(phoneNumber).trim();
+        variants.add(raw);
+        // Ensure leading +
+        if (!raw.startsWith('+')) variants.add('+' + raw);
+        // Also try without +
+        if (raw.startsWith('+')) variants.add(raw.replace(/^[+]/, ''));
 
-        if (error) {
-            console.error('[WhatsAppSessionRepo] findByPhoneNumber error:', error.message);
-            return null;
+        // Try exact matches in order
+        for (const p of variants) {
+            try {
+                const { data, error } = await this.client
+                    .from(this.table)
+                    .select('*')
+                    .eq('phone_number', p)
+                    .maybeSingle();
+
+                if (error) {
+                    console.error('[WhatsAppSessionRepo] findByPhoneNumber error for', p, error.message);
+                    continue;
+                }
+
+                if (data) return WhatsAppSession.fromSupabaseRow(data);
+            } catch (e) {
+                console.error('[WhatsAppSessionRepo] findByPhoneNumber unexpected error for', p, e && e.message);
+                continue;
+            }
         }
-        return data ? WhatsAppSession.fromSupabaseRow(data) : null;
+
+        // Fallback: try loose match by stripping non-digits
+        try {
+            const digits = raw.replace(/\D+/g, '');
+            if (digits) {
+                const { data, error } = await this.client
+                    .from(this.table)
+                    .select('*')
+                    .ilike('phone_number', `%${digits}`)
+                    .limit(1)
+                    .maybeSingle();
+
+                if (!error && data) return WhatsAppSession.fromSupabaseRow(data);
+            }
+        } catch (e) {
+            console.error('[WhatsAppSessionRepo] loose findByPhoneNumber failed:', e && e.message);
+        }
+
+        return null;
     }
 
     /**
