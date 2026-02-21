@@ -558,12 +558,14 @@ export class WhatsAppDomainService {
             // log the inbound message now that we know session and (potentially) user
             if (this.chatMessageRepo) {
                 try {
+                    // repository expects `message` property (not `content`).
+                    // also coerce null/undefined to empty string to avoid NOT NULL
                     await this.chatMessageRepo.create({
                         session_id: session ? session.id : null,
                         user_id: session ? session.userId : null,
                         channel: 'whatsapp',
                         direction: 'inbound',
-                        content: messageBody,
+                        message: messageBody || '',
                         metadata: { waMessageId, from },
                     });
                 } catch (e) {
@@ -660,7 +662,7 @@ export class WhatsAppDomainService {
                             user_id: user ? user.id : null,
                             channel: 'whatsapp',
                             direction: 'outbound',
-                            content: chunk,
+                            message: chunk || '',
                             metadata: { waMessageId: waMessageId || null },
                         });
                     } catch (e) {
@@ -1104,8 +1106,24 @@ export class WhatsAppDomainService {
     }
 
     _isGradeIntent(text) {
-        const keywords = ['calificar', 'califica', 'nota', 'poner nota', 'evaluar', 'evalúa'];
-        return keywords.some(kw => text.includes(kw));
+        // Detect only explicit grading commands/verbs.  The previous
+        // implementation matched the naked word "nota", which caused a
+        // general query containing the word "notas" (e.g. "suma de las
+        // notas") to be classified as a grading intent when the sender had
+        // teacher/admin roles.  That misclassification produced a handler
+        // error because the message wasn't actually a `/calificar` command.
+        //
+        // New behaviour:
+        //   * always recognise the slash command /calificar
+        //   * recognise verbs such as calificar, califica, evaluar, evalúa,
+        //     or the phrase "poner nota"
+        //   * **do not** treat the bare word "nota" as a signal by itself
+        //     (it is too general and appears in many innocuous queries).
+        //
+        const lower = text.toLowerCase();
+        if (/\b\/calificar\b/.test(lower)) return true;
+        const keywords = ['calificar', 'califica', 'poner nota', 'evaluar', 'evalúa'];
+        return keywords.some(kw => lower.includes(kw));
     }
 
     _isProgressIntent(text) {
