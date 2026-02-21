@@ -151,6 +151,32 @@ export class WhatsAppController {
                 console.log('[WhatsApp] webhook payload:', JSON.stringify(body));
             }
 
+            // Support YCloud-style payloads or other integrations that send a
+            // top-level `whatsappInboundMessage` object (common in testing and
+            // alternate providers). Example shape handled:
+            // { type: 'whatsapp.inbound_message.received', whatsappInboundMessage: { from: '5730...', text: { body: 'hi' } } }
+            if (body && body.whatsappInboundMessage) {
+                try {
+                    const inbound = body.whatsappInboundMessage;
+                    if (process.env.WHATSAPP_DEBUG === 'true') {
+                        console.log('[WhatsApp] Detected YCloud-style inbound payload:', JSON.stringify(inbound));
+                    }
+                    const msg = {
+                        from: inbound.from || inbound.phone || inbound.sender || '',
+                        text: { body: inbound.text?.body || inbound.body || '' },
+                        id: inbound.id || inbound.messageId || inbound.message_id || null,
+                        type: 'text',
+                    };
+                    // reuse existing dispatchMessage logic by calling the same internal
+                    // handler used for Meta-style messages. Provide a minimal contact
+                    // object so downstream code can use contact.wa_id if needed.
+                    dispatchMessage(msg, { wa_id: inbound.from || null });
+                } catch (e) {
+                    console.warn('[WhatsApp] Failed to process whatsappInboundMessage shape:', e && e.message);
+                }
+                return;
+            }
+
             // The Meta Cloud API uses object==='whatsapp_business_account' with entry/changes
             // but some alternative providers (YCloud, test harnesses) send a flatter
             // { messages: [...] } structure.  Handle both.
