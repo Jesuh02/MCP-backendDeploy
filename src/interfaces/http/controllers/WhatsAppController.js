@@ -37,7 +37,7 @@ export class WhatsAppController {
         return false;
     }
 
-    isWebhookSignatureValid(req) {
+    async isWebhookSignatureValid(req) {
         const verifySignature = this.service?.whatsAppPort?.verifySignature;
         if (typeof verifySignature !== 'function') return true;
 
@@ -98,7 +98,7 @@ export class WhatsAppController {
         res.status(200).json({ success: true });
 
         try {
-            const sigValid = this.isWebhookSignatureValid(req);
+            const sigValid = await this.isWebhookSignatureValid(req);
             if (!sigValid) {
                 // In production we refuse, but allow a debug override for local/testing
                 console.warn('[WhatsApp] Invalid webhook signature');
