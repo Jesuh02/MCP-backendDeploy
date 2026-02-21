@@ -72,7 +72,13 @@ export class LLMService {
         await ensureLangChainLoaded();
 
         const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
-        const useDeepSeek = process.env.USE_LLM === 'true' && deepSeekApiKey;
+        // enable DeepSeek automatically whenever an API key is configured, unless
+        // the user explicitly disables via USE_LLM="false".  This reduces the
+        // surprising case where DEEPSEEK_API_KEY is set but nothing happens.
+        const useDeepSeek = Boolean(deepSeekApiKey) && process.env.USE_LLM !== 'false';
+        if (deepSeekApiKey && process.env.USE_LLM !== 'true') {
+            console.warn('[LLMService] DEEPSEEK_API_KEY present; enabling LLM even though USE_LLM!=true');
+        }
 
         if (useDeepSeek && ChatOpenAI) {
             const modelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
@@ -98,7 +104,7 @@ export class LLMService {
                 timeout: 30000,
             });
         } else {
-            console.warn('⚠️ No LLM provider available (LangChain not loaded)');
+            console.warn('⚠️ No LLM provider available (LangChain not loaded or disabled)');
         }
     }
 

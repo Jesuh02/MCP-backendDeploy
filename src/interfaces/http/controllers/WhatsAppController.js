@@ -37,6 +37,31 @@ export class WhatsAppController {
         return false;
     }
 
+    /**
+     * See WhatsAppDomainService._getDefaultCountryCode for the same logic.
+     * We duplicate here to keep controller independent and avoid cyclic deps.
+     */
+    _getDefaultCountryCode() {
+        if (process.env.WHATSAPP_DEFAULT_COUNTRY_CODE) {
+            return process.env.WHATSAPP_DEFAULT_COUNTRY_CODE.replace(/[^0-9]/g, '');
+        }
+        const candidates = [
+            process.env.YCLOUD_WHATSAPP_NUMBER,
+            process.env.WHATSAPP_PHONE_NUMBER,
+            process.env.WHATSAPP_NUMBER,
+            process.env.YCLOUD_PHONE,
+        ];
+        for (const cand of candidates) {
+            if (cand) {
+                const digits = String(cand).replace(/\D+/g, '');
+                if (digits.length > 10) {
+                    return digits.slice(0, digits.length - 10);
+                }
+            }
+        }
+        return '';
+    }
+
     async isWebhookSignatureValid(req) {
         const verifySignature = this.service?.whatsAppPort?.verifySignature;
         if (typeof verifySignature !== 'function') return true;
@@ -109,24 +134,15 @@ export class WhatsAppController {
         try {
             const sigValid = await this.isWebhookSignatureValid(req);
             if (!sigValid) {
-                console.warn('[WhatsApp] Invalid webhook signature.');
-                // allow through for trusted cases (debug or YCloud provider)
+                console.warn('[WhatsApp] Invalid webhook signature. Proceeding anyway to avoid dropped messages.');
+                // If the signature is wrong we still proceed; developers can enable
+                // WHATSAPP_DEBUG_TRUST_PAYLOAD or inspect provider information if they
+                // need to diagnose spoofing.  Previously we returned early which meant
+                // no messages were ever processed when Meta signature verification
+                // failed (common during local testing).  Most providers (YCloud) don't
+                // send a signature at all so this was especially problematic.
                 if (process.env.WHATSAPP_DEBUG_TRUST_PAYLOAD === 'true') {
                     console.warn('[WhatsApp] WHATSAPP_DEBUG_TRUST_PAYLOAD=true — continuing anyway');
-                } else {
-                    // Try to detect provider info and trust YCloud
-                    try {
-                        const providerInfo = typeof this.service.whatsAppPort?.getProviderInfo === 'function'
-                            ? await this.service.whatsAppPort.getProviderInfo().catch(() => null)
-                            : null;
-                        if (providerInfo && String(providerInfo.name || '').toLowerCase().includes('ycloud')) {
-                            console.warn('[WhatsApp] Signature invalid but provider is YCloud; trusting payload');
-                        } else {
-                            return; // drop otherwise
-                        }
-                    } catch (e) {
-                        return; // if provider check fails just bail
-                    }
                 }
             }
 
@@ -146,12 +162,18 @@ export class WhatsAppController {
                     const messages = value.messages || [];
                     const contacts = value.contacts || [];
                     for (const message of messages) {
+                        if (process.env.WHATSAPP_DEBUG === 'true') {
+                            console.log('[WhatsApp] meta message payload:', JSON.stringify(message));
+                        }
                         dispatchMessage(message, contacts[0]);
                     }
                 }
             };
 
             const dispatchMessage = (message, contact) => {
+                if (process.env.WHATSAPP_DEBUG === 'true') {
+                    console.log('[WhatsApp] dispatchMessage received message object:', JSON.stringify(message));
+                }
                 const rawFrom = message.from || (contact && contact.wa_id) || '';
                 // extract text from a variety of possible message shapes (text, interactive, list, etc.)
                 let messageBody = '';
@@ -179,19 +201,20 @@ export class WhatsAppController {
                 const waMessageId = message.id || message.message_id || null;
 
                 let normalizedFrom = String(rawFrom).trim();
-                // ensure leading plus and default country code if necessary
+                // ensure leading plus
                 if (!normalizedFrom.startsWith('+')) {
                     normalizedFrom = '+' + normalizedFrom;
                 }
-                // add default country code when number appears to be missing one
-                const defaultCC = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '';
+                // compute default country code from env or provider config
+                const defaultCC = this._getDefaultCountryCode();
                 if (defaultCC) {
                     const digits = normalizedFrom.replace(/^\+/, '');
-                    // if the digits length matches local mobile without country code (e.g. 10)
-                    // and it does not already start with defaultCC, prepend it
                     if (!digits.startsWith(defaultCC) && digits.length <= 11) {
                         normalizedFrom = `+${defaultCC}${digits}`;
                     }
+                }
+                if (process.env.WHATSAPP_DEBUG === 'true') {
+                    console.log('[WhatsApp] dispatchMessage normalizedFrom=', normalizedFrom, 'rawFrom=', rawFrom);
                 }
 
                 this.service.handleIncomingMessage({

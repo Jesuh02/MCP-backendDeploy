@@ -34,8 +34,28 @@ export class SupabaseWhatsAppSessionRepository {
         if (!raw.startsWith('+')) variants.add('+' + raw);
         // Also try without +
         if (raw.startsWith('+')) variants.add(raw.replace(/^[+]/, ''));
-        // Try default country code variant if configured and not already present
-        const defaultCC = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '';
+        // Try default country code variant if configured; infer one from
+        // the provider phone number when the explicit env var is missing.
+        const defaultCC = (() => {
+            if (process.env.WHATSAPP_DEFAULT_COUNTRY_CODE) {
+                return process.env.WHATSAPP_DEFAULT_COUNTRY_CODE.replace(/[^0-9]/g, '');
+            }
+            const candidates = [
+                process.env.YCLOUD_WHATSAPP_NUMBER,
+                process.env.WHATSAPP_PHONE_NUMBER,
+                process.env.WHATSAPP_NUMBER,
+                process.env.YCLOUD_PHONE,
+            ];
+            for (const cand of candidates) {
+                if (cand) {
+                    const digits = String(cand).replace(/\D+/g, '');
+                    if (digits.length > 10) {
+                        return digits.slice(0, digits.length - 10);
+                    }
+                }
+            }
+            return '';
+        })();
         if (defaultCC) {
             let digits = raw.replace(/^\+/, '');
             if (!digits.startsWith(defaultCC)) {

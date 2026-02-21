@@ -473,6 +473,18 @@ export class WhatsAppDomainService {
         try {
             console.log(`[WhatsApp] Incoming message from=${from} waMessageId=${waMessageId} type=${messageType} bodyPreview=${String(messageBody).slice(0,200)}`);
 
+            // avoid processing messages that were sent by the business account itself
+            // (can happen e.g. when using the playground or when the webhook echoes
+            // outgoing messages).  The business number is configured via env vars.
+            const providerNum = (process.env.YCLOUD_WHATSAPP_NUMBER || process.env.WHATSAPP_PHONE_NUMBER || '').replace(/\D+/g, '');
+            if (providerNum) {
+                const justDigits = from.replace(/\D+/g, '');
+                if (justDigits.endsWith(providerNum)) {
+                    console.log('[WhatsApp] Ignoring message from own business number', from);
+                    return;
+                }
+            }
+
             // 1. Marcar mensaje como leído
             if (waMessageId && this.whatsAppPort) {
                 await this.whatsAppPort.markAsRead(waMessageId).catch((e) => {
@@ -493,6 +505,11 @@ export class WhatsAppDomainService {
                 return;
             }
 
+            // logging at debug level helps when the webhook seems not to fire.
+            if (process.env.WHATSAPP_DEBUG === 'true') {
+                console.log(`[WhatsApp] text after sanitization: '${text}'`);
+            }
+
             // 4. Buscar sesión activa por número de teléfono
             let session = await this.sessionRepo.findByPhoneNumber(from);
             console.log('[WhatsApp] session lookup result initial:', !!session, session && { id: session.id, userId: session.userId, phoneNumber: session.phoneNumber, isActive: session.isActive });
@@ -502,16 +519,21 @@ export class WhatsAppDomainService {
             // prefix.  This helps when the user linked using a local number or the
             // provider delivers the "from" value without the country code.
             if (!session) {
-                const defaultCC = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '';
-                if (defaultCC) {
-                    let alt = from;
-                    // remove leading + if present then prefix defaultCC
-                    alt = `+${defaultCC}${alt.replace(/^\+/, '')}`;
-                    session = await this.sessionRepo.findByPhoneNumber(alt);
-                    if (session) {
-                        console.log('[WhatsApp] session found using default country code alt=', alt);
-                    }
-                }
+                // try using configured default country code or infer one from the
+        // business phone number if none was explicitly provided.  This fixes
+        // scenarios where the incoming "from" value lacks "+57" (or any CC)
+        // and the session lookup would otherwise miss because the stored entry
+        // is E.164.
+        const defaultCC = this._getDefaultCountryCode();
+        if (defaultCC) {
+            let alt = from;
+            // remove leading + if present then prefix defaultCC
+            alt = `+${defaultCC}${alt.replace(/^\+/, '')}`;
+            session = await this.sessionRepo.findByPhoneNumber(alt);
+            if (session) {
+                console.log('[WhatsApp] session found using default country code alt=', alt);
+            }
+        }
             }
 
             // If we found a session but the stored phone number differs from the
@@ -546,6 +568,10 @@ export class WhatsAppDomainService {
             if (!session || !session.isActive) {
                 // Try fallbacks: sometimes phone stored without + or other formatting
                 console.warn('[WhatsApp] Session not found or inactive for', from);
+                if (process.env.WHATSAPP_DEBUG === 'true') {
+                    const inferredCC = this._getDefaultCountryCode();
+                    console.log('[WhatsApp] debug session lookup details: inferredCC=', inferredCC);
+                }
                 await this._sendReply(from, MESSAGES.NOT_LINKED);
                 return;
             }
@@ -1089,6 +1115,36 @@ export class WhatsAppDomainService {
         return true;
     }
 
+    /**
+     * Determine the default country code to use when normalizing incoming
+     * phone numbers.  Prefer explicit environment variable but fall back to
+     * parsing the configured WhatsApp number (Meta or YCloud) if available.
+     * @returns {string} e.g. "57" or '' when unable to infer
+     */
+    _getDefaultCountryCode() {
+        if (process.env.WHATSAPP_DEFAULT_COUNTRY_CODE) {
+            return process.env.WHATSAPP_DEFAULT_COUNTRY_CODE.replace(/[^0-9]/g, '');
+        }
+        // look at known configuration values for the provider phone number
+        const candidates = [
+            process.env.YCLOUD_WHATSAPP_NUMBER,
+            process.env.WHATSAPP_PHONE_NUMBER,
+            process.env.WHATSAPP_NUMBER,
+            process.env.YCLOUD_PHONE,
+        ];
+        for (const cand of candidates) {
+            if (cand) {
+                const digits = String(cand).replace(/\D+/g, '');
+                // assume last 10 digits are subscriber number
+                if (digits.length > 10) {
+                    const cc = digits.slice(0, digits.length - 10);
+                    if (cc) return cc;
+                }
+            }
+        }
+        return '';
+    }
+
     // ═══════════════════════════════════════════════════════════
     // HANDLERS POR INTENCIÓN
     // ═══════════════════════════════════════════════════════════
@@ -1099,7 +1155,7 @@ export class WhatsAppDomainService {
      */
     async _handleGeneralQuestion(text, session, user, userRoles = []) {
         try {
-            if (!this.llmService) return 'El servicio de IA no está disponible en este momento.';
+            if (!this.llmService) return 'El servicio de IA no está disponible en este momento. Verifica que DEEPSEEK_API_KEY esté configurado y USE_LLM no esté desactivado.';
 
             // If the admin asked for an Excel explicitly, handle that here before
             // firing off the LLM.  This duplicates some logic from _handleMCPQuery but
