@@ -1203,7 +1203,10 @@ export class WhatsAppDomainService {
         // Excel file.  We keep keywords like "pagos"/"username" so that the
         // database agent can still detect them.
         q = q.replace(/dame un\s+excel/gi, '').trim();
-        if (!q) q = text; // fallback to original message if we stripped everything
+        if (!q) {
+            // if after stripping we have nothing sensible, bail out early
+            return '❌ Debes indicar qué datos quieres en el Excel. Ejemplo: "/excel usuarios activos"';
+        }
         console.log("[WhatsApp] Excel query sanitized to:", q);
 
         try {
