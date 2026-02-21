@@ -1030,18 +1030,22 @@ export class WhatsAppDomainService {
         try {
             if (!this.llmService) return 'El servicio de IA no está disponible en este momento.';
 
-            // If the user is an admin (role 3) prefer a BI/DatabaseQuery persona so
-            // WhatsApp responses mimic the behavior of the Android `DatabaseQueryFragment`.
-            // We keep the prompt small and focused to avoid token inflation.
+            // Decide whether the Business‑Intelligence persona should be used.
+            // It only makes sense when an admin is actually asking a database query;
+            // otherwise generic chat behavior (greetings, small talk) is preferred.
             const isAdmin = Array.isArray(userRoles) && userRoles.includes(3);
             const context = session.conversationContext || [];
 
+            const queryKeywords = /cu[áa]ntos|cuantos|listar|mostrar|select|consultar bd|base de datos/i;
+            const isQueryish = queryKeywords.test(text);
+
             let promptToSend = text;
-            if (isAdmin) {
+            let forceTools = false;
+
+            if (isAdmin && isQueryish) {
+                forceTools = true;
                 const username = user?.username || 'usuario';
-                // Use the same BI-style instructions the Android client provides so
-                // WhatsApp responses mimic `DatabaseQueryFragment` behavior.
-                const biPrompt = `CONSULTA DE BUSINESS INTELLIGENCE: ${text}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema'.\n2. Usa 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.).\n3. Genera un reporte con el siguiente formato EXACTO (Markdown):\n\n## Resumen ejecutivo\n[Objetivo y hallazgos principales]\n\n## Decisiones críticas\n1. [Decisión 1]\n2. [Decisión 2]\n\n## KPIs priorizados\n1. [KPI 1]\n2. [KPI 2]\n\n## Ejemplos de SQL\n\`\`\`sql\n-- Ejemplo relevante\nSELECT ...\n\`\`\`\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\n🎯 ¡Bienvenido/a, ${username}!`;
+                const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${text}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema'.\n2. Usa 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.).\n3. Genera un reporte con el siguiente formato EXACTO (Markdown):\n\n## Resumen ejecutivo\n[Objetivo y hallazgos principales]\n\n## Decisiones críticas\n1. [Decisión 1]\n2. [Decisión 2]\n\n## KPIs priorizados\n1. [KPI 1]\n2. [KPI 2]\n\n## Ejemplos de SQL\n\`\`\`sql\n-- Ejemplo relevante\nSELECT ...\n\`\`\`\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\n🎯 ¡Bienvenido/a, ${username}!`;
                 promptToSend = biPrompt;
             }
 
@@ -1054,8 +1058,8 @@ export class WhatsAppDomainService {
                 conversationHistory: context.map(c => ({ role: c.role, content: c.content })),
                 userId: user.id,
                 username: user.username,
-                // Force MCP tools availability when admin so the LLM can call query_database
-                forceMCPTools: isAdmin,
+                // only force tools when we've decided the query persona applies
+                forceMCPTools: forceTools,
             });
 
             if (result && result.isOk && result.isOk()) {
@@ -1294,18 +1298,25 @@ export class WhatsAppDomainService {
             console.warn('[WhatsApp] Port not available, cannot send reply');
             return;
         }
-            // If YCloud configured, use it as the primary sender
-            if (this._isYCloudEnabled()) {
-                try {
-                    const resp = await this._sendViaYCloud(to, text);
-                    console.log('[WhatsApp] Sent reply via YCloud:', resp && (resp.messageId || resp));
-                } catch (e) {
-                    console.warn('[WhatsApp] reply via YCloud failed:', e && (e.message || e));
-                }
+
+        // If YCloud configured, try it first but fall back to the Meta adapter
+        if (this._isYCloudEnabled()) {
+            try {
+                const resp = await this._sendViaYCloud(to, text);
+                console.log('[WhatsApp] Sent reply via YCloud:', resp && (resp.messageId || resp));
                 return;
+            } catch (e) {
+                console.warn('[WhatsApp] reply via YCloud failed:', e && (e.message || e));
+                // fall through to use Meta adapter below
             }
-            if (!this.whatsAppPort) return;
+        }
+
+        // finally send via the configured WhatsApp port (e.g. Meta)
+        try {
             await this.whatsAppPort.sendTextMessage(to, text);
+        } catch (err) {
+            console.error('[WhatsApp] failed sending reply via port:', err && (err.message || err));
+        }
     }
 }
 

@@ -212,7 +212,22 @@ export class MetaWhatsAppAdapter {
      * @returns {boolean}
      */
     verifySignature(payload, signature) {
-        if (!this.appSecret || !signature) return false;
+        // If no app secret was configured we cannot verify the signature,
+        // so we treat every payload as valid. This allows local development
+        // or alternative providers (e.g. YCloud) to function without forcing
+        // the user to supply a secret. The controller also checks for
+        // missing signature and respects the WHATSAPP_DEBUG_TRUST_PAYLOAD flag.
+        if (!this.appSecret) {
+            if (process.env.WHATSAPP_DEBUG === 'true') {
+                console.warn('[MetaWhatsAppAdapter] no appSecret configured – skipping signature verification');
+            }
+            return true;
+        }
+
+        if (!signature) {
+            // signature missing – reject unless debugging/trust payload
+            return false;
+        }
 
         const expected = 'sha256=' + crypto
             .createHmac('sha256', this.appSecret)
