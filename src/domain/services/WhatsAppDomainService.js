@@ -472,6 +472,7 @@ export class WhatsAppDomainService {
     async handleIncomingMessage({ from, messageBody, messageType, waMessageId }) {
         try {
             console.log(`[WhatsApp] Incoming message from=${from} waMessageId=${waMessageId} type=${messageType} bodyPreview=${String(messageBody).slice(0,200)}`);
+
             // 1. Marcar mensaje como leído
             if (waMessageId && this.whatsAppPort) {
                 await this.whatsAppPort.markAsRead(waMessageId).catch((e) => {
@@ -492,6 +493,23 @@ export class WhatsAppDomainService {
             // 4. Buscar sesión activa por número de teléfono
             const session = await this.sessionRepo.findByPhoneNumber(from);
             console.log('[WhatsApp] session lookup result:', !!session, session && { id: session.id, userId: session.userId, isActive: session.isActive });
+
+            // log the inbound message now that we know session and (potentially) user
+            if (this.chatMessageRepo) {
+                try {
+                    await this.chatMessageRepo.create({
+                        session_id: session ? session.id : null,
+                        user_id: session ? session.userId : null,
+                        channel: 'whatsapp',
+                        direction: 'inbound',
+                        content: messageBody,
+                        metadata: { waMessageId, from },
+                    });
+                } catch (e) {
+                    console.warn('[WhatsApp] failed to log inbound chat message', e && e.message);
+                }
+            }
+
             if (!session || !session.isActive) {
                 // Try fallbacks: sometimes phone stored without + or other formatting
                 console.warn('[WhatsApp] Session not found or inactive for', from);
@@ -510,6 +528,7 @@ export class WhatsAppDomainService {
 
             // 6. Clasificar intención
             const intent = this._classifyIntent(text, userRoles);
+
             console.log('[WhatsApp] classified intent:', intent, 'userRoles:', userRoles);
 
             // 7. Verificar permisos
@@ -561,6 +580,21 @@ export class WhatsAppDomainService {
             const chunks = truncateResponse(response);
             for (const chunk of chunks) {
                 await this._sendReply(from, chunk);
+                // log outbound assistant message
+                if (this.chatMessageRepo) {
+                    try {
+                        await this.chatMessageRepo.create({
+                            session_id: session ? session.id : null,
+                            user_id: user ? user.id : null,
+                            channel: 'whatsapp',
+                            direction: 'outbound',
+                            content: chunk,
+                            metadata: { waMessageId: waMessageId || null },
+                        });
+                    } catch (e) {
+                        console.warn('[WhatsApp] failed to log outbound chat message', e && e.message);
+                    }
+                }
             }
 
             // 10. Actualizar contexto de conversación
@@ -1030,19 +1064,41 @@ export class WhatsAppDomainService {
         try {
             if (!this.llmService) return 'El servicio de IA no está disponible en este momento.';
 
+            // If the admin asked for an Excel explicitly, handle that here before
+            // firing off the LLM.  This duplicates some logic from _handleMCPQuery but
+            // keeps the chat flow responsive even when the message isn't treated as a
+            // query by the LLM itself.
+            if (/^\/excel\b/i.test(text) || /\bexcel\b/i.test(text)) {
+                if (!this.excelService) return '❌ Servicio de generación de Excel no disponible.';
+                try {
+                    const q = text.replace(/^\/excel\s*/i, '').trim() || text;
+                    const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id });
+                    if (gen && gen.isOk && gen.isOk()) {
+                        const v = gen.getValue();
+                        return `✅ Excel generado: ${v.url} (filas: ${v.rows})`;
+                    }
+                    return '❌ No se pudo generar el Excel para esa solicitud.';
+                } catch (e) {
+                    console.error('[WhatsApp] Excel generation failed in general handler:', e);
+                    return '❌ Error generando Excel. Intenta de nuevo más tarde.';
+                }
+            }
+
             // Decide whether the Business‑Intelligence persona should be used.
-            // It only makes sense when an admin is actually asking a database query;
-            // otherwise generic chat behavior (greetings, small talk) is preferred.
+            // Admins always get the BI persona now (see requirement), non-admins get
+            // generic chat.
             const isAdmin = Array.isArray(userRoles) && userRoles.includes(3);
             const context = session.conversationContext || [];
-
-            const queryKeywords = /cu[áa]ntos|cuantos|listar|mostrar|select|consultar bd|base de datos/i;
-            const isQueryish = queryKeywords.test(text);
 
             let promptToSend = text;
             let forceTools = false;
 
-            if (isAdmin && isQueryish) {
+            // For administrators we always engage the Business Intelligence persona
+            // that mirrors the behaviour of DatabaseQueryFragment.kt.  This means every
+            // message is sent to the LLM with instructions to use `query_database` when
+            // appropriate and to format results as a BI report.  Non-admin users will
+            // still receive a generic LLM chat response.
+            if (isAdmin) {
                 forceTools = true;
                 const username = user?.username || 'usuario';
                 const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${text}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema'.\n2. Usa 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.).\n3. Genera un reporte con el siguiente formato EXACTO (Markdown):\n\n## Resumen ejecutivo\n[Objetivo y hallazgos principales]\n\n## Decisiones críticas\n1. [Decisión 1]\n2. [Decisión 2]\n\n## KPIs priorizados\n1. [KPI 1]\n2. [KPI 2]\n\n## Ejemplos de SQL\n\`\`\`sql\n-- Ejemplo relevante\nSELECT ...\n\`\`\`\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\n🎯 ¡Bienvenido/a, ${username}!`;
