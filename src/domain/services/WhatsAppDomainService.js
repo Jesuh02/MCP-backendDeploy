@@ -1052,6 +1052,8 @@ export class WhatsAppDomainService {
                 conversationHistory: context.map(c => ({ role: c.role, content: c.content })),
                 userId: user.id,
                 username: user.username,
+                // Force MCP tools availability when admin so the LLM can call query_database
+                forceMCPTools: isAdmin,
             });
 
             if (result && result.isOk && result.isOk()) {

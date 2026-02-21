@@ -43,6 +43,14 @@ export class LLMAdapter {
         // Try LLMService first
         if (this._llmService) {
             try {
+                // Ensure underlying LLMService finishes lazy initialization
+                if (typeof this._llmService._ensureInitialized === 'function') {
+                    try {
+                        await this._llmService._ensureInitialized();
+                    } catch (initErr) {
+                        console.warn('[LLMAdapter] LLMService initialization warning:', initErr && initErr.message);
+                    }
+                }
                 const { HumanMessage, SystemMessage } = await
                 import ('@langchain/core/messages');
                 const messages = [

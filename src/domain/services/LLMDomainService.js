@@ -44,7 +44,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId, topicId }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId, topicId, forceMCPTools = false }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
@@ -285,7 +285,8 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
             // 5. Call LLM
             // If the prompt asks for database queries or BI instructions, expose MCP tools
             const promptLc = String(fullPrompt || '').toLowerCase();
-            const needsMCPTools = /query[_ ]database|consulta de business intelligence|usa \'query_database\'|usa "query_database"/i.test(promptLc);
+            // Allow caller to force enabling MCP tools (useful for channel integrations)
+            const needsMCPTools = forceMCPTools || /query[_ ]database|consulta de business intelligence|usa \'query_database\'|usa "query_database"/i.test(promptLc);
             const tools = needsMCPTools ? [
                 { name: 'query_database', description: 'Execute queries on Supabase database', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
                 { name: 'get_database_schema', description: 'Get complete database schema', parameters: { type: 'object', properties: {} } },
