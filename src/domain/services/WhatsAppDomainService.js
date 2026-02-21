@@ -472,6 +472,12 @@ export class WhatsAppDomainService {
     async handleIncomingMessage({ from, messageBody, messageType, waMessageId }) {
         try {
             console.log(`[WhatsApp] Incoming message from=${from} waMessageId=${waMessageId} type=${messageType} bodyPreview=${String(messageBody).slice(0,200)}`);
+            // extra debug marker so we can trace that the webhook actually reached
+            // the service.  Sometimes users misconfigure the URL and the request
+            // never even arrives; this line will help quickly spot that case.
+            if (process.env.WHATSAPP_DEBUG === 'true') {
+                console.debug('[WhatsApp] DEBUG: entered handleIncomingMessage');
+            }
 
             // avoid processing messages that were sent by the business account itself
             // (can happen e.g. when using the playground or when the webhook echoes
@@ -633,7 +639,10 @@ export class WhatsAppDomainService {
             // 9. Enviar respuesta (dividida si es muy larga)
             if (!response || (typeof response === 'string' && response.trim().length === 0)) {
                 console.warn('[WhatsApp] Empty response from handler — sending fallback notice');
-                response = 'Estoy procesando tu solicitud. Si esto persiste, intenta de nuevo o escribe /ayuda.';
+                // if the LLM/service produced nothing we still want the user to
+                // see that their message was received; send a generic echo so they
+                // know the backend is alive and they can debug further.
+                response = 'Recibí tu mensaje, pero no pude generar una respuesta. Intenta otra vez o escribe /ayuda.';
             }
 
             const chunks = truncateResponse(response);
