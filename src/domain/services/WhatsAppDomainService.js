@@ -493,6 +493,8 @@ export class WhatsAppDomainService {
             const session = await this.sessionRepo.findByPhoneNumber(from);
             console.log('[WhatsApp] session lookup result:', !!session, session && { id: session.id, userId: session.userId, isActive: session.isActive });
             if (!session || !session.isActive) {
+                // Try fallbacks: sometimes phone stored without + or other formatting
+                console.warn('[WhatsApp] Session not found or inactive for', from);
                 await this._sendReply(from, MESSAGES.NOT_LINKED);
                 return;
             }

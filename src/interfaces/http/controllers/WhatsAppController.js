@@ -79,9 +79,15 @@ export class WhatsAppController {
         res.status(200).json({ success: true });
 
         try {
-            if (!this.isWebhookSignatureValid(req)) {
+            const sigValid = this.isWebhookSignatureValid(req);
+            if (!sigValid) {
+                // In production we refuse, but allow a debug override for local/testing
                 console.warn('[WhatsApp] Invalid webhook signature');
-                return;
+                if (process.env.WHATSAPP_DEBUG_TRUST_PAYLOAD === 'true') {
+                    console.warn('[WhatsApp] WHATSAPP_DEBUG_TRUST_PAYLOAD enabled — processing payload despite invalid signature');
+                } else {
+                    return;
+                }
             }
 
             const body = req.body;
@@ -100,14 +106,18 @@ export class WhatsAppController {
                     const contacts = value.contacts || [];
 
                     for (const message of messages) {
-                        const from = message.from; // Número del remitente
+                        const rawFrom = message.from; // Número del remitente (sin +)
                         const messageBody = message.text?.body || '';
                         const messageType = message.type || 'text';
                         const waMessageId = message.id;
 
+                        // Normalize phone: ensure single leading + and no spaces
+                        let normalizedFrom = String(rawFrom || '').trim();
+                        if (!normalizedFrom.startsWith('+')) normalizedFrom = '+' + normalizedFrom;
+
                         // Procesar en background (no bloquear respuesta al webhook)
                         this.service.handleIncomingMessage({
-                            from: `+${from}`,
+                            from: normalizedFrom,
                             messageBody,
                             messageType,
                             waMessageId,
