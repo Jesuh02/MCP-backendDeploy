@@ -1230,7 +1230,15 @@ export class WhatsAppDomainService {
             if (isAdmin) {
                 forceTools = true;
                 const username = user?.username || 'usuario';
-                const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${text}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema'.\n2. Usa 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.).\n3. Genera un reporte con el siguiente formato EXACTO (Markdown):\n\n## Resumen ejecutivo\n[Objetivo y hallazgos principales]\n\n## Decisiones críticas\n1. [Decisión 1]\n2. [Decisión 2]\n\n## KPIs priorizados\n1. [KPI 1]\n2. [KPI 2]\n\n## Ejemplos de SQL\n\`\`\`sql\n-- Ejemplo relevante\nSELECT ...\n\`\`\`\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\n🎯 ¡Bienvenido/a, ${username}!`;
+                const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${text}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema' (salvo que necesites confirmar la estructura de tablas).\n2. 📌 OBLIGATORIO: usa la herramienta 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.). No inventes datos.\n   - Para invocarla, responde primero con un bloque JSON EXACTO:\n` +
+                    "```json\n" +
+                    "{\"tool\":\"query_database\",\"arguments\":{\"query\":\"<tu SQL aquí>\"}}\n" +
+                    "```\n" +
+                    `   Debes esperar a que el backend ejecute ese SQL y componer tu reporte utilizando la respuesta.\n3. Genera un reporte con el siguiente formato EXACTO (Markdown):\n\n## Resumen ejecutivo\n[Objetivo y hallazgos principales]\n\n## Decisiones críticas\n1. [Decisión 1]\n2. [Decisión 2]\n\n## KPIs priorizados\n1. [KPI 1]\n2. [KPI 2]\n\n## Ejemplos de SQL\n` +
+                    "```sql\n" +
+                    "-- Ejemplo relevante\nSELECT ...\n" +
+                    "```\n" +
+                    `\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\n🎯 ¡Bienvenido/a, ${username}!`;
                 promptToSend = biPrompt;
             }
 
@@ -1252,6 +1260,15 @@ export class WhatsAppDomainService {
             if (result && result.isOk && result.isOk()) {
                 const answer = result.getValue();
                 let responseText = typeof answer === 'string' ? answer : (answer?.response || answer?.text || JSON.stringify(answer));
+                // if answer object had no real content we may have fallen back to
+                // JSON.stringify(answer) (see earlier bug).  Detect that pattern
+                // and treat it as empty so the generic fallback logic can apply.
+                if (typeof answer === 'object' && !answer.response && !answer.text) {
+                    const maybeJson = responseText.trim();
+                    if (maybeJson.startsWith('{') && maybeJson.includes('"model"') && maybeJson.includes('"response"')) {
+                        responseText = '';
+                    }
+                }
                 // strip any grading signal the LLM may have included; WhatsApp should
                 // behave as a general Q&A channel only
                 responseText = responseText.replace(/\[GRADING_REQUEST(?::\s*\d+(?:\.\d+)?)?\]\s*/gi, '');
