@@ -34,6 +34,14 @@ export class SupabaseWhatsAppSessionRepository {
         if (!raw.startsWith('+')) variants.add('+' + raw);
         // Also try without +
         if (raw.startsWith('+')) variants.add(raw.replace(/^[+]/, ''));
+        // Try default country code variant if configured and not already present
+        const defaultCC = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '';
+        if (defaultCC) {
+            let digits = raw.replace(/^\+/, '');
+            if (!digits.startsWith(defaultCC)) {
+                variants.add(`+${defaultCC}${digits}`);
+            }
+        }
 
         // Try exact matches in order
         for (const p of variants) {

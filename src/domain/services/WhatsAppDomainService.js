@@ -488,11 +488,44 @@ export class WhatsAppDomainService {
 
             // 3. Sanitizar entrada
             const text = sanitizeInput(messageBody);
-            if (!text) return;
+            if (!text) {
+                console.warn('[WhatsApp] sanitized messageBody resulted empty, dropping. original:', messageBody);
+                return;
+            }
 
             // 4. Buscar sesión activa por número de teléfono
-            const session = await this.sessionRepo.findByPhoneNumber(from);
-            console.log('[WhatsApp] session lookup result:', !!session, session && { id: session.id, userId: session.userId, isActive: session.isActive });
+            let session = await this.sessionRepo.findByPhoneNumber(from);
+            console.log('[WhatsApp] session lookup result initial:', !!session, session && { id: session.id, userId: session.userId, phoneNumber: session.phoneNumber, isActive: session.isActive });
+
+            // If no session was found, try adding a default country code (e.g. +57)
+            // or stripping leading plus in case the stored record has a different
+            // prefix.  This helps when the user linked using a local number or the
+            // provider delivers the "from" value without the country code.
+            if (!session) {
+                const defaultCC = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '';
+                if (defaultCC) {
+                    let alt = from;
+                    // remove leading + if present then prefix defaultCC
+                    alt = `+${defaultCC}${alt.replace(/^\+/, '')}`;
+                    session = await this.sessionRepo.findByPhoneNumber(alt);
+                    if (session) {
+                        console.log('[WhatsApp] session found using default country code alt=', alt);
+                    }
+                }
+            }
+
+            // If we found a session but the stored phone number differs from the
+            // normalized incoming number, update the record so future lookups are
+            // exact.  This keeps the database in sync with what WhatsApp actually
+            // reports (which may include +57 even when user linked without it).
+            if (session && session.phoneNumber && session.phoneNumber !== from) {
+                try {
+                    await this.sessionRepo.update(session.id, { phone_number: from });
+                    console.log('[WhatsApp] updated session phoneNumber to', from);
+                } catch (e) {
+                    console.warn('[WhatsApp] could not update session phoneNumber', e && e.message);
+                }
+            }
 
             // log the inbound message now that we know session and (potentially) user
             if (this.chatMessageRepo) {
@@ -579,7 +612,11 @@ export class WhatsAppDomainService {
 
             const chunks = truncateResponse(response);
             for (const chunk of chunks) {
-                await this._sendReply(from, chunk);
+                const ok = await this._sendReply(from, chunk);
+                if (!ok) {
+                    console.warn('[WhatsApp] _sendReply returned false; stopping further chunks');
+                    break;
+                }
                 // log outbound assistant message
                 if (this.chatMessageRepo) {
                     try {
@@ -1118,6 +1155,8 @@ export class WhatsAppDomainService {
                 forceMCPTools: forceTools,
             });
 
+            console.log('[WhatsApp] LLM processPrompt result:', result && (result.isOk ? (result.isOk() ? 'ok' : 'fail') : typeof result));
+
             if (result && result.isOk && result.isOk()) {
                 const answer = result.getValue();
                 const responseText = typeof answer === 'string' ? answer : (answer?.response || answer?.text || JSON.stringify(answer));
@@ -1349,10 +1388,16 @@ export class WhatsAppDomainService {
      * @param {string} to — Número destino.
      * @param {string} text — Contenido del mensaje.
      */
+    /**
+     * Envía una respuesta de texto por WhatsApp.
+     * @param {string} to — Número destino.
+     * @param {string} text — Contenido del mensaje.
+     * @returns {Promise<boolean>} true si el envío aparentemente tuvo éxito.
+     */
     async _sendReply(to, text) {
         if (!this.whatsAppPort) {
             console.warn('[WhatsApp] Port not available, cannot send reply');
-            return;
+            return false;
         }
 
         // If YCloud configured, try it first but fall back to the Meta adapter
@@ -1360,7 +1405,7 @@ export class WhatsAppDomainService {
             try {
                 const resp = await this._sendViaYCloud(to, text);
                 console.log('[WhatsApp] Sent reply via YCloud:', resp && (resp.messageId || resp));
-                return;
+                return true;
             } catch (e) {
                 console.warn('[WhatsApp] reply via YCloud failed:', e && (e.message || e));
                 // fall through to use Meta adapter below
@@ -1370,8 +1415,10 @@ export class WhatsAppDomainService {
         // finally send via the configured WhatsApp port (e.g. Meta)
         try {
             await this.whatsAppPort.sendTextMessage(to, text);
+            return true;
         } catch (err) {
             console.error('[WhatsApp] failed sending reply via port:', err && (err.message || err));
+            return false;
         }
     }
 }

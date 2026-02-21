@@ -49,7 +49,17 @@ export function validatePhoneNumber(phone) {
 
     // Asegurar prefijo +
     if (!cleaned.startsWith('+')) {
-        cleaned = `+${cleaned}`;
+        // If a default country code is configured, prepend it when missing.
+        // This lets users enter local numbers (e.g. 3053048316) and still
+        // receive OTPs and messages without having to type +57 manually.
+        const defaultCC = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '';
+        if (defaultCC && !cleaned.startsWith(`+${defaultCC}`)) {
+            // strip any leading + before prefixing with default code
+            const digitsOnly = cleaned.replace(/^\+?/, '');
+            cleaned = `+${defaultCC}${digitsOnly}`;
+        } else {
+            cleaned = `+${cleaned}`;
+        }
     }
 
     // Validar formato E.164: + seguido de 7-15 dígitos
