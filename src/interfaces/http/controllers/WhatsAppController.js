@@ -41,12 +41,31 @@ export class WhatsAppController {
         const verifySignature = this.service?.whatsAppPort?.verifySignature;
         if (typeof verifySignature !== 'function') return true;
 
+        // If signature verification is not implemented, allow processing.
+        // Some providers (YCloud) don't send Meta signatures — allow an explicit
+        // debug override or accept when the configured provider is YCloud.
         const signature = req.get('x-hub-signature-256') || '';
         const payload = req.rawBody || JSON.stringify(req.body || {});
 
         try {
+            // If signature header is missing, allow processing when debugging or using YCloud
+            if (!signature) {
+                if (process.env.WHATSAPP_DEBUG_TRUST_PAYLOAD === 'true') return true;
+                // If the underlying port indicates a non-Meta provider, trust payload
+                const providerInfo = typeof this.service.whatsAppPort.getProviderInfo === 'function'
+                    ? await this.service.whatsAppPort.getProviderInfo().catch(() => null)
+                    : null;
+                if (providerInfo && String(providerInfo.name || '').toLowerCase().includes('ycloud')) return true;
+            }
+
             return verifySignature.call(this.service.whatsAppPort, payload, signature);
-        } catch {
+        } catch (err) {
+            // If verification throws but we're explicitly trusting payloads in debug, continue
+            if (process.env.WHATSAPP_DEBUG_TRUST_PAYLOAD === 'true') {
+                console.warn('[WhatsApp] Signature verification threw but WHATSAPP_DEBUG_TRUST_PAYLOAD=true — continuing', err && err.message);
+                return true;
+            }
+            console.warn('[WhatsApp] Signature verification failed with error:', err && err.message);
             return false;
         }
     }
