@@ -123,6 +123,73 @@ export class WhatsAppController {
     };
 
     /**
+     * Helper used by handleWebhook to normalize an incoming message and forward it
+     * to the domain service.  Factoring this out prevents the "Cannot access
+     * 'dispatchMessage' before initialization" error that occurred when the
+     * helper was declared as a `const` inside handleWebhook and referenced earlier.
+     *
+     * @param {object} message - raw message payload from Meta/YCloud
+     * @param {object|null} contact - optional contact info ({ wa_id })
+     */
+    _dispatchMessage(message, contact) {
+        if (process.env.WHATSAPP_DEBUG === 'true') {
+            console.log('[WhatsApp] dispatchMessage received message object:', JSON.stringify(message));
+        }
+        const rawFrom = message.from || (contact && contact.wa_id) || '';
+        // extract text from a variety of possible message shapes (text, interactive, list, etc.)
+        let messageBody = '';
+        // plain text
+        if (message.text && typeof message.text.body === 'string') {
+            messageBody = message.text.body;
+        }
+        // interactive buttons or list replies
+        else if (message.interactive) {
+            const interactive = message.interactive;
+            if (interactive.button_reply && interactive.button_reply.title) {
+                messageBody = interactive.button_reply.title;
+            } else if (interactive.list_reply && interactive.list_reply.title) {
+                messageBody = interactive.list_reply.title;
+            } else if (interactive.type === 'product_list' && interactive.product_list_reply && interactive.product_list_reply.product_items) {
+                // just convert to string representation
+                messageBody = JSON.stringify(interactive.product_list_reply);
+            }
+        }
+        // fallback captions (media messages with caption)
+        if (!messageBody && message.caption) {
+            messageBody = message.caption;
+        }
+        const messageType = message.type || (messageBody ? 'text' : 'unknown');
+        const waMessageId = message.id || message.message_id || null;
+
+        let normalizedFrom = String(rawFrom).trim();
+        // ensure leading plus
+        if (!normalizedFrom.startsWith('+')) {
+            normalizedFrom = '+' + normalizedFrom;
+        }
+        // compute default country code from env or provider config
+        const defaultCC = this._getDefaultCountryCode();
+        if (defaultCC) {
+            const digits = normalizedFrom.replace(/^\+/, '');
+            if (!digits.startsWith(defaultCC) && digits.length <= 11) {
+                normalizedFrom = `+${defaultCC}${digits}`;
+            }
+        }
+        if (process.env.WHATSAPP_DEBUG === 'true') {
+            console.log('[WhatsApp] dispatchMessage normalizedFrom=', normalizedFrom, 'rawFrom=', rawFrom);
+        }
+
+        // forward to domain service asynchronously and log errors
+        this.service.handleIncomingMessage({
+            from: normalizedFrom,
+            messageBody,
+            messageType,
+            waMessageId,
+        }).catch(err => {
+            console.error('[WhatsApp] Error processing webhook message:', err);
+        });
+    }
+
+    /**
      * POST /webhook — Recepción de mensajes entrantes.
      * Meta envía el payload con las notificaciones de mensajes.
      * Responde 200 inmediatamente para no bloquear el webhook.
@@ -167,10 +234,11 @@ export class WhatsAppController {
                         id: inbound.id || inbound.messageId || inbound.message_id || null,
                         type: 'text',
                     };
-                    // reuse existing dispatchMessage logic by calling the same internal
-                    // handler used for Meta-style messages. Provide a minimal contact
-                    // object so downstream code can use contact.wa_id if needed.
-                    dispatchMessage(msg, { wa_id: inbound.from || null });
+                    // reuse existing dispatch logic by calling the shared helper method.
+                    // Provide a minimal contact object so downstream code can use contact.wa_id
+                    // if needed.  We intentionally do NOT await the promise to keep the
+                    // webhook fast.
+                    this._dispatchMessage(msg, { wa_id: inbound.from || null });
                 } catch (e) {
                     console.warn('[WhatsApp] Failed to process whatsappInboundMessage shape:', e && e.message);
                 }
@@ -191,67 +259,13 @@ export class WhatsAppController {
                         if (process.env.WHATSAPP_DEBUG === 'true') {
                             console.log('[WhatsApp] meta message payload:', JSON.stringify(message));
                         }
-                        dispatchMessage(message, contacts[0]);
+                        this._dispatchMessage(message, contacts[0]);
                     }
                 }
             };
 
-            const dispatchMessage = (message, contact) => {
-                if (process.env.WHATSAPP_DEBUG === 'true') {
-                    console.log('[WhatsApp] dispatchMessage received message object:', JSON.stringify(message));
-                }
-                const rawFrom = message.from || (contact && contact.wa_id) || '';
-                // extract text from a variety of possible message shapes (text, interactive, list, etc.)
-                let messageBody = '';
-                // plain text
-                if (message.text && typeof message.text.body === 'string') {
-                    messageBody = message.text.body;
-                }
-                // interactive buttons or list replies
-                else if (message.interactive) {
-                    const interactive = message.interactive;
-                    if (interactive.button_reply && interactive.button_reply.title) {
-                        messageBody = interactive.button_reply.title;
-                    } else if (interactive.list_reply && interactive.list_reply.title) {
-                        messageBody = interactive.list_reply.title;
-                    } else if (interactive.type === 'product_list' && interactive.product_list_reply && interactive.product_list_reply.product_items) {
-                        // just convert to string representation
-                        messageBody = JSON.stringify(interactive.product_list_reply);
-                    }
-                }
-                // fallback captions (media messages with caption)
-                if (!messageBody && message.caption) {
-                    messageBody = message.caption;
-                }
-                const messageType = message.type || (messageBody ? 'text' : 'unknown');
-                const waMessageId = message.id || message.message_id || null;
-
-                let normalizedFrom = String(rawFrom).trim();
-                // ensure leading plus
-                if (!normalizedFrom.startsWith('+')) {
-                    normalizedFrom = '+' + normalizedFrom;
-                }
-                // compute default country code from env or provider config
-                const defaultCC = this._getDefaultCountryCode();
-                if (defaultCC) {
-                    const digits = normalizedFrom.replace(/^\+/, '');
-                    if (!digits.startsWith(defaultCC) && digits.length <= 11) {
-                        normalizedFrom = `+${defaultCC}${digits}`;
-                    }
-                }
-                if (process.env.WHATSAPP_DEBUG === 'true') {
-                    console.log('[WhatsApp] dispatchMessage normalizedFrom=', normalizedFrom, 'rawFrom=', rawFrom);
-                }
-
-                this.service.handleIncomingMessage({
-                    from: normalizedFrom,
-                    messageBody,
-                    messageType,
-                    waMessageId,
-                }).catch(err => {
-                    console.error('[WhatsApp] Error processing webhook message:', err);
-                });
-            };
+            // dispatchMessage logic has been moved to `_dispatchMessage` helper above
+            // in order to avoid temporal-dead-zone errors.  Calls to it appear below.
 
             // Meta style
             if (body?.object === 'whatsapp_business_account' && Array.isArray(body.entry)) {
@@ -264,7 +278,7 @@ export class WhatsAppController {
             // Generic style (YCloud or similar)
             if (Array.isArray(body?.messages)) {
                 for (const msg of body.messages) {
-                    dispatchMessage(msg, body.contacts ? body.contacts[0] : null);
+                    this._dispatchMessage(msg, body.contacts ? body.contacts[0] : null);
                 }
             }
 
