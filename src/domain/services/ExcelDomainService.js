@@ -1,7 +1,7 @@
 /**
- * ExcelDomainService  Servicio de dominio para generación de reportes Excel.
+ * ExcelDomainService  Servicio de dominio para generaciï¿½n de reportes Excel.
  *
- * Principio SRP: encapsula la lógica de:
+ * Principio SRP: encapsula la lï¿½gica de:
  *   1. Obtener datos desde MCPService (consulta en lenguaje natural  SQL  datos)
  *   2. Generar un archivo Excel (.xlsx) en memoria
  *   3. Subir el buffer resultante a R2 Storage
@@ -52,7 +52,7 @@ export class ExcelDomainService {
         }
 
         //  2. Normalizar estructura de datos 
-        if (!result) return Result.fail("No se obtuvo ningún resultado de la consulta");
+        if (!result) return Result.fail("No se obtuvo ningï¿½n resultado de la consulta");
         
         let dataToExport;
         try {
@@ -62,7 +62,14 @@ export class ExcelDomainService {
         }
 
         if (!dataToExport || dataToExport.length === 0) {
-            return Result.fail("No se encontraron datos para esta consulta");
+            // don't treat "no rows" as an error; users may still want an Excel file
+            // with the appropriate column headers.  We'll continue to generate an
+            // empty workbook so that the WhatsApp handler can return a valid URL.
+            console.warn('ExcelDomainService: query returned no rows, generating blank file');
+            dataToExport = dataToExport || [];
+            // Note: further down the code will still compute ws from json_to_sheet,
+            // which creates only a header row when given an empty array and a header
+            // array.  If we can't infer headers we'll just return a blank sheet.
         }
 
         //  3. Generar Excel 
@@ -102,7 +109,7 @@ export class ExcelDomainService {
     }
 
     /**
-     * Sube un archivo genérico a R2 (para la ruta /upload).
+     * Sube un archivo genï¿½rico a R2 (para la ruta /upload).
      */
     async uploadFile({ buffer, originalname, mimetype, size, userId }) {
         try {

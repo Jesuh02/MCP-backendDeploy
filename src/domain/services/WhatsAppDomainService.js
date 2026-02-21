@@ -623,7 +623,7 @@ export class WhatsAppDomainService {
                     response = await this._handleStudentProgress(text, user);
                     break;
                 case 'MCP_QUERY':
-                    response = await this._handleMCPQuery(text, user);
+                    response = await this._handleMCPQuery(text, user, userRoles);
                     break;
                 case 'MY_PROGRESS':
                     response = await this._handleMyProgress(user);
@@ -1180,29 +1180,42 @@ export class WhatsAppDomainService {
      * Handler: Preguntas generales (todos los roles).
      * Usa LLMDomainService.processPrompt() existente.
      */
+    // internal helper shared by multiple intents.  Returns a chat response
+    // string if the user asked for an Excel file (role‑3 only) or `null` when the
+    // message does not refer to Excel and normal handling should continue.
+    async _maybeHandleExcel(text, user, userRoles = []) {
+        if (!/\bexcel\b/i.test(text)) return null;
+
+        if (!this._hasPermission(userRoles, 'admin')) {
+            return '❌ Solo administradores pueden generar archivos Excel.';
+        }
+        if (!this.excelService) {
+            return '❌ Servicio de generación de Excel no disponible.';
+        }
+
+        const q = text.replace(/^\/excel\s*/i, '').trim() || text;
+        try {
+            const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id });
+            if (gen && gen.isOk && gen.isOk()) {
+                const v = gen.getValue();
+                return `✅ Excel generado: ${v.url} (filas: ${v.rows})`;
+            }
+            const err = gen && gen.getError && gen.getError();
+            const msg = err && err.message ? err.message : 'No se pudo generar el Excel para esa solicitud.';
+            return `❌ ${msg}`;
+        } catch (e) {
+            console.error('[WhatsApp] Excel generation failed:', e);
+            return '❌ Error generando Excel. Intenta de nuevo más tarde.';
+        }
+    }
+
     async _handleGeneralQuestion(text, session, user, userRoles = []) {
         try {
             if (!this.llmService) return 'El servicio de IA no está disponible en este momento. Verifica que DEEPSEEK_API_KEY esté configurado y USE_LLM no esté desactivado.';
 
-            // If the admin asked for an Excel explicitly, handle that here before
-            // firing off the LLM.  This duplicates some logic from _handleMCPQuery but
-            // keeps the chat flow responsive even when the message isn't treated as a
-            // query by the LLM itself.
-            if (/^\/excel\b/i.test(text) || /\bexcel\b/i.test(text)) {
-                if (!this.excelService) return '❌ Servicio de generación de Excel no disponible.';
-                try {
-                    const q = text.replace(/^\/excel\s*/i, '').trim() || text;
-                    const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id });
-                    if (gen && gen.isOk && gen.isOk()) {
-                        const v = gen.getValue();
-                        return `✅ Excel generado: ${v.url} (filas: ${v.rows})`;
-                    }
-                    return '❌ No se pudo generar el Excel para esa solicitud.';
-                } catch (e) {
-                    console.error('[WhatsApp] Excel generation failed in general handler:', e);
-                    return '❌ Error generando Excel. Intenta de nuevo más tarde.';
-                }
-            }
+            // early exit for excel requests
+            const excelResp = await this._maybeHandleExcel(text, user, userRoles);
+            if (excelResp !== null) return excelResp;
 
             // Decide whether the Business‑Intelligence persona should be used.
             // Admins always get the BI persona now (see requirement), non-admins get
@@ -1380,9 +1393,15 @@ export class WhatsAppDomainService {
      * Handler: Consultas MCP (solo admin, rol 3).
      * Usa MCPDomainService.processQuery() existente.
      */
-    async _handleMCPQuery(text, user) {
+    async _handleMCPQuery(text, user, userRoles = []) {
         try {
             if (!this.mcpService) return 'El servicio MCP no está disponible.';
+
+            // check that caller has admin role just in case (intent logic should
+            // have already enforced this).
+            if (!this._hasPermission(userRoles, 'admin')) {
+                return '❌ Solo administradores pueden usar consultas MCP o generar Excel.';
+            }
 
             // Extraer la consulta (quitar el prefijo /consulta si existe)
             let query = text.replace(/^\/consulta\s*/i, '').trim();
@@ -1417,21 +1436,14 @@ export class WhatsAppDomainService {
                 return '❌ Error al ejecutar la consulta. Intenta con otra formulación.';
             }
 
-            // If the user asked for an Excel (keyword /excel or contains 'excel'), generate a file
-            if (/^\/excel\b/i.test(text) || /\bexcel\b/i.test(text)) {
-                if (!this.excelService) return '❌ Servicio de generación de Excel no disponible.';
-                try {
-                    const q = query.replace(/^\/excel\s*/i, '').trim() || query;
-                    const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id });
-                    if (gen && gen.isOk && gen.isOk()) {
-                        const v = gen.getValue();
-                        return `✅ Excel generado: ${v.url} (filas: ${v.rows})`;
-                    }
-                    return '❌ No se pudo generar el Excel para esa consulta.';
-                } catch (e) {
-                    console.error('[WhatsApp] Excel generation failed:', e);
-                    return '❌ Error generando Excel. Intenta de nuevo más tarde.';
-                }
+            // intercept Excel requests (after computing `query` but before
+            // running it) using the shared helper which also enforces the
+            // admin-only restriction.
+            const excelResp = await this._maybeHandleExcel(text, user, userRoles);
+            if (excelResp !== null) {
+                // if the helper decided this was an Excel request, return the
+                // formatted response and skip the normal MCP result handling.
+                return excelResp;
             }
 
             // Normalize result shapes
