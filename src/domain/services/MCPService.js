@@ -1333,6 +1333,9 @@ export class MCPService {
 - USA SOLO columnas que existan en el esquema
 - Incluye LIMIT 1000 para evitar sobrecargar el servidor
 - Si la consulta falla, corrige basándote en el error
+- **EVITA USAR FUNCIONES DE AGREGACIÓN (COUNT, SUM, AVG, etc.)** a menos que el usuario mencione explícitamente "cuenta", "total" o similar. El objetivo principal es devolver filas sin resumir siempre que sea posible.
+- Si el prompt incluye palabras como "pagos", "users", "transacciones", "username" o similares, genera una consulta detallada que liste cada registro relevante en lugar de un solo valor agregado.
+- **IMPORTANTE:** cuando el texto mencione explícitamente que se quiere un "excel" o un reporte, prioriza siempre un resultado tabular con filas completas y evita valores agregados, incluso si el usuario pregunta "cuántos" o "cuántas". Esta regla garantiza que los archivos Excel contengan datos en lugar de sólo totales.
 
 **FORMATO:**
 \`\`\`json
