@@ -613,31 +613,38 @@ export class WhatsAppDomainService {
 
             // 8. Enrutar al handler correspondiente
             let response;
-                if (waMessageId && this.whatsAppPort) {/* Lines 494-497 omitted */}
+            try {
+                // marcar como leído (no fatal)
+                if (waMessageId && this.whatsAppPort) {
                     try {
                         if (typeof this.whatsAppPort.markAsRead === 'function') {
                             await this.whatsAppPort.markAsRead(waMessageId).catch(e => { throw e; });
                         }
                     } catch (markErr) {
                         console.warn('[WhatsApp] markAsRead non-fatal error:', String(markErr.message || markErr));
-                        // no hacemos throw: continuar el procesamiento aun cuando marcar como leído falle
+                        // continuar el procesamiento aun cuando marcar como leído falle
                     }
-                    break;
-                case 'UNLINK':
-                    response = await this._handleUnlinkCommand(session.userId);
-                    break;
-                // grading is disabled for WhatsApp, so we never route here. If
-                // the intent somehow is set to GRADE_TASK we fall through to the
-                // general question handler as a safety measure.
-                case 'STUDENT_PROGRESS':
-                    response = await this._handleStudentProgress(text, user);
-                    break;
-                case 'MCP_QUERY':
-                    response = await this._handleMCPQuery(text, user, userRoles);
-                    break;
-                case 'MY_PROGRESS':
-                    response = await this._handleMyProgress(user);
-                    break;
+                }
+
+                // El clasificador devuelve un objeto { intent: 'NAME', ... }
+                const intentLabel = (intent && (intent.intent || intent)) || 'GENERAL_QUESTION';
+
+                switch (intentLabel) {
+                    case 'UNLINK':
+                        response = await this._handleUnlinkCommand(session.userId);
+                        break;
+                    // grading is disabled for WhatsApp, so we never route aquí. If
+                    // the intent somehow is set to GRADE_TASK we fall through to the
+                    // general question handler as a safety measure.
+                    case 'STUDENT_PROGRESS':
+                        response = await this._handleStudentProgress(text, user);
+                        break;
+                    case 'MCP_QUERY':
+                        response = await this._handleMCPQuery(text, user, userRoles);
+                        break;
+                    case 'MY_PROGRESS':
+                        response = await this._handleMyProgress(user);
+                        break;
                     case 'GENERAL_QUESTION':
                     default:
                         response = await this._handleGeneralQuestion(text, session, user, userRoles);
