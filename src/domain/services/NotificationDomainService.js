@@ -29,6 +29,14 @@ export class NotificationDomainService {
     }
 
     async send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
+        // If global opt-out is enabled or this is a chat-originated notification, skip sending/storing
+        const disableChatNotifications = process.env.DISABLE_CHAT_NOTIFICATIONS === 'true';
+        const isChatType = type === 'chat_response' || (metadata && (metadata.channel === 'chat' || metadata.from === 'chat'));
+        if (disableChatNotifications || isChatType) {
+            console.log('[NotificationDomainService] Skipping chat notification (disabled or chat-type)');
+            return Result.ok({ skipped: true });
+        }
+
         // 1. Guardar en BD
         const notif = await this.notifRepo.create({
             userId,
