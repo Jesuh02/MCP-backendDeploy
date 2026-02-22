@@ -36,6 +36,12 @@ export function markdownToWhatsApp(text) {
         // might have emitted, and strip header hashes that weren't converted.
         .replace(/\*\*/g, '')
         .replace(/(^|\n)#+\s*/g, '$1')
+        // Remove internal file references that some LLMs emit like "#file:Name.js"
+        .replace(/#file:[\w\-\/\.]+/g, '')
+        // Remove plain <attachments> tokens and common "See <attachments>" phrases
+        .replace(/<attachments>/gi, '')
+        .replace(/\(see\s+<attachments>[^)]*\)/gi, '')
+        .replace(/See\s+<attachments>[^\n\r]*/gi, '')
         .trim();
 }
 
