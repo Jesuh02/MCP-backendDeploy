@@ -726,7 +726,9 @@ export class WhatsAppDomainService {
                 response = 'Recibí tu mensaje, pero no pude generar una respuesta. Intenta otra vez o escribe /ayuda.';
             }
 
-            const chunks = truncateResponse(response);
+            // Sanitize LLM/handler output to WhatsApp-friendly formatting
+            const safeResponse = this._sanitizeForWhatsApp(response);
+            const chunks = truncateResponse(safeResponse);
             for (const chunk of chunks) {
                 const ok = await this._sendReply(from, chunk);
                 if (!ok) {
@@ -1628,6 +1630,35 @@ export class WhatsAppDomainService {
             console.error('[WhatsApp] failed sending reply via port:', err && (err.message || err));
             return false;
         }
+    }
+
+    /**
+     * Sanitize LLM output for WhatsApp:
+     * - Convert markdown bold **text** to WhatsApp bold *text*
+     * - Convert markdown headings (# ...) to WhatsApp bold
+     * - Remove any '#file:...' file tags the LLM may include
+     * - Collapse excessive newlines
+     */
+    _sanitizeForWhatsApp(text) {
+        if (!text) return text;
+        let out = String(text);
+
+        // Replace **bold** with *bold* (WhatsApp uses single asterisks)
+        out = out.replace(/\*\*(.+?)\*\*/gs, '*$1*');
+
+        // Convert markdown headings (# Heading) to bold: *Heading*
+        out = out.replace(/^\s*#{1,6}\s*(.+)$/gm, '*$1*');
+
+        // Remove any file tags like #file:WhatsAppDomainService.js or # file:...
+        out = out.replace(/#\s*file:[^\s\n]+/gi, '');
+
+        // Remove stray '#' characters used as inline markdown markers
+        out = out.replace(/(^|\s)#(\S+)/g, '$1$2');
+
+        // Collapse more than 2 consecutive newlines to 2
+        out = out.replace(/\n{3,}/g, '\n\n');
+
+        return out.trim();
     }
 }
 
