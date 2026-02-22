@@ -31,7 +31,12 @@ export function markdownToWhatsApp(text) {
         // Horizontal rules
         .replace(/^-{3,}$/gm, '─────────────')
         // Clean up multiple newlines
-        .replace(/\n{3,}/g, '\n\n');
+        .replace(/\n{3,}/g, '\n\n')
+        // Remove any leftover Markdown bold markers (double asterisks) that the LLM
+        // might have emitted, and strip header hashes that weren't converted.
+        .replace(/\*\*/g, '')
+        .replace(/(^|\n)#+\s*/g, '$1')
+        .trim();
 }
 
 /**
