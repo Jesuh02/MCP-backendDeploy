@@ -1272,6 +1272,34 @@ export class WhatsAppDomainService {
                 // strip any grading signal the LLM may have included; WhatsApp should
                 // behave as a general Q&A channel only
                 responseText = responseText.replace(/\[GRADING_REQUEST(?::\s*\d+(?:\.\d+)?)?\]\s*/gi, '');
+                // If the LLM produced no usable text (common when it chose not to call tools),
+                // attempt a MCP fallback that runs the DB agent or direct query execution.
+                if (!responseText || !String(responseText).trim()) {
+                    try {
+                        if (this.mcpService) {
+                            let mcpResult = null;
+                            if (typeof this.mcpService.processQueryWithAgent === 'function') {
+                                mcpResult = await this.mcpService.processQueryWithAgent(text, { userId: user.id, username: user.username });
+                            } else if (typeof this.mcpService.processQueryToData === 'function') {
+                                mcpResult = await this.mcpService.processQueryToData(text, user.id);
+                            } else if (typeof this.mcpService.processQuery === 'function') {
+                                mcpResult = await this.mcpService.processQuery(text, { userId: user.id, username: user.username });
+                            }
+
+                            if (mcpResult) {
+                                const payload = mcpResult.data ?? mcpResult.rows ?? mcpResult;
+                                if (Array.isArray(payload) && payload.length > 0) {
+                                    const sample = payload.slice(0, 10).map(r => JSON.stringify(r)).join('\n');
+                                    return markdownToWhatsApp(`Resultados (muestra hasta 10 filas):\n${sample}`);
+                                }
+                                if (typeof payload === 'object') return markdownToWhatsApp(JSON.stringify(payload, null, 2));
+                                return markdownToWhatsApp(String(payload || 'No se encontraron datos.'));
+                            }
+                        }
+                    } catch (mcpErr) {
+                        console.error('[WhatsApp] MCP fallback error:', mcpErr && (mcpErr.message || mcpErr));
+                    }
+                }
                 return markdownToWhatsApp(responseText);
             }
 
