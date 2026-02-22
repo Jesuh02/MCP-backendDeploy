@@ -591,6 +591,68 @@ export class WhatsAppDomainService {
 
             const userRoles = (user.roles || []).map(r => r.id || r.rol_id || r);
 
+            // DIRECT MCP ROUTING: For queries coming from WhatsApp we should
+            // prefer the MCP pipeline (same functions used by DatabaseQueryFragment.kt)
+            // to ensure the DB schema persona and tool-calling behavior is used
+            // instead of the generic LLM system prompt. This replicates the
+            // client behaviour and avoids classifier LLM contamination.
+            try {
+                const canUseMCP = Boolean(this.mcpService);
+                const looksLikeDbQuery = this._isMCPIntent(text) || (this.mcpService && typeof this.mcpService.isBusinessIntent === 'function' && this.mcpService.isBusinessIntent(text));
+                // Allow teachers (2) and admins (3) to use MCP queries from WhatsApp.
+                const roleAllows = userRoles.includes(3) || userRoles.includes(2);
+
+                if (canUseMCP && (roleAllows || looksLikeDbQuery)) {
+                    let mcpResult = null;
+                    try {
+                        if (typeof this.mcpService.processQueryWithAgent === 'function') {
+                            mcpResult = await this.mcpService.processQueryWithAgent(text, { userId: user.id, username: user.username });
+                        } else if (typeof this.mcpService.processQueryToData === 'function') {
+                            mcpResult = await this.mcpService.processQueryToData(text, user.id);
+                        } else if (typeof this.mcpService.processQuery === 'function') {
+                            mcpResult = await this.mcpService.processQuery(text, { userId: user.id, username: user.username, includeSchema: true });
+                        }
+                    } catch (mErr) {
+                        console.error('[WhatsApp] MCP direct call failed:', mErr && (mErr.message || mErr));
+                        // fall through to normal classification/LLM path below
+                        mcpResult = null;
+                    }
+
+                    if (mcpResult) {
+                        try {
+                            const payload = mcpResult.data ?? mcpResult.rows ?? mcpResult;
+                            let replyText = '';
+                            if (Array.isArray(payload) && payload.length > 0) {
+                                const sample = payload.slice(0, 10).map(r => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n');
+                                replyText = `Resultados (muestra hasta 10 filas):\n${sample}`;
+                            } else if (typeof payload === 'object') {
+                                replyText = JSON.stringify(payload, null, 2);
+                            } else {
+                                replyText = String(payload || 'No se encontraron datos.');
+                            }
+                            const chunks = truncateResponse(markdownToWhatsApp(replyText));
+                            for (const chunk of chunks) {
+                                await this._sendReply(from, chunk);
+                            }
+                            // update session context and persistence
+                            session.addToContext('user', text);
+                            session.addToContext('assistant', replyText.substring(0, 500));
+                            await this.sessionRepo.update(session.id, {
+                                conversation_context: session.conversationContext,
+                                last_message_at: new Date().toISOString(),
+                            });
+                            // Already handled — stop further processing
+                            return;
+                        } catch (e) {
+                            console.error('[WhatsApp] failed formatting MCP result:', e && (e.message || e));
+                            // continue to normal flow in case formatting fails
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[WhatsApp] error in direct MCP routing check:', e && (e.message || e));
+            }
+
             // 6. Clasificar intención (ahora async para permitir consulta al LLM cuando sea necesario)
             const intent = await this._classifyIntent(text, userRoles);
 
