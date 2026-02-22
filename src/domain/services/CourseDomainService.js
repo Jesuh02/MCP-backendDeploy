@@ -10,6 +10,15 @@ export class CourseDomainService {
         this.courseNotificationService = courseNotificationService || null;
     }
 
+    // Derive `isFree` flag from a price value and mutate the object provided.
+    // If price > 0 => not free (premium). Otherwise it's free.
+    _ensureIsFreeFlag(obj) {
+        if (!obj || typeof obj !== 'object') return;
+        if (!Object.prototype.hasOwnProperty.call(obj, 'price')) return;
+        const price = Number(obj.price) || 0;
+        obj.isFree = price <= 0;
+    }
+
     _validateCourseId(id) {
         const normalizedId = Number(id);
         if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
@@ -206,6 +215,8 @@ export class CourseDomainService {
 
     async create(courseData, requesterId) {
         courseData.creatorUserId = requesterId;
+        // Ensure isFree is consistent with price (price > 0 => premium)
+        this._ensureIsFreeFlag(courseData);
         const created = await this.courseRepo.create(courseData);
         
         // Fire-and-forget: Notificar a los suscriptores del creador sobre el nuevo curso
@@ -224,6 +235,8 @@ export class CourseDomainService {
         if (course.creator_user_id && course.creator_user_id !== requesterId) {
             return Result.fail(new ForbiddenError('No tienes permiso para editar este curso'));
         }
+        // If price is being updated, ensure isFree is consistent with new price
+        this._ensureIsFreeFlag(data);
         const updated = await this.courseRepo.update(id, data);
         return Result.ok(updated);
     }
