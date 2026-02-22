@@ -591,10 +591,17 @@ export class WhatsAppDomainService {
 
             const userRoles = (user.roles || []).map(r => r.id || r.rol_id || r);
 
-            // 6. Clasificar intención
-            const intent = this._classifyIntent(text, userRoles);
+            // 6. Clasificar intención (ahora async para permitir consulta al LLM cuando sea necesario)
+            const intent = await this._classifyIntent(text, userRoles);
 
             console.log('[WhatsApp] classified intent:', intent, 'userRoles:', userRoles);
+
+            // Si el LLM detectó un intento de asignar nota, denegamos la acción
+            // con una respuesta amable: WhatsApp no permite calificar.
+            if (intent && intent.isGradeAssignmentAttempt) {
+                await this._sendReply(from, 'Lo siento — no puedo calificar tareas por WhatsApp.');
+                return;
+            }
 
             // 7. Verificar permisos
             if (intent.requiresRole && !this._hasPermission(userRoles, intent.requiresRole)) {
@@ -606,10 +613,15 @@ export class WhatsAppDomainService {
 
             // 8. Enrutar al handler correspondiente
             let response;
-            try {
-                switch (intent.intent) {
-                case 'HELP':
-                    response = MESSAGES.HELP;
+                if (waMessageId && this.whatsAppPort) {/* Lines 494-497 omitted */}
+                    try {
+                        if (typeof this.whatsAppPort.markAsRead === 'function') {
+                            await this.whatsAppPort.markAsRead(waMessageId).catch(e => { throw e; });
+                        }
+                    } catch (markErr) {
+                        console.warn('[WhatsApp] markAsRead non-fatal error:', String(markErr.message || markErr));
+                        // no hacemos throw: continuar el procesamiento aun cuando marcar como leído falle
+                    }
                     break;
                 case 'UNLINK':
                     response = await this._handleUnlinkCommand(session.userId);
@@ -1068,27 +1080,53 @@ export class WhatsAppDomainService {
      * @param {number[]} userRoles
      * @returns {{ intent: string, requiresRole: string|null }}
      */
-    _classifyIntent(message, userRoles) {
+    async _classifyIntent(message, userRoles) {
         const text = message.trim().toLowerCase();
 
         // 1. Comandos explícitos (mayor prioridad)
-        // grading commands have been disabled for WhatsApp: everything else
-        // falls back to the LLM general question handler.
         if (text.startsWith('/progreso')) return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
         if (text.startsWith('/consulta')) return { intent: 'MCP_QUERY', requiresRole: 'admin' };
         if (text.startsWith('/ayuda')) return { intent: 'HELP', requiresRole: null };
         if (text.startsWith('/desvincular')) return { intent: 'UNLINK', requiresRole: null };
         if (text.startsWith('/mi_progreso')) return { intent: 'MY_PROGRESS', requiresRole: null };
 
-        // 2. Calificación desactivada: nunca retornamos GRADE_TASK aquí.
+        // 2. Detección explícita de intención de calificar — en casos ambiguos
+        // consultamos al LLM para evitar falsos positivos.  Palabras que indican
+        // posibilidad de intento de asignar nota.
+        const gradingIndicators = ['calificar', 'califica', 'calificado', 'calificó', 'califico', 'asignar nota', 'dar nota', 'poner nota'];
+        const hasGradingIndicator = gradingIndicators.some(k => text.includes(k));
 
-        // 3. Detección de progreso
+        if (hasGradingIndicator && this.llmService && typeof this.llmService.processPrompt === 'function') {
+            try {
+                const prompt = `Eres un clasificador de intención. Has recibido el siguiente mensaje de WhatsApp: "${message.trim()}"\n\nResponde SOLO con una de estas etiquetas exactas:\n- ASSIGN_GRADE (si la intención es asignar o modificar una nota a un estudiante)\n- QUERY_ABOUT_GRADES (si la intención es preguntar sobre conteos, estadísticas o historiales de calificaciones)\n- OTHER (ninguna de las anteriores).`;
+                const result = await this.llmService.processPrompt({ prompt, userId: null });
+                let label = null;
+                if (result && result.isOk && result.isOk()) {
+                    const val = result.getValue();
+                    const textRes = (typeof val === 'string' ? val : (val?.response || val?.text || '')) || '';
+                    label = textRes.trim().split(/\s|\n/)[0].toUpperCase();
+                }
+                if (label === 'ASSIGN_GRADE') {
+                    return { intent: 'GENERAL_QUESTION', requiresRole: null, isGradeAssignmentAttempt: true };
+                }
+                if (label === 'QUERY_ABOUT_GRADES') {
+                    // tratar como consulta sobre progreso/estadísticas
+                    if (userRoles.includes(2) || userRoles.includes(3)) {
+                        return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
+                    }
+                    return { intent: 'MY_PROGRESS', requiresRole: null };
+                }
+                // si LLM responde OTHER o no se entiende, continuar con detección heurística
+            } catch (e) {
+                console.warn('[WhatsApp] LLM intent classifier failed, falling back to heuristics:', e && e.message);
+            }
+        }
+
+        // 3. Detección de progreso (heurística más conservadora)
         if (this._isProgressIntent(text)) {
-            // Si es docente/admin, muestra progreso de sus estudiantes
             if (userRoles.includes(2) || userRoles.includes(3)) {
                 return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
             }
-            // Si es estudiante, muestra su propio progreso
             return { intent: 'MY_PROGRESS', requiresRole: null };
         }
 
@@ -1104,7 +1142,7 @@ export class WhatsAppDomainService {
 
 
     _isProgressIntent(text) {
-        const keywords = ['progreso', 'avance', 'cómo van', 'como van', 'estudiantes', 'mi progreso'];
+        const keywords = ['progreso', 'avance', 'cómo van', 'como van', 'mi progreso'];
         return keywords.some(kw => text.includes(kw));
     }
 
