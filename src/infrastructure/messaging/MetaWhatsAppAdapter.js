@@ -254,131 +254,96 @@ export class MetaWhatsAppAdapter {
     async _request(method, url, body = null) {
         const options = {
             method,
-            headers: {
-                'Authorization': `Bearer ${this.accessToken}`,
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json' },
         };
-
-        if (body && method !== 'GET') {
-            options.body = JSON.stringify(body);
-        }
+        if (body && method !== 'GET') options.body = JSON.stringify(body);
 
         const response = await fetch(url, options);
-            const data = await response.json();
+        const data = await response.json();
 
-        // Optional verbose debug output controlled by env var
         if (process.env.WHATSAPP_DEBUG === 'true') {
-            try {
-                console.debug('[MetaWhatsAppAdapter] Response data:', JSON.stringify(data));
-            } catch (e) {
-                console.debug('[MetaWhatsAppAdapter] Response data (non-serializable)');
-            }
+            console.debug('[MetaWhatsAppAdapter] Response:', JSON.stringify(data));
         }
 
         if (!response.ok) {
-            const metaError = data?.error || {};
-            const rawErrorMsg = metaError.message || `Meta API error: ${response.status}`;
-            const metaCode = Number(metaError.code);
-            const metaSubcode = Number(metaError.error_subcode);
-            const isHelloWorldTemplate = body?.type === 'template' && body?.template?.name === 'hello_world';
-            const isRecipientNotAllowed =
-                metaCode === 131030 ||
-                String(rawErrorMsg).includes('131030') ||
-                String(rawErrorMsg).toLowerCase().includes('recipient phone number not in allowed list');
-
-            const isAccountNotRegistered =
-                metaCode === 133010 ||
-                metaSubcode === 133010 ||
-                String(rawErrorMsg).includes('133010') ||
-                String(rawErrorMsg).toLowerCase().includes('account not registered');
-
-            const treatAsTestModeRestriction = isHelloWorldTemplate && isAccountNotRegistered;
-
-            let errorMsg = rawErrorMsg;
-            if (isRecipientNotAllowed || treatAsTestModeRestriction) {
-                errorMsg = 'El número destino no está permitido en modo prueba de Meta (allowed list). Agrega el número como tester en WhatsApp Cloud API o publica la app.';
-            } else if (isAccountNotRegistered) {
-                errorMsg = 'El número ingresado no tiene una cuenta de WhatsApp activa. Verifica que el número sea correcto y tenga WhatsApp instalado.';
-            }
-
-            console.error(`[MetaWhatsAppAdapter] ${method} ${url} → ${response.status}:`, errorMsg);
-            // Log raw error object for diagnosis when debug enabled
-            if (process.env.WHATSAPP_DEBUG === 'true') console.error('[MetaWhatsAppAdapter] raw error object:', metaError, 'response body:', data);
-            const error = new Error(errorMsg);
-            if (isRecipientNotAllowed || treatAsTestModeRestriction) {
-                error.code = 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE';
-            } else if (isAccountNotRegistered) {
-                error.code = 'WHATSAPP_ACCOUNT_NOT_REGISTERED';
-            }
-            error.metaCode = metaError.code;
-            error.metaSubcode = metaError.error_subcode;
-            error.httpStatus = response.status;
-            // Common root cause: using a Business Account ID instead of a Phone Number ID
-            // when calling /{phone_number_id}/messages. Attempt automatic discovery
-            // of phone_number_id and retry once if permissions error is detected.
-            const permissionMsg = String(rawErrorMsg || '').toLowerCase();
-                const isPermissionError = (response.status === 403 && permissionMsg.includes('you do not have the necessary permissions')) || (metaError?.code === 200 && permissionMsg.includes('necessary permissions'));
-            if (isPermissionError && url.includes('/messages')) {
-                try {
-                    // If a Business Account ID is provided in env, prefer it as discovery target
-                    const discoveryTarget = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || this.phoneId;
-                    const discovered = await this._discoverPhoneNumberId(discoveryTarget);
-                    if (discovered) {
-                        const newUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
-                        console.log(`[MetaWhatsAppAdapter] Retrying ${method} ${newUrl} after discovering phone_number_id=${this.phoneId}`);
-                        // Retry once with the discovered phoneId
-                        const retryOptions = { method, headers: options.headers };
-                        if (body && method !== 'GET') retryOptions.body = JSON.stringify(body);
-                        const retryResp = await fetch(newUrl, retryOptions);
-                        const retryData = await retryResp.json();
-                        if (!retryResp.ok) {
-                            const retryErrMsg = retryData?.error?.message || `Meta API error: ${retryResp.status}`;
-                            console.error(`[MetaWhatsAppAdapter] Retry failed: ${retryResp.status} ${retryErrMsg}`);
-                            const retryError = new Error(retryErrMsg);
-                            retryError.httpStatus = retryResp.status;
-                            throw retryError;
-                        }
-                        return retryData;
-                    }
-                    // If discovery returned false, attempt to fetch phone_numbers for diagnostics
-                    try {
-                        // Prefer using the configured Business Account ID for diagnostics
-                        const diagTarget = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || this.phoneId;
-                        const diagUrl = `${META_BASE_URL}/${diagTarget}/phone_numbers`;
-                        const diagResp = await fetch(diagUrl, { method: 'GET', headers: { Authorization: `Bearer ${this.accessToken}` } });
-                        const diagJson = await diagResp.json();
-                        console.warn('[MetaWhatsAppAdapter] Discovery diagnostics:', diagJson);
-                        if (diagResp.ok && Array.isArray(diagJson.data) && diagJson.data.length > 0) {
-                            const ids = diagJson.data.map(d => d.id).join(', ');
-                            error.message += ` Discovered candidate phone_number ids: ${ids}.`;
-                        } else if (diagJson?.error) {
-                            // Avoid appending confusing field errors coming from querying a phone_number_id
-                            const diagMsg = String(diagJson.error.message || '').trim();
-                            if (diagMsg && !diagMsg.includes('Tried accessing nonexisting field')) {
-                                error.message += ` Discovery diagnostic error: ${diagMsg}`;
-                            } else {
-                                error.message += ' Discovery diagnostic did not return usable phone number ids.';
-                            }
-                        } else {
-                            error.message += ' No phone_numbers found during discovery.';
-                        }
-                    } catch (dErr) {
-                        console.warn('[MetaWhatsAppAdapter] Discovery diagnostic request failed:', dErr?.message || dErr);
-                    }
-                } catch (discErr) {
-                    console.warn('[MetaWhatsAppAdapter] Phone number discovery failed:', discErr?.message || discErr);
-                    // Fall through to throw original error with guidance
-                }
-            }
-            // Augment error message with guidance when permission-related
-            if (isPermissionError) {
-                error.message += ' — Possible causes: wrong ID (use phone_number_id instead of WABA id), token lacks whatsapp_business_messaging/whatsapp_business_management scopes, or phone number not assigned/verified in WhatsApp Manager.';
-            }
-            throw error;
+            throw await this._buildMetaError(response, data, method, url, options, body);
         }
 
         return data;
+    }
+
+    /**
+     * Construye el error de Meta e intenta descubrir phone_number_id si hay error de permisos.
+     * @private
+     */
+    async _buildMetaError(response, data, method, url, options, body) {
+        const metaError = data?.error || {};
+        const rawMsg = metaError.message || `Meta API error: ${response.status}`;
+        const metaCode = Number(metaError.code);
+        const metaSubcode = Number(metaError.error_subcode);
+
+        const isRecipientNotAllowed = metaCode === 131030 || String(rawMsg).includes('131030') || String(rawMsg).toLowerCase().includes('recipient phone number not in allowed list');
+        const isAccountNotRegistered = metaCode === 133010 || metaSubcode === 133010 || String(rawMsg).toLowerCase().includes('account not registered');
+        const isHelloWorldTemplate = body?.type === 'template' && body?.template?.name === 'hello_world';
+        const isPermissionError = (response.status === 403 || metaCode === 200) && String(rawMsg).toLowerCase().includes('necessary permissions');
+
+        let errorMsg = rawMsg;
+        if (isRecipientNotAllowed || (isHelloWorldTemplate && isAccountNotRegistered)) {
+            errorMsg = 'El número destino no está permitido en modo prueba de Meta. Agrega el número como tester en WhatsApp Cloud API o publica la app.';
+        } else if (isAccountNotRegistered) {
+            errorMsg = 'El número no tiene una cuenta de WhatsApp activa. Verifica que el número sea correcto.';
+        } else if (isPermissionError) {
+            errorMsg = rawMsg + ' — Verifica que el token tenga scopes whatsapp_business_messaging/whatsapp_business_management y que uses phone_number_id (no WABA id).';
+        }
+
+        console.error(`[MetaWhatsAppAdapter] ${method} ${url} → ${response.status}:`, errorMsg);
+        if (process.env.WHATSAPP_DEBUG === 'true') console.error('[MetaWhatsAppAdapter] raw error:', metaError);
+
+        // Si es error de permisos en /messages, intentar descubrir el phone_number_id correcto y reintentar
+        if (isPermissionError && url.includes('/messages')) {
+            const retryResult = await this._retryWithDiscovery(method, url, options, body);
+            if (retryResult) return retryResult; // retryResult es data si tuvo éxito, lanza si no
+        }
+
+        const error = new Error(errorMsg);
+        error.metaCode = metaError.code;
+        error.metaSubcode = metaError.error_subcode;
+        error.httpStatus = response.status;
+        if (isRecipientNotAllowed || (isHelloWorldTemplate && isAccountNotRegistered)) error.code = 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE';
+        else if (isAccountNotRegistered) error.code = 'WHATSAPP_ACCOUNT_NOT_REGISTERED';
+        return error;
+    }
+
+    /**
+     * Intenta descubrir el phone_number_id correcto y reintentar la petición.
+     * @returns {Promise<object|null>} data si el reintento tuvo éxito, null si discovery falló.
+     * @throws si el reintento también falla.
+     * @private
+     */
+    async _retryWithDiscovery(method, url, options, body) {
+        try {
+            const target = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || this.phoneId;
+            const discovered = await this._discoverPhoneNumberId(target);
+            if (!discovered) return null;
+
+            const newUrl = `${META_BASE_URL}/${this.phoneId}/messages`;
+            console.log(`[MetaWhatsAppAdapter] Retrying ${method} ${newUrl} (phone_number_id=${this.phoneId})`);
+
+            const retryOptions = { method, headers: options.headers };
+            if (body && method !== 'GET') retryOptions.body = JSON.stringify(body);
+            const retryResp = await fetch(newUrl, retryOptions);
+            const retryData = await retryResp.json();
+
+            if (!retryResp.ok) {
+                const errMsg = retryData?.error?.message || `Meta API error: ${retryResp.status}`;
+                console.error(`[MetaWhatsAppAdapter] Retry failed: ${retryResp.status} ${errMsg}`);
+                throw Object.assign(new Error(errMsg), { httpStatus: retryResp.status });
+            }
+            return retryData;
+        } catch (discErr) {
+            console.warn('[MetaWhatsAppAdapter] Discovery/retry failed:', discErr?.message);
+            return null;
+        }
     }
 
     /**
