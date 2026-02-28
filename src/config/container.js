@@ -318,7 +318,7 @@ export function createContainer() {
     // ═══════════════════════════════════════════════════════════
 
     const authController = new AuthController({ authService });
-    const userController = new UserController({ userService });
+    const userController = new UserController({ userService, whatsAppService: whatsAppDomainService });
     const courseController = new CourseController({ courseService });
     const videoController = new VideoController({ videoService });
     const topicController = new TopicController({ topicService });
