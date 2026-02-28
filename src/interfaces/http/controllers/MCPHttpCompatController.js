@@ -107,11 +107,18 @@ export class MCPHttpCompatController {
 
             const result = await this._dispatchToolCall(toolName, args);
 
+            // If the result is already a plain string (e.g. LLM agent response),
+            // use it as-is so the client receives human-readable text instead of
+            // a JSON-stringified object like {"data":"...","sqlScript":"..."}.
+            const text = typeof result === 'string'
+                ? result
+                : JSON.stringify(result, null, 2);
+
             res.json({
                 jsonrpc: '2.0',
                 id: req.body.id,
                 result: {
-                    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+                    content: [{ type: 'text', text }],
                 },
             });
         } catch (error) {
@@ -159,7 +166,8 @@ export class MCPHttpCompatController {
 
         try {
             const agentResponse = await this.mcpServiceLegacy.processQueryWithAgent(args.query);
-            return { data: agentResponse, sqlScript: '-- Executed via LLM Agent' };
+            // Return the text directly so callers can render it without JSON-parsing.
+            return typeof agentResponse === 'string' ? agentResponse : agentResponse;
         } catch (agentErr) {
             console.error('❌ Agent error:', agentErr);
             return { error: true, message: `Error del agente LLM: ${agentErr.message}` };
