@@ -428,7 +428,12 @@ export class WhatsAppDomainService {
                 // Allow teachers (2) and admins (3) to use MCP queries from WhatsApp.
                 const roleAllows = userRoles.includes(3) || userRoles.includes(2);
 
-                if (canUseMCP && (roleAllows || looksLikeDbQuery)) {
+                // If the user is asking for an Excel file, skip the direct MCP
+                // shortcut entirely — let intent classification route the message
+                // to _handleGeneralQuestion (which calls _maybeHandleExcel first).
+                const isExcelRequest = /\bexcel\b/i.test(text);
+
+                if (canUseMCP && !isExcelRequest && (roleAllows || looksLikeDbQuery)) {
                     let mcpResult = null;
                     try {
                         if (typeof this.mcpService.processQueryWithAgent === 'function') {
@@ -1189,6 +1194,10 @@ export class WhatsAppDomainService {
                 return '❌ Solo administradores pueden usar consultas MCP o generar Excel.';
             }
 
+            // Check for Excel requests BEFORE running the MCP query.
+            const excelResp = await this._maybeHandleExcel(text, user, userRoles);
+            if (excelResp !== null) return excelResp;
+
             // Extraer la consulta (quitar el prefijo /consulta si existe)
             let query = text.replace(/^\/consulta\s*/i, '').trim();
             if (!query) return 'Por favor, indica qué deseas consultar.\nEjemplo: /consulta cuántos usuarios hay';
@@ -1220,16 +1229,6 @@ export class WhatsAppDomainService {
             } catch (e) {
                 console.error('[WhatsApp] MCP processQuery failed:', e && (e.message || e));
                 return '❌ Error al ejecutar la consulta. Intenta con otra formulación.';
-            }
-
-            // intercept Excel requests (after computing `query` but before
-            // running it) using the shared helper which also enforces the
-            // admin-only restriction.
-            const excelResp = await this._maybeHandleExcel(text, user, userRoles);
-            if (excelResp !== null) {
-                // if the helper decided this was an Excel request, return the
-                // formatted response and skip the normal MCP result handling.
-                return excelResp;
             }
 
             // Normalize result shapes
