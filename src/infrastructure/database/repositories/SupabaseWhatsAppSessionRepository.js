@@ -110,10 +110,16 @@ export class SupabaseWhatsAppSessionRepository {
      * @returns {Promise<WhatsAppSession|null>}
      */
     async findByUserId(userId) {
+        // Use limit(1) + order so that duplicate rows (e.g. from missing UNIQUE
+        // constraint) never cause .maybeSingle() to throw PGRST116.
+        // Prefer the active session; fall back to the most recent one.
         const { data, error } = await this.client
             .from(this.table)
             .select('*')
             .eq('user_id', userId)
+            .order('is_active', { ascending: false })
+            .order('created_at', { ascending: false })
+            .limit(1)
             .maybeSingle();
 
         if (error) {
