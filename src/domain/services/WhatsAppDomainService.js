@@ -158,306 +158,132 @@ export class WhatsAppDomainService {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // OTP — envío de código de verificación
+    // ═══════════════════════════════════════════════════════════
+
     /**
-     * Send a plain text message via YCloud HTTP API when YCLOUD credentials are present.
-     * This is used as an alternative provider to Meta when env vars are configured.
-     * @param {string} to E.164 phone number with leading +
-     * @param {string} text Message body
+     * Despacha el OTP con el proveedor disponible.
+     * Prioridad: YCloud template → YCloud texto → Meta.
+     * @param {string} phoneNumber E.164
+     * @param {string} otpCode 6 dígitos
      */
-    async _sendViaYCloud(to, text) {
-        const instanceId = process.env.YCLOUD_INSTANCE_ID || process.env.YCLOUD_ID;
-        const apiKey = process.env.YCLOUD_API_KEY;
-        const baseUrl = process.env.YCLOUD_BASE_URL || 'https://api.ycloud.com/v2';
-        const fromNumber = process.env.YCLOUD_WHATSAPP_NUMBER || process.env.YCLOUD_PHONE || null;
-
-        if (!apiKey) throw new Error('YCloud credentials not configured: missing YCLOUD_API_KEY');
-
-        // Normalize numbers to E.164 with leading + for YCloud v2 endpoints
-        const normalizeE164 = (value) => {
-            if (!value) return '';
-            const cleaned = String(value).trim().replace(/[^0-9+]/g, '');
-            return cleaned.startsWith('+') ? cleaned : `+${cleaned.replace(/^\+/, '')}`;
-        };
-
-        const normalizedTo = normalizeE164(to);
-        const normalizedFrom = normalizeE164(fromNumber);
-
-        // Prefer modern YCloud endpoint (v2), keep legacy /instances fallback for compatibility.
-        const root = baseUrl.replace(/\/$/, '');
-        const candidates = [];
-
-        // v2 direct send (recommended for OTP/instant)
-        if (normalizedFrom) {
-            const v2Root = /\/v2$/i.test(root) ? root : root.replace(/\/v1$/i, '/v2');
-            candidates.push({
-                name: 'v2-sendDirectly',
-                url: `${v2Root}/whatsapp/messages/sendDirectly`,
-                payload: {
-                    from: normalizedFrom,
-                    to: normalizedTo,
-                    type: 'text',
-                    text: { body: String(text || '') },
-                },
-            });
-        }
-
-        // legacy instances endpoint
-        if (instanceId) {
-            candidates.push({
-                name: 'v1-instances',
-                url: `${root}/instances/${instanceId}/messages`,
-                payload: {
-                    to: normalizedTo.replace(/^\+/, ''),
-                    type: 'text',
-                    text: { body: String(text || '') },
-                },
-            });
-        }
-
-        if (candidates.length === 0) {
-            throw new Error('YCloud configuration invalid: define YCLOUD_WHATSAPP_NUMBER (for v2) or YCLOUD_INSTANCE_ID (legacy)');
-        }
-
-        // Diagnostic checks: DNS resolution and optional node-fetch fallback
-        try {
-            const parsed = new URL(candidates[0].url);
-            const dns = await import('dns').then(m => m.promises).catch(() => null);
-            if (dns) {
-                try {
-                    const addrs = await dns.lookup(parsed.hostname, { all: true });
-                    if (process.env.WHATSAPP_DEBUG === 'true') console.log('[WhatsApp] YCloud DNS lookup:', parsed.hostname, addrs);
-                } catch (dErr) {
-                    console.warn('[WhatsApp] YCloud DNS lookup failed:', dErr && (dErr.code || dErr.message));
-                }
+    async _sendOtp(phoneNumber, otpCode) {
+        if (this._isYCloudEnabled()) {
+            if (process.env.YCLOUD_OTP_TEMPLATE_NAME) {
+                return this._sendViaYCloudTemplate(phoneNumber, otpCode);
             }
-        } catch (e) {
-            // ignore URL parse errors
+            const text = `🔐 Tu código de verificación CourseV es: *${otpCode}*\n\nEste código expira en 10 minutos.`;
+            return this._sendViaYCloud(phoneNumber, text);
         }
-
-        if (typeof fetch === 'undefined') {
-            try {
-                const nf = await import('node-fetch');
-                // node-fetch v3 exports default
-                globalThis.fetch = nf.default || nf;
-                if (process.env.WHATSAPP_DEBUG === 'true') console.log('[WhatsApp] Polyfilled global fetch with node-fetch');
-            } catch (impErr) {
-                console.warn('[WhatsApp] Could not polyfill fetch:', impErr && impErr.message);
-            }
+        if (typeof this.whatsAppPort?.sendOtpMessage === 'function') {
+            return this.whatsAppPort.sendOtpMessage(phoneNumber, otpCode);
         }
-
-        // Use small retry loop with AbortController timeout to surface network errors
-        const maxAttempts = 3;
-        const timeoutMs = Number(process.env.YCLOUD_REQUEST_TIMEOUT_MS || 8000);
-        let lastErr = null;
-
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            if (process.env.WHATSAPP_DEBUG === 'true') {
-                const candidateNames = candidates.map(c => c.name).join(',');
-                console.log(`[WhatsApp] YCloud attempt=${attempt} candidates=[${candidateNames}]`);
-            }
-
-            // Try sequence: fetch -> axios -> native https
-            let attemptErr = null;
-
-            for (const candidate of candidates) {
-                // 1) Try fetch (global or polyfilled)
-                try {
-                    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-                    const signal = controller ? controller.signal : undefined;
-                    if (controller) {
-                        setTimeout(() => { try { controller.abort(); } catch (_) {} }, timeoutMs);
-                    }
-
-                    const resp = await fetch(candidate.url, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-API-Key': apiKey,
-                        },
-                        body: JSON.stringify(candidate.payload),
-                        signal,
-                    });
-                    const j = await resp.json().catch(() => ({}));
-                    if (!resp.ok) {
-                        const errMsg = j?.error?.message || j?.message || `YCloud API error: ${resp.status}`;
-                        const e = new Error(errMsg);
-                        e.meta = j;
-                        e.httpStatus = resp.status;
-                        throw e;
-                    }
-                    return j;
-                } catch (err) {
-                    attemptErr = err;
-                    if (process.env.WHATSAPP_DEBUG === 'true') {
-                        console.warn(`[WhatsApp] fetch failed (${candidate.name}): ${err?.code || ''} ${err?.message || err}`);
-                    }
-                }
-
-                // 2) Try axios if available
-                try {
-                    const axiosModule = await import('axios').then(m => m.default || m).catch(() => null);
-                    if (axiosModule) {
-                        try {
-                            const axiosResp = await axiosModule.post(candidate.url, candidate.payload, {
-                                headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-                                timeout: timeoutMs,
-                                validateStatus: null,
-                            });
-                            if (axiosResp.status && axiosResp.status >= 200 && axiosResp.status < 300) {
-                                return axiosResp.data;
-                            }
-                            const errMsg = axiosResp.data?.error?.message || axiosResp.data?.message || `YCloud API error: ${axiosResp.status}`;
-                            const e = new Error(errMsg);
-                            e.meta = axiosResp.data;
-                            e.httpStatus = axiosResp.status;
-                            throw e;
-                        } catch (aErr) {
-                            attemptErr = aErr;
-                            if (process.env.WHATSAPP_DEBUG === 'true') {
-                                console.warn(`[WhatsApp] axios failed (${candidate.name}):`, aErr && (aErr.code || aErr.message));
-                            }
-                        }
-                    }
-                } catch (_) { /* ignore import errors */ }
-
-                // 3) Try native https request
-                try {
-                    const https = await import('node:https');
-                    const tls = await import('node:tls');
-                    const urlObj = new URL(candidate.url);
-                    const bodyStr = JSON.stringify(candidate.payload);
-
-                    const nativeResp = await new Promise((resolve, reject) => {
-                        const hostHeader = urlObj.port ? `${urlObj.hostname}:${urlObj.port}` : urlObj.hostname;
-                            const opts = {
-                            protocol: urlObj.protocol,
-                            hostname: urlObj.hostname,
-                            port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
-                            path: urlObj.pathname + (urlObj.search || ''),
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-API-Key': apiKey,
-                                'Content-Length': Buffer.byteLength(bodyStr),
-                                'Host': hostHeader,
-                            },
-                            timeout: timeoutMs,
-                            // Use a custom TLS connector to guarantee the SNI `servername` value
-                            createConnection: (connectionOptions, callback) => {
-                                const connectOpts = {
-                                    host: urlObj.hostname,
-                                    port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
-                                    servername: urlObj.hostname,
-                                    minVersion: 'TLSv1.2',
-                                    // include any socket options passed by https
-                                    ...connectionOptions,
-                                };
-                                return tls.connect(connectOpts, callback);
-                            },
-                        };
-
-                        const req = https.request(opts, (res) => {
-                            let data = '';
-                            res.on('data', (c) => data += c);
-                            res.on('end', () => resolve({ status: res.statusCode, body: data }));
-                        });
-
-                        req.on('error', (e) => reject(e));
-                        req.on('timeout', () => { req.destroy(new Error('request timeout')); });
-                        req.write(bodyStr);
-                        req.end();
-                    });
-
-                    const parsedBody = (() => {
-                        try { return JSON.parse(nativeResp.body || '{}'); } catch (_) { return {}; }
-                    })();
-                    if (nativeResp.status >= 200 && nativeResp.status < 300) return parsedBody;
-                    const errMsg = parsedBody?.error?.message || parsedBody?.message || `YCloud API error: ${nativeResp.status}`;
-                    const e = new Error(errMsg);
-                    e.meta = parsedBody;
-                    e.httpStatus = nativeResp.status;
-                    throw e;
-                } catch (nErr) {
-                    attemptErr = nErr;
-                    if (process.env.WHATSAPP_DEBUG === 'true') {
-                        console.warn(`[WhatsApp] native https failed (${candidate.name}):`, nErr && (nErr.code || nErr.message));
-                    }
-                }
-            }
-
-            // record last attempt error and backoff
-            lastErr = attemptErr;
-            const code = attemptErr && (attemptErr.code || attemptErr.httpStatus || attemptErr.name) || 'UNKNOWN';
-            const msg = attemptErr && (attemptErr.message || String(attemptErr));
-            console.warn(`[WhatsApp] YCloud POST failed (attempt=${attempt}): ${code} ${msg}`);
-
-            if (attempt < maxAttempts) {
-                const backoff = 200 * Math.pow(2, attempt - 1);
-                await new Promise(r => setTimeout(r, backoff));
-                continue;
-            }
-        }
-
-        const finalErr = new Error(`YCloud fetch failed: ${lastErr?.message || String(lastErr)}`);
-        finalErr.meta = lastErr;
-        throw finalErr;
+        const text = `🔐 Tu código de verificación CourseV es: *${otpCode}*\n\nEste código expira en 10 minutos.`;
+        return this.whatsAppPort.sendTextMessage(phoneNumber, text);
     }
 
-        /**
-         * Consulta el estado de un mensaje en YCloud usando el message id retornado.
-         * Intenta varios endpoints compatibles para maximizar compatibilidad con versiones.
-         * @param {string} messageId
-         * @returns {Promise<object|null>}
-         */
-        async _fetchYCloudMessageStatus(messageId) {
-            if (!messageId) return null;
-            const apiKey = process.env.YCLOUD_API_KEY;
-            if (!apiKey) return null;
+    /**
+     * Mapea un error de envío OTP a un Result.fail con código semántico.
+     * @param {Error} err
+     * @returns {Result}
+     */
+    _mapOtpSendError(err) {
+        const msg = String(err?.message || '');
+        const code = String(err?.code || '');
+        if (code === 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE' || msg.includes('131030'))
+            return Result.fail(new AppError('Este número no está permitido en modo prueba de Meta. Agrégalo como tester en WhatsApp Cloud API.', 400, true, 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE'));
+        if (code === 'WHATSAPP_ACCOUNT_NOT_REGISTERED' || msg.includes('133010'))
+            return Result.fail(new AppError('El número no tiene una cuenta de WhatsApp activa.', 400, true, 'WHATSAPP_ACCOUNT_NOT_REGISTERED'));
+        console.error('[WhatsApp] OTP send error:', msg);
+        return Result.fail(new AppError('No se pudo enviar el código de verificación. Verifica el número e inténtalo nuevamente.', 502, true, 'WHATSAPP_OTP_SEND_FAILED'));
+    }
 
-            const baseUrl = process.env.YCLOUD_BASE_URL || 'https://api.ycloud.com/v2';
-            const root = baseUrl.replace(/\/$/, '');
-            const instanceId = process.env.YCLOUD_INSTANCE_ID || process.env.YCLOUD_ID || null;
+    /**
+     * Envía OTP usando template de YCloud (no requiere ventana de 24h).
+     * Configura YCLOUD_OTP_TEMPLATE_NAME con el nombre de la plantilla aprobada.
+     * @param {string} to E.164
+     * @param {string} otpCode
+     */
+    async _sendViaYCloudTemplate(to, otpCode) {
+        const from = process.env.YCLOUD_WHATSAPP_NUMBER || process.env.YCLOUD_PHONE;
+        const baseUrl = (process.env.YCLOUD_BASE_URL || 'https://api.ycloud.com/v2').replace(/\/$/, '');
+        return this._ycloudPost([{
+            url: `${baseUrl}/whatsapp/messages`,
+            payload: {
+                from, to, type: 'template',
+                template: {
+                    name: process.env.YCLOUD_OTP_TEMPLATE_NAME,
+                    language: { code: process.env.YCLOUD_OTP_TEMPLATE_LANGUAGE || 'es' },
+                    components: [{ type: 'body', parameters: [{ type: 'text', text: otpCode }] }],
+                },
+            },
+        }]);
+    }
 
-            // Candidate URL patterns (include instance scoping variants)
-            const candidates = [];
-            if (instanceId) {
-                candidates.push(`${root}/instances/${encodeURIComponent(instanceId)}/messages/${encodeURIComponent(messageId)}`);
-                candidates.push(`${root}/instances/${encodeURIComponent(instanceId)}/messages/${encodeURIComponent(messageId)}/status`);
-            }
-            candidates.push(`${root}/whatsapp/messages/${encodeURIComponent(messageId)}`);
-            candidates.push(`${root}/messages/${encodeURIComponent(messageId)}`);
-            candidates.push(`${root}/whatsapp/message/${encodeURIComponent(messageId)}`);
+    /**
+     * Envía texto libre vía YCloud HTTP API.
+     * Solo funciona dentro de la ventana de 24h. Para mensajes proactivos usar _sendViaYCloudTemplate.
+     * @param {string} to E.164
+     * @param {string} text
+     */
+    async _sendViaYCloud(to, text) {
+        const fromNumber = process.env.YCLOUD_WHATSAPP_NUMBER || process.env.YCLOUD_PHONE;
+        const instanceId = process.env.YCLOUD_INSTANCE_ID || process.env.YCLOUD_ID;
+        const baseUrl = (process.env.YCLOUD_BASE_URL || 'https://api.ycloud.com/v2').replace(/\/$/, '');
 
-            // Try multiple auth header styles (some YCloud setups expect X-API-KEY)
-            const headerVariants = [
-                { name: 'Authorization:Bearer', build: () => ({ 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' }) },
-                { name: 'X-API-KEY', build: () => ({ 'X-API-KEY': apiKey, 'Accept': 'application/json' }) },
-                { name: 'x-api-key', build: () => ({ 'x-api-key': apiKey, 'Accept': 'application/json' }) },
-            ];
+        const candidates = [];
+        if (fromNumber) {
+            candidates.push({
+                url: `${baseUrl}/whatsapp/messages/sendDirectly`,
+                payload: { from: fromNumber, to, type: 'text', text: { body: String(text) } },
+            });
+        }
+        if (instanceId) {
+            candidates.push({
+                url: `${baseUrl}/instances/${instanceId}/messages`,
+                payload: { to: to.replace(/^\+/, ''), type: 'text', text: { body: String(text) } },
+            });
+        }
+        if (!candidates.length) throw new Error('YCloud: define YCLOUD_WHATSAPP_NUMBER o YCLOUD_INSTANCE_ID');
 
-            for (const url of candidates) {
-                for (const hv of headerVariants) {
-                    try {
-                        const headers = hv.build();
-                        const res = await fetch(url, { method: 'GET', headers });
-                        if (process.env.WHATSAPP_DEBUG === 'true') {
-                            try {
-                                const preview = await res.clone().text().then(t => t.slice(0, 1000)).catch(() => '');
-                                console.log(`[WhatsApp][YCloudStatus] GET ${url} via ${hv.name} => ${res.status} bodyPreview=${preview}`);
-                            } catch (e) { /* ignore logging errors */ }
-                        }
-                        if (!res.ok) continue;
-                        const data = await res.json();
-                        return data;
-                    } catch (e) {
-                        if (process.env.WHATSAPP_DEBUG === 'true') console.warn('[WhatsApp][YCloudStatus] request failed', e && (e.message || e));
-                        continue;
-                    }
+        return this._ycloudPost(candidates);
+    }
+
+    /**
+     * Ejecuta POST a YCloud con reintentos y timeout.
+     * @param {{ url: string, payload: object }[]} candidates — Endpoints a intentar en orden.
+     * @param {number} [retries=3]
+     */
+    async _ycloudPost(candidates, retries = 3) {
+        const apiKey = process.env.YCLOUD_API_KEY;
+        if (!apiKey) throw new Error('YCLOUD_API_KEY no configurado');
+        const timeoutMs = Number(process.env.YCLOUD_REQUEST_TIMEOUT_MS || 8000);
+        let lastErr;
+
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            for (const { url, payload } of candidates) {
+                try {
+                    const ctrl = new AbortController();
+                    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+                    const resp = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+                        body: JSON.stringify(payload),
+                        signal: ctrl.signal,
+                    }).finally(() => clearTimeout(timer));
+                    const data = await resp.json().catch(() => ({}));
+                    if (!resp.ok) throw Object.assign(new Error(data?.error?.message || data?.message || `YCloud ${resp.status}`), { httpStatus: resp.status, meta: data });
+                    return data;
+                } catch (err) {
+                    lastErr = err;
+                    if (process.env.WHATSAPP_DEBUG === 'true') console.warn(`[WhatsApp] YCloud attempt=${attempt} ${url}:`, err?.message);
                 }
             }
-
-            return null;
+            if (attempt < retries) await new Promise(r => setTimeout(r, 200 * attempt));
         }
+        throw Object.assign(new Error(`YCloud fetch failed: ${lastErr?.message}`), { cause: lastErr });
+    }
     // ═══════════════════════════════════════════════════════════
     // CASO DE USO: Manejo de mensajes entrantes (webhook)
     // ═══════════════════════════════════════════════════════════
@@ -834,173 +660,18 @@ export class WhatsAppDomainService {
             session = await this.sessionRepo.save(sessionData);
         }
 
-        // Prepare variable to hold provider response for diagnostics
-        let providerResp = null;
-
-        // 7. Enviar OTP vía WhatsApp (usa template message para iniciar conversación)
-        const otpMessage = `🔐 Tu código de verificación CourseV es: *${otpCode}*\n\nEste código expira en 10 minutos.`;
+        // 7. Enviar OTP
         try {
-            // If YCloud is configured prefer it for OTP delivery to avoid Meta Cloud permissions issues
-            if (this._isYCloudEnabled()) {
-                try {
-                    const yresp = await this._sendViaYCloud(normalized, otpMessage);
-                    providerResp = { provider: 'YCloud', response: yresp };
-                    console.log('[WhatsApp] OTP sent via YCloud:', yresp && (yresp.messageId || yresp));
-                    try {
-                        const mid = yresp?.id || yresp?.messageId || yresp?.wamid || yresp?.waMessageId || null;
-                        if (mid) {
-                            const status = await this._fetchYCloudMessageStatus(mid);
-                            providerResp.delivery = status || null;
-                            console.log('[WhatsApp] YCloud delivery status:', status);
-                            // If YCloud reports a failure due to 24h window (Meta code 131047),
-                            // try to fallback to Meta template send (if configured) so we can
-                            // start a template conversation.
-                            try {
-                                const ds = providerResp.delivery || {};
-                                const dstatus = (ds.status || ds.state || '').toLowerCase();
-                                const derr = String(ds.errorCode || ds.error_code || ds.error?.code || ds.errorCode || ds.errorMessage || ds.error_message || '').trim();
-                                const derrMsg = String(ds.errorMessage || ds.error_message || ds.error?.message || '').toLowerCase();
-                                const is24h = dstatus === 'failed' && (derr === '131047' || derrMsg.includes('24 hours') || derrMsg.includes('24 horas'));
-                                if (is24h && this.whatsAppPort && typeof this.whatsAppPort.sendOtpMessage === 'function') {
-                                    console.warn('[WhatsApp] YCloud send failed due to 24h window — falling back to Meta template');
-                                    try {
-                                        const metaResp = await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
-                                        providerResp.fallback = { provider: 'Meta', response: metaResp };
-                                        console.log('[WhatsApp] Fallback OTP sent via Meta:', metaResp && (metaResp.messageId || metaResp));
-                                    } catch (mf) {
-                                        console.error('[WhatsApp] Meta fallback also failed:', mf && (mf.message || mf));
-                                    }
-                                }
-                            } catch (e) {
-                                /* ignore fallback errors */
-                            }
-                        }
-                    } catch (e) {
-                        console.warn('[WhatsApp] Failed to fetch YCloud delivery status:', e && (e.message || e));
-                    }
-                } catch (yErr) {
-                    // When YCloud is explicitly configured we should NOT silently fallback to Meta.
-                    // Return a clear error so the client can inform the user and operators can
-                    // diagnose YCloud connectivity/credentials. Include limited error details.
-                    console.error('[WhatsApp] YCloud OTP send failed:', yErr?.message || yErr);
-                    return Result.fail(new AppError(
-                        'No se pudo enviar el código de verificación vía YCloud. Contacta al administrador del sistema.',
-                        502,
-                        true,
-                        'YCLOUD_OTP_SEND_FAILED'
-                    ));
-                }
-            } else {
-                // Preferir template message (requerido por Meta fuera de la ventana de 24h)
-                if (typeof this.whatsAppPort.sendOtpMessage === 'function') {
-                    const mresp = await this.whatsAppPort.sendOtpMessage(normalized, otpCode);
-                    providerResp = { provider: 'Meta', response: mresp };
-                } else {
-                    // Fallback a texto libre (solo funciona si hay conversación abierta)
-                    const mresp = await this.whatsAppPort.sendTextMessage(normalized, otpMessage);
-                    providerResp = { provider: 'Meta', response: mresp };
-                }
-            }
+            await this._sendOtp(normalized, otpCode);
+            console.log('[WhatsApp] OTP enviado a', normalized);
         } catch (err) {
-            const errorMessage = String(err?.message || '');
-            const metaCode = Number(err?.metaCode);
-            const appCode = String(err?.code || '');
-            const isRecipientNotAllowed =
-                appCode === 'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE' ||
-                metaCode === 131030 ||
-                errorMessage.includes('131030') ||
-                errorMessage.toLowerCase().includes('recipient phone number not in allowed list');
-
-            const isAccountNotRegistered =
-                appCode === 'WHATSAPP_ACCOUNT_NOT_REGISTERED' ||
-                metaCode === 133010 ||
-                errorMessage.includes('133010') ||
-                errorMessage.toLowerCase().includes('account not registered');
-
-            if (isRecipientNotAllowed) {
-                console.warn('[WhatsApp] OTP bloqueado por modo prueba de Meta (allowed list).');
-                return Result.fail(new AppError(
-                    'No se pudo enviar el OTP porque este número no está permitido en el modo prueba de Meta. Agrega el número como tester en WhatsApp Cloud API o publica la app para usar números externos.',
-                    400,
-                    true,
-                    'WHATSAPP_RECIPIENT_NOT_ALLOWED_TEST_MODE',
-                ));
-            }
-
-            if (isAccountNotRegistered) {
-                console.warn('[WhatsApp] El número no tiene cuenta de WhatsApp activa.');
-                return Result.fail(new AppError(
-                    'El número ingresado no tiene una cuenta de WhatsApp activa. Verifica que el número sea correcto y tenga WhatsApp instalado.',
-                    400,
-                    true,
-                    'WHATSAPP_ACCOUNT_NOT_REGISTERED',
-                ));
-            }
-
-            console.error('[WhatsApp] Error sending OTP:', err.message);
-
-            return Result.fail(new AppError(
-                'No se pudo enviar el código de verificación por WhatsApp. Verifica el número e inténtalo nuevamente.',
-                502,
-                true,
-                'WHATSAPP_OTP_SEND_FAILED',
-            ));
-        }
-
-        // If we obtained a delivery status and it indicates failure, surface a clear error
-        try {
-            const delivery = providerResp?.delivery;
-            const fallback = providerResp?.fallback;
-            const deliveryStatus = delivery?.status || (delivery?.state) || null;
-            const deliveryErr = String(delivery?.errorCode || delivery?.error_code || delivery?.error?.code || delivery?.errorMessage || delivery?.error_message || '').trim();
-
-            if (deliveryStatus && String(deliveryStatus).toLowerCase() === 'failed') {
-                // Known undeliverable codes (Meta/YCloud mappings)
-                if (deliveryErr === '131026') {
-                    console.warn('[WhatsApp] Message undeliverable (131026) for', normalized, providerResp);
-                    return Result.fail(new AppError(
-                        'No fue posible entregar el código de verificación: el número objetivo no acepta mensajes (undeliverable). Verifica el número e inténtalo nuevamente.',
-                        400,
-                        true,
-                        'WHATSAPP_UNDELIVERABLE'
-                    ));
-                }
-
-                // If YCloud failed due to 24h window but we attempted a Meta fallback and it succeeded, continue.
-                if (deliveryErr === '131047') {
-                    const metaOk = fallback && fallback.provider === 'Meta' && (fallback.response?.messageId || fallback.response?.message_id);
-                    if (metaOk) {
-                        console.log('[WhatsApp] Meta fallback succeeded after 131047');
-                    } else {
-                        console.warn('[WhatsApp] YCloud failed 131047 and Meta fallback did not succeed', providerResp);
-                        return Result.fail(new AppError(
-                            'No se pudo iniciar la conversación por WhatsApp (fuera de ventana de 24h). Pide al usuario que envíe un mensaje al número de la empresa para activar la conversación, o agrega el número como tester.',
-                            400,
-                            true,
-                            'WHATSAPP_24H_WINDOW'
-                        ));
-                    }
-                }
-
-                // Generic failed case: surface provider info
-                console.warn('[WhatsApp] Delivery failed for', normalized, providerResp);
-                return Result.fail(new AppError(
-                    'No se pudo entregar el código de verificación. Verifica el número y que el destinatario tenga WhatsApp o no haya bloqueado al remitente.',
-                    400,
-                    true,
-                    'WHATSAPP_DELIVERY_FAILED'
-                ));
-            }
-        } catch (e) {
-            // If any error occurs during delivery inspection, log and continue to return ok with providerResponse
-            console.warn('[WhatsApp] Error inspecting delivery status:', e && (e.message || e));
+            return this._mapOtpSendError(err);
         }
 
         return Result.ok({
             sessionId: session?.id,
             phoneNumber: normalized,
             message: 'Código de verificación enviado a WhatsApp',
-            providerResponse: providerResp,
             canUseMCP,
         });
     }
