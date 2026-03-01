@@ -4,6 +4,7 @@ export function progressRoutes({ progressController }) {
     const router = Router();
 
     router.get('/my', progressController.getMyProgress);
+    router.get('/my/certificates', progressController.getMyCertificates);
     router.get('/my/enrolled-course-ids', progressController.getEnrolledCourseIds);
     router.get('/top-students', progressController.getTopStudents);
     router.get('/creator/enrollment-analytics', progressController.getCreatorEnrollmentAnalytics);

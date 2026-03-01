@@ -3,6 +3,14 @@ export class ProgressController {
         this.progressService = progressService;
     }
 
+    getMyCertificates = async(req, res, next) => {
+        try {
+            const result = await this.progressService.getMyCertificates(req.user.userId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getMyProgress = async(req, res, next) => {
         try {
             const result = await this.progressService.getByUser(req.user.userId);

@@ -195,6 +195,11 @@ export class ProgressDomainService {
         return Result.ok(updated);
     }
 
+    async getMyCertificates(userId) {
+        const certificates = await this.progressRepo.findCertificatesByUser(userId);
+        return Result.ok(certificates);
+    }
+
     async updateCertificateUrl(userId, courseId, url) {
         const updated = await this.progressRepo.updateCertificate(userId, courseId, {
             certificateUrl: url,
