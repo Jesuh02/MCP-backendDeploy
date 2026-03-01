@@ -9,7 +9,9 @@ export class SubscriptionDomainService {
 
     async subscribe(subscriberId, creatorId) {
         if (subscriberId === creatorId) {
-            return Result.fail(new ConflictError('No puedes suscribirte a ti mismo'));
+            const err = new ConflictError('No puedes suscribirte a ti mismo');
+            err.silent = true;
+            return Result.fail(err);
         }
         const existing = await this.subRepo.findBySubscriberAndCreator(subscriberId, creatorId);
         if (existing) return Result.ok(existing);
