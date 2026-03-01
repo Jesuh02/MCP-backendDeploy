@@ -20,7 +20,7 @@ export function errorHandler(err, req, res, _next) {
     };
 
     if ((err instanceof AppError || err.isOperational) && statusCode >= 400 && statusCode < 500) {
-        logger.warn('Request warning:', logPayload);
+        if (!err.silent) logger.warn('Request warning:', logPayload);
     } else {
         logger.error('Error:', logPayload);
     }
