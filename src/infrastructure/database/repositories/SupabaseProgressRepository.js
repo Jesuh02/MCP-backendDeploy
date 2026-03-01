@@ -123,6 +123,41 @@ export class SupabaseProgressRepository {
         }));
     }
 
+    async findCertificatesByUser(userId) {
+        const { data, error } = await this.client
+            .from('progreso_estudiante')
+            .select('curso_id, certificado_url, certificado_emitido_en, estado, promedio, calificacion_ponderada')
+            .eq('usuario_estudiante', userId)
+            .not('certificado_url', 'is', null)
+            .order('certificado_emitido_en', { ascending: false });
+
+        if (error || !data || data.length === 0) return [];
+
+        const courseIds = data.map(r => r.curso_id).filter(Boolean);
+        let coursesById = new Map();
+
+        if (courseIds.length > 0) {
+            const { data: courses } = await this.client
+                .from('courses')
+                .select('id, title, thumbnail_uri')
+                .in('id', courseIds);
+            coursesById = new Map((courses || []).map(c => [c.id, c]));
+        }
+
+        return data.map(row => {
+            const course = coursesById.get(row.curso_id) || {};
+            return {
+                courseId: row.curso_id,
+                courseName: course.title || null,
+                courseThumbnail: course.thumbnail_uri || null,
+                certificateUrl: row.certificado_url,
+                certificateIssuedAt: row.certificado_emitido_en,
+                status: row.estado,
+                averageGrade: row.calificacion_ponderada ?? row.promedio ?? null,
+            };
+        });
+    }
+
     async updateCertificate(userId, courseId, data) {
         const payload = {};
         if (data.certificateIssuedAt) payload.certificado_emitido_en = data.certificateIssuedAt;
