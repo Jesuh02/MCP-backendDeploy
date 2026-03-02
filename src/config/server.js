@@ -300,19 +300,30 @@ export function createApp() {
 
     // Notify grade — delegates to notificationService via container (DIP)
     app.post('/notify-grade', async(req, res) => {
+        try {
+            const { userId, taskName, grade, feedback, gradedByUsername, submissionId, taskId: taskIdFromBody } = req.body;
+            if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+
+            const notifService = container.notificationService;
+            if (!notifService) return res.json({ success: false, error: 'NotificationService not available' });
+
+            let resolvedTaskId = taskIdFromBody ? parseInt(taskIdFromBody) : null;
+            if (!resolvedTaskId && submissionId && container.submissionService) {
                 try {
-                    const { userId, taskName, grade, feedback, gradedByUsername, submissionId } = req.body;
-                    if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+                    const subResult = await container.submissionService.getById(parseInt(submissionId));
+                    if (subResult.isOk()) {
+                        const sub = subResult.getValue();
+                        resolvedTaskId = sub.task_id || sub.taskId || null;
+                    }
+                } catch (_) {}
+            }
 
-                    const notifService = container.notificationService;
-                    if (!notifService) return res.json({ success: false, error: 'NotificationService not available' });
-
-                    await notifService.sendNotification({
-                                userId: parseInt(userId),
-                                title: `📊 Tu tarea "${taskName || 'Tarea'}" ha sido calificada`,
-                                message: `Nota: ${grade}/10${feedback ? ` — ${feedback.substring(0, 100)}` : ''}`,
+            await notifService.sendNotification({
+                userId: parseInt(userId),
+                title: `📊 Tu tarea "${taskName || 'Tarea'}" ha sido calificada`,
+                message: `Nota: ${grade}/10${feedback ? ` — ${feedback.substring(0, 100)}` : ''}`,
                 type: 'task_graded',
-                relatedId: submissionId,
+                relatedId: resolvedTaskId || (submissionId ? parseInt(submissionId) : null),
                 senderUsername: gradedByUsername,
             });
             res.json({ success: true });
