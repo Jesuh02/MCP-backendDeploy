@@ -173,6 +173,7 @@ export class SupabaseWhatsAppSessionRepository {
      * Desactiva la sesión de un usuario (soft delete).
      * @param {number} userId
      * @returns {Promise<void>}
+     * @throws {Error} si la operación falla en la base de datos.
      */
     async deactivate(userId) {
         const { error } = await this.client
@@ -185,6 +186,7 @@ export class SupabaseWhatsAppSessionRepository {
 
         if (error) {
             console.error('[WhatsAppSessionRepo] deactivate error:', error.message);
+            throw new Error(`Error desactivando sesión de WhatsApp: ${error.message}`);
         }
     }
 
