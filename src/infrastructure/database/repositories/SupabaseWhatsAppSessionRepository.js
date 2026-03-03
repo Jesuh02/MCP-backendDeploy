@@ -192,6 +192,7 @@ export class SupabaseWhatsAppSessionRepository {
      * Elimina la sesión de un usuario (hard delete).
      * @param {number} userId
      * @returns {Promise<void>}
+     * @throws {Error} si la operación falla en la base de datos.
      */
     async deleteByUserId(userId) {
         const { error } = await this.client
@@ -201,6 +202,7 @@ export class SupabaseWhatsAppSessionRepository {
 
         if (error) {
             console.error('[WhatsAppSessionRepo] deleteByUserId error:', error.message);
+            throw new Error(`Error eliminando sesión de WhatsApp: ${error.message}`);
         }
     }
 }
