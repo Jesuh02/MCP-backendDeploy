@@ -1,7 +1,7 @@
 import { Task } from '../../../domain/entities/Task.js';
 
 /**
- * SupabaseTaskRepository — Adaptador de salida (infraestructura).
+ * SupabaseTaskRepository ï¿½ Adaptador de salida (infraestructura).
  *
  * Implementa ITaskRepository usando el cliente de Supabase.
  * Responsabilidades:
@@ -12,9 +12,9 @@ import { Task } from '../../../domain/entities/Task.js';
  * Tabla `tasks` (columnas reales):
  *   id | topic_id | title | description | due_date | created_at
  *
- * Nota: NO existe `course_id` en `tasks`; la relación con cursos va
- *       tasks.topic_id ? topics.course_id. Los métodos que necesitan filtrar
- *       por curso hacen join a través de `topics`.
+ * Nota: NO existe `course_id` en `tasks`; la relaciï¿½n con cursos va
+ *       tasks.topic_id ? topics.course_id. Los mï¿½todos que necesitan filtrar
+ *       por curso hacen join a travï¿½s de `topics`.
  */
 export class SupabaseTaskRepository {
     constructor(client) { this.client = client; }
@@ -66,7 +66,7 @@ export class SupabaseTaskRepository {
 
     /**
      * Busca todas las tareas de un curso.
-     * Como `tasks` no tiene `course_id`, se resuelve a través de `topics`:
+     * Como `tasks` no tiene `course_id`, se resuelve a travï¿½s de `topics`:
      *   1. Obtener los topic IDs del curso.
      *   2. Filtrar tareas por esos topic IDs.
      */
@@ -127,10 +127,26 @@ export class SupabaseTaskRepository {
     }
 
     async delete(id) {
-        const { error } = await this.client
-            .from('tasks')
-            .delete()
-            .eq('id', id);
+        // 1. Delete RAG documents tied directly to this task
+        await this.client.from('rag_documents').delete().eq('task_id', id);
+
+        // 2. Delete RAG documents tied to content items of this task, then the content items
+        const { data: items } = await this.client
+            .from('content_items').select('id').eq('task_id', id);
+        if (items?.length > 0) {
+            await this.client.from('rag_documents').delete()
+                .in('content_item_id', items.map(i => i.id));
+            await this.client.from('content_items').delete().eq('task_id', id);
+        }
+
+        // 3. Delete task submissions
+        await this.client.from('task_submissions').delete().eq('task_id', id);
+
+        // 4. Delete question sessions referencing this task
+        await this.client.from('question_sessions').delete().eq('task_id', id);
+
+        // 5. Delete the task
+        const { error } = await this.client.from('tasks').delete().eq('id', id);
         if (error) throw new Error(error.message);
         return true;
     }
