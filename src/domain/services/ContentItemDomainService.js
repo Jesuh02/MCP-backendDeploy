@@ -22,6 +22,11 @@ export class ContentItemDomainService {
         return Result.ok(items);
     }
 
+    async getByCourse(courseId) {
+        const items = await this.contentRepo.findByCourse(courseId);
+        return Result.ok(items);
+    }
+
     async create(data) {
         const created = await this.contentRepo.create(data);
         return Result.ok(created);

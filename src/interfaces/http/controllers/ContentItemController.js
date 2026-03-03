@@ -30,6 +30,14 @@ export class ContentItemController {
         } catch (err) { next(err); }
     };
 
+    getByCourse = async(req, res, next) => {
+        try {
+            const result = await this.contentService.getByCourse(parseInt(req.params.courseId));
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     create = async(req, res, next) => {
         try {
             const { error, value } = createContentItemSchema.validate(req.body);

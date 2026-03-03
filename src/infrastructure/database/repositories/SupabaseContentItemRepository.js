@@ -40,6 +40,20 @@ export class SupabaseContentItemRepository {
         return data || [];
     }
 
+    async findByCourse(courseId) {
+        const { data: topics, error: topicErr } = await this.client
+            .from('topics').select('id').eq('course_id', courseId);
+        if (topicErr) throw new Error(topicErr.message);
+        if (!topics || topics.length === 0) return [];
+        const topicIds = topics.map(t => t.id);
+        const { data, error } = await this.client
+            .from('content_items').select('*')
+            .in('topic_id', topicIds)
+            .order('order_index', { ascending: true });
+        if (error) throw new Error(error.message);
+        return data || [];
+    }
+
     async create(itemData) {
         const payload = {
             topic_id: itemData.topicId || null,

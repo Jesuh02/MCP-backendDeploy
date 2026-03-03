@@ -3,6 +3,7 @@ import { Router } from 'express';
 export function contentItemRoutes({ contentItemController }) {
     const router = Router();
 
+    router.get('/course/:courseId', contentItemController.getByCourse);
     router.get('/task/:taskId', contentItemController.getByTask);
     router.get('/topic/:topicId', contentItemController.getByTopic);
     router.get('/:id', contentItemController.getById);
