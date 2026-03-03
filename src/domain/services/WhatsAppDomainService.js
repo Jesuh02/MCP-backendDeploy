@@ -758,16 +758,9 @@ export class WhatsAppDomainService {
     async unlinkAccount(userId) {
         const session = await this.sessionRepo.findByUserId(userId);
 
-        // If no session is found (e.g. duplicate rows caused findByUserId to fail,
-        // or the session was already cleaned up), still deactivate by userId so
-        // any leftover rows are cleared. Return success so the client UI updates.
-        if (!session) {
-            try { await this.sessionRepo.deactivate(userId); } catch (_) {}
-            return Result.ok({ message: 'WhatsApp desvinculado correctamente' });
-        }
-
-        // Enviar mensaje de despedida antes de desactivar (usar YCloud si está configurado)
-        if (session.phoneNumber && session.isActive) {
+        // Enviar mensaje de despedida antes de eliminar (usar YCloud si está configurado).
+        // Los errores de envío son ignorados — la eliminación procede igual.
+        if (session?.phoneNumber && session.isActive) {
             try {
                 if (this._isYCloudEnabled()) {
                     try {
@@ -785,11 +778,19 @@ export class WhatsAppDomainService {
                     }
                 }
             } catch (e) {
-                // ignore
+                // ignore send errors
             }
         }
 
-        await this.sessionRepo.deactivate(userId);
+        // Eliminar la sesión del usuario (hard delete).
+        // Si falla, propagar el error para que el cliente sepa que no se desvinculó.
+        try {
+            await this.sessionRepo.deleteByUserId(userId);
+        } catch (err) {
+            console.error('[WhatsApp] unlinkAccount: failed to delete session for userId:', userId, err && err.message);
+            return Result.fail(new Error('No se pudo desvincular WhatsApp. Intenta de nuevo.'));
+        }
+
         return Result.ok({ message: 'WhatsApp desvinculado correctamente' });
     }
 
