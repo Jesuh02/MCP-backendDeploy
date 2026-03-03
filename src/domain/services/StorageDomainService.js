@@ -3,7 +3,7 @@
  * Delega al IFileStoragePort.
  */
 import { Result } from '../../shared/Result.js';
-import { ValidationError } from '../../shared/errors/index.js';
+import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 const ALLOWED_PREFIXES = ['videos', 'thumbnails', 'avatars', 'submissions', 'content', 'courses'];
@@ -43,6 +43,25 @@ export class StorageDomainService {
     async listFiles(prefix) {
         const files = await this.storage.listFiles(prefix);
         return Result.ok(files);
+    }
+
+    /**
+     * Returns a readable stream for a file without loading it into memory.
+     * Used by the public proxy endpoint to serve files without exposing R2 URLs.
+     */
+    async streamFile(key) {
+        if (!key || key.includes('..') || key.startsWith('/')) {
+            return Result.fail(new ValidationError('key inválido'));
+        }
+        try {
+            const stream = await this.storage.getFileStream(key);
+            return Result.ok(stream);
+        } catch (err) {
+            if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
+                return Result.fail(new NotFoundError('Archivo no encontrado'));
+            }
+            throw err;
+        }
     }
 
     getPublicUrl(key) {

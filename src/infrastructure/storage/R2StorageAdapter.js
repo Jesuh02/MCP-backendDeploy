@@ -164,6 +164,23 @@ export class R2StorageAdapter {
         }));
     }
 
+    /**
+     * Returns a readable stream for a file stored in R2.
+     * Useful for proxying files without loading them into memory.
+     * @param {string} key - R2 object key
+     * @returns {Promise<{ body: ReadableStream, contentType: string, contentLength: number|undefined }>}
+     */
+    async getFileStream(key) {
+        if (!this.r2Client) throw new Error('R2 client not available');
+        const cmd = new GetObjectCommand({ Bucket: this.bucketName, Key: key });
+        const res = await this.r2Client.send(cmd);
+        return {
+            body: res.Body,
+            contentType: res.ContentType || 'application/octet-stream',
+            contentLength: res.ContentLength,
+        };
+    }
+
     async fetchFile(key) {
         if (!this.r2Client) throw new Error('R2 client not available');
         const cmd = new GetObjectCommand({ Bucket: this.bucketName, Key: key });
