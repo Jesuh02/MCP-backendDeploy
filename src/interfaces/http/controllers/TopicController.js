@@ -55,7 +55,11 @@ export class TopicController {
 
     delete = async(req, res, next) => {
         try {
-            const result = await this.topicService.delete(parseInt(req.params.id));
+            const preserveTasks = req.query.preserveTasks === 'true';
+            const id = parseInt(req.params.id);
+            const result = preserveTasks
+                ? await this.topicService.deleteTopicOnly(id)
+                : await this.topicService.delete(id);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

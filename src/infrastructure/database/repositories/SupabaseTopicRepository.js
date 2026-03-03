@@ -89,6 +89,30 @@ export class SupabaseTopicRepository {
         if (error) throw new Error(error.message);
         return true;
     }
+
+    // Deletes only the topic and its direct content items.
+    // Tasks belonging to this topic are preserved (topic_id set to null).
+    async deleteTopicOnly(id) {
+        // 1. Delete RAG documents with topic_id
+        await this.client.from('rag_documents').delete().eq('topic_id', id);
+
+        // 2. Detach tasks from this topic (preserve them)
+        await this.client.from('tasks').update({ topic_id: null }).eq('topic_id', id);
+
+        // 3. Delete content items directly under this topic (no task)
+        const { data: topicItems } = await this.client
+            .from('content_items').select('id').eq('topic_id', id);
+        if (topicItems?.length > 0) {
+            await this.client.from('rag_documents').delete()
+                .in('content_item_id', topicItems.map(i => i.id));
+            await this.client.from('content_items').delete().eq('topic_id', id);
+        }
+
+        // 4. Delete the topic
+        const { error } = await this.client.from('topics').delete().eq('id', id);
+        if (error) throw new Error(error.message);
+        return true;
+    }
 }
 export default SupabaseTopicRepository;
 
