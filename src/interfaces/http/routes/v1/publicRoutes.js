@@ -9,7 +9,7 @@
 import { Router } from 'express';
 import { parsePagination, buildPaginatedResponse } from '../../../../shared/pagination.js';
 
-export function publicRoutes({ videoService, courseService }) {
+export function publicRoutes({ videoService, courseService, storageService }) {
     const router = Router();
 
     /**
@@ -69,6 +69,43 @@ export function publicRoutes({ videoService, courseService }) {
             if (result.isFail()) return next(result.getError());
             const { courses, total } = result.getValue();
             res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
+        } catch (err) {
+            next(err);
+        }
+    });
+
+    /**
+     * GET /api/v1/public/files/*key
+     * Proxy público de archivos R2 — hace de intermediario entre el cliente
+     * y el bucket, sin exponer la URL real de Cloudflare R2.
+     * Cualquier usuario puede acceder sin autenticación.
+     *
+     * Ejemplo: GET /api/v1/public/files/topics/documents/1234_archivo.xlsx
+     */
+    router.get('/files/*', async (req, res, next) => {
+        try {
+            const key = req.params[0];
+            if (!key || key.length < 2) {
+                return res.status(400).json({ success: false, error: 'key requerido' });
+            }
+
+            if (!storageService) {
+                return res.status(503).json({ success: false, error: 'Storage no disponible' });
+            }
+
+            const result = await storageService.streamFile(key);
+            if (result.isFail()) return next(result.getError());
+
+            const { body, contentType, contentLength } = result.getValue();
+
+            res.setHeader('Content-Type', contentType);
+            if (contentLength) res.setHeader('Content-Length', contentLength);
+
+            // Mostrar inline (para PDFs, imágenes) en lugar de forzar descarga
+            const filename = key.split('/').pop();
+            res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(filename)}"`);
+
+            body.pipe(res);
         } catch (err) {
             next(err);
         }
