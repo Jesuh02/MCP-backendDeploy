@@ -43,6 +43,13 @@ export class TopicDomainService {
         await this.topicRepo.delete(id);
         return Result.ok({ message: 'Tema eliminado' });
     }
+
+    async deleteTopicOnly(id) {
+        const topic = await this.topicRepo.findById(id);
+        if (!topic) return Result.fail(new NotFoundError('Tema', id));
+        await this.topicRepo.deleteTopicOnly(id);
+        return Result.ok({ message: 'Tema eliminado (tareas conservadas)' });
+    }
 }
 export default TopicDomainService;
 
