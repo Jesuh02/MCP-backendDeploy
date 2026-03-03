@@ -46,6 +46,45 @@ export class SupabaseTopicRepository {
     }
 
     async delete(id) {
+        // 1. Delete RAG documents with topic_id (fk_rag_documents_topic)
+        await this.client.from('rag_documents').delete().eq('topic_id', id);
+
+        // 2. Get all tasks for this topic
+        const { data: tasks } = await this.client
+            .from('tasks').select('id').eq('topic_id', id);
+        const taskIds = (tasks || []).map(t => t.id);
+
+        if (taskIds.length > 0) {
+            // 3. Delete RAG documents tied to those tasks
+            await this.client.from('rag_documents').delete().in('task_id', taskIds);
+
+            // 4. Delete RAG documents tied to content items of those tasks, then the content items
+            const { data: taskItems } = await this.client
+                .from('content_items').select('id').in('task_id', taskIds);
+            if (taskItems?.length > 0) {
+                await this.client.from('rag_documents').delete()
+                    .in('content_item_id', taskItems.map(i => i.id));
+                await this.client.from('content_items').delete().in('task_id', taskIds);
+            }
+
+            // 5. Delete task submissions and question sessions for those tasks
+            await this.client.from('task_submissions').delete().in('task_id', taskIds);
+            await this.client.from('question_sessions').delete().in('task_id', taskIds);
+
+            // 6. Delete the tasks
+            await this.client.from('tasks').delete().eq('topic_id', id);
+        }
+
+        // 7. Delete content items directly under this topic (topic_id, no task)
+        const { data: topicItems } = await this.client
+            .from('content_items').select('id').eq('topic_id', id);
+        if (topicItems?.length > 0) {
+            await this.client.from('rag_documents').delete()
+                .in('content_item_id', topicItems.map(i => i.id));
+            await this.client.from('content_items').delete().eq('topic_id', id);
+        }
+
+        // 8. Delete the topic
         const { error } = await this.client.from('topics').delete().eq('id', id);
         if (error) throw new Error(error.message);
         return true;
