@@ -89,7 +89,7 @@ export const createContentItemSchema = Joi.object({
     task_id: Joi.number().integer().allow(null).optional(),
     topicId: Joi.number().integer().allow(null).optional(),
     topic_id: Joi.number().integer().allow(null).optional(),
-    contentType: Joi.string().valid('text', 'file', 'link', 'image', 'video', 'document').default('text'),
+    contentType: Joi.string().valid('text', 'file', 'link', 'image', 'video', 'document').optional(),
     content_type: Joi.string().valid('text', 'file', 'link', 'image', 'video', 'document').optional(),
     title: Joi.string().max(500).allow('', null).optional(),
     body: Joi.string().max(50000).allow('', null).optional(),
@@ -110,7 +110,9 @@ export const createContentItemSchema = Joi.object({
     // Normalizar snake_case a camelCase
     if (!value.taskId && value.task_id) value.taskId = value.task_id;
     if (!value.topicId && value.topic_id) value.topicId = value.topic_id;
-    if (!value.contentType && value.content_type) value.contentType = value.content_type;
+    // content_type always wins if provided (fixes default('text') overriding snake_case value)
+    if (value.content_type) value.contentType = value.content_type;
+    else if (!value.contentType) value.contentType = 'text';
     // Mapear campos Android: name→title, uriString→body
     if (!value.title && value.name) value.title = value.name;
     if (!value.title && value.fileName) value.title = value.fileName;

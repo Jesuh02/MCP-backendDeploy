@@ -1,5 +1,5 @@
 ## consideraciones de calidad
-- Manten el codigo limpio facil de leer
+- Manten el codigo limpio facil de leer, y escribe el menos codigo posible
 ## stack tecnologico 
 - backend Node.js + Express (ESM modules)
 - frontend kotlin con jetpack compose
