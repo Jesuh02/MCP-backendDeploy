@@ -217,7 +217,7 @@ export function createContainer() {
     const authService = new AuthService({ userRepository: userRepo, jwtAdapter });
     const userService = new UserDomainService({ userRepository: userRepo, fileStoragePort: storageAdapter });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
-    const videoService = new VideoDomainService({ videoRepository: videoRepo, fileStoragePort: storageAdapter });
+    const videoService = new VideoDomainService({ videoRepository: videoRepo, fileStoragePort: storageAdapter, courseRepository: courseRepo });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo });
@@ -233,20 +233,20 @@ export function createContainer() {
 
     // Nivel 1: servicios que dependen de servicios del Nivel 0
     // Crear courseNotificationService primero (depende de nivel 0)
-    const courseNotificationService = new CourseNotificationService({ 
-        subscriptionRepository: subscriptionRepo, 
-        notificationService, 
+    const courseNotificationService = new CourseNotificationService({
+        subscriptionRepository: subscriptionRepo,
+        notificationService,
         userService,
         emailQueueService
     });
 
     // courseService necesita courseNotificationService, por lo que se instancia aquí
-    const courseService = new CourseDomainService({ 
-        courseRepository: courseRepo, 
-        transactionRepository: transactionRepo, 
-        progressRepository: progressRepo, 
-        fileStoragePort: storageAdapter, 
-        courseNotificationService 
+    const courseService = new CourseDomainService({
+        courseRepository: courseRepo,
+        transactionRepository: transactionRepo,
+        progressRepository: progressRepo,
+        fileStoragePort: storageAdapter,
+        courseNotificationService
     });
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios
