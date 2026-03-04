@@ -3,9 +3,10 @@ import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/err
 import path from 'path';
 
 export class VideoDomainService {
-    constructor({ videoRepository, fileStoragePort }) {
+    constructor({ videoRepository, fileStoragePort, courseRepository }) {
         this.videoRepo = videoRepository;
         this.storage = fileStoragePort || null;
+        this.courseRepo = courseRepository || null;
     }
 
     /**
@@ -193,6 +194,15 @@ export class VideoDomainService {
             };
 
             const created = await this.videoRepo.create(videoData);
+
+            // 4. Update the associated course with the thumbnail if one exists
+            if (metadata.courseId && thumbnailUrl && this.courseRepo) {
+                try {
+                    await this.courseRepo.update(metadata.courseId, { thumbnailUri: thumbnailUrl });
+                } catch (err) {
+                    console.warn('[VideoDomainService] Error updating course thumbnail:', err.message);
+                }
+            }
 
             // Sign URLs before returning
             await this._signUrls(created);
