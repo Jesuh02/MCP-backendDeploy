@@ -6,7 +6,7 @@ import Joi from 'joi';
 export const createVideoSchema = Joi.object({
     title: Joi.string().min(1).max(300).required(),
     description: Joi.string().max(5000).allow('').optional(),
-    videoUri: Joi.string().uri().required(),
+    videoUri: Joi.string().uri().allow(null, '').optional(),
     thumbnailUri: Joi.string().uri().allow(null, '').optional(),
     duration: Joi.number().min(0).allow(null).optional(),
     username: Joi.string().required(),
