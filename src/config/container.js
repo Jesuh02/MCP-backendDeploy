@@ -245,6 +245,7 @@ export function createContainer() {
         courseRepository: courseRepo,
         transactionRepository: transactionRepo,
         progressRepository: progressRepo,
+        videoRepository: videoRepo,
         fileStoragePort: storageAdapter,
         courseNotificationService
     });
