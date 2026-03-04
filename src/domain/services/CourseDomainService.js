@@ -2,12 +2,13 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
-    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService }) {
+    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService, videoRepository }) {
         this.courseRepo = courseRepository;
         this.transactionRepo = transactionRepository;
         this.progressRepo = progressRepository;
         this.storage = fileStoragePort || null;
         this.courseNotificationService = courseNotificationService || null;
+        this.videoRepo = videoRepository || null;
     }
 
     // Derive `isFree` flag from a price value and mutate the object provided.
@@ -33,7 +34,7 @@ export class CourseDomainService {
     async _signUrls(courses) {
         if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return courses;
         const list = Array.isArray(courses) ? courses : [courses];
-        await Promise.all(list.map(async(c) => {
+        await Promise.all(list.map(async (c) => {
             if (!c) return;
             try {
                 const url = c.thumbnail_url || c.thumbnail_uri || c.thumbnailUri;
@@ -55,6 +56,36 @@ export class CourseDomainService {
         return Array.isArray(courses) ? list : list[0];
     }
 
+    async _attachVideos(courses) {
+        if (!this.videoRepo) return courses;
+        const list = Array.isArray(courses) ? courses : [courses];
+        const courseIds = list.map(c => c && c.id).filter(Boolean);
+        if (courseIds.length === 0) return courses;
+
+        try {
+            const videos = await this.videoRepo.findByCourseIds(courseIds, { limit: 1000 });
+            const videoMap = {};
+            for (const v of videos) {
+                if (!videoMap[v.courseId]) {
+                    videoMap[v.courseId] = v;
+                }
+            }
+
+            for (const c of list) {
+                if (!c) continue;
+                const v = videoMap[c.id];
+                if (v && v.videoUriString) {
+                    c.video_uri = v.videoUriString;
+                    c.video_uri_string = v.videoUriString;
+                    c.videoUri = v.videoUriString;
+                }
+            }
+        } catch (e) {
+            console.warn('[CourseDomainService] Error attaching videos to courses', e.message);
+        }
+        return Array.isArray(courses) ? list : list[0];
+    }
+
     async getById(id) {
         const idValidation = this._validateCourseId(id);
         if (idValidation.isFail()) return idValidation;
@@ -63,6 +94,7 @@ export class CourseDomainService {
         const course = await this.courseRepo.findById(courseId);
         if (!course) return Result.fail(new NotFoundError('Curso', courseId));
         await this._signUrls(course);
+        await this._attachVideos(course);
         return Result.ok(course);
     }
 
@@ -72,6 +104,7 @@ export class CourseDomainService {
             this.courseRepo.count({ excludeCreatorId: pagination.excludeCreatorId }),
         ]);
         await this._signUrls(courses);
+        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -201,6 +234,7 @@ export class CourseDomainService {
             this.courseRepo.count({ creatorUsername: username })
         ]);
         await this._signUrls(courses);
+        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -210,6 +244,7 @@ export class CourseDomainService {
             this.courseRepo.count({ search: query })
         ]);
         await this._signUrls(courses);
+        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -218,14 +253,14 @@ export class CourseDomainService {
         // Ensure isFree is consistent with price (price > 0 => premium)
         this._ensureIsFreeFlag(courseData);
         const created = await this.courseRepo.create(courseData);
-        
+
         // Fire-and-forget: Notificar a los suscriptores del creador sobre el nuevo curso
         if (this.courseNotificationService) {
             await this.courseNotificationService.notifySubscribersAboutNewCourse(created, requesterId).catch(err =>
                 console.warn('[CourseDomainService] Error notifying subscribers about new course:', err.message)
             );
         }
-        
+
         return Result.ok(created);
     }
 
@@ -257,12 +292,14 @@ export class CourseDomainService {
             this.courseRepo.count({ creatorUserId: userId })
         ]);
         await this._signUrls(courses);
+        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
     async findByIds(ids) {
         const courses = await this.courseRepo.findByIds(ids);
         await this._signUrls(courses);
+        await this._attachVideos(courses);
         return Result.ok(courses);
     }
 
@@ -272,6 +309,7 @@ export class CourseDomainService {
             this.courseRepo.count({ isFree: true, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
+        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -281,6 +319,7 @@ export class CourseDomainService {
             this.courseRepo.count({ isFree: false, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
+        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -308,6 +347,7 @@ export class CourseDomainService {
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
+        await this._attachVideos(sortedCourses);
         return Result.ok({ courses: sortedCourses, total });
     }
 
@@ -332,6 +372,7 @@ export class CourseDomainService {
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
+        await this._attachVideos(sortedCourses);
         return Result.ok({ courses: sortedCourses, total });
     }
 
@@ -345,6 +386,7 @@ export class CourseDomainService {
         try {
             const courses = await this.courseRepo.findCreatorCoursesWithSubmissions(creatorUserId);
             await this._signUrls(courses);
+            await this._attachVideos(courses);
             return Result.ok(courses);
         } catch (err) {
             return Result.fail(new Error(`Error fetching courses with submissions: ${err.message}`));
