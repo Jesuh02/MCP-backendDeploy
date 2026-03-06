@@ -37,7 +37,7 @@ const candidates = [
     join(cwd, '.env'),
 ].filter(Boolean);
 
-let result = { parsed: {} };
+let result = null;
 let loadedPath = null;
 
 for (const candidate of candidates) {
@@ -49,9 +49,9 @@ for (const candidate of candidates) {
     }
 }
 
-if (result.error) {
+if (result?.error) {
     console.error('❌ Error loading .env file:', result.error);
-} else if (result.parsed) {
+} else if (result?.parsed && loadedPath) {
     const keys = Object.keys(result.parsed);
     console.log(`✅ Environment variables loaded from ${loadedPath} (${keys.length} keys found)`);
     console.log(`📌 APP_ENVIRONMENT: ${process.env.APP_ENVIRONMENT || nodeEnv}`);
@@ -60,11 +60,11 @@ if (result.error) {
         'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
         'PAYU_API_KEY', 'PAYU_PUBLIC_KEY', 'PAYU_INTEGRITY_SECRET', 'PAYU_EVENT_SECRET'
     ];
-    const missingKeys = criticalKeys.filter(k => !keys.includes(k));
+    const missingKeys = criticalKeys.filter((k) => !process.env[k]);
     if (missingKeys.length > 0) {
-        console.warn(`⚠️ Missing critical keys in .env: ${missingKeys.join(', ')}`);
+        console.warn(`⚠️ Missing critical runtime keys: ${missingKeys.join(', ')}`);
     } else {
-        console.log('✅ All critical R2 keys present in .env');
+        console.log('✅ All critical runtime keys present');
     }
 
     // Log WhatsApp integration keys presence
@@ -86,6 +86,15 @@ if (result.error) {
     // In production (Railway), environment variables are set directly
     console.log('ℹ️  No .env file found — using system environment variables (Railway mode)');
     console.log(`📌 APP_ENVIRONMENT: ${process.env.APP_ENVIRONMENT || nodeEnv}`);
+
+    const criticalKeys = [
+        'SUPABASE_URL', 'SUPABASE_SERVICE_KEY',
+        'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'
+    ];
+    const missingKeys = criticalKeys.filter((k) => !process.env[k]);
+    if (missingKeys.length > 0) {
+        console.warn(`⚠️ Missing critical runtime keys: ${missingKeys.join(', ')}`);
+    }
 }
 
 export default result;
