@@ -45,13 +45,23 @@ export class SupabaseVideoRepository {
     async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc' } = {}) {
         this._requireClient();
         const effectiveSortBy = (sortBy && sortBy !== 'null') ? sortBy : 'created_at';
-        const { data, error } = await this.client
-            .from('videos')
-            .select('*, usuarios!remote_id(username)')
-            .order(effectiveSortBy, { ascending: sortOrder === 'asc' })
-            .range(offset, offset + limit - 1);
-        if (error) throw new Error(error.message);
-        return (data || []).map(v => this._mapVideo(v));
+        try {
+            const { data, error } = await Promise.race([
+                this.client
+                    .from('videos')
+                    .select('*, usuarios!remote_id(username)')
+                    .order(effectiveSortBy, { ascending: sortOrder === 'asc' })
+                    .range(offset, offset + limit - 1),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Query timeout after 15s')), 15000)
+                ),
+            ]);
+            if (error) throw new Error(error.message);
+            return (data || []).map(v => this._mapVideo(v));
+        } catch (err) {
+            console.error('[SupabaseVideoRepository] findAll error:', err.message);
+            throw err;
+        }
     }
 
     async findByCreator(username, { offset = 0, limit = 20 } = {}) {
@@ -62,28 +72,43 @@ export class SupabaseVideoRepository {
             return [];
         }
 
-        // First get the user ID using the username
-        const { data: userData, error: userError } = await this.client
-            .from('usuarios')
-            .select('id')
-            .ilike('username', normalizedUsername)
-            .maybeSingle();
+        try {
+            // First get the user ID using the username
+            const { data: userData, error: userError } = await Promise.race([
+                this.client
+                    .from('usuarios')
+                    .select('id')
+                    .ilike('username', normalizedUsername)
+                    .maybeSingle(),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Timeout finding creator')), 10000)
+                ),
+            ]);
 
-        if (userError || !userData) {
-            console.warn(`[SupabaseVideoRepository] User not found for username: ${normalizedUsername}`);
+            if (userError || !userData) {
+                console.warn(`[SupabaseVideoRepository] User not found for username: ${normalizedUsername}`);
+                return [];
+            }
+
+            // Query videos using remote_id (user ID)
+            const { data, error } = await Promise.race([
+                this.client
+                    .from('videos')
+                    .select('*, usuarios!remote_id(username)')
+                    .eq('remote_id', userData.id)
+                    .order('created_at', { ascending: false })
+                    .range(offset, offset + limit - 1),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Timeout fetching videos')), 15000)
+                ),
+            ]);
+
+            if (error) throw new Error(error.message);
+            return (data || []).map(v => this._mapVideo(v));
+        } catch (err) {
+            console.error('[SupabaseVideoRepository] findByCreator error:', err.message);
             return [];
         }
-
-        // Query videos using remote_id (user ID)
-        const { data, error } = await this.client
-            .from('videos')
-            .select('*, usuarios!remote_id(username)')
-            .eq('remote_id', userData.id)
-            .order('created_at', { ascending: false })
-            .range(offset, offset + limit - 1);
-
-        if (error) throw new Error(error.message);
-        return (data || []).map(v => this._mapVideo(v));
     }
 
     async findByCreatorId(userId, { offset = 0, limit = 20 } = {}) {
@@ -168,15 +193,25 @@ export class SupabaseVideoRepository {
     async count(filters) {
         this._requireClient();
         filters = filters || {};
-        let q = this.client.from('videos').select('id', { count: 'exact', head: true });
-        if (filters.username) q = q.ilike('username', filters.username);
-        if (filters.courseId) q = q.eq('course_id', filters.courseId);
-        if (filters.search) {
-            var p = '%' + filters.search + '%';
-            q = q.or('title.ilike.' + p + ',description.ilike.' + p);
+        try {
+            let q = this.client.from('videos').select('id', { count: 'exact', head: true });
+            if (filters.username) q = q.ilike('username', filters.username);
+            if (filters.courseId) q = q.eq('course_id', filters.courseId);
+            if (filters.search) {
+                var p = '%' + filters.search + '%';
+                q = q.or('title.ilike.' + p + ',description.ilike.' + p);
+            }
+            const { count, error } = await Promise.race([
+                q,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Count query timeout')), 10000)
+                ),
+            ]);
+            return error ? 0 : count;
+        } catch (err) {
+            console.error('[SupabaseVideoRepository] count error:', err.message);
+            return 0;
         }
-        const { count, error } = await q;
-        return error ? 0 : count;
     }
 
     async findByCourseIds(courseIds, { offset = 0, limit = 100 } = {}) {
