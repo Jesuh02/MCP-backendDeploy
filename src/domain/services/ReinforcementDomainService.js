@@ -158,18 +158,6 @@ export class ReinforcementDomainService {
 
         // If we have questions, use MCPService for full embedding + uniqueness flow
         if (Array.isArray(parsedQuestions) && parsedQuestions.length > 0) {
-            if (parsedQuestions.length !== this.REQUIRED_QUESTION_COUNT) {
-                return Result.ok({
-                    success: false,
-                    savedCount: 0,
-                    duplicateCount: 0,
-                    totalSubmitted: parsedQuestions.length,
-                    requiredCount: this.REQUIRED_QUESTION_COUNT,
-                    needsRegeneration: true,
-                    message: `Se requieren exactamente ${this.REQUIRED_QUESTION_COUNT} preguntas para guardar la sesión.`
-                });
-            }
-
             try {
                 const mcpService = new MCPService();
                 const saveResult = await mcpService.saveReinforcementHistory(
@@ -181,20 +169,22 @@ export class ReinforcementDomainService {
                 );
 
                 const savedCount = saveResult?.savedCount || 0;
+                const cumulativeCount = saveResult?.cumulativeCount || savedCount;
                 const requiredCount = saveResult?.requiredCount || this.REQUIRED_QUESTION_COUNT;
-                const isCompleteBatch = savedCount === requiredCount;
+                const isComplete = cumulativeCount >= requiredCount;
 
-                if (saveResult && isCompleteBatch) {
+                if (saveResult && isComplete) {
                     return Result.ok({
                         success: true,
                         savedCount,
+                        cumulativeCount,
                         duplicateCount: (parsedQuestions.length - savedCount),
                         totalSubmitted: parsedQuestions.length,
                         requiredCount,
-                        message: `${savedCount} preguntas únicas guardadas con embeddings`
+                        message: `Lote completo: ${cumulativeCount} preguntas únicas acumuladas`
                     });
                 } else {
-                    console.warn(`[ReinforcementDomainService] Incomplete save: ${savedCount}/${requiredCount}. Regeneration required.`);
+                    console.warn(`[ReinforcementDomainService] Partial save: ${savedCount} this batch, ${cumulativeCount}/${requiredCount} cumulative.`);
                     // Fetch existing questions so client can use them for regeneration
                     let existingQuestions = [];
                     try {
@@ -210,14 +200,15 @@ export class ReinforcementDomainService {
                     return Result.ok({
                         success: false,
                         savedCount,
+                        cumulativeCount,
                         duplicateCount: (parsedQuestions.length - savedCount),
                         totalSubmitted: parsedQuestions.length,
                         requiredCount,
-                        shortfall: Math.max(requiredCount - savedCount, 0),
+                        shortfall: Math.max(requiredCount - cumulativeCount, 0),
                         allDuplicates: savedCount === 0,
                         needsRegeneration: true,
                         existingQuestions,
-                        message: `Solo se guardaron ${savedCount}/${requiredCount} preguntas únicas. Regenera para completar el lote.`
+                        message: `Guardadas ${savedCount} este ciclo, ${cumulativeCount}/${requiredCount} acumuladas. Faltan ${Math.max(requiredCount - cumulativeCount, 0)}.`
                     });
                 }
             } catch (e) {

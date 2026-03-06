@@ -482,8 +482,8 @@ export class MCPService {
             const REQUIRED_QUESTION_COUNT = 10;
             const preparedQuestions = this._prepareQuestionsForPersistence(questions, REQUIRED_QUESTION_COUNT);
 
-            if (preparedQuestions.length < REQUIRED_QUESTION_COUNT) {
-                logger.warn(`⚠️ saveReinforcementHistory rejected batch: expected ${REQUIRED_QUESTION_COUNT} valid unique questions, got ${preparedQuestions.length}`);
+            if (preparedQuestions.length === 0) {
+                logger.warn(`⚠️ saveReinforcementHistory: no valid questions in batch`);
                 return {
                     success: false,
                     savedCount: 0,
@@ -491,7 +491,7 @@ export class MCPService {
                     requiredCount: REQUIRED_QUESTION_COUNT,
                     insufficientCount: true,
                     totalSubmitted: Array.isArray(questions) ? questions.length : 0,
-                    reason: 'INSUFFICIENT_VALID_QUESTIONS'
+                    reason: 'NO_VALID_QUESTIONS'
                 };
             }
 
@@ -825,13 +825,56 @@ export class MCPService {
                 }
             }
 
-            logger.info(`✅ MCPService: Saved ${savedCount}/${REQUIRED_QUESTION_COUNT} unique questions to history.`);
+            // Count cumulative unique questions for this user+course+topic+task
+            let cumulativeCount = savedCount;
+            try {
+                let countQuery = supabase
+                    .from('questions_history')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('user_id', userId)
+                    .eq('course_id', courseId);
+
+                if (sessionId) {
+                    // Count all questions linked to sessions with the same topic/task
+                    const { data: sessionData } = await supabase
+                        .from('question_sessions')
+                        .select('topic_id, task_id')
+                        .eq('id', sessionId)
+                        .single();
+
+                    if (sessionData) {
+                        // Get all session IDs with matching context
+                        let sessionQuery = supabase
+                            .from('question_sessions')
+                            .select('id')
+                            .eq('user_id', userId)
+                            .eq('course_id', courseId);
+                        if (sessionData.topic_id) sessionQuery = sessionQuery.eq('topic_id', sessionData.topic_id);
+                        if (sessionData.task_id) sessionQuery = sessionQuery.eq('task_id', sessionData.task_id);
+                        const { data: relatedSessions } = await sessionQuery;
+                        if (relatedSessions && relatedSessions.length > 0) {
+                            const sessionIds = relatedSessions.map(s => s.id);
+                            countQuery = countQuery.in('session_id', sessionIds);
+                        }
+                    }
+                }
+
+                const { count, error: countError } = await countQuery;
+                if (!countError && typeof count === 'number') {
+                    cumulativeCount = count;
+                }
+            } catch (countErr) {
+                logger.warn(`⚠️ Failed to get cumulative count: ${countErr.message}`);
+            }
+
+            logger.info(`✅ MCPService: Saved ${savedCount} unique questions this batch. Cumulative: ${cumulativeCount}/${REQUIRED_QUESTION_COUNT}.`);
             return {
-                success: savedCount === REQUIRED_QUESTION_COUNT,
+                success: cumulativeCount >= REQUIRED_QUESTION_COUNT,
                 savedCount,
+                cumulativeCount,
                 savedQuestions: acceptedQuestions,
                 requiredCount: REQUIRED_QUESTION_COUNT,
-                insufficientCount: savedCount < REQUIRED_QUESTION_COUNT
+                insufficientCount: cumulativeCount < REQUIRED_QUESTION_COUNT
             };
 
         } catch (error) {
