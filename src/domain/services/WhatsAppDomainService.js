@@ -787,6 +787,9 @@ export class WhatsAppDomainService {
         try {
             const deletedCount = await this.sessionRepo.deleteByUserId(userId);
             console.log(`[WhatsApp] unlinkAccount: deleteByUserId returned deletedCount=${deletedCount} for userId=${userId}`);
+            if (deletedCount === 0) {
+                console.warn(`[WhatsApp] unlinkAccount: deleteByUserId returned 0 rows for userId=${userId} — session may not exist or delete was blocked by RLS/permissions`);
+            }
         } catch (err) {
             console.error('[WhatsApp] unlinkAccount: failed to delete session for userId:', userId, err && err.message);
             return Result.fail(new Error('No se pudo desvincular WhatsApp. Intenta de nuevo.'));
@@ -801,6 +804,13 @@ export class WhatsAppDomainService {
             } catch (deactivateErr) {
                 console.error('[WhatsApp] unlinkAccount: deactivate fallback also failed:', deactivateErr && deactivateErr.message);
                 return Result.fail(new Error('No se pudo desvincular WhatsApp. Intenta de nuevo.'));
+            }
+
+            // Verify deactivation actually took effect (silent RLS/DB failures return no error but update 0 rows)
+            const sessionFinal = await this.sessionRepo.findByUserId(userId);
+            if (sessionFinal && sessionFinal.isActive) {
+                console.error('[WhatsApp] unlinkAccount: session STILL active after deactivate for userId:', userId, '— possible RLS/permission issue');
+                return Result.fail(new Error('No se pudo desvincular WhatsApp. Verifica permisos o contacta al soporte.'));
             }
         }
 
