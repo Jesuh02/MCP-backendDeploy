@@ -2,7 +2,7 @@
  * Task — Entidad de dominio para Tarea de un tema.
  *
  * Refleja exactamente las columnas de la tabla `tasks`:
- *   id, topic_id, title, description, due_date, created_at
+ *   id, topic_id, title, description, due_date, time_limit_minutes, created_at
  *
  * Principio: la entidad de dominio usa camelCase; la capa de
  * infraestructura se encarga del mapeo snake_case ↔ camelCase.
@@ -15,14 +15,16 @@ export class Task {
      * @param {string}       props.description
      * @param {number}       props.topicId
      * @param {string|null}  props.dueDate
+     * @param {number|null}  props.timeLimitMinutes
      * @param {string|null}  props.createdAt
      */
-    constructor({ id = null, title, description = '', topicId, dueDate = null, createdAt = null } = {}) {
+    constructor({ id = null, title, description = '', topicId, dueDate = null, timeLimitMinutes = null, createdAt = null } = {}) {
         this.id = id;
         this.title = title;
         this.description = description;
         this.topicId = topicId;
         this.dueDate = dueDate;
+        this.timeLimitMinutes = timeLimitMinutes;
         this.createdAt = createdAt;
     }
 
@@ -38,6 +40,7 @@ export class Task {
             description: row.description || '',
             topicId: row.topic_id ?? row.topicId,
             dueDate: row.due_date ?? row.dueDate ?? null,
+            timeLimitMinutes: row.time_limit_minutes ?? row.timeLimitMinutes ?? null,
             createdAt: row.created_at ?? row.createdAt ?? null,
         });
     }
@@ -56,6 +59,8 @@ export class Task {
             topic_id: this.topicId,
             dueDate: this.dueDate,
             due_date: this.dueDate,
+            timeLimitMinutes: this.timeLimitMinutes,
+            time_limit_minutes: this.timeLimitMinutes,
             createdAt: this.createdAt,
             created_at: this.createdAt,
         };

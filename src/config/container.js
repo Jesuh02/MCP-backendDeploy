@@ -217,12 +217,12 @@ export function createContainer() {
     const authService = new AuthService({ userRepository: userRepo, jwtAdapter });
     const userService = new UserDomainService({ userRepository: userRepo, fileStoragePort: storageAdapter });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
-    const videoService = new VideoDomainService({ videoRepository: videoRepo, fileStoragePort: storageAdapter, courseRepository: courseRepo });
+    const videoService = new VideoDomainService({ videoRepository: videoRepo, fileStoragePort: storageAdapter });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo });
     const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo });
-    const notificationService = new NotificationDomainService({ notificationRepository: notificationRepo, userRepository: userRepo, pushNotificationPort: fcmAdapter, emailPort: emailAdapter });
+    const notificationService = new NotificationDomainService({ notificationRepository: notificationRepo, userRepository: userRepo, pushNotificationPort: fcmAdapter, emailPort: emailAdapter, userService });
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
@@ -245,7 +245,6 @@ export function createContainer() {
         courseRepository: courseRepo,
         transactionRepository: transactionRepo,
         progressRepository: progressRepo,
-        videoRepository: videoRepo,
         fileStoragePort: storageAdapter,
         courseNotificationService
     });
@@ -363,6 +362,7 @@ export function createContainer() {
     return {
         // Middleware
         jwtAdapter,
+        supabaseService: supabase, // For diagnostics endpoint
 
         // Controladores (para montar rutas)
         authController,
@@ -446,4 +446,3 @@ export function createContainer() {
 }
 
 export default createContainer;
-

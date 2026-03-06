@@ -10,7 +10,7 @@ import { Task } from '../../../domain/entities/Task.js';
  *   3. Mapear datos de dominio camelCase a snake_case para inserts / updates.
  *
  * Tabla `tasks` (columnas reales):
- *   id | topic_id | title | description | due_date | created_at
+ *   id | topic_id | title | description | due_date | time_limit_minutes | created_at
  *
  * Nota: NO existe `course_id` en `tasks`; la relaci�n con cursos va
  *       tasks.topic_id ? topics.course_id. Los m�todos que necesitan filtrar
@@ -99,6 +99,7 @@ export class SupabaseTaskRepository {
             description: taskData.description || '',
             topic_id: taskData.topicId,
             due_date: taskData.dueDate || null,
+            time_limit_minutes: taskData.timeLimitMinutes ?? null,
         };
         const { data, error } = await this.client
             .from('tasks')
@@ -114,6 +115,7 @@ export class SupabaseTaskRepository {
         if (updateData.title !== undefined) payload.title = updateData.title;
         if (updateData.description !== undefined) payload.description = updateData.description;
         if (updateData.dueDate !== undefined) payload.due_date = updateData.dueDate;
+        if (updateData.timeLimitMinutes !== undefined) payload.time_limit_minutes = updateData.timeLimitMinutes;
         // No se incluyen campos inexistentes (max_score, is_active, updated_at)
 
         const { data, error } = await this.client
