@@ -1,12 +1,12 @@
-import { Result } from '../../shared/Result.js';
+﻿import { Result } from '../../shared/Result.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
 /**
- * TaskDomainService — Servicio de dominio (casos de uso) para Tareas.
+ * TaskDomainService â€” Servicio de dominio (casos de uso) para Tareas.
  *
- * Orquesta la lógica de negocio usando puertos inyectados:
+ * Orquesta la lÃ³gica de negocio usando puertos inyectados:
  *   - taskRepository  (ITaskRepository)
- *   - topicRepository (ITopicRepository) — para validar existencia de temas
+ *   - topicRepository (ITopicRepository) â€” para validar existencia de temas
  *
  * No conoce detalles de infraestructura (Supabase, HTTP, etc.).
  */
@@ -76,16 +76,16 @@ export class TaskDomainService {
 
     /**
      * Crea una tarea y notifica a los estudiantes inscritos.
-     * Orquesta la lógica de negocio que antes vivía en el controlador.
+     * Orquesta la lÃ³gica de negocio que antes vivÃ­a en el controlador.
      * @param {object} data - Datos de la tarea
-     * @param {object} [currentUser] - Usuario que crea la tarea (para excluirlo de la notificación)
+     * @param {object} [currentUser] - Usuario que crea la tarea (para excluirlo de la notificaciÃ³n)
      */
     async createAndNotify(data, currentUser) {
         const createResult = await this.create(data);
         if (createResult.isFail()) return createResult;
 
         const task = createResult.getValue();
-        // Fire-and-forget: la notificación no bloquea la respuesta
+        // Fire-and-forget: la notificaciÃ³n no bloquea la respuesta
         this._notifyNewTask(task, currentUser).catch(err =>
             console.error('[TaskDomainService] Error notificando nueva tarea:', err.message)
         );
@@ -100,7 +100,7 @@ export class TaskDomainService {
         if (updateResult.isFail()) return updateResult;
 
         const task = updateResult.getValue();
-        if (!task ? .dueDate) {
+        if (!task ?.dueDate) {
             this._cancelTaskDeadlineReminder(task).catch(err =>
                 console.error('[TaskDomainService] Error cancelando recordatorio de entrega:', err.message)
             );
@@ -139,9 +139,9 @@ export class TaskDomainService {
         const enrolledUserIds = this._extractEnrollmentUserIds(enrollments);
         if (enrolledUserIds.length === 0) return;
 
-        let senderUsername = currentUser ? .username || 'Instructor';
+        let senderUsername = currentUser ?.username || 'Instructor';
         let senderAvatarUrl = null;
-        if (currentUser ? .userId && this.userService) {
+        if (currentUser ?.userId && this.userService) {
             const userResult = await this.userService.getById(currentUser.userId);
             if (userResult.isOk()) {
                 const u = userResult.getValue();
@@ -150,9 +150,9 @@ export class TaskDomainService {
             }
         }
 
-        const currentUserId = Number(currentUser ? .userId);
-        const cleanTaskTitle = String(task ? .title || 'Nueva actividad').trim();
-        const cleanCourseTitle = String(course ? .title || 'Curso').trim();
+        const currentUserId = Number(currentUser ?.userId);
+        const cleanTaskTitle = String(task ?.title || 'Nueva actividad').trim();
+        const cleanCourseTitle = String(course ?.title || 'Curso').trim();
 
         const promises = enrolledUserIds.map(userId => {
             if (Number.isInteger(currentUserId) && currentUserId > 0 && userId === currentUserId) return Promise.resolve();
@@ -181,14 +181,14 @@ export class TaskDomainService {
     _extractEnrollmentUserIds(enrollments = []) {
         return [...new Set(
             enrollments
-            .map(e => Number(e ? .userId ? ? e ? .usuarioEstudiante ? ? e ? .user_id))
+            .map(e => Number(e ?.userId ?? e ?.usuarioEstudiante ?? e ?.user_id))
             .filter(userId => Number.isInteger(userId) && userId > 0)
         )];
     }
 
     async _scheduleTaskDeadlineReminder(task) {
         if (!this.notificationService || !this.progressService) return;
-        if (!task ? .dueDate) return;
+        if (!task ?.dueDate) return;
 
         const dueDate = new Date(task.dueDate);
         if (Number.isNaN(dueDate.getTime())) return;
@@ -203,7 +203,7 @@ export class TaskDomainService {
         if (!courseId) return;
 
         const courseResult = this.courseService ? await this.courseService.getById(courseId) : null;
-        const courseTitle = courseResult ? .isOk ? .() ? (courseResult.getValue() ? .title || 'Curso') : 'Curso';
+        const courseTitle = courseResult ?.isOk ?.() ? (courseResult.getValue() ?.title || 'Curso') : 'Curso';
 
         const progressResult = await this.progressService.getAllByCourse(courseId);
         if (progressResult.isFail()) return;
@@ -224,7 +224,7 @@ export class TaskDomainService {
 
     async _cancelTaskDeadlineReminder(task) {
         if (!this.notificationService || !this.progressService) return;
-        if (!task ? .id) return;
+        if (!task ?.id) return;
 
         const topicId = task.topicId || task.topic_id;
         if (!topicId) return;
@@ -255,12 +255,12 @@ export class TaskDomainService {
 
         if (originalTopicId) {
             const originalTopic = await this.topicRepo.findById(originalTopicId);
-            originalCourseId = originalTopic ? .course_id || originalTopic ? .courseId || null;
+            originalCourseId = originalTopic ?.course_id || originalTopic ?.courseId || null;
         }
 
         if (nextTopicId) {
             const topic = await this.topicRepo.findById(nextTopicId);
-            nextCourseId = topic ? .course_id || topic ? .courseId || null;
+            nextCourseId = topic ?.course_id || topic ?.courseId || null;
         }
 
         const updated = await this.taskRepo.update(id, data);
@@ -284,10 +284,10 @@ export class TaskDomainService {
         let courseId = null;
         if (topicId) {
             const topic = await this.topicRepo.findById(topicId);
-            courseId = topic ? .course_id || topic ? .courseId || null;
+            courseId = topic ?.course_id || topic ?.courseId || null;
         }
 
-        if (this.notificationService && task ? .id) {
+        if (this.notificationService && task ?.id) {
             try {
                 await this._cancelTaskDeadlineReminder(task);
             } catch (err) {

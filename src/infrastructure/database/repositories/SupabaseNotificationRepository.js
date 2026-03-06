@@ -38,48 +38,182 @@ export class SupabaseNotificationRepository {
 
         const notifications = data || [];
         const videoTypes = new Set(['video_like', 'video_comment', 'comment_like', 'comment_reply', 'comment', 'like']);
+        const courseTypes = new Set(['new_course', 'new_task', 'task_submission', 'task_graded']);
 
         const videoIds = new Set();
+        const courseIds = new Set();
+        const taskIds = new Set();
         for (const notif of notifications) {
             const hasThumbnail = Boolean(notif.thumbnail_url);
-            if (hasThumbnail || !videoTypes.has(String(notif.type || '').toLowerCase())) continue;
+            const notifType = String(notif.type || '').toLowerCase();
 
-            const relatedId = Number(notif.related_id);
-            if (Number.isFinite(relatedId) && relatedId > 0) {
-                videoIds.add(relatedId);
+            if (!hasThumbnail && videoTypes.has(notifType)) {
+                const relatedId = Number(notif.related_id);
+                if (Number.isFinite(relatedId) && relatedId > 0) {
+                    videoIds.add(relatedId);
+                } else {
+                    const metadataVideoId = this._extractVideoIdFromMetadata(notif.metadata);
+                    if (metadataVideoId) videoIds.add(metadataVideoId);
+                }
+            }
+
+            if (hasThumbnail || !courseTypes.has(notifType)) continue;
+
+            if (notifType === 'new_course') {
+                const relatedCourseId = Number(notif.related_id);
+                if (Number.isFinite(relatedCourseId) && relatedCourseId > 0) {
+                    courseIds.add(relatedCourseId);
+                }
+                const metadataCourseId = this._extractCourseIdFromMetadata(notif.metadata);
+                if (metadataCourseId) courseIds.add(metadataCourseId);
                 continue;
             }
 
-            const metadataVideoId = this._extractVideoIdFromMetadata(notif.metadata);
-            if (metadataVideoId) videoIds.add(metadataVideoId);
+            const relatedId = Number(notif.related_id);
+            if (Number.isFinite(relatedId) && relatedId > 0) {
+                taskIds.add(relatedId);
+            }
+
+            const metadataCourseId = this._extractCourseIdFromMetadata(notif.metadata);
+            if (metadataCourseId) courseIds.add(metadataCourseId);
+
+            const metadataTaskId = this._extractTaskIdFromMetadata(notif.metadata);
+            if (metadataTaskId) taskIds.add(metadataTaskId);
         }
 
-        if (videoIds.size === 0) return notifications;
+        let thumbnailByVideoId = new Map();
+        if (videoIds.size > 0) {
+            const { data: videos } = await this.client
+                .from('videos')
+                .select('id, thumbnail_uri')
+                .in('id', Array.from(videoIds));
 
-        const { data: videos } = await this.client
-            .from('videos')
-            .select('id, thumbnail_uri')
-            .in('id', Array.from(videoIds));
+            thumbnailByVideoId = new Map((videos || []).map(v => [Number(v.id), v.thumbnail_uri || null]));
+        }
 
-        const thumbnailByVideoId = new Map((videos || []).map(v => [Number(v.id), v.thumbnail_uri || null]));
+        const taskToCourseId = new Map();
+        if (taskIds.size > 0) {
+            const { data: tasks } = await this.client
+                .from('tasks')
+                .select('id, topic_id')
+                .in('id', Array.from(taskIds));
+
+            const topicIds = [...new Set((tasks || []).map(t => Number(t.topic_id)).filter(id => Number.isInteger(id) && id > 0))];
+            if (topicIds.length > 0) {
+                const { data: topics } = await this.client
+                    .from('topics')
+                    .select('id, course_id')
+                    .in('id', topicIds);
+
+                const courseIdByTopicId = new Map((topics || []).map(t => [Number(t.id), Number(t.course_id)]));
+                for (const task of tasks || []) {
+                    const taskId = Number(task.id);
+                    const topicId = Number(task.topic_id);
+                    const courseId = courseIdByTopicId.get(topicId);
+                    if (Number.isInteger(taskId) && taskId > 0 && Number.isInteger(courseId) && courseId > 0) {
+                        taskToCourseId.set(taskId, courseId);
+                        courseIds.add(courseId);
+                    }
+                }
+            }
+        }
+
+        let thumbnailByCourseId = new Map();
+        if (courseIds.size > 0) {
+            const { data: courses } = await this.client
+                .from('courses')
+                .select('id, thumbnail_uri')
+                .in('id', Array.from(courseIds));
+
+            thumbnailByCourseId = new Map((courses || []).map(c => [Number(c.id), c.thumbnail_uri || null]));
+        }
+
+        if (videoIds.size === 0 && courseIds.size === 0 && taskIds.size === 0) return notifications;
 
         return notifications.map(notif => {
             if (notif.thumbnail_url) return notif;
 
-            const relatedId = Number(notif.related_id);
-            let videoId = Number.isFinite(relatedId) && relatedId > 0 ? relatedId : null;
-            if (!videoId) videoId = this._extractVideoIdFromMetadata(notif.metadata);
-            if (!videoId) return notif;
+            const notifType = String(notif.type || '').toLowerCase();
 
-            const thumbnail = thumbnailByVideoId.get(Number(videoId));
-            if (!thumbnail) return notif;
+            if (videoTypes.has(notifType)) {
+                const relatedId = Number(notif.related_id);
+                let videoId = Number.isFinite(relatedId) && relatedId > 0 ? relatedId : null;
+                if (!videoId) videoId = this._extractVideoIdFromMetadata(notif.metadata);
+                if (!videoId) return notif;
+
+                const thumbnail = thumbnailByVideoId.get(Number(videoId));
+                if (!thumbnail) return notif;
+
+                return {
+                    ...notif,
+                    thumbnail_url: thumbnail,
+                    thumbnailUrl: thumbnail,
+                };
+            }
+
+            if (!courseTypes.has(notifType)) return notif;
+
+            let courseId = this._extractCourseIdFromMetadata(notif.metadata);
+            if (!courseId && notifType === 'new_course') {
+                const relatedCourseId = Number(notif.related_id);
+                if (Number.isFinite(relatedCourseId) && relatedCourseId > 0) {
+                    courseId = relatedCourseId;
+                }
+            }
+
+            if (!courseId) {
+                let taskId = this._extractTaskIdFromMetadata(notif.metadata);
+                if (!taskId) {
+                    const relatedId = Number(notif.related_id);
+                    if (Number.isFinite(relatedId) && relatedId > 0) {
+                        taskId = relatedId;
+                    }
+                }
+                if (taskId) {
+                    courseId = taskToCourseId.get(Number(taskId)) || null;
+                }
+            }
+
+            if (!courseId) return notif;
+
+            const courseThumbnail = thumbnailByCourseId.get(Number(courseId));
+            if (!courseThumbnail) return notif;
 
             return {
                 ...notif,
-                thumbnail_url: thumbnail,
-                thumbnailUrl: thumbnail,
+                thumbnail_url: courseThumbnail,
+                thumbnailUrl: courseThumbnail,
             };
         });
+    }
+
+    _normalizeMetadata(metadata) {
+        if (!metadata) return null;
+        if (typeof metadata === 'object') return metadata;
+
+        try {
+            const raw = String(metadata).trim();
+            if (!raw) return null;
+            return raw.startsWith('{') ? JSON.parse(raw) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    _extractCourseIdFromMetadata(metadata) {
+        const parsed = this._normalizeMetadata(metadata);
+        if (!parsed) return null;
+
+        const num = Number(parsed.course_id ?? parsed.courseId ?? null);
+        return Number.isFinite(num) && num > 0 ? num : null;
+    }
+
+    _extractTaskIdFromMetadata(metadata) {
+        const parsed = this._normalizeMetadata(metadata);
+        if (!parsed) return null;
+
+        const num = Number(parsed.task_id ?? parsed.taskId ?? null);
+        return Number.isFinite(num) && num > 0 ? num : null;
     }
 
     _extractVideoIdFromMetadata(metadata) {
