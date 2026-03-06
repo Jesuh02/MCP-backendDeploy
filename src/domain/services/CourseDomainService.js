@@ -61,7 +61,12 @@ export class CourseDomainService {
 
         const courseId = idValidation.getValue();
         const course = await this.courseRepo.findById(courseId);
-        if (!course) return Result.fail(new NotFoundError('Curso', courseId));
+        if (!course) {
+            const err = new NotFoundError('Curso', courseId);
+            // Missing resources are expected on client navigation retries.
+            err.silent = true;
+            return Result.fail(err);
+        }
         await this._signUrls(course);
         return Result.ok(course);
     }
@@ -157,19 +162,19 @@ export class CourseDomainService {
         let approvedRows = 0;
 
         for (const row of progressRows || []) {
-            const userId = Number(row ? .userId);
+            const userId = Number(row?.userId);
             if (!Number.isInteger(userId) || userId <= 0) continue;
 
             uniqueUsers.add(userId);
 
-            const isCertified = Boolean(row ? .certificateIssuedAt) || (typeof row ? .certificateUrl === 'string' && row.certificateUrl.trim().length > 0);
+            const isCertified = Boolean(row?.certificateIssuedAt) || (typeof row?.certificateUrl === 'string' && row.certificateUrl.trim().length > 0);
             if (isCertified) certifiedUsers.add(userId);
 
-            const progressPercentage = Number(row ? .progressPercentage || 0);
-            const completedTasks = Number(row ? .completedTasks || 0);
-            const totalTasks = Number(row ? .totalTasks || 0);
-            const status = String(row ? .status || '').trim().toLowerCase();
-            const averageGrade = Number(row ? .averageGrade);
+            const progressPercentage = Number(row?.progressPercentage || 0);
+            const completedTasks = Number(row?.completedTasks || 0);
+            const totalTasks = Number(row?.totalTasks || 0);
+            const status = String(row?.status || '').trim().toLowerCase();
+            const averageGrade = Number(row?.averageGrade);
 
             const isCompleted = progressPercentage >= 100 || (totalTasks > 0 && completedTasks >= totalTasks);
             if (isCompleted) completedRows++;
@@ -341,9 +346,9 @@ export class CourseDomainService {
             return Result.ok({ courses: [], total: 0 });
         }
 
-        const offset = Number(pagination ? .offset) || 0;
-        const limit = Number(pagination ? .limit) || 20;
-        const excludeCreatorId = pagination ? .excludeCreatorId ? Number(pagination.excludeCreatorId) : null;
+        const offset = Number(pagination?.offset) || 0;
+        const limit = Number(pagination?.limit) || 20;
+        const excludeCreatorId = pagination?.excludeCreatorId ? Number(pagination.excludeCreatorId) : null;
 
         const ranking = await this.progressRepo.findCourseEnrollmentRanking();
         if (!ranking || ranking.length === 0) return Result.ok({ courses: [], total: 0 });
@@ -356,7 +361,7 @@ export class CourseDomainService {
 
         let filteredIds = rankedCourseIds.filter((id) => courseById.has(id));
         if (excludeCreatorId && Number.isInteger(excludeCreatorId) && excludeCreatorId > 0) {
-            filteredIds = filteredIds.filter((id) => Number(courseById.get(id) ? .creator_user_id) !== excludeCreatorId);
+            filteredIds = filteredIds.filter((id) => Number(courseById.get(id)?.creator_user_id) !== excludeCreatorId);
         }
 
         const total = filteredIds.length;

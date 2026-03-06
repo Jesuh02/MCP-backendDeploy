@@ -14,9 +14,17 @@ export class SupabaseCourseRepository {
     }
 
     async findById(id) {
-        const { data, error } = await this.client.from('courses').select('*').eq('id', id).single();
-        if (error || !data) return null;
-        return data;
+        const { data, error } = await this.client
+            .from('courses')
+            .select('*')
+            .eq('id', id)
+            .maybeSingle();
+
+        if (error) {
+            throw new Error(`Error consultando curso ${id}: ${error.message}`);
+        }
+
+        return data || null;
     }
 
     async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc', excludeCreatorId = null } = {}) {
