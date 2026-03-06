@@ -135,8 +135,9 @@ export class TaskDomainService {
 
         const progressResult = await this.progressService.getAllByCourse(courseId);
         if (progressResult.isFail()) return;
-        const enrollments = progressResult.getValue();
-        if (!enrollments || enrollments.length === 0) return;
+        const enrollments = progressResult.getValue() || [];
+        const enrolledUserIds = this._extractEnrollmentUserIds(enrollments);
+        if (enrolledUserIds.length === 0) return;
 
         let senderUsername = currentUser?.username || 'Instructor';
         let senderAvatarUrl = null;
@@ -149,21 +150,40 @@ export class TaskDomainService {
             }
         }
 
-        const promises = enrollments.map(e => {
-            if (currentUser && e.userId === currentUser.userId) return Promise.resolve();
+        const currentUserId = Number(currentUser?.userId);
+        const cleanTaskTitle = String(task?.title || 'Nueva actividad').trim();
+        const cleanCourseTitle = String(course?.title || 'Curso').trim();
+
+        const promises = enrolledUserIds.map(userId => {
+            if (Number.isInteger(currentUserId) && currentUserId > 0 && userId === currentUserId) return Promise.resolve();
             return this.notificationService.sendNotification({
-                userId: e.userId,
-                title: `Nueva tarea: ${task.title}`,
-                message: `${senderUsername} ha publicado una nueva tarea en '${course.title}'`,
+                userId,
+                title: `Nueva tarea: ${cleanTaskTitle}`,
+                message: `${senderUsername} publico una tarea en ${cleanCourseTitle}`,
                 type: 'new_task',
                 relatedId: task.id,
                 senderUsername,
                 senderAvatarUrl,
                 thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl,
-                metadata: JSON.stringify({ taskId: task.id, courseId, type: 'new_task' })
+                metadata: JSON.stringify({
+                    taskId: task.id,
+                    courseId,
+                    taskTitle: cleanTaskTitle,
+                    courseTitle: cleanCourseTitle,
+                    style: 'minimal',
+                    type: 'new_task'
+                })
             });
         });
         await Promise.all(promises);
+    }
+
+    _extractEnrollmentUserIds(enrollments = []) {
+        return [...new Set(
+            enrollments
+                .map(e => Number(e?.userId ?? e?.usuarioEstudiante ?? e?.user_id))
+                .filter(userId => Number.isInteger(userId) && userId > 0)
+        )];
     }
 
     async _scheduleTaskDeadlineReminder(task) {
@@ -189,11 +209,7 @@ export class TaskDomainService {
         if (progressResult.isFail()) return;
 
         const enrollments = progressResult.getValue() || [];
-        const userIds = [...new Set(
-            enrollments
-                .map(e => Number(e.userId ?? e.usuarioEstudiante ?? e.user_id))
-                .filter(id => Number.isInteger(id) && id > 0)
-        )];
+        const userIds = this._extractEnrollmentUserIds(enrollments);
 
         if (userIds.length === 0) return;
 
@@ -222,11 +238,7 @@ export class TaskDomainService {
         const progressResult = await this.progressService.getAllByCourse(courseId);
         if (progressResult.isFail()) return;
 
-        const userIds = [...new Set(
-            (progressResult.getValue() || [])
-                .map(e => Number(e.userId ?? e.usuarioEstudiante ?? e.user_id))
-                .filter(userId => Number.isInteger(userId) && userId > 0)
-        )];
+        const userIds = this._extractEnrollmentUserIds(progressResult.getValue() || []);
 
         this.notificationService.cancelTaskReminderForUsers(task.id, userIds);
     }
