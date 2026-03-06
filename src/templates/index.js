@@ -9,7 +9,8 @@ export {
     generateGradeModifiedEmailHTML,
     generateNewCourseEmailHTML,
     generateGenericEmailHTML,
-    generateChatResponseEmailHTML
+    generateChatResponseEmailHTML,
+    generateTaskReminderEmailHTML
 } from './emailTemplates.js';
 
 export default {
@@ -18,7 +19,8 @@ export default {
     generateGradeModifiedEmailHTML: () => import('./emailTemplates.js').then(m => m.generateGradeModifiedEmailHTML),
     generateNewCourseEmailHTML: () => import('./emailTemplates.js').then(m => m.generateNewCourseEmailHTML),
     generateGenericEmailHTML: () => import('./emailTemplates.js').then(m => m.generateGenericEmailHTML),
-    generateChatResponseEmailHTML: () => import('./emailTemplates.js').then(m => m.generateChatResponseEmailHTML)
+    generateChatResponseEmailHTML: () => import('./emailTemplates.js').then(m => m.generateChatResponseEmailHTML),
+    generateTaskReminderEmailHTML: () => import('./emailTemplates.js').then(m => m.generateTaskReminderEmailHTML)
 };
 
 

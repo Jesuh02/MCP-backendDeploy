@@ -563,79 +563,137 @@ export class MCPService {
             const acceptedQuestions = [];
             const inBatchQuestionHashes = new Set();
 
-            // B. Process Each Question
+            // ═══════════════════════════════════════════════════════════
+            // BATCH OPTIMIZATION: Pre-compute hashes and embeddings for
+            // ALL questions at once instead of one-by-one API calls.
+            // This reduces N embedding API calls to 1-2 batch calls.
+            // ═══════════════════════════════════════════════════════════
+
+            // Step 1: Pre-compute all hashes and deduplicate within batch
+            const questionsWithHashes = [];
             for (const q of preparedQuestions) {
                 const qText = q.question;
-                const qExplanation = q.explanation;
-                const qIndex = q.correctIndex;
-
                 if (!qText) continue;
-
-                // --- 1. Hash Check (Paso B) ---
                 const normalizedText = this._normalizeQuestionText(qText);
                 const questionHash = crypto.createHash('sha256').update(normalizedText).digest('hex');
-
                 if (inBatchQuestionHashes.has(questionHash)) {
                     logger.info(`🚫 Duplicate Question (In-Batch Hash Match): "${qText.substring(0, 40)}..."`);
                     continue;
                 }
+                inBatchQuestionHashes.add(questionHash);
+                questionsWithHashes.push({ ...q, _hash: questionHash, _normalized: normalizedText });
+            }
 
-                const { data: hashExists } = await supabase
+            if (questionsWithHashes.length === 0) {
+                return { success: false, savedCount: 0, savedQuestions: [], requiredCount: REQUIRED_QUESTION_COUNT, cumulativeCount: 0 };
+            }
+
+            // Step 2: Batch hash check against DB (single query instead of N queries)
+            const allHashes = questionsWithHashes.map(q => q._hash);
+            let existingHashes = new Set();
+            try {
+                const { data: hashRows } = await supabase
                     .from('questions_history')
-                    .select('id')
+                    .select('question_hash')
                     .eq('user_id', userId)
-                    .eq('question_hash', questionHash)
-                    .maybeSingle();
-
-                if (hashExists) {
-                    logger.info(`🚫 Duplicate Question (Hash Match): "${qText.substring(0, 40)}..."`);
-                    continue; // REJECT
+                    .in('question_hash', allHashes);
+                if (hashRows) {
+                    existingHashes = new Set(hashRows.map(r => r.question_hash));
                 }
+            } catch (hashErr) {
+                logger.warn(`⚠️ Batch hash check failed, will check individually: ${hashErr.message}`);
+            }
 
-                // --- 2. Embedding Generation (Paso C) ---
-                let questionEmbedding = null;
+            // Filter out hash-matched duplicates
+            const hashUniqueQuestions = questionsWithHashes.filter(q => {
+                if (existingHashes.has(q._hash)) {
+                    logger.info(`🚫 Duplicate Question (Hash Match): "${q.question.substring(0, 40)}..."`);
+                    return false;
+                }
+                return true;
+            });
+
+            if (hashUniqueQuestions.length === 0) {
+                logger.info(`🚫 All ${questionsWithHashes.length} questions are hash-duplicates`);
+                // Count cumulative
+                let cumulativeCount = 0;
                 try {
-                    // Always call embedQuery: EmbeddingService initializes provider lazily.
-                    // Guarding with isReady() can force fallback vectors with stale dimensions.
-                    questionEmbedding = await embeddingService.embedQuery(qText);
+                    const { count } = await supabase.from('questions_history').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('course_id', courseId);
+                    if (typeof count === 'number') cumulativeCount = count;
+                } catch (_) {}
+                return { success: false, savedCount: 0, cumulativeCount, savedQuestions: [], requiredCount: REQUIRED_QUESTION_COUNT };
+            }
+
+            // Step 3: Batch embed ALL unique question texts in ONE call
+            const questionTexts = hashUniqueQuestions.map(q => q.question);
+            let questionEmbeddings = [];
+            try {
+                questionEmbeddings = await embeddingService.embedDocuments(questionTexts);
+            } catch (e) {
+                logger.warn(`⚠️ Batch question embedding failed: ${e.message}. Using fallback.`);
+            }
+
+            // Assign embeddings (with fallback)
+            for (let i = 0; i < hashUniqueQuestions.length; i++) {
+                const emb = (questionEmbeddings && questionEmbeddings[i] && Array.isArray(questionEmbeddings[i]) && questionEmbeddings[i].length > 0)
+                    ? questionEmbeddings[i]
+                    : embeddingService._fallbackEmbed(hashUniqueQuestions[i].question);
+                hashUniqueQuestions[i]._embedding = emb;
+            }
+
+            // Step 4: Batch embed ALL options in ONE call
+            const allOptionTexts = [];
+            const optionMapping = []; // Track which options belong to which question
+            for (let qi = 0; qi < hashUniqueQuestions.length; qi++) {
+                const opts = hashUniqueQuestions[qi].options || hashUniqueQuestions[qi].opciones || [];
+                for (let oi = 0; oi < opts.length; oi++) {
+                    allOptionTexts.push(String(opts[oi]).trim());
+                    optionMapping.push({ qi, oi });
+                }
+            }
+
+            let allOptionEmbeddings = [];
+            if (allOptionTexts.length > 0) {
+                try {
+                    allOptionEmbeddings = await embeddingService.embedDocuments(allOptionTexts);
                 } catch (e) {
-                    logger.warn(`⚠️ Failed to embed question: ${e.message}`);
+                    logger.warn(`⚠️ Batch option embedding failed: ${e.message}. Using fallback.`);
                 }
+            }
 
-                // Fallback to Mathematical Embedding if AI failed
-                if (!questionEmbedding || !Array.isArray(questionEmbedding) || questionEmbedding.length === 0) {
-                    logger.warn(`⚠️ Using Fallback Embedding for Question in History: "${qText.substring(0,20)}..."`);
-                    questionEmbedding = embeddingService._fallbackEmbed(qText);
-                }
+            // Assign option embeddings back to questions
+            for (const q of hashUniqueQuestions) {
+                q._optionEmbeddings = [];
+            }
+            for (let i = 0; i < optionMapping.length; i++) {
+                const { qi, oi } = optionMapping[i];
+                const emb = (allOptionEmbeddings && allOptionEmbeddings[i] && Array.isArray(allOptionEmbeddings[i]) && allOptionEmbeddings[i].length > 0)
+                    ? allOptionEmbeddings[i]
+                    : embeddingService._fallbackEmbed(allOptionTexts[i]);
+                hashUniqueQuestions[qi]._optionEmbeddings[oi] = emb;
+            }
 
-                // STRICT VALIDATION: Ensure embedding is valid to prevent NULLs in DB
-                if (!Array.isArray(questionEmbedding) || questionEmbedding.length === 0) {
-                    logger.warn(`⚠️ Embedding service returned invalid result for: "${qText.substring(0,30)}...". Skipping save.`);
-                    continue;
-                }
+            // Step 5: Semantic check + save per question (embedding already computed)
+            for (const q of hashUniqueQuestions) {
+                const qText = q.question;
+                const qExplanation = q.explanation;
+                const qIndex = q.correctIndex;
+                let questionEmbedding = q._embedding;
+                const questionHash = q._hash;
 
-                // --- 3. Semantic Search (Paso D & E) ---
+                if (!qText || !questionEmbedding || !Array.isArray(questionEmbedding) || questionEmbedding.length === 0) continue;
+
+                // --- Semantic Search (using pre-computed embedding) ---
                 if (questionEmbedding) {
-                    // Use raw SQL via RPC or fallback to match_questions
-                    // Note: We use executeRawSQL to handle strict similarity check without relying on specific indexes
-                    // Or standard match_questions if available.
-
-                    // We check if any previous question has similarity > 0.90
-                    // Using Supabase RPC 'match_questions' (Generic implementation usually available)
                     const { data: semanticMatches, error: semanticError } = await supabase
                         .rpc('match_questions', {
                             query_embedding: questionEmbedding,
-                            match_threshold: 0.90, // Strict threshold per requirements
+                            match_threshold: 0.90,
                             match_count: 1,
                             filter_user_id: userId
                         });
 
-                    // If RPC fails (e.g., parameter mismatch due to dimensions), we log and try to proceed (risky) or skip.
-                    // Given the "expected 1024" error, this RPC call might be where it fails if the DB function is hardcoded to 1024.
-                    // However, we must try.
-
                     if (semanticError) {
-                        // Special handling for dimension error in RPC
                         if (semanticError.message.includes('dimensions')) {
                             const expectedDim = this._parseExpectedDimensionFromError(semanticError.message);
                             if (expectedDim > 0) {
@@ -652,10 +710,6 @@ export class MCPService {
                                     logger.info(`🚫 Duplicate Question (Semantic Match ${retryMatches[0].similarity?.toFixed(2)}): "${qText.substring(0, 40)}..."`);
                                     continue;
                                 }
-
-                                if (retrySemanticError) {
-                                    logger.warn(`⚠️ Semantic check retry failed after dimension adjust: ${retrySemanticError.message}`);
-                                }
                             } else {
                                 logger.warn(`⚠️ Vector dimension mismatch in match_questions (model=${questionEmbedding.length}). Skipping semantic check.`);
                             }
@@ -664,53 +718,13 @@ export class MCPService {
                         }
                     } else if (semanticMatches && semanticMatches.length > 0) {
                         logger.info(`🚫 Duplicate Question (Semantic Match ${semanticMatches[0].similarity?.toFixed(2)}): "${qText.substring(0, 40)}..."`);
-                        continue; // REJECT
+                        continue;
                     }
                 }
 
-                // --- 4. Validate Options (Paso G) ---
+                // --- Save Question (using pre-computed embedding) ---
                 const optionsArray = q.options || q.opciones || [];
-                let optionEmbeddings = [];
-
-                if (Array.isArray(optionsArray) && optionsArray.length > 0) {
-                    try {
-                        // Generate embeddings for options
-                        optionEmbeddings = await embeddingService.embedDocuments(optionsArray.map(o => String(o).trim()));
-                    } catch (e) {
-                        logger.error(`❌ Failed to embed options: ${e.message}`);
-                        // Fallback: Continue with empty embeddings array -> will trigger fallback in map loop
-                        optionEmbeddings = [];
-                    }
-
-                    // Validate option embeddings
-                    if (!Array.isArray(optionEmbeddings) || optionEmbeddings.length !== optionsArray.length) {
-                        logger.warn(`⚠️ Option embeddings count mismatch (Expected ${optionsArray.length}, Got ${optionEmbeddings?.length}). Using mathematical fallback.`);
-                        // Reset to force mathematical fallback
-                        optionEmbeddings = [];
-                    }
-
-                    // Strict check: if any option is too similar to a previous option for this user? 
-                    // This is computationally expensive (Checking 4 vectors vs 1000s).
-                    // Optimization: We skip this massive check unless critical.
-                    // User requirements say "Validar Opciones... Si similitud >= 0.90 -> regenerar".
-
-                    // We will skip the DB check for options to save performance BUT we will save the embedding.
-                    // Implementing full option historical check via RPC for every option is too slow.
-                    // Instead, we ensure uniqueness WITHIN expectation.
-                }
-
-                // --- 5. Save Question & Options (Paso F & H) ---
-                // Save Question
-                // STRICT PRE-INSERT VALIDATION
-                if (!questionEmbedding || !Array.isArray(questionEmbedding) || questionEmbedding.length === 0) {
-                    logger.error(`❌ FATAL: Logic error - Question embedding lost before save: "${qText.substring(0,30)}..."`);
-                    continue;
-                }
-
-                if (!questionHash) {
-                    logger.error(`❌ FATAL: Logic error - Question hash missing: "${qText.substring(0,30)}..."`);
-                    continue;
-                }
+                const optionEmbeddings = q._optionEmbeddings || [];
 
                 let savedQResult = null;
 
@@ -733,34 +747,21 @@ export class MCPService {
                     if (saveError.message.includes('dimensions')) {
                         const expectedDim = this._parseExpectedDimensionFromError(saveError.message);
                         if (expectedDim <= 0) {
-                            logger.error(`❌ Vector dimension mismatch (model=${questionEmbedding.length}) and expected dimension could not be parsed: ${saveError.message}`);
+                            logger.error(`❌ Vector dimension mismatch (model=${questionEmbedding.length}): ${saveError.message}`);
                             continue;
                         }
-
-                        logger.warn(`⚠️ Adjusting question embedding from ${questionEmbedding.length} to DB dimension ${expectedDim} and retrying insert...`);
                         questionEmbedding = this._adjustVectorDimension(questionEmbedding, expectedDim);
-
                         const retry = await supabase
                             .from('questions_history')
                             .insert({
-                                session_id: sessionId,
-                                user_id: userId,
-                                course_id: courseId,
-                                question_text: qText,
-                                question_hash: questionHash,
-                                question_embedding: questionEmbedding,
-                                correct_index: qIndex,
+                                session_id: sessionId, user_id: userId, course_id: courseId,
+                                question_text: qText, question_hash: questionHash,
+                                question_embedding: questionEmbedding, correct_index: qIndex,
                                 explanation: qExplanation
                             })
-                            .select('id')
-                            .single();
-
-                        if (retry.error) {
-                            logger.error(`❌ Retry failed after dimension adjust: ${retry.error.message}`);
-                            continue;
-                        }
+                            .select('id').single();
+                        if (retry.error) { logger.error(`❌ Retry failed: ${retry.error.message}`); continue; }
                         savedQResult = retry.data;
-                        logger.info(`✅ Question saved after dimension adjust (${expectedDim}).`);
                     } else {
                         logger.error(`❌ Error saving question: ${saveError.message}`);
                         continue;
@@ -769,46 +770,29 @@ export class MCPService {
 
                 const questionId = (savedQResult || savedQ).id;
 
-                // Save Options
+                // Save Options (using pre-computed embeddings)
                 if (optionsArray.length > 0) {
                     const optionsPayload = optionsArray.map((opt, idx) => ({
                         question_id: questionId,
                         option_text: String(opt),
                         order_index: idx,
-                        option_embedding: (optionEmbeddings && optionEmbeddings[idx]) ? optionEmbeddings[idx] : embeddingService._fallbackEmbed(String(opt))
+                        option_embedding: (optionEmbeddings[idx] && Array.isArray(optionEmbeddings[idx]) && optionEmbeddings[idx].length > 0)
+                            ? optionEmbeddings[idx]
+                            : embeddingService._fallbackEmbed(String(opt))
                     }));
 
-                    // Filter out invalid option embeddings to be safe? 
-                    // No, DB requires vector. If we send [], it might fail. 
-                    // If we send null, it violates requirement.
-                    // We MUST have embeddings.
-
-                    const { error: optError } = await supabase
-                        .from('question_options')
-                        .insert(optionsPayload);
-
+                    const { error: optError } = await supabase.from('question_options').insert(optionsPayload);
 
                     if (optError) {
                         if (optError.message.includes('dimensions')) {
                             const expectedDim = this._parseExpectedDimensionFromError(optError.message);
-                            if (expectedDim <= 0) {
-                                logger.error(`❌ Options dimension mismatch and expected dimension could not be parsed: ${optError.message}`);
-                                continue;
-                            }
-
-                            logger.warn(`⚠️ Adjusting option embeddings to DB dimension ${expectedDim} and retrying...`);
-                            const adjustedOptionsPayload = optionsPayload.map((item) => ({
-                                ...item,
-                                option_embedding: this._adjustVectorDimension(item.option_embedding, expectedDim)
-                            }));
-
-                            const retryOpt = await supabase
-                                .from('question_options')
-                                .insert(adjustedOptionsPayload);
-                            if (retryOpt.error) {
-                                logger.error(`❌ Options retry failed after dimension adjust: ${retryOpt.error.message}`);
-                            } else {
-                                logger.info(`✅ Options saved after dimension adjust (${expectedDim}).`);
+                            if (expectedDim > 0) {
+                                const adjustedPayload = optionsPayload.map(item => ({
+                                    ...item,
+                                    option_embedding: this._adjustVectorDimension(item.option_embedding, expectedDim)
+                                }));
+                                const retryOpt = await supabase.from('question_options').insert(adjustedPayload);
+                                if (retryOpt.error) logger.error(`❌ Options retry failed: ${retryOpt.error.message}`);
                             }
                         } else {
                             logger.error(`❌ Error saving options: ${optError.message}`);
@@ -817,7 +801,6 @@ export class MCPService {
                 }
 
                 savedCount++;
-                inBatchQuestionHashes.add(questionHash);
                 acceptedQuestions.push(q);
 
                 if (savedCount >= REQUIRED_QUESTION_COUNT) {

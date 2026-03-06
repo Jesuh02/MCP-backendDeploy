@@ -561,6 +561,183 @@ export function generateGenericEmailHTML(title, message, type, senderUsername) {
 }
 
 /**
+ * Escapa entidades HTML para prevenir inyecciones en contenido dinámico.
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeHtml(value = '') {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/**
+ * Plantilla: Recordatorio de entrega de tarea (minimalista/profesional)
+ * @param {object} params
+ * @param {string} params.userName
+ * @param {string} params.taskTitle
+ * @param {string} params.courseTitle
+ * @param {string} params.dueDateText
+ * @param {string} [params.ctaUrl]
+ * @returns {string}
+ */
+export function generateTaskReminderEmailHTML({ userName, taskTitle, courseTitle, dueDateText, ctaUrl }) {
+    const safeUserName = escapeHtml(userName || 'estudiante');
+    const safeTaskTitle = escapeHtml(taskTitle || 'Actividad pendiente');
+    const safeCourseTitle = escapeHtml(courseTitle || 'Curso');
+    const safeDueDateText = escapeHtml(dueDateText || 'fecha no disponible');
+    const safeCtaUrl = typeof ctaUrl === 'string' && /^https?:\/\//i.test(ctaUrl) ? escapeHtml(ctaUrl) : '';
+
+    const ctaSection = safeCtaUrl
+        ? `<div style="text-align: center; margin-top: 26px;">
+                <a href="${safeCtaUrl}" style="display: inline-block; padding: 12px 22px; border-radius: 999px; border: 1px solid #111827; text-decoration: none; color: #111827; font-size: 14px; font-weight: 600; letter-spacing: 0.2px;">Revisar tarea</a>
+           </div>`
+        : '';
+
+    return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recordatorio de entrega</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #f5f6f8;
+            color: #111827;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .outer {
+            width: 100%;
+            padding: 28px 14px;
+        }
+        .card {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(17, 24, 39, 0.06);
+        }
+        .top-line {
+            height: 4px;
+            background: linear-gradient(90deg, #111827 0%, #374151 100%);
+        }
+        .content {
+            padding: 26px 24px;
+        }
+        .tag {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #f3f4f6;
+            color: #4b5563;
+            font-size: 11px;
+            letter-spacing: 0.7px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .title {
+            margin: 14px 0 8px;
+            font-size: 24px;
+            line-height: 1.25;
+            letter-spacing: -0.2px;
+            color: #111827;
+        }
+        .subtitle {
+            margin: 0;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #6b7280;
+        }
+        .details {
+            margin-top: 22px;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 16px;
+            background: #fcfcfd;
+        }
+        .row {
+            margin-bottom: 12px;
+        }
+        .row:last-child {
+            margin-bottom: 0;
+        }
+        .label {
+            margin: 0 0 4px;
+            font-size: 11px;
+            letter-spacing: 0.7px;
+            text-transform: uppercase;
+            color: #9ca3af;
+            font-weight: 600;
+        }
+        .value {
+            margin: 0;
+            font-size: 15px;
+            color: #1f2937;
+            line-height: 1.5;
+            font-weight: 500;
+        }
+        .note {
+            margin-top: 18px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #6b7280;
+        }
+        .footer {
+            padding: 14px 24px 22px;
+            font-size: 12px;
+            color: #9ca3af;
+            text-align: center;
+        }
+        @media (max-width: 480px) {
+            .content { padding: 22px 18px; }
+            .title { font-size: 22px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="outer">
+        <div class="card">
+            <div class="top-line"></div>
+            <div class="content">
+                <span class="tag">Recordatorio</span>
+                <h1 class="title">Tu tarea vence en 5 horas</h1>
+                <p class="subtitle">Hola ${safeUserName}, este es un aviso para que puedas enviar tu entrega con tiempo.</p>
+
+                <div class="details">
+                    <div class="row">
+                        <p class="label">Tarea</p>
+                        <p class="value">${safeTaskTitle}</p>
+                    </div>
+                    <div class="row">
+                        <p class="label">Curso</p>
+                        <p class="value">${safeCourseTitle}</p>
+                    </div>
+                    <div class="row">
+                        <p class="label">Fecha limite</p>
+                        <p class="value">${safeDueDateText}</p>
+                    </div>
+                </div>
+
+                <p class="note">Si ya realizaste la entrega, puedes ignorar este mensaje.</p>
+                ${ctaSection}
+            </div>
+            <div class="footer">CourseV · Notificacion automatica</div>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
+/**
  * Plantilla: Email de respuesta de chat IA
  * @param {string} subject - Asunto del email
  * @returns {string} HTML del email
@@ -713,7 +890,8 @@ export default {
     generateGradeModifiedEmailHTML,
     generateNewCourseEmailHTML,
     generateGenericEmailHTML,
-    generateChatResponseEmailHTML
+    generateChatResponseEmailHTML,
+    generateTaskReminderEmailHTML
 };
 
 
