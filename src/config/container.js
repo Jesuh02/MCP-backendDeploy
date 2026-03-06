@@ -222,7 +222,16 @@ export function createContainer() {
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo });
     const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo });
-    const notificationService = new NotificationDomainService({ notificationRepository: notificationRepo, userRepository: userRepo, pushNotificationPort: fcmAdapter, emailPort: emailAdapter, userService });
+    const notificationService = new NotificationDomainService({
+        notificationRepository: notificationRepo,
+        userRepository: userRepo,
+        pushNotificationPort: fcmAdapter,
+        emailPort: emailAdapter,
+        userService,
+        courseRepository: courseRepo,
+        topicRepository: topicRepo,
+        taskRepository: taskRepo,
+    });
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });

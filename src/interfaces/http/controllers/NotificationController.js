@@ -99,11 +99,21 @@ export class NotificationController {
 
     sendToMultiple = async(req, res, next) => {
         try {
-            const { userIds, title, message, type, data } = req.body;
+            const { userIds, title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, thumbnail_url, metadata } = req.body;
             if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
                 return res.status(400).json({ success: false, error: 'userIds required' });
             }
-            const result = await this.notifService.sendToMultiple(userIds, { title, message, type, data });
+            const result = await this.notifService.sendToMultiple(userIds, {
+                title,
+                message,
+                type,
+                data,
+                relatedId,
+                senderUsername,
+                senderAvatarUrl,
+                thumbnailUrl: thumbnailUrl || thumbnail_url,
+                metadata,
+            });
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

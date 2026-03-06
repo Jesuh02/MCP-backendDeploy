@@ -197,15 +197,20 @@ export class SupabaseWhatsAppSessionRepository {
      * @throws {Error} si la operación falla en la base de datos.
      */
     async deleteByUserId(userId) {
-        const { error } = await this.client
+        const { data, error } = await this.client
             .from(this.table)
             .delete()
-            .eq('user_id', userId);
+            .eq('user_id', userId)
+            .select('id');
 
         if (error) {
             console.error('[WhatsAppSessionRepo] deleteByUserId error:', error.message);
             throw new Error(`Error eliminando sesión de WhatsApp: ${error.message}`);
         }
+
+        const deletedCount = Array.isArray(data) ? data.length : 0;
+        console.log(`[WhatsAppSessionRepo] deleteByUserId userId=${userId} deletedRows=${deletedCount}`);
+        return deletedCount;
     }
 }
 
