@@ -465,6 +465,36 @@ export function createApp() {
     });
 
     // ═══════════════════════════════════════════════════════════
+    // 4.1 DIAGNOSTICS ENDPOINT (for troubleshooting 502 errors)
+    //      WITHOUT heavy DB queries to avoid hanging
+    // ═══════════════════════════════════════════════════════════
+
+    app.get('/api/v1/diagnostics/quick', (req, res) => {
+        const diagnostics = {
+            server: healthPayload(),
+            supabase_config: {
+                url: process.env.SUPABASE_URL ? '✅ SET' : '❌ NOT SET',
+                service_key: process.env.SUPABASE_SERVICE_KEY ? '✅ SET' : '❌ NOT SET',
+                anon_key: process.env.SUPABASE_KEY ? '✅ SET' : '❌ NOT SET',
+            },
+            storage_config: {
+                r2_available: process.env.R2_ACCOUNT_ID ? '✅ YES' : '❌ NO',
+                bucket: process.env.R2_BUCKET_NAME || 'unknown',
+            },
+            environment: {
+                node_env: process.env.NODE_ENV,
+                app_env: process.env.APP_ENVIRONMENT,
+            },
+        };
+
+        res.json({
+            success: true,
+            diagnostics,
+            timestamp: new Date().toISOString(),
+        });
+    });
+
+    // ═══════════════════════════════════════════════════════════
     // 5. GLOBAL ERROR HANDLER
     // ═══════════════════════════════════════════════════════════
 
