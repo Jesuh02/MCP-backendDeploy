@@ -785,10 +785,23 @@ export class WhatsAppDomainService {
         // Eliminar la sesión del usuario (hard delete).
         // Si falla, propagar el error para que el cliente sepa que no se desvinculó.
         try {
-            await this.sessionRepo.deleteByUserId(userId);
+            const deletedCount = await this.sessionRepo.deleteByUserId(userId);
+            console.log(`[WhatsApp] unlinkAccount: deleteByUserId returned deletedCount=${deletedCount} for userId=${userId}`);
         } catch (err) {
             console.error('[WhatsApp] unlinkAccount: failed to delete session for userId:', userId, err && err.message);
             return Result.fail(new Error('No se pudo desvincular WhatsApp. Intenta de nuevo.'));
+        }
+
+        // Verificar que la sesión realmente se eliminó
+        const sessionAfterDelete = await this.sessionRepo.findByUserId(userId);
+        if (sessionAfterDelete && sessionAfterDelete.isActive) {
+            console.warn('[WhatsApp] unlinkAccount: session still exists after delete for userId:', userId, '— falling back to deactivate');
+            try {
+                await this.sessionRepo.deactivate(userId);
+            } catch (deactivateErr) {
+                console.error('[WhatsApp] unlinkAccount: deactivate fallback also failed:', deactivateErr && deactivateErr.message);
+                return Result.fail(new Error('No se pudo desvincular WhatsApp. Intenta de nuevo.'));
+            }
         }
 
         return Result.ok({ message: 'WhatsApp desvinculado correctamente' });

@@ -5,12 +5,15 @@ const TASK_REMINDER_OFFSET_MS = 5 * 60 * 60 * 1000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 export class NotificationDomainService {
-    constructor({ notificationRepository, userRepository, pushNotificationPort, emailPort, userService }) {
+    constructor({ notificationRepository, userRepository, pushNotificationPort, emailPort, userService, courseRepository, topicRepository, taskRepository }) {
         this.notifRepo = notificationRepository;
         this.userRepo = userRepository;
         this.push = pushNotificationPort;
         this.email = emailPort;
         this.userService = userService || null;
+        this.courseRepo = courseRepository || null;
+        this.topicRepo = topicRepository || null;
+        this.taskRepo = taskRepository || null;
         this.taskReminderTimers = new Map();
     }
 
@@ -43,6 +46,11 @@ export class NotificationDomainService {
             return Result.ok({ skipped: true });
         }
 
+        let resolvedThumbnailUrl = thumbnailUrl;
+        if (!resolvedThumbnailUrl) {
+            resolvedThumbnailUrl = await this._resolveCourseThumbnail({ type, relatedId, metadata });
+        }
+
         // 1. Guardar en BD
         const notif = await this.notifRepo.create({
             userId,
@@ -53,7 +61,7 @@ export class NotificationDomainService {
             relatedId,
             senderUsername,
             senderAvatarUrl,
-            thumbnailUrl,
+            thumbnailUrl: resolvedThumbnailUrl,
             metadata
         });
 
@@ -68,6 +76,97 @@ export class NotificationDomainService {
             }
         }
         return Result.ok(notif);
+    }
+
+    _normalizeMetadata(metadata) {
+        if (!metadata) return null;
+        if (typeof metadata === 'object') return metadata;
+
+        if (typeof metadata === 'string') {
+            const trimmed = metadata.trim();
+            if (!trimmed) return null;
+            try {
+                return JSON.parse(trimmed);
+            } catch {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    _isCourseRelatedType(type) {
+        const t = String(type || '').toLowerCase();
+        return t === 'new_course' || t === 'new_task' || t === 'task_submission' || t === 'task_graded';
+    }
+
+    _getCourseIdFromMetadata(metadata) {
+        const parsed = this._normalizeMetadata(metadata);
+        if (!parsed) return null;
+
+        const candidate = parsed.courseId ?? parsed.course_id ?? null;
+        const courseId = Number(candidate);
+        return Number.isInteger(courseId) && courseId > 0 ? courseId : null;
+    }
+
+    _getTaskIdFromMetadata(metadata) {
+        const parsed = this._normalizeMetadata(metadata);
+        if (!parsed) return null;
+
+        const candidate = parsed.taskId ?? parsed.task_id ?? null;
+        const taskId = Number(candidate);
+        return Number.isInteger(taskId) && taskId > 0 ? taskId : null;
+    }
+
+    async _resolveCourseIdFromTask(taskId) {
+        if (!this.taskRepo || !this.topicRepo) return null;
+        const numericTaskId = Number(taskId);
+        if (!Number.isInteger(numericTaskId) || numericTaskId <= 0) return null;
+
+        const task = await this.taskRepo.findById(numericTaskId);
+        if (!task) return null;
+
+        const topicId = Number(task.topicId ?? task.topic_id ?? 0);
+        if (!Number.isInteger(topicId) || topicId <= 0) return null;
+
+        const topic = await this.topicRepo.findById(topicId);
+        if (!topic) return null;
+
+        const courseId = Number(topic.courseId ?? topic.course_id ?? 0);
+        return Number.isInteger(courseId) && courseId > 0 ? courseId : null;
+    }
+
+    async _resolveCourseThumbnail({ type, relatedId, metadata }) {
+        if (!this.courseRepo || !this._isCourseRelatedType(type)) return null;
+
+        const normalizedType = String(type || '').toLowerCase();
+        let courseId = this._getCourseIdFromMetadata(metadata);
+
+        if (!courseId && normalizedType === 'new_course') {
+            const id = Number(relatedId);
+            if (Number.isInteger(id) && id > 0) courseId = id;
+        }
+
+        if (!courseId) {
+            const taskIdFromMetadata = this._getTaskIdFromMetadata(metadata);
+            if (taskIdFromMetadata) {
+                courseId = await this._resolveCourseIdFromTask(taskIdFromMetadata);
+            }
+        }
+
+        if (!courseId && normalizedType !== 'new_course') {
+            const relatedTaskId = Number(relatedId);
+            if (Number.isInteger(relatedTaskId) && relatedTaskId > 0) {
+                courseId = await this._resolveCourseIdFromTask(relatedTaskId);
+            }
+        }
+
+        if (!courseId) return null;
+
+        const course = await this.courseRepo.findById(courseId);
+        if (!course) return null;
+
+        return course.thumbnail_uri || course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl || null;
     }
     async sendBulk(userIds, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
         const results = [];
