@@ -119,6 +119,17 @@ export class CourseController {
         res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
     };
 
+    getPopularCourses = async(req, res, next) => {
+        const pg = parsePagination(req.query);
+        if (req.query.excludeUserId) pg.excludeCreatorId = parseInt(req.query.excludeUserId);
+
+        const result = await this.courseService.findPopularCourses(pg);
+        if (result.isFail()) return next(result.getError());
+
+        const { courses, total } = result.getValue();
+        res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
+    };
+
     getPurchasedCourses = async(req, res, next) => {
         const userId = req.user?.userId || req.query.userId;
         if (!userId) return res.status(400).json({ success: false, error: 'User ID required' });

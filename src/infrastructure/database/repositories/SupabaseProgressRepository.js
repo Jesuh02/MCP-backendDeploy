@@ -29,6 +29,40 @@ export class SupabaseProgressRepository {
         return data ? data.map(this._mapToDomain) : [];
     }
 
+    /**
+     * Ranking de cursos por cantidad de estudiantes inscritos (únicos por curso).
+     * @returns {Promise<Array<{courseId:number,enrollmentCount:number}>>}
+     */
+    async findCourseEnrollmentRanking() {
+        const { data, error } = await this.client
+            .from('progreso_estudiante')
+            .select('curso_id, usuario_estudiante')
+            .not('curso_id', 'is', null)
+            .not('usuario_estudiante', 'is', null);
+
+        if (error || !data) return [];
+
+        const usersByCourseId = new Map();
+        for (const row of data) {
+            const courseId = Number(row.curso_id);
+            const userId = Number(row.usuario_estudiante);
+            if (!Number.isInteger(courseId) || courseId <= 0) continue;
+            if (!Number.isInteger(userId) || userId <= 0) continue;
+
+            if (!usersByCourseId.has(courseId)) {
+                usersByCourseId.set(courseId, new Set());
+            }
+            usersByCourseId.get(courseId).add(userId);
+        }
+
+        return [...usersByCourseId.entries()]
+            .map(([courseId, users]) => ({ courseId, enrollmentCount: users.size }))
+            .sort((a, b) => {
+                if (b.enrollmentCount !== a.enrollmentCount) return b.enrollmentCount - a.enrollmentCount;
+                return a.courseId - b.courseId;
+            });
+    }
+
     async upsert(progressData) {
         // Guard against null/undefined required fields
         if (!progressData.courseId) throw new Error('courseId is required for progress upsert');
