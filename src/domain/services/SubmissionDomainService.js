@@ -38,6 +38,9 @@ export class SubmissionDomainService {
         const task = await this.taskRepo.findById(data.taskId);
         if (!task) return Result.fail(new NotFoundError('Tarea', data.taskId));
 
+        // Normalize fileUri to full R2 public URL if it's a relative key
+        data.fileUri = this._normalizeFileUri(data.fileUri);
+
         // Check if submission already exists for this user and task
         const existingSubmission = await this.subRepo.findByUserAndTask(data.userId, data.taskId);
 
@@ -58,6 +61,15 @@ export class SubmissionDomainService {
             await this._updateProgress(data.userId, data.taskId);
             return Result.ok(created);
         }
+    }
+
+    /**
+     * Ensures fileUri is always a full public URL, not a relative key.
+     * @private
+     */
+    _normalizeFileUri(uri) {
+        if (!uri || uri.startsWith('http')) return uri;
+        return this.storage?.getPublicUrl ? this.storage.getPublicUrl(uri) : uri;
     }
 
     /**

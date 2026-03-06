@@ -758,27 +758,17 @@ export class WhatsAppDomainService {
     async unlinkAccount(userId) {
         const session = await this.sessionRepo.findByUserId(userId);
 
-        // Enviar mensaje de despedida antes de eliminar (usar YCloud si está configurado).
+        // Enviar mensaje de despedida en fire-and-forget para no bloquear la respuesta.
         // Los errores de envío son ignorados — la eliminación procede igual.
         if (session?.phoneNumber && session.isActive) {
-            try {
-                if (this._isYCloudEnabled()) {
-                    try {
-                        const resp = await this._sendViaYCloud(session.phoneNumber, MESSAGES.UNLINKED);
-                        console.log('[WhatsApp] Sent unlink message via YCloud:', resp && (resp.messageId || resp));
-                    } catch (e) {
-                        console.warn('[WhatsApp] Unlink via YCloud failed:', e && (e.message || e));
-                    }
-                } else if (this.whatsAppPort) {
-                    try {
-                        const r = await this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.UNLINKED);
-                        console.log('[WhatsApp] Sent unlink via Meta:', r && r.messageId);
-                    } catch (e) {
-                        console.warn('[WhatsApp] Unlink via Meta failed:', e && (e.message || e));
-                    }
-                }
-            } catch (e) {
-                // ignore send errors
+            if (this._isYCloudEnabled()) {
+                this._sendViaYCloud(session.phoneNumber, MESSAGES.UNLINKED)
+                    .then(resp => console.log('[WhatsApp] Sent unlink message via YCloud:', resp && (resp.messageId || resp)))
+                    .catch(e => console.warn('[WhatsApp] Unlink via YCloud failed (fire-and-forget):', e && (e.message || e)));
+            } else if (this.whatsAppPort) {
+                this.whatsAppPort.sendTextMessage(session.phoneNumber, MESSAGES.UNLINKED)
+                    .then(r => console.log('[WhatsApp] Sent unlink via Meta:', r && r.messageId))
+                    .catch(e => console.warn('[WhatsApp] Unlink via Meta failed (fire-and-forget):', e && (e.message || e)));
             }
         }
 
