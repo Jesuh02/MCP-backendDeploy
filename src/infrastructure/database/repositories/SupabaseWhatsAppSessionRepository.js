@@ -171,32 +171,83 @@ export class SupabaseWhatsAppSessionRepository {
 
     /**
      * Desactiva la sesión de un usuario (soft delete).
+     * Intenta primero la función RPC SECURITY DEFINER (garantiza escritura
+     * incluso con restricciones RLS). Si el RPC falla, cae al cliente JS.
      * @param {number} userId
      * @returns {Promise<void>}
-     * @throws {Error} si la operación falla en la base de datos.
+     * @throws {Error} si ninguna estrategia pudo desactivar la sesión.
      */
     async deactivate(userId) {
-        const { error } = await this.client
+        // Estrategia 1: RPC SECURITY DEFINER (bypasses RLS)
+        try {
+            const { data: rpcCount, error: rpcError } = await this.client
+                .rpc('deactivate_whatsapp_session_for_user', { p_user_id: Number(userId) });
+            if (!rpcError) {
+                const count = typeof rpcCount === 'number' ? rpcCount : 0;
+                console.log(`[WhatsAppSessionRepo] deactivate (RPC) userId=${userId} updatedRows=${count}`);
+                if (count === 0) {
+                    throw new Error(`deactivate: 0 rows updated via RPC for userId=${userId}`);
+                }
+                return;
+            }
+            console.warn('[WhatsAppSessionRepo] deactivate RPC unavailable, falling back to JS client:', rpcError.message);
+        } catch (rpcEx) {
+            if (!rpcEx.message?.includes('0 rows updated')) {
+                console.warn('[WhatsAppSessionRepo] deactivate RPC failed:', rpcEx.message);
+            } else {
+                throw rpcEx; // 0 rows — propagate
+            }
+        }
+
+        // Estrategia 2: cliente JS con .select() para detectar 0 rows
+        const { data, error } = await this.client
             .from(this.table)
             .update({
                 is_active: false,
+                otp_code: null,
+                otp_expires_at: null,
                 updated_at: new Date().toISOString(),
             })
-            .eq('user_id', userId);
+            .eq('user_id', userId)
+            .select('id');
 
         if (error) {
             console.error('[WhatsAppSessionRepo] deactivate error:', error.message);
             throw new Error(`Error desactivando sesión de WhatsApp: ${error.message}`);
         }
+
+        const updatedCount = Array.isArray(data) ? data.length : 0;
+        console.log(`[WhatsAppSessionRepo] deactivate (JS) userId=${userId} updatedRows=${updatedCount}`);
+        if (updatedCount === 0) {
+            throw new Error(`deactivate: 0 rows updated for userId=${userId} — possible RLS/permission issue`);
+        }
     }
 
     /**
      * Elimina la sesión de un usuario (hard delete).
+     * Intenta primero la función RPC SECURITY DEFINER (garantiza eliminación
+     * incluso con restricciones RLS). Si el RPC no está disponible, usa el
+     * cliente JS como fallback.
      * @param {number} userId
-     * @returns {Promise<void>}
+     * @returns {Promise<number>} número de filas eliminadas.
      * @throws {Error} si la operación falla en la base de datos.
      */
     async deleteByUserId(userId) {
+        // Estrategia 1: RPC SECURITY DEFINER (bypasses RLS)
+        try {
+            const { data: rpcCount, error: rpcError } = await this.client
+                .rpc('delete_whatsapp_session_for_user', { p_user_id: Number(userId) });
+            if (!rpcError) {
+                const count = typeof rpcCount === 'number' ? rpcCount : 0;
+                console.log(`[WhatsAppSessionRepo] deleteByUserId (RPC) userId=${userId} deletedRows=${count}`);
+                return count;
+            }
+            console.warn('[WhatsAppSessionRepo] deleteByUserId RPC unavailable, falling back to JS client:', rpcError.message);
+        } catch (rpcEx) {
+            console.warn('[WhatsAppSessionRepo] deleteByUserId RPC failed:', rpcEx.message);
+        }
+
+        // Estrategia 2: cliente JS con .select() para detectar filas afectadas
         const { data, error } = await this.client
             .from(this.table)
             .delete()
@@ -209,7 +260,7 @@ export class SupabaseWhatsAppSessionRepository {
         }
 
         const deletedCount = Array.isArray(data) ? data.length : 0;
-        console.log(`[WhatsAppSessionRepo] deleteByUserId userId=${userId} deletedRows=${deletedCount}`);
+        console.log(`[WhatsAppSessionRepo] deleteByUserId (JS) userId=${userId} deletedRows=${deletedCount}`);
         return deletedCount;
     }
 }

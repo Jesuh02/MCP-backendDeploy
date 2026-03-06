@@ -783,35 +783,42 @@ export class WhatsAppDomainService {
         }
 
         // Eliminar la sesión del usuario (hard delete).
-        // Si falla, propagar el error para que el cliente sepa que no se desvinculó.
+        // deleteByUserId intenta primero el RPC SECURITY DEFINER (bypasses RLS)
+        // y cae al cliente JS si el RPC no está disponible.
+        let deletedCount = 0;
         try {
-            const deletedCount = await this.sessionRepo.deleteByUserId(userId);
+            deletedCount = await this.sessionRepo.deleteByUserId(userId);
             console.log(`[WhatsApp] unlinkAccount: deleteByUserId returned deletedCount=${deletedCount} for userId=${userId}`);
-            if (deletedCount === 0) {
-                console.warn(`[WhatsApp] unlinkAccount: deleteByUserId returned 0 rows for userId=${userId} — session may not exist or delete was blocked by RLS/permissions`);
-            }
         } catch (err) {
             console.error('[WhatsApp] unlinkAccount: failed to delete session for userId:', userId, err && err.message);
             return Result.fail(new Error('No se pudo desvincular WhatsApp. Intenta de nuevo.'));
         }
 
-        // Verificar que la sesión realmente se eliminó
+        // Verificar que la sesión realmente se eliminó.
+        // Si deleteByUserId retornó 0 filas pero la sesión todavía existe y está
+        // activa, intentar desactivación como fallback de último recurso.
         const sessionAfterDelete = await this.sessionRepo.findByUserId(userId);
-        if (sessionAfterDelete && sessionAfterDelete.isActive) {
-            console.warn('[WhatsApp] unlinkAccount: session still exists after delete for userId:', userId, '— falling back to deactivate');
-            try {
-                await this.sessionRepo.deactivate(userId);
-            } catch (deactivateErr) {
-                console.error('[WhatsApp] unlinkAccount: deactivate fallback also failed:', deactivateErr && deactivateErr.message);
-                return Result.fail(new Error('No se pudo desvincular WhatsApp. Intenta de nuevo.'));
-            }
 
-            // Verify deactivation actually took effect (silent RLS/DB failures return no error but update 0 rows)
-            const sessionFinal = await this.sessionRepo.findByUserId(userId);
-            if (sessionFinal && sessionFinal.isActive) {
-                console.error('[WhatsApp] unlinkAccount: session STILL active after deactivate for userId:', userId, '— possible RLS/permission issue');
-                return Result.fail(new Error('No se pudo desvincular WhatsApp. Verifica permisos o contacta al soporte.'));
-            }
+        if (!sessionAfterDelete || !sessionAfterDelete.isActive) {
+            // Sesión eliminada o ya inactiva — desvincular fue exitoso.
+            return Result.ok({ message: 'WhatsApp desvinculado correctamente' });
+        }
+
+        // La sesión sigue activa — el hard-delete falló (posible problema de
+        // permisos/RLS). Intentar soft-delete como último recurso.
+        console.warn(`[WhatsApp] unlinkAccount: session still active after delete for userId=${userId} (deletedCount=${deletedCount}) — trying deactivate fallback`);
+        try {
+            await this.sessionRepo.deactivate(userId);
+        } catch (deactivateErr) {
+            console.error('[WhatsApp] unlinkAccount: deactivate fallback failed:', deactivateErr && deactivateErr.message);
+            return Result.fail(new Error('No se pudo desvincular WhatsApp. Intenta de nuevo.'));
+        }
+
+        // Confirmar que la desactivación surtió efecto
+        const sessionFinal = await this.sessionRepo.findByUserId(userId);
+        if (sessionFinal && sessionFinal.isActive) {
+            console.error('[WhatsApp] unlinkAccount: session STILL active after deactivate for userId:', userId, '— RLS/permission issue persists');
+            return Result.fail(new Error('No se pudo desvincular WhatsApp. Verifica permisos o contacta al soporte.'));
         }
 
         return Result.ok({ message: 'WhatsApp desvinculado correctamente' });
