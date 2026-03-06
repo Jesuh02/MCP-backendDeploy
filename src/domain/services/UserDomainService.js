@@ -151,6 +151,30 @@ export class UserDomainService {
         };
     }
 
+    /**
+     * Gets validated emails for multiple users.
+     */
+    async getValidatedEmailsByIds(userIds = []) {
+        const uniqueIds = [...new Set((userIds || []).map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0))];
+        if (uniqueIds.length === 0) return Result.ok([]);
+
+        const users = await this.userRepo.findByIds(uniqueIds);
+        const validated = [];
+
+        for (const user of users || []) {
+            const validation = this.validateEmail(user?.email);
+            if (!validation.valid) continue;
+
+            validated.push({
+                userId: user.id,
+                email: user.email,
+                username: user.username || 'Usuario'
+            });
+        }
+
+        return Result.ok(validated);
+    }
+
     async getUserEmail(userId) {
         const user = await this.userRepo.findById(userId);
         return user ? user.email : null;

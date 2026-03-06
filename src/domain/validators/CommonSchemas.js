@@ -56,14 +56,20 @@ export const createTaskSchema = Joi.object({
     topic_id: Joi.number().integer().optional(),
     dueDate: Joi.date().iso().allow(null).optional(),
     due_date: Joi.date().iso().allow(null).optional(),
+    timeLimitMinutes: Joi.number().integer().min(1).allow(null).optional(),
+    time_limit_minutes: Joi.number().integer().min(1).allow(null).optional(),
     orderIndex: Joi.number().integer().min(0).default(0),
     order_index: Joi.number().integer().min(0).optional(),
 }).custom((value, helpers) => {
     // Normalizar: preferir camelCase, fusionar snake_case si falta
     if (!value.topicId && value.topic_id) value.topicId = value.topic_id;
     if (!value.dueDate && value.due_date) value.dueDate = value.due_date;
+    if (value.timeLimitMinutes === undefined && value.time_limit_minutes !== undefined) {
+        value.timeLimitMinutes = value.time_limit_minutes;
+    }
     delete value.topic_id;
     delete value.due_date;
+    delete value.time_limit_minutes;
     delete value.order_index;
     if (!value.topicId) return helpers.error('any.required', { key: 'topicId' });
     return value;
@@ -74,9 +80,15 @@ export const updateTaskSchema = Joi.object({
     description: Joi.string().max(5000).allow('', null).optional(),
     dueDate: Joi.date().iso().allow(null).optional(),
     due_date: Joi.date().iso().allow(null).optional(),
+    timeLimitMinutes: Joi.number().integer().min(1).allow(null).optional(),
+    time_limit_minutes: Joi.number().integer().min(1).allow(null).optional(),
 }).custom((value) => {
     if (!value.dueDate && value.due_date) value.dueDate = value.due_date;
+    if (value.timeLimitMinutes === undefined && value.time_limit_minutes !== undefined) {
+        value.timeLimitMinutes = value.time_limit_minutes;
+    }
     delete value.due_date;
+    delete value.time_limit_minutes;
     return value;
 }).min(1);
 

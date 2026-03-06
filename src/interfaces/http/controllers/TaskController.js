@@ -49,7 +49,7 @@ export class TaskController extends BaseController {
     update = async(req, res, next) => {
         const { error, value } = updateTaskSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
-        this.store(req, res, next, () => this.taskService.update(parseInt(req.params.id), value));
+        this.store(req, res, next, () => this.taskService.updateAndNotify(parseInt(req.params.id), value, req.user));
     };
 
     delete = async(req, res, next) => {

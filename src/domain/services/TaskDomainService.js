@@ -89,7 +89,29 @@ export class TaskDomainService {
         this._notifyNewTask(task, currentUser).catch(err =>
             console.error('[TaskDomainService] Error notificando nueva tarea:', err.message)
         );
+        this._scheduleTaskDeadlineReminder(task).catch(err =>
+            console.error('[TaskDomainService] Error programando recordatorio de entrega:', err.message)
+        );
         return createResult;
+    }
+
+    async updateAndNotify(id, data, _currentUser) {
+        const updateResult = await this.update(id, data);
+        if (updateResult.isFail()) return updateResult;
+
+        const task = updateResult.getValue();
+        if (!task?.dueDate) {
+            this._cancelTaskDeadlineReminder(task).catch(err =>
+                console.error('[TaskDomainService] Error cancelando recordatorio de entrega:', err.message)
+            );
+            return updateResult;
+        }
+
+        this._scheduleTaskDeadlineReminder(task).catch(err =>
+            console.error('[TaskDomainService] Error reprogramando recordatorio de entrega:', err.message)
+        );
+
+        return updateResult;
     }
 
     /**
@@ -144,6 +166,71 @@ export class TaskDomainService {
         await Promise.all(promises);
     }
 
+    async _scheduleTaskDeadlineReminder(task) {
+        if (!this.notificationService || !this.progressService) return;
+        if (!task?.dueDate) return;
+
+        const dueDate = new Date(task.dueDate);
+        if (Number.isNaN(dueDate.getTime())) return;
+
+        const topicId = task.topicId || task.topic_id;
+        if (!topicId) return;
+
+        const topic = await this.topicRepo.findById(topicId);
+        if (!topic) return;
+
+        const courseId = topic.course_id || topic.courseId;
+        if (!courseId) return;
+
+        const courseResult = this.courseService ? await this.courseService.getById(courseId) : null;
+        const courseTitle = courseResult?.isOk?.() ? (courseResult.getValue()?.title || 'Curso') : 'Curso';
+
+        const progressResult = await this.progressService.getAllByCourse(courseId);
+        if (progressResult.isFail()) return;
+
+        const enrollments = progressResult.getValue() || [];
+        const userIds = [...new Set(
+            enrollments
+                .map(e => Number(e.userId ?? e.usuarioEstudiante ?? e.user_id))
+                .filter(id => Number.isInteger(id) && id > 0)
+        )];
+
+        if (userIds.length === 0) return;
+
+        await this.notificationService.scheduleTaskReminderForUsers({
+            taskId: task.id,
+            userIds,
+            taskTitle: task.title,
+            courseTitle,
+            dueDate: dueDate.toISOString()
+        });
+    }
+
+    async _cancelTaskDeadlineReminder(task) {
+        if (!this.notificationService || !this.progressService) return;
+        if (!task?.id) return;
+
+        const topicId = task.topicId || task.topic_id;
+        if (!topicId) return;
+
+        const topic = await this.topicRepo.findById(topicId);
+        if (!topic) return;
+
+        const courseId = topic.course_id || topic.courseId;
+        if (!courseId) return;
+
+        const progressResult = await this.progressService.getAllByCourse(courseId);
+        if (progressResult.isFail()) return;
+
+        const userIds = [...new Set(
+            (progressResult.getValue() || [])
+                .map(e => Number(e.userId ?? e.usuarioEstudiante ?? e.user_id))
+                .filter(userId => Number.isInteger(userId) && userId > 0)
+        )];
+
+        this.notificationService.cancelTaskReminderForUsers(task.id, userIds);
+    }
+
     /** Actualiza una tarea existente. */
     async update(id, data) {
         const task = await this.taskRepo.findById(id);
@@ -186,6 +273,14 @@ export class TaskDomainService {
         if (topicId) {
             const topic = await this.topicRepo.findById(topicId);
             courseId = topic?.course_id || topic?.courseId || null;
+        }
+
+        if (this.notificationService && task?.id) {
+            try {
+                await this._cancelTaskDeadlineReminder(task);
+            } catch (err) {
+                console.error('[TaskDomainService] Error cancelando recordatorios de tarea eliminada:', err.message);
+            }
         }
 
         await this.taskRepo.delete(id);
