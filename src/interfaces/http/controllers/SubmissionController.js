@@ -63,18 +63,23 @@ export class SubmissionController extends BaseController {
 
     /**
      * Upload a submission file to R2 storage.
-     * Returns only the R2 object key (relative path), never the public URL.
+        * Returns the R2 object key and canonical public URL.
      */
     uploadFile = async(req, res, next) => {
         if (!req.file) return next(new ValidationError('Se requiere un archivo'));
         this.handleResult(res, next, (async() => {
             const folder = req.body.folder || req.body.prefix || 'submissions';
-            const key = `${folder}/${Date.now()}_${req.file.originalname}`;
+            const timestamp = Date.now();
+            const username = req.user?.username || 'user';
+            const key = this.storageAdapter?.buildSubmissionObjectKey
+                ? this.storageAdapter.buildSubmissionObjectKey(folder, username, req.file.originalname, timestamp)
+                : `${folder}/${username}_${timestamp}${path.extname(req.file.originalname || '') || '.txt'}`;
             const result = await this.storageService.upload(req.file.buffer, key, req.file.mimetype);
             if (result.isFail()) return result;
             const { key: uploadedKey } = result.getValue();
+            const url = this.storageAdapter?.getPublicUrl ? this.storageAdapter.getPublicUrl(uploadedKey) : uploadedKey;
             res.status(201);
-            return { isFail: () => false, isOk: () => true, getValue: () => ({ key: uploadedKey }) };
+            return { isFail: () => false, isOk: () => true, getValue: () => ({ key: uploadedKey, url }) };
         })());
     };
 

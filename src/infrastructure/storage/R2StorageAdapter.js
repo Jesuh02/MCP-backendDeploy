@@ -218,6 +218,22 @@ export class R2StorageAdapter {
         return `${base}${ext}`;
     }
 
+    /**
+     * Build submission key in canonical format:
+     * submissions/task_<id>/<username>_<timestamp>.<ext>
+     */
+    buildSubmissionObjectKey(folder, username, originalName, timestamp = Date.now()) {
+        const safeFolder = (folder || 'submissions').replace(/^\/+|\/+$/g, '');
+        const safeUsername = (username || 'user')
+            .toLowerCase()
+            .replace(/[^a-z0-9._-]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_+|_+$/g, '') || 'user';
+        const ext = (path.extname(originalName || '').toLowerCase() || '.txt')
+            .replace(/[^.a-z0-9]/g, '') || '.txt';
+        return `${safeFolder}/${safeUsername}_${timestamp}${ext}`;
+    }
+
     ensureKeyHasExtension(key, contentType) {
         const ext = path.extname(key);
         if (ext && ext.length > 1) return key;
