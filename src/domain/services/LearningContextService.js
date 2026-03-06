@@ -66,37 +66,27 @@ export class LearningContextService {
                     return Result.fail(new Error('courseId es requerido'));
                 }
 
-                // ── 1. Obtener detalles del tema ──
-                const topicDetails = await this._getTopicDetails(topicId);
-            // ── 2. Obtener detalles de la tarea ──
-            const taskDetails = await this._getTaskDetails(taskId);
+                // ── PARALLEL PHASE 1: Fetch topic, task, content items, and existing questions concurrently ──
+                const [topicDetails, taskDetails, contentItemsResult, existingQuestions] = await Promise.all([
+                    this._getTopicDetails(topicId),
+                    this._getTaskDetails(taskId),
+                    this._getContentItems(taskId, topicId),
+                    this._getExistingQuestions(userId, courseId, topicId, taskId),
+                ]);
 
-            // ── 3. Obtener content_items (separados por origen: topic vs task) ──
-            const { all: contentItems, taskItems: taskContentItems, topicItems: topicContentItems } =
-                await this._getContentItems(taskId, topicId);
+            const { all: contentItems, taskItems: taskContentItems, topicItems: topicContentItems } = contentItemsResult;
 
-            // ── 4. Asegurar ingesta RAG ──
-            const ingestionResult = await this._ensureRagIngestion(courseId, topicId, taskId, contentItems);
-
-            // ── 5. Obtener preguntas existentes (needed BEFORE RAG to compute sessionIndex) ──
-            const existingQuestions = await this._getExistingQuestions(userId, courseId, topicId, taskId);
-
-            // ── 6. Obtener contenido RAG usando la estrategia apropiada ──
+            // ── PARALLEL PHASE 2: RAG ingestion + RAG content retrieval concurrently ──
             // Auto-calculate session index: each session generates ~10 questions,
             // so sessionIndex = floor(existingCount / 10) advances through the document.
             const effectiveSessionIndex = sessionIndex ?? Math.floor(existingQuestions.length / 10);
-
-            // Determine retrieval strategy:
-            //   'hybrid'      → Semantic + Window Expansion + Progressive
-            //   'semantic'    → Semantic Search + Window Expansion only
-            //   'progressive' → Progressive chunking only (legacy)
-            //   'auto'        → Hybrid if query provided, otherwise progressive
             const effectiveMode = this._resolveRetrievalMode(retrievalMode, query);
+
+            // Start ingestion (non-blocking) and RAG retrieval in parallel
+            const ingestionPromise = this._ensureRagIngestion(courseId, topicId, taskId, contentItems);
 
             let ragData;
             if (effectiveMode === 'hybrid' || effectiveMode === 'semantic') {
-                // ALWAYS build query from topic/task details (from DB) for accurate retrieval.
-                // Client-provided query may only contain courseName (too general).
                 const dbQuery = this._buildSearchQuery(topicDetails, taskDetails);
                 const searchQuery = dbQuery || query || '';
                 ragData = await this._getHybridRagContent(
@@ -145,7 +135,7 @@ export class LearningContextService {
                     explanation: q.explanation || '',
                 })),
                 existingQuestionCount: existingQuestions.length,
-                ingestion: ingestionResult,
+                ingestion: await ingestionPromise,
                 contextReady: true,
             };
 

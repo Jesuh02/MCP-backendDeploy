@@ -1,4 +1,5 @@
 import { Result } from '../../shared/Result.js';
+import { generateTaskReminderEmailHTML } from '../../templates/index.js';
 
 const TASK_REMINDER_OFFSET_MS = 5 * 60 * 60 * 1000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -144,13 +145,27 @@ export class NotificationDomainService {
             hour: '2-digit', minute: '2-digit'
         });
 
-        const subject = `Recordatorio: ${taskTitle} vence en 5 horas`;
-        const text = `Hola ${user.username},\n\nTe recordamos que la actividad "${taskTitle}" del curso "${courseTitle}" vence el ${dueDateText}.\n\nTe recomendamos enviarla cuanto antes.\n`;
-        const html = `
-            <p>Hola <strong>${user.username}</strong>,</p>
-            <p>Te recordamos que la actividad <strong>${taskTitle}</strong> del curso <strong>${courseTitle}</strong> vence el <strong>${dueDateText}</strong>.</p>
-            <p>Te recomendamos enviarla cuanto antes.</p>
-        `;
+        const fallbackTaskTitle = taskTitle || 'Actividad pendiente';
+        const fallbackCourseTitle = courseTitle || 'Curso';
+        const subject = `Recordatorio de entrega: ${fallbackTaskTitle}`;
+        const text = [
+            `Hola ${user.username},`,
+            '',
+            `Este es un recordatorio de entrega para la tarea "${fallbackTaskTitle}".`,
+            `Curso: ${fallbackCourseTitle}.`,
+            `Fecha limite: ${dueDateText}.`,
+            '',
+            'Si ya realizaste la entrega, puedes ignorar este mensaje.',
+            '',
+            'Equipo CourseV.'
+        ].join('\n');
+        const html = generateTaskReminderEmailHTML({
+            userName: user.username,
+            taskTitle: fallbackTaskTitle,
+            courseTitle: fallbackCourseTitle,
+            dueDateText,
+            ctaUrl: process.env.FRONTEND_URL || process.env.APP_BASE_URL || ''
+        });
 
         await this.email.sendEmail({ to: user.email, subject, text, html });
     }
