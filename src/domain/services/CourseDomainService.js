@@ -2,13 +2,12 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
-    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService, videoRepository }) {
+    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService }) {
         this.courseRepo = courseRepository;
         this.transactionRepo = transactionRepository;
         this.progressRepo = progressRepository;
         this.storage = fileStoragePort || null;
         this.courseNotificationService = courseNotificationService || null;
-        this.videoRepo = videoRepository || null;
     }
 
     // Derive `isFree` flag from a price value and mutate the object provided.
@@ -34,7 +33,7 @@ export class CourseDomainService {
     async _signUrls(courses) {
         if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return courses;
         const list = Array.isArray(courses) ? courses : [courses];
-        await Promise.all(list.map(async (c) => {
+        await Promise.all(list.map(async(c) => {
             if (!c) return;
             try {
                 const url = c.thumbnail_url || c.thumbnail_uri || c.thumbnailUri;
@@ -56,36 +55,6 @@ export class CourseDomainService {
         return Array.isArray(courses) ? list : list[0];
     }
 
-    async _attachVideos(courses) {
-        if (!this.videoRepo) return courses;
-        const list = Array.isArray(courses) ? courses : [courses];
-        const courseIds = list.map(c => c && c.id).filter(Boolean);
-        if (courseIds.length === 0) return courses;
-
-        try {
-            const videos = await this.videoRepo.findByCourseIds(courseIds, { limit: 1000 });
-            const videoMap = {};
-            for (const v of videos) {
-                if (!videoMap[v.courseId]) {
-                    videoMap[v.courseId] = v;
-                }
-            }
-
-            for (const c of list) {
-                if (!c) continue;
-                const v = videoMap[c.id];
-                if (v && v.videoUriString) {
-                    c.video_uri = v.videoUriString;
-                    c.video_uri_string = v.videoUriString;
-                    c.videoUri = v.videoUriString;
-                }
-            }
-        } catch (e) {
-            console.warn('[CourseDomainService] Error attaching videos to courses', e.message);
-        }
-        return Array.isArray(courses) ? list : list[0];
-    }
-
     async getById(id) {
         const idValidation = this._validateCourseId(id);
         if (idValidation.isFail()) return idValidation;
@@ -94,7 +63,6 @@ export class CourseDomainService {
         const course = await this.courseRepo.findById(courseId);
         if (!course) return Result.fail(new NotFoundError('Curso', courseId));
         await this._signUrls(course);
-        await this._attachVideos(course);
         return Result.ok(course);
     }
 
@@ -104,7 +72,6 @@ export class CourseDomainService {
             this.courseRepo.count({ excludeCreatorId: pagination.excludeCreatorId }),
         ]);
         await this._signUrls(courses);
-        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -190,19 +157,19 @@ export class CourseDomainService {
         let approvedRows = 0;
 
         for (const row of progressRows || []) {
-            const userId = Number(row?.userId);
+            const userId = Number(row ? .userId);
             if (!Number.isInteger(userId) || userId <= 0) continue;
 
             uniqueUsers.add(userId);
 
-            const isCertified = Boolean(row?.certificateIssuedAt) || (typeof row?.certificateUrl === 'string' && row.certificateUrl.trim().length > 0);
+            const isCertified = Boolean(row ? .certificateIssuedAt) || (typeof row ? .certificateUrl === 'string' && row.certificateUrl.trim().length > 0);
             if (isCertified) certifiedUsers.add(userId);
 
-            const progressPercentage = Number(row?.progressPercentage || 0);
-            const completedTasks = Number(row?.completedTasks || 0);
-            const totalTasks = Number(row?.totalTasks || 0);
-            const status = String(row?.status || '').trim().toLowerCase();
-            const averageGrade = Number(row?.averageGrade);
+            const progressPercentage = Number(row ? .progressPercentage || 0);
+            const completedTasks = Number(row ? .completedTasks || 0);
+            const totalTasks = Number(row ? .totalTasks || 0);
+            const status = String(row ? .status || '').trim().toLowerCase();
+            const averageGrade = Number(row ? .averageGrade);
 
             const isCompleted = progressPercentage >= 100 || (totalTasks > 0 && completedTasks >= totalTasks);
             if (isCompleted) completedRows++;
@@ -234,7 +201,6 @@ export class CourseDomainService {
             this.courseRepo.count({ creatorUsername: username })
         ]);
         await this._signUrls(courses);
-        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -244,7 +210,6 @@ export class CourseDomainService {
             this.courseRepo.count({ search: query })
         ]);
         await this._signUrls(courses);
-        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -292,14 +257,12 @@ export class CourseDomainService {
             this.courseRepo.count({ creatorUserId: userId })
         ]);
         await this._signUrls(courses);
-        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
     async findByIds(ids) {
         const courses = await this.courseRepo.findByIds(ids);
         await this._signUrls(courses);
-        await this._attachVideos(courses);
         return Result.ok(courses);
     }
 
@@ -309,7 +272,6 @@ export class CourseDomainService {
             this.courseRepo.count({ isFree: true, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
-        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -319,7 +281,6 @@ export class CourseDomainService {
             this.courseRepo.count({ isFree: false, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
-        await this._attachVideos(courses);
         return Result.ok({ courses, total });
     }
 
@@ -347,7 +308,6 @@ export class CourseDomainService {
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
-        await this._attachVideos(sortedCourses);
         return Result.ok({ courses: sortedCourses, total });
     }
 
@@ -372,8 +332,46 @@ export class CourseDomainService {
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
-        await this._attachVideos(sortedCourses);
         return Result.ok({ courses: sortedCourses, total });
+    }
+
+    async findPopularCourses(pagination) {
+        if (!this.progressRepo || typeof this.progressRepo.findCourseEnrollmentRanking !== 'function') {
+            console.warn('ProgressRepository no soporta ranking de cursos populares');
+            return Result.ok({ courses: [], total: 0 });
+        }
+
+        const offset = Number(pagination ? .offset) || 0;
+        const limit = Number(pagination ? .limit) || 20;
+        const excludeCreatorId = pagination ? .excludeCreatorId ? Number(pagination.excludeCreatorId) : null;
+
+        const ranking = await this.progressRepo.findCourseEnrollmentRanking();
+        if (!ranking || ranking.length === 0) return Result.ok({ courses: [], total: 0 });
+
+        const rankedCourseIds = ranking.map((item) => Number(item.courseId)).filter((id) => Number.isInteger(id) && id > 0);
+        const enrollmentsByCourseId = new Map(ranking.map((item) => [Number(item.courseId), Number(item.enrollmentCount) || 0]));
+
+        const allRankedCourses = await this.courseRepo.findByIds(rankedCourseIds);
+        const courseById = new Map((allRankedCourses || []).map((course) => [Number(course.id), course]));
+
+        let filteredIds = rankedCourseIds.filter((id) => courseById.has(id));
+        if (excludeCreatorId && Number.isInteger(excludeCreatorId) && excludeCreatorId > 0) {
+            filteredIds = filteredIds.filter((id) => Number(courseById.get(id) ? .creator_user_id) !== excludeCreatorId);
+        }
+
+        const total = filteredIds.length;
+        const pagedIds = filteredIds.slice(offset, offset + limit);
+
+        const courses = pagedIds
+            .map((id) => courseById.get(id))
+            .filter(Boolean)
+            .map((course) => ({
+                ...course,
+                enrollmentCount: enrollmentsByCourseId.get(Number(course.id)) || 0,
+            }));
+
+        await this._signUrls(courses);
+        return Result.ok({ courses, total });
     }
 
     /**
@@ -386,7 +384,6 @@ export class CourseDomainService {
         try {
             const courses = await this.courseRepo.findCreatorCoursesWithSubmissions(creatorUserId);
             await this._signUrls(courses);
-            await this._attachVideos(courses);
             return Result.ok(courses);
         } catch (err) {
             return Result.fail(new Error(`Error fetching courses with submissions: ${err.message}`));

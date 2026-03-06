@@ -8,6 +8,7 @@ export function courseRoutes({ courseController }) {
     router.get('/stats', asyncHandler(courseController.getStats));
     router.get('/counts', asyncHandler(courseController.getFilterCounts));
     router.get('/search', asyncHandler(courseController.search));
+    router.get('/popular', asyncHandler(courseController.getPopularCourses));
     router.get('/free', asyncHandler(courseController.getFreeCourses));
     router.get('/premium', asyncHandler(courseController.getPremiumCourses));
     router.get('/purchased', asyncHandler(courseController.getPurchasedCourses));
