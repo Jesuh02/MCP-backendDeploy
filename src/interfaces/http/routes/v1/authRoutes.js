@@ -5,6 +5,7 @@ export function authRoutes({ authController }) {
 
     router.post('/register', authController.register);
     router.post('/login', authController.login);
+    router.post('/google', authController.googleLogin); // Google Sign-In authentication
     router.post('/refresh-token', authController.refreshToken);
     router.post('/change-password', authController.changePassword); // Protected by global auth middleware
 

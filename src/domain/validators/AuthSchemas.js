@@ -45,3 +45,13 @@ export const changePasswordSchema = Joi.object({
     newPassword: Joi.string().min(6).max(128).required(),
 });
 
+export const googleLoginSchema = Joi.object({
+    email: Joi.string().email().required().messages({
+        'string.email': 'Email inválido',
+        'any.required': 'El email es requerido',
+    }),
+    displayName: Joi.string().allow('').optional(),
+    avatarUrl: Joi.string().uri().allow(null, '').optional(),
+    idToken: Joi.string().allow('').optional(), // For future server-side verification
+});
+

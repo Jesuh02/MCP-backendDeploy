@@ -1,4 +1,4 @@
-import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema } from '../../../domain/validators/AuthSchemas.js';
+import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema, googleLoginSchema } from '../../../domain/validators/AuthSchemas.js';
 import { ValidationError } from '../../../shared/errors/index.js';
 
 export class AuthController {
@@ -40,6 +40,16 @@ export class AuthController {
             const { error, value } = changePasswordSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
             const result = await this.authService.changePassword(req.user.userId, value);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    googleLogin = async(req, res, next) => {
+        try {
+            const { error, value } = googleLoginSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            const result = await this.authService.loginWithGoogle(value);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
