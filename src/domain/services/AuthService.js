@@ -107,7 +107,7 @@ export class AuthService {
      * Login with Google - finds or creates user by email and returns JWT tokens.
      * This ensures the Android client gets proper authentication for the correct user.
      */
-    async loginWithGoogle({ email, displayName, avatarUrl }) {
+    async loginWithGoogle({ email, displayName, avatarUrl, username }) {
         console.log(`[AuthService] Google login attempt for email: ${email}`);
 
         // 1. Find user by email
@@ -131,12 +131,44 @@ export class AuthService {
             return Result.ok({ user: this._safeUser(user), ...tokens, isNewUser: false });
         }
 
-        // 2. User doesn't exist - create new account
+        // 2. Email not found — if a username hint is provided, try linking Google email to that account
+        if (username && username.trim().length >= 3) {
+            const existingUser = await this.userRepo.findByUsername(username.trim());
+            if (existingUser) {
+                // Only link when the account has no email (avoids overwriting a different verified email)
+                if (!existingUser.email) {
+                    try {
+                        await this.userRepo.update(existingUser.id, { email });
+                        existingUser.email = email;
+                        console.log(`[AuthService] Linked Google email ${email} to existing user '${existingUser.username}' (id: ${existingUser.id})`);
+                    } catch (e) {
+                        console.warn(`[AuthService] Could not link email to user '${existingUser.username}': ${e.message}`);
+                    }
+                } else {
+                    console.log(`[AuthService] Username hint '${username}' found but already has email '${existingUser.email}', skipping link`);
+                }
+
+                // Update avatar if provided
+                if (avatarUrl && existingUser.avatar !== avatarUrl) {
+                    try {
+                        await this.userRepo.update(existingUser.id, { avatar: avatarUrl });
+                        existingUser.avatar = avatarUrl;
+                    } catch (e) {
+                        console.warn(`[AuthService] Could not update avatar: ${e.message}`);
+                    }
+                }
+
+                const tokens = this._generateTokens(existingUser);
+                return Result.ok({ user: this._safeUser(existingUser), ...tokens, isNewUser: false });
+            }
+        }
+
+        // 3. User doesn't exist - create new account
         console.log(`[AuthService] Creating new user for Google email: ${email}`);
 
-        const username = email.split('@')[0];
-        const nameParts = (displayName || username).split(' ');
-        const nombres = nameParts[0] || username;
+        const newUsername = email.split('@')[0];
+        const nameParts = (displayName || newUsername).split(' ');
+        const nombres = nameParts[0] || newUsername;
         const apellidos = nameParts.slice(1).join(' ') || '';
 
         // Generate a random password for Google users (they won't use it)
@@ -145,7 +177,7 @@ export class AuthService {
 
         try {
             user = await this.userRepo.create({
-                username,
+                username: newUsername,
                 email,
                 password: hashedPassword,
                 avatar: avatarUrl || null,
