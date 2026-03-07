@@ -252,23 +252,29 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
                 fullPrompt = `Contenido del archivo:\n${resolvedFileContent}\n\nPregunta/Instrucción: ${prompt}`;
             }
 
-            // 4. Check reinforcement history to avoid repetitions — filter by topic/task
+            // 4. Check reinforcement history to avoid repetitions
+            // IMPORTANT: Do NOT filter by topic/task here because hash duplicate detection
+            // in saveReinforcementHistory() checks ALL questions for the user (no topic/task filter).
+            // This ensures the LLM sees ALL previously generated questions to avoid duplicates.
             if (userId && courseId && this._isReinforcementRequest(prompt)) {
                 try {
-                    // Use MCPService for topic/task-scoped history when available
+                    // Use MCPService WITHOUT topic/task filter to match the duplicate detection scope
                     const { MCPService } = await
                     import ('./MCPService.js');
                     const mcpService = new MCPService();
+                    // Pass null for topicId and taskId to get ALL questions for this user+course
                     const history = await mcpService.getReinforcementHistory(
-                        userId, courseId, topicId || null, taskId || null
+                        userId, courseId, null, null
                     );
+                    console.log(`[LLMDomainService] 📋 Reinforcement history retrieved: ${history?.length || 0} questions for user=${userId} course=${courseId}`);
                     if (history && history.length > 0) {
-                        const historyTexts = history.map(h => h.question || h.text || '');
-                        systemPrompt += `\n\n═══ PREGUNTAS YA GENERADAS PARA ESTE TEMA/TAREA (PROHIBIDO REPETIR O PARAFRASEAR) ═══`;
-                        systemPrompt += `\nHay ${historyTexts.length} preguntas existentes. Cada nueva pregunta DEBE cubrir un ASPECTO DIFERENTE del material:`;
+                        const historyTexts = history.map(h => h.question || h.text || '').filter(Boolean);
+                        systemPrompt += `\n\n═══ PREGUNTAS YA GENERADAS EN ESTE CURSO (PROHIBIDO REPETIR O PARAFRASEAR) ═══`;
+                        systemPrompt += `\nHay ${historyTexts.length} preguntas existentes. Cada nueva pregunta DEBE cubrir un ASPECTO COMPLETAMENTE DIFERENTE:`;
                         historyTexts.forEach((q, i) => { systemPrompt += `\n${i + 1}. ${q}`; });
                         systemPrompt += `\n═══ FIN DEL HISTORIAL ═══`;
-                        systemPrompt += `\nIMPORTANTE: NO reformules ni parafrasees ninguna de las preguntas anteriores. Aborda conceptos, funciones o secciones del material que NO aparezcan en el historial.`;
+                        systemPrompt += `\nIMPORTANTE: NO reformules ni parafrasees ninguna de las preguntas anteriores. Genera preguntas sobre conceptos, funciones o secciones que NO aparezcan arriba.`;
+                        systemPrompt += `\nSi el material ya fue cubierto por las preguntas existentes, busca DETALLES ESPECÍFICOS, EJEMPLOS CONCRETOS o APLICACIONES PRÁCTICAS que aún no se hayan preguntado.`;
                     }
                 } catch (histErr) {
                     console.warn('[LLMDomainService] Reinforcement history failed:', histErr.message);
