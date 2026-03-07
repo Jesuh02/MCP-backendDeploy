@@ -19,27 +19,28 @@ ADD COLUMN IF NOT EXISTS option_embedding vector(4096);
 CREATE INDEX IF NOT EXISTS idx_questions_history_user_hash 
 ON public.questions_history(user_id, question_hash);
 
-CREATE INDEX IF NOT EXISTS idx_questions_history_embedding 
-ON public.questions_history 
-USING ivfflat (question_embedding vector_cosine_ops)
-WITH (lists = 100);
-
-CREATE INDEX IF NOT EXISTS idx_question_options_embedding 
-ON public.question_options 
-USING ivfflat (option_embedding vector_cosine_ops)
-WITH (lists = 100);
+-- NOTE: ivfflat/hnsw indexes are limited to 2000 dimensions in pgvector.
+-- vector(4096) exceeds this limit, so vector indexes are intentionally omitted.
+-- KNN cosine search still works correctly via sequential scan at this scale.
 
 -- 4. Función RPC: Buscar preguntas similares por embedding
-CREATE OR REPLACE FUNCTION match_questions(
-  query_embedding vector(4096),
-  match_threshold float,
-  match_count int,
-  filter_user_id bigint
+-- Drop both 4-param (legacy) and 5-param (if exists) before recreating
+DROP FUNCTION IF EXISTS public.match_questions(vector,    float, int, bigint);
+DROP FUNCTION IF EXISTS public.match_questions(vector(4096), float, int, bigint);
+DROP FUNCTION IF EXISTS public.match_questions(vector,    float, int, bigint, bigint);
+DROP FUNCTION IF EXISTS public.match_questions(vector(4096), float, int, bigint, bigint);
+
+CREATE OR REPLACE FUNCTION public.match_questions(
+  query_embedding  vector(4096),
+  match_threshold  float,
+  match_count      int,
+  filter_user_id   bigint,
+  filter_course_id bigint DEFAULT NULL
 )
 RETURNS TABLE (
-  id bigint,
+  id            bigint,
   question_text text,
-  similarity float
+  similarity    float
 )
 LANGUAGE plpgsql
 AS $$
@@ -53,6 +54,7 @@ BEGIN
   WHERE
     qh.user_id = filter_user_id
     AND qh.question_embedding IS NOT NULL
+    AND (filter_course_id IS NULL OR qh.course_id = filter_course_id)
     AND 1 - (qh.question_embedding <=> query_embedding) > match_threshold
   ORDER BY qh.question_embedding <=> query_embedding
   LIMIT match_count;
@@ -60,16 +62,23 @@ END;
 $$;
 
 -- 5. Función RPC: Buscar opciones similares por embedding
-CREATE OR REPLACE FUNCTION match_options(
-  query_embedding vector(4096),
-  match_threshold float,
-  match_count int,
-  filter_user_id bigint
+DROP FUNCTION IF EXISTS public.match_options(vector,    float, int, bigint);
+DROP FUNCTION IF EXISTS public.match_options(vector(4096), float, int, bigint);
+DROP FUNCTION IF EXISTS public.match_options(vector,    float, int, bigint, bigint);
+DROP FUNCTION IF EXISTS public.match_options(vector(4096), float, int, bigint, bigint);
+
+CREATE OR REPLACE FUNCTION public.match_options(
+  query_embedding  vector(4096),
+  match_threshold  float,
+  match_count      int,
+  filter_user_id   bigint,
+  filter_course_id bigint DEFAULT NULL
 )
 RETURNS TABLE (
-  id bigint,
+  id          bigint,
   option_text text,
-  similarity float
+  question_id bigint,
+  similarity  float
 )
 LANGUAGE plpgsql
 AS $$
@@ -78,12 +87,14 @@ BEGIN
   SELECT
     qo.id,
     qo.option_text,
+    qo.question_id,
     1 - (qo.option_embedding <=> query_embedding) AS similarity
   FROM question_options qo
   JOIN questions_history qh ON qo.question_id = qh.id
   WHERE
     qh.user_id = filter_user_id
     AND qo.option_embedding IS NOT NULL
+    AND (filter_course_id IS NULL OR qh.course_id = filter_course_id)
     AND 1 - (qo.option_embedding <=> query_embedding) > match_threshold
   ORDER BY qo.option_embedding <=> query_embedding
   LIMIT match_count;

@@ -700,7 +700,11 @@ export class MCPService {
                         });
 
                     if (semanticError) {
-                        if (semanticError.message.includes('dimensions')) {
+                        if (semanticError.message.includes('schema cache') || semanticError.message.includes('Could not find the function')) {
+                            // Function signature mismatch — migration_match_questions_v2.sql hasn't been run yet.
+                            // Run scripts/migration_match_questions_v2.sql in the Supabase SQL Editor to fix.
+                            logger.warn('⚠️ match_questions RPC not found. Run scripts/migration_match_questions_v2.sql in Supabase SQL Editor. Skipping semantic dedup.');
+                        } else if (semanticError.message.includes('dimensions')) {
                             const expectedDim = this._parseExpectedDimensionFromError(semanticError.message);
                             if (expectedDim > 0) {
                                 const adjustedEmbedding = this._adjustVectorDimension(questionEmbedding, expectedDim);

@@ -69,3 +69,6 @@ docs/CLAUDE.MD
 scripts/reinforcementlog.txt
 scripts/requerimientoscache.txt
 scripts/CLAUDE.MD
+scripts/migration_match_questions_v2.sql
+scripts/setup_uniqueness_system.sql
+scripts/setup_uniqueness_system.sql
