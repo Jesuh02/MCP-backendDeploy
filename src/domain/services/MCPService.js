@@ -589,6 +589,8 @@ export class MCPService {
             }
 
             // Step 2: Batch hash check against DB (single query instead of N queries)
+            // NOTE: We check by user_id + course_id to match the scope of getReinforcementHistory()
+            // This allows questions to be reused across different courses
             const allHashes = questionsWithHashes.map(q => q._hash);
             let existingHashes = new Set();
             try {
@@ -596,10 +598,12 @@ export class MCPService {
                     .from('questions_history')
                     .select('question_hash')
                     .eq('user_id', userId)
+                    .eq('course_id', courseId)
                     .in('question_hash', allHashes);
                 if (hashRows) {
                     existingHashes = new Set(hashRows.map(r => r.question_hash));
                 }
+                logger.info(`📋 Hash check: found ${existingHashes.size}/${allHashes.length} existing hashes for user=${userId} course=${courseId}`);
             } catch (hashErr) {
                 logger.warn(`⚠️ Batch hash check failed, will check individually: ${hashErr.message}`);
             }
@@ -684,13 +688,15 @@ export class MCPService {
                 if (!qText || !questionEmbedding || !Array.isArray(questionEmbedding) || questionEmbedding.length === 0) continue;
 
                 // --- Semantic Search (using pre-computed embedding) ---
+                // Filter by user_id AND course_id to match the scope of hash duplicate detection
                 if (questionEmbedding) {
                     const { data: semanticMatches, error: semanticError } = await supabase
                         .rpc('match_questions', {
                             query_embedding: questionEmbedding,
                             match_threshold: 0.90,
                             match_count: 1,
-                            filter_user_id: userId
+                            filter_user_id: userId,
+                            filter_course_id: courseId
                         });
 
                     if (semanticError) {
@@ -703,7 +709,8 @@ export class MCPService {
                                         query_embedding: adjustedEmbedding,
                                         match_threshold: 0.90,
                                         match_count: 1,
-                                        filter_user_id: userId
+                                        filter_user_id: userId,
+                                        filter_course_id: courseId
                                     });
 
                                 if (!retrySemanticError && retryMatches && retryMatches.length > 0) {
