@@ -102,6 +102,69 @@ export class AuthService {
         const { password, ...safe } = user;
         return safe;
     }
+
+    /**
+     * Login with Google - finds or creates user by email and returns JWT tokens.
+     * This ensures the Android client gets proper authentication for the correct user.
+     */
+    async loginWithGoogle({ email, displayName, avatarUrl }) {
+        console.log(`[AuthService] Google login attempt for email: ${email}`);
+
+        // 1. Find user by email
+        let user = await this.userRepo.findByEmail(email);
+
+        if (user) {
+            console.log(`[AuthService] Found existing user for Google email: ${email}, userId: ${user.id}, username: ${user.username}`);
+
+            // Update avatar if provided and different
+            if (avatarUrl && user.avatar !== avatarUrl) {
+                try {
+                    await this.userRepo.update(user.id, { avatar: avatarUrl });
+                    user.avatar = avatarUrl;
+                    console.log(`[AuthService] Updated avatar for user ${user.id}`);
+                } catch (e) {
+                    console.warn(`[AuthService] Could not update avatar: ${e.message}`);
+                }
+            }
+
+            const tokens = this._generateTokens(user);
+            return Result.ok({ user: this._safeUser(user), ...tokens, isNewUser: false });
+        }
+
+        // 2. User doesn't exist - create new account
+        console.log(`[AuthService] Creating new user for Google email: ${email}`);
+
+        const username = email.split('@')[0];
+        const nameParts = (displayName || username).split(' ');
+        const nombres = nameParts[0] || username;
+        const apellidos = nameParts.slice(1).join(' ') || '';
+
+        // Generate a random password for Google users (they won't use it)
+        const randomPassword = `google_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+        const hashedPassword = await this.jwt.hashPassword(randomPassword);
+
+        try {
+            user = await this.userRepo.create({
+                username,
+                email,
+                password: hashedPassword,
+                avatar: avatarUrl || null,
+                persona: {
+                    nombres,
+                    apellidos,
+                    identificacion: '',
+                    telefono: '',
+                },
+            });
+
+            console.log(`[AuthService] Created new Google user: ${user.id}, username: ${user.username}`);
+            const tokens = this._generateTokens(user);
+            return Result.ok({ user: this._safeUser(user), ...tokens, isNewUser: true });
+        } catch (createError) {
+            console.error(`[AuthService] Error creating Google user: ${createError.message}`);
+            return Result.fail(new ValidationError(`Error creando usuario: ${createError.message}`));
+        }
+    }
 }
 export default AuthService;
 
