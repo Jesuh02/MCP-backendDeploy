@@ -17,6 +17,35 @@ export class CourseDomainService {
         if (!Object.prototype.hasOwnProperty.call(obj, 'price')) return;
         const price = Number(obj.price) || 0;
         obj.isFree = price <= 0;
+        obj.isPremium = price > 0;
+        obj.is_premium = price > 0;
+    }
+
+    _normalizeCourseShape(course) {
+        if (!course || typeof course !== 'object') return course;
+
+        this._ensureIsFreeFlag(course);
+
+        const thumbnail = course.thumbnail_url || course.thumbnail_uri || course.thumbnailUri || null;
+        if (thumbnail) {
+            course.thumbnail_url = thumbnail;
+            course.thumbnail_uri = thumbnail;
+            course.thumbnailUri = thumbnail;
+        }
+
+        if (course.creator_user_id && !course.creatorUserId) {
+            course.creatorUserId = Number(course.creator_user_id) || 0;
+        }
+
+        if (course.creatorUserId && !course.creator_user_id) {
+            course.creator_user_id = Number(course.creatorUserId) || 0;
+        }
+
+        if (typeof course.category !== 'string' || course.category.trim().length === 0) {
+            course.category = 'General';
+        }
+
+        return course;
     }
 
     _validateCourseId(id) {
@@ -31,11 +60,15 @@ export class CourseDomainService {
      * Sign R2 thumbnail URLs for courses so they are not blocked by private bucket.
      */
     async _signUrls(courses) {
-        if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return courses;
         const list = Array.isArray(courses) ? courses : [courses];
+        list.forEach((course) => this._normalizeCourseShape(course));
+        if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) {
+            return Array.isArray(courses) ? list : list[0];
+        }
         await Promise.all(list.map(async(c) => {
             if (!c) return;
             try {
+                this._normalizeCourseShape(c);
                 const url = c.thumbnail_url || c.thumbnail_uri || c.thumbnailUri;
                 if (url) {
                     if (!url.includes('X-Amz-Signature')) {
@@ -67,6 +100,7 @@ export class CourseDomainService {
             err.silent = true;
             return Result.fail(err);
         }
+        this._normalizeCourseShape(course);
         await this._signUrls(course);
         return Result.ok(course);
     }
@@ -76,6 +110,7 @@ export class CourseDomainService {
             this.courseRepo.findAll(pagination),
             this.courseRepo.count({ excludeCreatorId: pagination.excludeCreatorId }),
         ]);
+        (courses || []).forEach((course) => this._normalizeCourseShape(course));
         await this._signUrls(courses);
         return Result.ok({ courses, total });
     }
