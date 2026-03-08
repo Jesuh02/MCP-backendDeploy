@@ -155,9 +155,14 @@ export class CourseDomainService {
             countPromises.push(Promise.resolve(0));
         }
 
-        const [total, free, premium, myCreated, otherCreators, enrolled, purchased] = await Promise.all(countPromises);
+        const popularPromise = this.progressRepo && typeof this.progressRepo.findCourseEnrollmentRanking === 'function'
+            ? this.progressRepo.findCourseEnrollmentRanking().then(r => (r || []).length)
+            : Promise.resolve(0);
+        countPromises.push(popularPromise);
 
-        return Result.ok({ total, free, premium, myCreated, otherCreators, enrolled, purchased });
+        const [total, free, premium, myCreated, otherCreators, enrolled, purchased, popular] = await Promise.all(countPromises);
+
+        return Result.ok({ total, free, premium, myCreated, otherCreators, enrolled, purchased, popular });
     }
 
     async getCreatorDashboardMetrics(creatorUserId) {
