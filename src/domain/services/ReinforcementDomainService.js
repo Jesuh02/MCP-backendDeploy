@@ -191,7 +191,7 @@ export class ReinforcementDomainService {
             }
         }
 
-        this.logQuestionBatch('saveSession received questions', parsedQuestions, {
+        this.logQuestionBatch('respuestas mostradas en ReinforcementLearningScreen.kt', parsedQuestions, {
             userId,
             courseId,
             topicId,
