@@ -69,13 +69,47 @@ export class NotificationDomainService {
         if (this.push.isAvailable()) {
             const tokens = await this.userRepo.getUserFCMTokens(userId);
             if (tokens.length > 0) {
-                const result = await this.push.sendToTokens(tokens, title, message, data || {});
+                const pushData = this._buildPushData({
+                    notificationId: notif?.id,
+                    type,
+                    relatedId,
+                    senderUsername,
+                    senderAvatarUrl,
+                    thumbnailUrl: resolvedThumbnailUrl,
+                    metadata,
+                    ...data
+                });
+                const result = await this.push.sendToTokens(tokens, title, message, pushData);
                 if (result.invalidTokens?.length > 0) {
                     await this.userRepo.removeInvalidFCMTokens(result.invalidTokens);
                 }
             }
         }
         return Result.ok(notif);
+    }
+
+    _buildPushData(params) {
+        const data = {};
+        const stringFields = ['type', 'senderUsername', 'senderAvatarUrl', 'thumbnailUrl'];
+        const numericFields = ['notificationId', 'relatedId', 'courseId', 'taskId', 'videoId', 'topicId'];
+
+        for (const field of stringFields) {
+            if (params[field] != null) data[field] = String(params[field]);
+        }
+        for (const field of numericFields) {
+            if (params[field] != null) data[field] = String(params[field]);
+        }
+
+        const meta = this._normalizeMetadata(params.metadata);
+        if (meta) {
+            for (const field of numericFields) {
+                const snakeField = field.replace(/([A-Z])/g, '_$1').toLowerCase();
+                const value = meta[field] ?? meta[snakeField];
+                if (value != null && !data[field]) data[field] = String(value);
+            }
+        }
+
+        return data;
     }
 
     _normalizeMetadata(metadata) {

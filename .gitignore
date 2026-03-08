@@ -72,3 +72,7 @@ scripts/CLAUDE.MD
 scripts/migration_match_questions_v2.sql
 scripts/setup_uniqueness_system.sql
 scripts/setup_uniqueness_system.sql
+.claude/CLAUDE.MD
+docs/resultado_2rondasdepreguntas.txt
+docs/CLAUDE.MD
+scripts/migration_whatsapp_unlink_rpc.sql

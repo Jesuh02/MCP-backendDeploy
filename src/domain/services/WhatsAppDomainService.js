@@ -756,7 +756,10 @@ export class WhatsAppDomainService {
      * @returns {Promise<Result>}
      */
     async unlinkAccount(userId) {
-        const session = await this.sessionRepo.findByUserId(userId);
+        const sessionsBeforeDelete = typeof this.sessionRepo.findAllByUserId === 'function'
+            ? await this.sessionRepo.findAllByUserId(userId)
+            : [await this.sessionRepo.findByUserId(userId)].filter(Boolean);
+        const session = sessionsBeforeDelete[0] || null;
 
         // Enviar mensaje de despedida en fire-and-forget para no bloquear la respuesta.
         // Los errores de envío son ignorados — la eliminación procede igual.
@@ -787,10 +790,12 @@ export class WhatsAppDomainService {
         // Verificar que la sesión realmente se eliminó.
         // Si deleteByUserId retornó 0 filas pero la sesión todavía existe y está
         // activa, intentar desactivación como fallback de último recurso.
-        const sessionAfterDelete = await this.sessionRepo.findByUserId(userId);
+        const sessionsAfterDelete = typeof this.sessionRepo.findAllByUserId === 'function'
+            ? await this.sessionRepo.findAllByUserId(userId)
+            : [await this.sessionRepo.findByUserId(userId)].filter(Boolean);
+        const hasActiveSessionsAfterDelete = sessionsAfterDelete.some((item) => item?.isActive);
 
-        if (!sessionAfterDelete || !sessionAfterDelete.isActive) {
-            // Sesión eliminada o ya inactiva — desvincular fue exitoso.
+        if (!hasActiveSessionsAfterDelete) {
             return Result.ok({ message: 'WhatsApp desvinculado correctamente' });
         }
 
@@ -804,9 +809,11 @@ export class WhatsAppDomainService {
             return Result.fail(new Error('No se pudo desvincular WhatsApp. Intenta de nuevo.'));
         }
 
-        // Confirmar que la desactivación surtió efecto
-        const sessionFinal = await this.sessionRepo.findByUserId(userId);
-        if (sessionFinal && sessionFinal.isActive) {
+        const sessionsFinal = typeof this.sessionRepo.findAllByUserId === 'function'
+            ? await this.sessionRepo.findAllByUserId(userId)
+            : [await this.sessionRepo.findByUserId(userId)].filter(Boolean);
+        const hasActiveSessionsFinal = sessionsFinal.some((item) => item?.isActive);
+        if (hasActiveSessionsFinal) {
             console.error('[WhatsApp] unlinkAccount: session STILL active after deactivate for userId:', userId, '— RLS/permission issue persists');
             return Result.fail(new Error('No se pudo desvincular WhatsApp. Verifica permisos o contacta al soporte.'));
         }
