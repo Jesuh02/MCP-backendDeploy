@@ -28,11 +28,11 @@ export const createCourseSchema = Joi.object({
 
 export const updateCourseSchema = Joi.object(courseBaseUpdateSchema)
     .rename('thumbnail_uri', 'thumbnailUri', { ignoreUndefined: true, override: true })
-    .rename('is_premium', 'isFree', {
-        ignoreUndefined: true,
-        override: true,
-        adjust: (value) => (typeof value === 'boolean' ? !value : value),
-    })
+    .rename('is_premium', 'isFree', { ignoreUndefined: true, override: true })
     .rename('is_published', 'isPublished', { ignoreUndefined: true, override: true })
+    .custom((obj) => {
+        if (typeof obj.isFree === 'boolean') obj.isFree = !obj.isFree;
+        return obj;
+    })
     .min(1);
 
