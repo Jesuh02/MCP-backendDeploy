@@ -3,9 +3,16 @@
  * Envía push notifications via Firebase Cloud Messaging.
  */
 import { createRequire } from 'module';
+import { readFileSync, existsSync } from 'fs';
+import { resolve } from 'path';
 
-const require = createRequire(
-    import.meta.url);
+const require = createRequire(import.meta.url);
+
+const SA_FILE_CANDIDATES = [
+    'movil-77c19-firebase-adminsdk-fbsvc-5d81f25b08.json',
+    'firebase-service-account.json',
+    'serviceAccountKey.json',
+];
 
 export class FCMAdapter {
     constructor() {
@@ -44,15 +51,35 @@ export class FCMAdapter {
             } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
                 let sa;
                 try { sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT); } catch { sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT.replace(/\\"/g, '"')); }
-                if (sa.private_key ?.includes('\\n')) sa.private_key = sa.private_key.replace(/\\n/g, '\n');
+                if (sa.private_key?.includes('\\n')) sa.private_key = sa.private_key.replace(/\\n/g, '\n');
                 this.admin.initializeApp({ credential: this.admin.credential.cert(sa) });
                 console.log('✅ FCMAdapter: Firebase Admin initialized from JSON');
             } else {
-                console.warn('⚠️ FCMAdapter: Firebase not configured — push disabled');
+                const sa = this._loadServiceAccountFile();
+                if (sa) {
+                    this.admin.initializeApp({ credential: this.admin.credential.cert(sa) });
+                    console.log('✅ FCMAdapter: Firebase Admin initialized from service account file');
+                } else {
+                    console.warn('⚠️ FCMAdapter: Firebase not configured — push disabled');
+                }
             }
         } catch (err) {
             console.warn('⚠️ FCMAdapter: Firebase init failed:', err.message);
         }
+    }
+
+    _loadServiceAccountFile() {
+        const rootDir = process.cwd();
+        for (const filename of SA_FILE_CANDIDATES) {
+            const filePath = resolve(rootDir, filename);
+            if (existsSync(filePath)) {
+                try {
+                    const sa = JSON.parse(readFileSync(filePath, 'utf-8'));
+                    if (sa.project_id && sa.private_key && sa.client_email) return sa;
+                } catch { /* skip invalid file */ }
+            }
+        }
+        return null;
     }
 
     // ----------------------------------------------------------
