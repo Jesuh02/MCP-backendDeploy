@@ -282,7 +282,9 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
                     const history = await mcpService.getReinforcementHistory(
                         userId, courseId, null, null
                     );
-                    console.log(`[LLMDomainService] 📋 Reinforcement history retrieved: ${history?.length || 0} questions for user=${userId} course=${courseId}`);
+                    const historyCount = history?.length || 0;
+                    const remaining = Math.max(10 - historyCount, 0);
+                    console.log(`[LLMDomainService] 🔢 ACUMULATIVO: ${historyCount}/10 preguntas únicas en DB, faltan=${remaining}, user=${userId}, course=${courseId}`);
                     if (history && history.length > 0) {
                         const historyTexts = history.map(h => h.question || h.text || '').filter(Boolean);
                         systemPrompt += `\n\n═══ PREGUNTAS YA GENERADAS EN ESTE CURSO (PROHIBIDO REPETIR O PARAFRASEAR) ═══`;

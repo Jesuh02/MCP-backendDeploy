@@ -203,7 +203,6 @@ export function createContainer() {
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
-    const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo });
     const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo });
     const notificationService = new NotificationDomainService({
         notificationRepository: notificationRepo,
@@ -215,6 +214,7 @@ export function createContainer() {
         topicRepository: topicRepo,
         taskRepository: taskRepo,
     });
+    const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo, notificationService });
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });

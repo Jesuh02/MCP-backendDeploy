@@ -2,9 +2,10 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ConflictError } from '../../shared/errors/index.js';
 
 export class SubscriptionDomainService {
-    constructor({ subscriptionRepository, userRepository }) {
+    constructor({ subscriptionRepository, userRepository, notificationService }) {
         this.subRepo = subscriptionRepository;
         this.userRepo = userRepository;
+        this.notificationService = notificationService || null;
     }
 
     async subscribe(subscriberId, creatorId) {
@@ -18,6 +19,7 @@ export class SubscriptionDomainService {
 
         try {
             const sub = await this.subRepo.create({ subscriberId, creatorId });
+            this._notifyCreator(subscriberId, creatorId).catch(() => {});
             return Result.ok(sub);
         } catch (error) {
             const message = String(error?.message || '').toLowerCase();
@@ -78,6 +80,20 @@ export class SubscriptionDomainService {
     async getSubscriberIds(creatorId) {
         const ids = await this.subRepo.findSubscriberIds(creatorId);
         return Result.ok(ids);
+    }
+
+    async _notifyCreator(subscriberId, creatorId) {
+        if (!this.notificationService) return;
+        const subscriber = await this.userRepo.findById(subscriberId);
+        const username = subscriber?.username || 'Alguien';
+        await this.notificationService.send(creatorId, {
+            title: '🔔 Nuevo suscriptor',
+            message: `${username} se ha suscrito a tu canal`,
+            type: 'new_subscriber',
+            relatedId: subscriberId,
+            senderUsername: username,
+            senderAvatarUrl: subscriber?.avatar || null,
+        });
     }
 }
 export default SubscriptionDomainService;

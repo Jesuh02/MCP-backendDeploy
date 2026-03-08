@@ -40,7 +40,7 @@ const saveQuestionsSchema = Joi.object({
     taskId: Joi.number().integer().allow(null).optional(),
     task_id: Joi.number().integer().allow(null).optional(),
     questions: Joi.alternatives().try(
-        Joi.array().items(questionItemSchema).length(10).custom((items, helpers) => {
+        Joi.array().items(questionItemSchema).min(1).max(10).custom((items, helpers) => {
             const seenQuestions = new Set();
 
             for (const item of items) {
