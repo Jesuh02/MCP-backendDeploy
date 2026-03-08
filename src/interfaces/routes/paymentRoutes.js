@@ -1,13 +1,16 @@
-/**
- * @deprecated paymentRoutes.js - DEPRECADO
- * Migrado a: src/interfaces/http/routes/v1/paymentRoutes.js
- * Controller: PaymentController.js
- * Servicio: PaymentDomainService.js
- * 
- * Este archivo se mantiene únicamente por compatibilidad con index.legacy.js.
- */
 import { Router } from 'express';
-const router = Router();
-export default router;
 
+export function paymentRoutes({ paymentController }) {
+    const router = Router();
+
+    router.post('/initiate', paymentController.initiate);
+    router.get('/status/:transactionId', paymentController.checkStatus);
+    router.get('/my', paymentController.getMyTransactions);
+    router.get('/banks', paymentController.getBanks);
+    router.get('/purchased/:courseId', paymentController.hasPurchased);
+    router.post('/webhook', paymentController.webhook); // No auth needed for webhook
+
+    return router;
+}
+export default paymentRoutes;
 

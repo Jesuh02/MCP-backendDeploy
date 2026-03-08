@@ -1,30 +1,28 @@
-/**
- * courseRoutes.js (Legacy)
- *
- * @deprecated Este archivo está DEPRECADO. Usar las rutas hexagonales en:
- *   - src/interfaces/http/routes/v1/courseRoutes.js
- *   - CourseController + CourseDomainService (inyección de dependencias)
- *
- * VIOLACIONES CORREGIDAS:
- *   - DIP: Importaba SupabaseService directamente (infraestructura en capa de interfaz)
- *   - SRP: Contenía SQL queries inline en los handlers de ruta
- *   - SQL Injection: Interpolación directa de userId en queries SQL
- *
- * Los endpoints han sido migrados a:
- *   - GET /creator/:userId/with-submissions → /api/v1/courses/creator-id/:userId/with-submissions
- *   - GET /:courseId/submissions → /api/v1/submissions/course/:courseId
- *
- * Este archivo se mantiene únicamente como referencia de la migración.
- * NO se importa ni se monta en el servidor.
- */
-
 import { Router } from 'express';
+import { asyncHandler } from '../../utils/asyncHandler.js';
 
-const router = Router();
+export function courseRoutes({ courseController }) {
+    const router = Router();
 
-// All functionality has been migrated to hexagonal v1 routes.
-// See: src/interfaces/http/routes/v1/courseRoutes.js
-// See: src/interfaces/http/routes/v1/submissionRoutes.js
+    router.get('/', asyncHandler(courseController.list));
+    router.get('/stats', asyncHandler(courseController.getStats));
+    router.get('/counts', asyncHandler(courseController.getFilterCounts));
+    router.get('/search', asyncHandler(courseController.search));
+    router.get('/popular', asyncHandler(courseController.getPopularCourses));
+    router.get('/free', asyncHandler(courseController.getFreeCourses));
+    router.get('/premium', asyncHandler(courseController.getPremiumCourses));
+    router.get('/purchased', asyncHandler(courseController.getPurchasedCourses));
+    router.get('/enrolled', asyncHandler(courseController.getEnrolledCourses));
+    router.get('/by-ids', asyncHandler(courseController.getByIds));
+    router.get('/my/creator-metrics', asyncHandler(courseController.getMyCreatorMetrics));
+    router.get('/creator/:username', asyncHandler(courseController.getByCreator));
+    router.get('/creator-id/:userId', asyncHandler(courseController.getByCreatorId));
+    router.get('/creator-id/:userId/with-submissions', asyncHandler(courseController.getCreatorCoursesWithSubmissions));
+    router.get('/:id', asyncHandler(courseController.getById));
+    router.post('/', asyncHandler(courseController.create));
+    router.put('/:id', asyncHandler(courseController.update));
+    router.delete('/:id', asyncHandler(courseController.delete));
 
-export default router;
-
+    return router;
+}
+export default courseRoutes;
