@@ -22,6 +22,11 @@ export const updateVideoSchema = Joi.object({
     duration: Joi.number().min(0).allow(null).optional(),
     type: Joi.string().valid('video', 'short', 'live').optional(),
     hlsUrl: Joi.string().uri().allow(null, '').optional(),
+    isPaid: Joi.boolean().optional(),
     isPublished: Joi.boolean().optional(),
-}).min(1);
+})
+    .rename('thumbnail_uri', 'thumbnailUri', { ignoreUndefined: true, override: true })
+    .rename('is_paid', 'isPaid', { ignoreUndefined: true, override: true })
+    .rename('is_published', 'isPublished', { ignoreUndefined: true, override: true })
+    .min(1);
 
