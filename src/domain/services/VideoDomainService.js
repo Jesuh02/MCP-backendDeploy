@@ -3,10 +3,13 @@ import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/err
 import path from 'path';
 
 export class VideoDomainService {
-    constructor({ videoRepository, fileStoragePort, courseRepository }) {
+    constructor({ videoRepository, fileStoragePort, courseRepository, notificationService, subscriptionService, userRepository }) {
         this.videoRepo = videoRepository;
         this.storage = fileStoragePort || null;
         this.courseRepo = courseRepository || null;
+        this.notificationService = notificationService || null;
+        this.subscriptionService = subscriptionService || null;
+        this.userRepo = userRepository || null;
     }
 
     /**
@@ -207,11 +210,43 @@ export class VideoDomainService {
             // Sign URLs before returning
             await this._signUrls(created);
 
+            // Notify subscribers about new video (fire-and-forget)
+            this._notifySubscribersAboutNewVideo(created, userId).catch(err =>
+                console.warn('[VideoDomainService] Error notifying subscribers:', err.message)
+            );
+
             return Result.ok(created);
         } catch (error) {
             console.error('[VideoDomainService] uploadAndCreate error:', error.message);
             return Result.fail(error);
         }
+    }
+
+    async _notifySubscribersAboutNewVideo(video, creatorId) {
+        if (!this.notificationService || !this.subscriptionService) return;
+
+        const subscriberResult = await this.subscriptionService.getSubscriberIds(creatorId);
+        if (!subscriberResult.isOk()) return;
+
+        const subscriberIds = subscriberResult.getValue();
+        if (!subscriberIds || subscriberIds.length === 0) return;
+
+        const creator = this.userRepo ? await this.userRepo.findById(creatorId) : null;
+        const creatorUsername = creator?.username || 'Un creador';
+        const creatorAvatar = creator?.avatar || null;
+
+        const notificationData = {
+            title: `📹 Nuevo video de ${creatorUsername}`,
+            message: video.title || 'Nuevo video disponible',
+            type: 'new_video',
+            relatedId: video.id,
+            senderUsername: creatorUsername,
+            senderAvatarUrl: creatorAvatar,
+            thumbnailUrl: video.thumbnail_uri || video.thumbnailUri || null,
+            metadata: JSON.stringify({ videoId: video.id, creatorId })
+        };
+
+        await this.notificationService.sendBulk(subscriberIds, notificationData);
     }
 
     async create(videoData) {

@@ -26,6 +26,15 @@ export class IWhatsAppSessionRepository {
     }
 
     /**
+     * Lista todas las sesiones asociadas a un usuario.
+     * @param {number} userId
+     * @returns {Promise<import('../../entities/WhatsAppSession.js').WhatsAppSession[]>}
+     */
+    async findAllByUserId(userId) {
+        throw new Error('Not implemented');
+    }
+
+    /**
      * Crea o actualiza una sesión.
      * @param {object} sessionData
      * @returns {Promise<import('../../entities/WhatsAppSession.js').WhatsAppSession>}

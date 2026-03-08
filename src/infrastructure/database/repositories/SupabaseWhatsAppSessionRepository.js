@@ -110,23 +110,24 @@ export class SupabaseWhatsAppSessionRepository {
      * @returns {Promise<WhatsAppSession|null>}
      */
     async findByUserId(userId) {
-        // Use limit(1) + order so that duplicate rows (e.g. from missing UNIQUE
-        // constraint) never cause .maybeSingle() to throw PGRST116.
-        // Prefer the active session; fall back to the most recent one.
+        const sessions = await this.findAllByUserId(userId);
+        return sessions[0] || null;
+    }
+
+    async findAllByUserId(userId) {
         const { data, error } = await this.client
             .from(this.table)
             .select('*')
             .eq('user_id', userId)
             .order('is_active', { ascending: false })
             .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+;
 
         if (error) {
-            console.error('[WhatsAppSessionRepo] findByUserId error:', error.message);
-            return null;
+            console.error('[WhatsAppSessionRepo] findAllByUserId error:', error.message);
+            return [];
         }
-        return data ? WhatsAppSession.fromSupabaseRow(data) : null;
+        return Array.isArray(data) ? data.map((row) => WhatsAppSession.fromSupabaseRow(row)) : [];
     }
 
     /**
@@ -178,6 +179,11 @@ export class SupabaseWhatsAppSessionRepository {
      * @throws {Error} si ninguna estrategia pudo desactivar la sesión.
      */
     async deactivate(userId) {
+        const existingSessions = await this.findAllByUserId(userId);
+        if (!existingSessions.length) {
+            return;
+        }
+
         // Estrategia 1: RPC SECURITY DEFINER (bypasses RLS)
         try {
             const { data: rpcCount, error: rpcError } = await this.client
@@ -204,8 +210,11 @@ export class SupabaseWhatsAppSessionRepository {
             .from(this.table)
             .update({
                 is_active: false,
+                wa_id: null,
                 otp_code: null,
                 otp_expires_at: null,
+                conversation_context: [],
+                last_message_at: null,
                 updated_at: new Date().toISOString(),
             })
             .eq('user_id', userId)
@@ -233,6 +242,11 @@ export class SupabaseWhatsAppSessionRepository {
      * @throws {Error} si la operación falla en la base de datos.
      */
     async deleteByUserId(userId) {
+        const existingSessions = await this.findAllByUserId(userId);
+        if (!existingSessions.length) {
+            return 0;
+        }
+
         // Estrategia 1: RPC SECURITY DEFINER (bypasses RLS)
         try {
             const { data: rpcCount, error: rpcError } = await this.client
@@ -240,7 +254,9 @@ export class SupabaseWhatsAppSessionRepository {
             if (!rpcError) {
                 const count = typeof rpcCount === 'number' ? rpcCount : 0;
                 console.log(`[WhatsAppSessionRepo] deleteByUserId (RPC) userId=${userId} deletedRows=${count}`);
-                return count;
+                if (count > 0) {
+                    return count;
+                }
             }
             console.warn('[WhatsAppSessionRepo] deleteByUserId RPC unavailable, falling back to JS client:', rpcError.message);
         } catch (rpcEx) {
@@ -261,6 +277,9 @@ export class SupabaseWhatsAppSessionRepository {
 
         const deletedCount = Array.isArray(data) ? data.length : 0;
         console.log(`[WhatsAppSessionRepo] deleteByUserId (JS) userId=${userId} deletedRows=${deletedCount}`);
+        if (deletedCount === 0 && existingSessions.length > 0) {
+            throw new Error(`deleteByUserId: 0 rows deleted for userId=${userId} — possible RLS/permission issue`);
+        }
         return deletedCount;
     }
 }

@@ -217,7 +217,6 @@ export function createContainer() {
     const authService = new AuthService({ userRepository: userRepo, jwtAdapter });
     const userService = new UserDomainService({ userRepository: userRepo, fileStoragePort: storageAdapter });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
-    const videoService = new VideoDomainService({ videoRepository: videoRepo, fileStoragePort: storageAdapter });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo });
@@ -241,6 +240,14 @@ export function createContainer() {
     const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
 
     // Nivel 1: servicios que dependen de servicios del Nivel 0
+    const videoService = new VideoDomainService({
+        videoRepository: videoRepo,
+        fileStoragePort: storageAdapter,
+        courseRepository: courseRepo,
+        notificationService,
+        subscriptionService,
+        userRepository: userRepo
+    });
     // Crear courseNotificationService primero (depende de nivel 0)
     const courseNotificationService = new CourseNotificationService({
         subscriptionRepository: subscriptionRepo,
