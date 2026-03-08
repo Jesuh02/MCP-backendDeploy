@@ -215,7 +215,33 @@ export class ReinforcementDomainService {
                 const requiredCount = saveResult?.requiredCount || this.REQUIRED_QUESTION_COUNT;
                 const isComplete = cumulativeCount >= requiredCount;
 
+                let accumulatedQuestions = [];
+                try {
+                    const allHistory = await mcpService.getReinforcementHistory(userId, courseId, topicId, taskId);
+                    accumulatedQuestions = (allHistory || []).map(h => ({
+                        question: h.question || '',
+                        options: h.options || [],
+                        correctIndex: h.answer_index ?? 0,
+                        explanation: h.explanation || '',
+                    }));
+                } catch (_) { /* non-blocking */ }
+
+                const shortfall = Math.max(requiredCount - cumulativeCount, 0);
+
+                console.log(
+                    `🔢 [ReinforcementDomainService] ACUMULATIVO: ` +
+                    `savedThisCycle=${savedCount}, cumulativeCount=${cumulativeCount}/${requiredCount}, ` +
+                    `shortfall=${shortfall}, userId=${userId}, courseId=${courseId}, ` +
+                    `topicId=${topicId ?? 'null'}, taskId=${taskId ?? 'null'}`
+                );
+
                 if (saveResult && isComplete) {
+                    const finalQuestions = accumulatedQuestions.slice(0, requiredCount);
+                    this.logQuestionBatch(
+                        `LOTE COMPLETO — ${finalQuestions.length} preguntas únicas acumuladas`,
+                        finalQuestions,
+                        { userId, courseId, topicId, taskId }
+                    );
                     return Result.ok({
                         success: true,
                         savedCount,
@@ -223,22 +249,15 @@ export class ReinforcementDomainService {
                         duplicateCount: (parsedQuestions.length - savedCount),
                         totalSubmitted: parsedQuestions.length,
                         requiredCount,
+                        shortfall: 0,
+                        accumulatedQuestions: finalQuestions,
                         message: `Lote completo: ${cumulativeCount} preguntas únicas acumuladas`
                     });
                 } else {
-                    console.warn(`[ReinforcementDomainService] Partial save: ${savedCount} this batch, ${cumulativeCount}/${requiredCount} cumulative.`);
-                    // Fetch existing questions so client can use them for regeneration
-                    let existingQuestions = [];
-                    try {
-                        const existing = await mcpService.getReinforcementHistory(userId, courseId, topicId, taskId);
-                        existingQuestions = (existing || []).map(h => ({
-                            question: h.question || '',
-                            options: h.options || [],
-                            correctIndex: h.answer_index ?? 0,
-                            explanation: h.explanation || '',
-                        }));
-                    } catch (_) { /* non-blocking */ }
-
+                    console.warn(
+                        `[ReinforcementDomainService] Ciclo parcial: ${savedCount} nuevas este ciclo, ` +
+                        `${cumulativeCount}/${requiredCount} acumuladas. Faltan ${shortfall}.`
+                    );
                     return Result.ok({
                         success: false,
                         savedCount,
@@ -246,11 +265,12 @@ export class ReinforcementDomainService {
                         duplicateCount: (parsedQuestions.length - savedCount),
                         totalSubmitted: parsedQuestions.length,
                         requiredCount,
-                        shortfall: Math.max(requiredCount - cumulativeCount, 0),
+                        shortfall,
                         allDuplicates: savedCount === 0,
                         needsRegeneration: true,
-                        existingQuestions,
-                        message: `Guardadas ${savedCount} este ciclo, ${cumulativeCount}/${requiredCount} acumuladas. Faltan ${Math.max(requiredCount - cumulativeCount, 0)}.`
+                        accumulatedQuestions,
+                        existingQuestions: accumulatedQuestions,
+                        message: `Guardadas ${savedCount} este ciclo, ${cumulativeCount}/${requiredCount} acumuladas. Faltan ${shortfall}.`
                     });
                 }
             } catch (e) {

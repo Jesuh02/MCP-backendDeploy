@@ -14,6 +14,7 @@ export class SupabaseCourseRepository {
     }
 
     async findById(id) {
+        console.log(`[CourseRepo] findById: id=${id}`);
         const { data, error } = await this.client
             .from('courses')
             .select('*')
