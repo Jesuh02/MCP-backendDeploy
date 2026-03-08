@@ -10,9 +10,9 @@ import {
     ListPromptsRequestSchema,
     GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { EventSource } from "eventsource";
+import EventSourcePkg from "eventsource";
+const EventSource = EventSourcePkg.default || EventSourcePkg;
 
-// Polyfill EventSource for Node.js
 global.EventSource = EventSource;
 
 const REMOTE_URL = "https://mcp-backenddeploy-production.up.railway.app/mcp/sse";
