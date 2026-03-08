@@ -21,6 +21,7 @@ export const processPromptSchema = Joi.object({
     taskId: Joi.number().integer().optional(),
     topicId: Joi.number().integer().optional(),
     topic_id: Joi.number().integer().optional(),
+    freeLearning: Joi.boolean().optional(),
 }).options({ allowUnknown: true });
 
 export const analyzeSubmissionSchema = Joi.object({
