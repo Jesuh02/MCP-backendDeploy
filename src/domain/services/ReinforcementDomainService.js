@@ -22,6 +22,41 @@ export class ReinforcementDomainService {
         this.REQUIRED_QUESTION_COUNT = 10;
     }
 
+    logQuestionBatch(label, questions, context = {}) {
+        if (!Array.isArray(questions)) {
+            console.log(`[ReinforcementDomainService] ${label}: questions payload is not an array`);
+            return;
+        }
+
+        const contextSummary = Object.entries(context)
+            .filter(([, value]) => value !== undefined)
+            .map(([key, value]) => `${key}=${value ?? 'null'}`)
+            .join(', ');
+
+        console.log(
+            `🧠 [ReinforcementDomainService] ${label}: totalQuestions=${questions.length}` +
+            `${contextSummary ? `, ${contextSummary}` : ''}`
+        );
+
+        questions.forEach((item, questionIndex) => {
+            const questionText = String(item?.question || '').trim() || '(sin texto de pregunta)';
+            const options = Array.isArray(item?.options) ? item.options : [];
+            const correctIndex = Number.isInteger(item?.correctIndex) ? item.correctIndex : null;
+
+            console.log(`   Q${questionIndex + 1}: ${questionText}`);
+
+            if (options.length === 0) {
+                console.log('      opciones: (sin opciones)');
+                return;
+            }
+
+            options.forEach((option, optionIndex) => {
+                const marker = correctIndex === optionIndex ? '[correcta]' : '[opcion]';
+                console.log(`      ${marker} (${optionIndex}) ${String(option || '').trim()}`);
+            });
+        });
+    }
+
     /**
      * Ensure content for a task/topic is ingested into RAG (rag_documents).
      * If missing, fetches from content_items and ingests.
@@ -156,6 +191,13 @@ export class ReinforcementDomainService {
             }
         }
 
+        this.logQuestionBatch('saveSession received questions', parsedQuestions, {
+            userId,
+            courseId,
+            topicId,
+            taskId,
+        });
+
         // If we have questions, use MCPService for full embedding + uniqueness flow
         if (Array.isArray(parsedQuestions) && parsedQuestions.length > 0) {
             try {
@@ -235,6 +277,9 @@ export class ReinforcementDomainService {
             const history = await mcpService.getReinforcementHistory(userId, courseId, topicId, taskId);
 
             if (!Array.isArray(history) || history.length === 0) {
+                console.log(
+                    `🧠 [ReinforcementDomainService] getExistingQuestions: totalQuestions=0, userId=${userId}, courseId=${courseId}, topicId=${topicId ?? 'null'}, taskId=${taskId ?? 'null'}`
+                );
                 return Result.ok({ questions: [], count: 0 });
             }
 
@@ -245,6 +290,13 @@ export class ReinforcementDomainService {
                 correctIndex: h.answer_index ?? 0,
                 explanation: h.explanation || '',
             }));
+
+            this.logQuestionBatch('getExistingQuestions returning questions', questions, {
+                userId,
+                courseId,
+                topicId,
+                taskId,
+            });
 
             return Result.ok({ questions, count: questions.length });
         } catch (error) {
