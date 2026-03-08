@@ -24,7 +24,7 @@ import { S3Client, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/clien
 // 🏗️ HEXAGONAL ARCHITECTURE — v2 Clean Architecture modules
 // ============================================================
 import { createContainer } from './src/config/container.js';
-import { createV1Router } from './src/interfaces/http/routes/v1/index.js';
+import { createRouter } from './src/interfaces/routes/index.js';
 import { createAuthMiddleware, requireRoles } from './src/infrastructure/middleware/AuthMiddleware.js';
 import { errorHandler } from './src/infrastructure/middleware/ErrorHandler.js';
 
@@ -136,7 +136,7 @@ app.use('/excel', excelRoutes);
 try {
     const container = createContainer();
     const authMiddleware = createAuthMiddleware(container.jwtAdapter);
-    const v1Router = createV1Router({
+    const v1Router = createRouter({
         ...container,
         authMiddleware,
         requireRoles,

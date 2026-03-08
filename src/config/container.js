@@ -1,18 +1,3 @@
-/**
- * container.js — Contenedor de Inyección de Dependencias (DI Container).
- *
- * Implementa el patrón Composition Root: aquí se instancian todos los
- * adaptadores de infraestructura y se inyectan en los servicios de dominio
- * y controladores.
- *
- * Principios aplicados:
- *   - Dependency Inversion (SOLID-D): el dominio depende de puertos abstractos,
- *     no de implementaciones concretas.
- *   - Single Responsibility: este módulo SOLO se encarga del wiring.
- *   - Open/Closed: para agregar un nuevo dominio, se añade aquí sin modificar existentes.
- */
-
-// ── Infraestructura: Adaptadores ────────────────────────────
 import { JWTAdapter } from '../infrastructure/auth/JWTAdapter.js';
 import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
 
@@ -89,37 +74,36 @@ import { RAGService } from '../domain/services/RAGService.js';
 import { WhatsAppDomainService } from '../domain/services/WhatsAppDomainService.js';
 
 // ── Interfaces: Controladores ───────────────────────────────
-import { AuthController } from '../interfaces/http/controllers/AuthController.js';
-import { UserController } from '../interfaces/http/controllers/UserController.js';
-import { CourseController } from '../interfaces/http/controllers/CourseController.js';
-import { VideoController } from '../interfaces/http/controllers/VideoController.js';
-import { TopicController } from '../interfaces/http/controllers/TopicController.js';
-import { TaskController } from '../interfaces/http/controllers/TaskController.js';
-import { ContentItemController } from '../interfaces/http/controllers/ContentItemController.js';
-import { SubmissionController } from '../interfaces/http/controllers/SubmissionController.js';
-import { SubscriptionController } from '../interfaces/http/controllers/SubscriptionController.js';
-import { ProgressController } from '../interfaces/http/controllers/ProgressController.js';
-import { LikeController } from '../interfaces/http/controllers/LikeController.js';
-import { CommentController } from '../interfaces/http/controllers/CommentController.js';
-import { NotificationController } from '../interfaces/http/controllers/NotificationController.js';
-import { PaymentController } from '../interfaces/http/controllers/PaymentController.js';
-import { StorageController } from '../interfaces/http/controllers/StorageController.js';
-import { HealthController } from '../interfaces/http/controllers/HealthController.js';
-import { PersonaController } from '../interfaces/http/controllers/PersonaController.js';
-import { RolController } from '../interfaces/http/controllers/RolController.js';
-import { FileContextController } from '../interfaces/http/controllers/FileContextController.js';
-import { ReinforcementController } from '../interfaces/http/controllers/ReinforcementController.js';
-import { ChatMessageController } from '../interfaces/http/controllers/ChatMessageController.js';
-
-import { TTSController } from '../interfaces/http/controllers/TTSController.js';
-import { LLMController } from '../interfaces/http/controllers/LLMController.js';
-import { VideoProcessingController } from '../interfaces/http/controllers/VideoProcessingController.js';
-import { VideoStreamingController } from '../interfaces/http/controllers/VideoStreamingController.js';
-import { RAGController } from '../interfaces/http/controllers/RAGController.js';
-import { MCPController } from '../interfaces/http/controllers/MCPController.js';
-import { AppDistributionController } from '../interfaces/http/controllers/AppDistributionController.js';
-import { ExcelController } from '../interfaces/http/controllers/ExcelController.js';
-import { WhatsAppController } from '../interfaces/http/controllers/WhatsAppController.js';
+import { AuthController } from '../interfaces/controllers/AuthController.js';
+import { UserController } from '../interfaces/controllers/UserController.js';
+import { CourseController } from '../interfaces/controllers/CourseController.js';
+import { VideoController } from '../interfaces/controllers/VideoController.js';
+import { TopicController } from '../interfaces/controllers/TopicController.js';
+import { TaskController } from '../interfaces/controllers/TaskController.js';
+import { ContentItemController } from '../interfaces/controllers/ContentItemController.js';
+import { SubmissionController } from '../interfaces/controllers/SubmissionController.js';
+import { SubscriptionController } from '../interfaces/controllers/SubscriptionController.js';
+import { ProgressController } from '../interfaces/controllers/ProgressController.js';
+import { LikeController } from '../interfaces/controllers/LikeController.js';
+import { CommentController } from '../interfaces/controllers/CommentController.js';
+import { NotificationController } from '../interfaces/controllers/NotificationController.js';
+import { PaymentController } from '../interfaces/controllers/PaymentController.js';
+import { StorageController } from '../interfaces/controllers/StorageController.js';
+import { HealthController } from '../interfaces/controllers/HealthController.js';
+import { PersonaController } from '../interfaces/controllers/PersonaController.js';
+import { RolController } from '../interfaces/controllers/RolController.js';
+import { FileContextController } from '../interfaces/controllers/FileContextController.js';
+import { ReinforcementController } from '../interfaces/controllers/ReinforcementController.js';
+import { ChatMessageController } from '../interfaces/controllers/ChatMessageController.js';
+import { TTSController } from '../interfaces/controllers/TTSController.js';
+import { LLMController } from '../interfaces/controllers/LLMController.js';
+import { VideoProcessingController } from '../interfaces/controllers/VideoProcessingController.js';
+import { VideoStreamingController } from '../interfaces/controllers/VideoStreamingController.js';
+import { RAGController } from '../interfaces/controllers/RAGController.js';
+import { MCPController } from '../interfaces/controllers/MCPController.js';
+import { AppDistributionController } from '../interfaces/controllers/AppDistributionController.js';
+import { ExcelController } from '../interfaces/controllers/ExcelController.js';
+import { WhatsAppController } from '../interfaces/controllers/WhatsAppController.js';
 
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los

@@ -1,13 +1,16 @@
-/**
- * @deprecated RAGRoutes.js - DEPRECADO
- * Migrado a: src/interfaces/http/routes/v1/ragRoutes.js
- * Controller: RAGController.js
- * Servicio: RAGDomainService.js
- * 
- * Este archivo se mantiene únicamente por compatibilidad con index.legacy.js.
- */
 import { Router } from 'express';
-const router = Router();
-export default router;
 
+export function ragRoutes({ ragController }) {
+    const router = Router();
+
+    router.get('/status', ragController.getStatus);
+    router.post('/ingest', ragController.ingest);
+    router.post('/ingest-task-content', ragController.ingestTaskContent);
+    router.post('/search', ragController.search);
+    router.post('/context', ragController.buildContext);
+    router.post('/hybrid-search', ragController.hybridSearch);
+
+    return router;
+}
+export default ragRoutes;
 
