@@ -182,7 +182,10 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
 - Extrae mecanismos, relaciones causa-efecto, comparaciones e implicaciones del material para formular preguntas que evalúen CONSECUENCIAS y COMPRENSIÓN PROFUNDA, nunca solo recuerdo de datos.
 - Usa la información del material para crear ESCENARIOS donde el estudiante deba PENSAR y DECIDIR, no solo localizar una respuesta.
 - PROHIBIDO preguntas que se respondan buscando un dato literal. Las preguntas deben requerir ENTENDER el mecanismo detrás del dato.
-- PROHIBIDO generar preguntas generales basadas en el nombre del curso. Las preguntas DEBEN basarse en el TEMA y TAREA específicos.`;
+- PROHIBIDO generar preguntas generales basadas en el nombre del curso. Las preguntas DEBEN basarse en el TEMA y TAREA específicos.
+- PROHIBIDO ABSOLUTO preguntas de memorización de eventos: NO preguntar "¿Qué ocurrió?", "¿Quién hizo X?", "¿Cuándo sucedió?", "¿Dónde se realizó?", "¿Qué evento causó X?". El estudiante NUNCA debe responder recordando un hecho, fecha, nombre o evento del documento.
+- TODAS las preguntas deben premiar la COMPRENSIÓN y el PENSAMIENTO CRÍTICO: el estudiante debe demostrar que ENTIENDE relaciones, mecanismos, consecuencias e implicaciones — no que memorizó hechos.
+- Usa la Taxonomía de Bloom niveles superiores: APLICAR, ANALIZAR, EVALUAR, CREAR. PROHIBIDO niveles inferiores: RECORDAR, IDENTIFICAR.`;
             }
 
             // 2.5. JSON format enforcement for reinforcement/quiz requests
@@ -199,8 +202,10 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
                 // 2.6. PEDAGOGICAL QUALITY: 10/10 questions — thinking, not searching
                 systemPrompt += `\n\nINSTRUCCIÓN PEDAGÓGICA — NIVEL 10/10 (OBLIGATORIO ESTRICTO):
 
-═══ PRINCIPIO #1: EL ESTUDIANTE DEBE PENSAR, NO BUSCAR ═══
+═══ PRINCIPIO #1: EL ESTUDIANTE DEBE PENSAR, NO BUSCAR NI RECORDAR EVENTOS ═══
 - PROHIBIDO preguntas donde el estudiante solo localiza un dato en el material (ej: "¿Qué modelo tiene menor tiempo?").
+- PROHIBIDO preguntas de memorización de EVENTOS del documento: "¿Qué ocurrió?", "¿Quién hizo X?", "¿Cuándo sucedió?", "¿Dónde se realizó?", "¿Qué evento causó X?"
+- El estudiante NUNCA debe poder responder simplemente recordando un hecho, evento, fecha o nombre del documento.
 - Eso es nivel medio. El nivel 10/10 exige ANALIZAR, INTERPRETAR y DECIDIR.
 - Cada pregunta debe requerir que el estudiante ENTIENDA un mecanismo, compare alternativas o prediga consecuencias.
 - Ejemplo PROHIBIDO: "¿Cuál es el valor de X?" → solo buscar.
