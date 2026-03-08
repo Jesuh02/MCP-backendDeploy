@@ -44,7 +44,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId, topicId, forceMCPTools = false }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
@@ -84,8 +84,10 @@ export class LLMDomainService {
 
                         if (typeof this.rag.getHybridRagContent === 'function') {
                             const filter = { courseId };
-                            if (topicId) filter.topicId = topicId;
-                            if (taskId) filter.taskId = taskId;
+                            if (!freeLearning) {
+                                if (topicId) filter.topicId = topicId;
+                                if (taskId) filter.taskId = taskId;
+                            }
 
                             const hybridData = await this.rag.getHybridRagContent(compositeQuery, filter, {
                                 semanticTopK: 5,
@@ -117,8 +119,10 @@ export class LLMDomainService {
                         // Fallback to progressive context if hybrid didn't produce results
                         if (!ragContext && typeof this.rag.getProgressiveRagContent === 'function') {
                             const filter = { courseId };
-                            if (topicId) filter.topicId = topicId;
-                            if (taskId) filter.taskId = taskId;
+                            if (!freeLearning) {
+                                if (topicId) filter.topicId = topicId;
+                                if (taskId) filter.taskId = taskId;
+                            }
 
                             const progressiveData = await this.rag.getProgressiveRagContent(filter, sessionIndex);
 
@@ -139,17 +143,16 @@ export class LLMDomainService {
                         if (!ragContext) {
                             ragContext = await this.rag.buildContext(prompt, {
                                 courseId,
-                                topicId: topicId || null,
-                                taskId: taskId || null,
+                                topicId: freeLearning ? null : (topicId || null),
+                                taskId: freeLearning ? null : (taskId || null),
                                 maxTokens: 4000
                             });
                         }
                     } else {
-                        // Non-reinforcement: use standard semantic search context
                         ragContext = await this.rag.buildContext(prompt, {
                             courseId,
-                            topicId: topicId || null,
-                            taskId: taskId || null,
+                            topicId: freeLearning ? null : (topicId || null),
+                            taskId: freeLearning ? null : (taskId || null),
                             maxTokens: 2000
                         });
                     }
@@ -186,6 +189,14 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
 - PROHIBIDO ABSOLUTO preguntas de memorización de eventos: NO preguntar "¿Qué ocurrió?", "¿Quién hizo X?", "¿Cuándo sucedió?", "¿Dónde se realizó?", "¿Qué evento causó X?". El estudiante NUNCA debe responder recordando un hecho, fecha, nombre o evento del documento.
 - TODAS las preguntas deben premiar la COMPRENSIÓN y el PENSAMIENTO CRÍTICO: el estudiante debe demostrar que ENTIENDE relaciones, mecanismos, consecuencias e implicaciones — no que memorizó hechos.
 - Usa la Taxonomía de Bloom niveles superiores: APLICAR, ANALIZAR, EVALUAR, CREAR. PROHIBIDO niveles inferiores: RECORDAR, IDENTIFICAR.`;
+            }
+
+            if (freeLearning) {
+                systemPrompt += `\n\nMODO APRENDIZAJE LIBRE ACTIVADO:
+- Las preguntas DEBEN cubrir TODOS los temas presentes en el material, no solo uno.
+- Si el documento contiene múltiples temas (ej: SQL y Python), genera preguntas que cubran AMBOS.
+- NO te limites al título del tema o tarea. Explora TODO el contenido disponible.
+- Distribuye las preguntas equitativamente entre los distintos temas del material.`;
             }
 
             // 2.5. JSON format enforcement for reinforcement/quiz requests
