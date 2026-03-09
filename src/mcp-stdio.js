@@ -5,7 +5,7 @@
  */
 
 import './config/env.js';
-import { MCPService } from './domain/services/MCPService.js';
+import { MCPService } from './modules/ai/domain/MCPService.js';
 import { SupabaseService } from './infrastructure/database/SupabaseService.js';
 
 // CRITICAL: Redirect ALL stdout to stderr before any other imports

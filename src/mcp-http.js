@@ -7,7 +7,7 @@
 import './config/env.js';
 import express from 'express';
 import os from 'os';
-import { MCPService } from './domain/services/MCPService.js';
+import { MCPService } from './modules/ai/domain/MCPService.js';
 import { SupabaseService } from './infrastructure/database/SupabaseService.js';
 
 const app = express();

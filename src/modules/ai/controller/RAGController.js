@@ -1,0 +1,249 @@
+/**
+ * RAGController — Controlador HTTP para Retrieval-Augmented Generation.
+ */
+
+import { createRequire } from 'module';
+const require = createRequire(
+    import.meta.url);
+const pdf = require('pdf-parse');
+import { ingestSchema, searchSchema, buildContextSchema } from '../domain/RAGSchemas.js';
+import { ValidationError } from '../../../shared/errors/index.js';
+import { SupabaseService } from '../../../infrastructure/database/SupabaseService.js';
+import { R2StorageAdapter } from '../../../infrastructure/storage/R2StorageAdapter.js';
+import { RAGService } from '../domain/RAGService.js';
+import { logger } from '../../../infrastructure/logging/Logger.js';
+
+export class RAGController {
+    constructor({ ragService }) {
+        this.ragService = ragService;
+    }
+
+    getStatus = async(req, res, next) => {
+        try {
+            const result = await this.ragService.getStatus();
+            if (result.isFail()) return next(result.getError());
+
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    ingest = async(req, res, next) => {
+        try {
+            const { error, value } = ingestSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+
+            const result = await this.ragService.ingest(value);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    search = async(req, res, next) => {
+        try {
+            const { error, value } = searchSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+
+            const result = await this.ragService.search(value);
+            if (result.isFail()) return next(result.getError());
+
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+    buildContext = async(req, res, next) => {
+        try {
+            const { error, value } = buildContextSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+
+            const result = await this.ragService.buildContext(value);
+            if (result.isFail()) return next(result.getError());
+
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * POST /api/v1/rag/ingest-task-content
+     * Fetches content_items for a task from DB, downloads files, and ingests into RAG.
+     * Skips if rag_documents already exist for the task+topic pair.
+     */
+    ingestTaskContent = async(req, res, next) => {
+        const parseId = (val) => {
+            if (!val) return null;
+            const parsed = parseInt(val);
+            return isNaN(parsed) ? null : parsed;
+        };
+
+        const taskId = parseId(req.body.taskId);
+        const topicId = parseId(req.body.topicId);
+        const courseId = parseId(req.body.courseId);
+
+        if (!taskId) {
+            return res.status(400).json({ success: false, error: 'taskId is required' });
+        }
+
+        try {
+            const ragService = new RAGService();
+            const supabase = SupabaseService.getInstance();
+
+            // ⛔ Removed task-level existence check — it blocked new content_items
+            // from being ingested when other items for the same task already existed.
+            // Each content_item is checked individually inside ragService.ingestDocument()
+            // via its contentItemId, which is the correct granularity.
+
+            // Step 1: Fetch content_items for BOTH task AND topic
+            // This ensures ALL relevant files are ingested, not just task-specific ones
+            let ciQuery = supabase.client
+                .from('content_items')
+                .select('id, topic_id, title, body, content_type, task_id');
+            
+            if (taskId && topicId) {
+                ciQuery = ciQuery.or(`task_id.eq.${taskId},topic_id.eq.${topicId}`);
+            } else {
+                ciQuery = ciQuery.eq('task_id', taskId);
+            }
+
+            const { data: contentItems, error: ciError } = await ciQuery;
+
+            if (ciError) {
+                return res.status(500).json({ success: false, error: ciError.message });
+            }
+            if (!contentItems || contentItems.length === 0) {
+                return res.json({
+                    success: true,
+                    data: { skipped: true, reason: 'No content_items found', taskId }
+                });
+            }
+
+            // Step 3: Process each content_item
+            const r2Service = new R2StorageAdapter();
+            let totalChunksStored = 0;
+            let filesProcessed = 0;
+            const errors = [];
+
+            for (const item of contentItems) {
+                const body = (item.body || '').trim();
+                const fileName = item.title || `content_item_${item.id}`;
+                const isUrl = body.startsWith('http://') || body.startsWith('https://');
+
+                if (!body || body.length < 10) continue;
+
+                let extractedText = null;
+
+                if (isUrl) {
+                    try {
+                        const fileData = await r2Service.getSubmissionFileContent(body, fileName);
+                        if (!fileData || !fileData.content) {
+                            errors.push({ file: fileName, error: 'No content from download' });
+                            continue;
+                        }
+
+                        const nameLower = fileName.toLowerCase();
+                        const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+
+                        if (isPdf) {
+                            try {
+                                const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                const pdfData = await pdf(pdfBuffer);
+                                extractedText = pdfData.text;
+                                if (!extractedText || extractedText.trim().length < 50) extractedText = null;
+                            } catch (pdfErr) {
+                                errors.push({ file: fileName, error: `PDF parse: ${pdfErr.message}` });
+                            }
+                        } else if (!fileData.isBase64) {
+                            extractedText = fileData.content;
+                        }
+                    } catch (dlErr) {
+                        errors.push({ file: fileName, error: `Download: ${dlErr.message}` });
+                    }
+                } else {
+                    extractedText = body;
+                }
+
+                if (extractedText && extractedText.length >= 50) {
+                    try {
+                        const result = await ragService.ingestDocument(extractedText, {
+                            courseId: courseId || null,
+                            topicId: topicId || item.topic_id || null,
+                            taskId,
+                            contentItemId: item.id,
+                            fileName,
+                            fileType: 'txt'
+                        });
+
+                        if (result.success) {
+                            totalChunksStored += result.chunksStored || 0;
+                            filesProcessed++;
+                        } else if (result.skipped) {
+                            filesProcessed++;
+                        } else {
+                            errors.push({ file: fileName, error: result.error });
+                        }
+                    } catch (ingestErr) {
+                        errors.push({ file: fileName, error: ingestErr.message });
+                    }
+                }
+            }
+
+            return res.json({
+                success: true,
+                data: {
+                    skipped: false,
+                    ingested: true,
+                    filesProcessed,
+                    totalChunksStored,
+                    contentItemsFound: contentItems.length,
+                    errors: errors.length > 0 ? errors : undefined,
+                    taskId,
+                    topicId,
+                    courseId,
+                    timestamp: new Date().toISOString()
+                }
+            });
+
+        } catch (err) {
+            logger.error(`❌ ingestTaskContent error: ${err.message}`, err);
+            next(err);
+        }
+    };
+
+    /**
+     * POST /api/v1/rag/hybrid-search
+     * Hybrid Retrieval: Semantic Search + Window Expansion + Reranking + Progressive Coverage.
+     *
+     * Body: { query, courseId, topicId?, taskId?, semanticTopK?, windowSize?, sessionIndex?, rerank?, topicName?, taskTitle? }
+     * Returns: { content, chunks, files, semanticHits, expandedChunks, reranked, rerankMethod, page?, totalPages?, totalChunks? }
+     */
+    hybridSearch = async (req, res, next) => {
+        try {
+            const { query, courseId, topicId, taskId, semanticTopK, windowSize, sessionIndex, rerank, topicName, taskTitle } = req.body;
+
+            if (!query || !courseId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'query and courseId are required',
+                });
+            }
+
+            const ragService = new RAGService();
+            const filter = { courseId: parseInt(courseId) };
+            if (topicId) filter.topicId = parseInt(topicId);
+            if (taskId) filter.taskId = parseInt(taskId);
+
+            const result = await ragService.getHybridRagContent(query, filter, {
+                semanticTopK: semanticTopK ? parseInt(semanticTopK) : 3,
+                windowSize: windowSize ? parseInt(windowSize) : 3,
+                sessionIndex: sessionIndex != null ? parseInt(sessionIndex) : null,
+                rerank: rerank !== false, // default true
+                topicName: topicName || null,
+                taskTitle: taskTitle || null,
+            });
+
+            return res.json({ success: true, data: result });
+        } catch (err) {
+            logger.error(`❌ hybridSearch error: ${err.message}`, err);
+            next(err);
+        }
+    };
+}
+export default RAGController;
+

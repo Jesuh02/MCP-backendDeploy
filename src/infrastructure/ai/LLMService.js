@@ -144,18 +144,13 @@ export class LLMService {
             const messageLog = messages.map(m => ({
                 role: m.constructor.name,
                 content: m.content,
-                contentPreview: m.content
+                // Show FULL content as requested by user to verify no truncation
+                contentPreview: m.content // Removed truncation limit
             }));
             console.log("INPUT MESSAGES:", JSON.stringify(messageLog, null, 2));
 
+            // Check for specific files requested by user
             const fullContent = JSON.stringify(messages);
-
-            const acumulativoMatch = fullContent.match(/PROHIBIDO REPETIR/g);
-            if (acumulativoMatch) {
-                const existingCount = (fullContent.match(/\d+\.\s/g) || []).length;
-                console.log(`\n🔢 [LLMService] ACUMULATIVO: ${existingCount} preguntas existentes inyectadas al prompt para evitar repeticiones`);
-            }
-
             const interestingFiles = [
                 'ReinforcementLearningScreen.kt',
                 'utils/index.js',
