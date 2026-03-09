@@ -1,4 +1,4 @@
-import { MCPHttpCompatController } from '../../interfaces/controllers/MCPHttpCompatController.js';
+import { MCPHttpCompatController } from '../../modules/ai/controller/MCPHttpCompatController.js';
 
 const REDIRECT_MAP = [
     { method: 'use',  from: '/excel',            to: '/api/v1/excel' },
