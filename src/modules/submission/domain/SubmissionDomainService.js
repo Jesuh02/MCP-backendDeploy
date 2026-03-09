@@ -130,7 +130,8 @@ export class SubmissionDomainService {
             senderUsername: data.username,
             senderAvatarUrl,
             thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnail_uri || senderAvatarUrl,
-            metadata: JSON.stringify({ taskId: data.taskId, courseId, type: 'task_submission' })
+            metadata: JSON.stringify({ taskId: data.taskId, courseId, type: 'task_submission' }),
+            actorUserId: data.userId
         });
     }
 

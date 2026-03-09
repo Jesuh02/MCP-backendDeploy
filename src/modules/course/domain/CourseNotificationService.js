@@ -65,8 +65,12 @@ export class CourseNotificationService {
             for (const subscription of subscribers) {
                 const subscriberId = subscription.subscriber_id || subscription.subscriberId;
 
+                if (Number(subscriberId) === Number(creatorUserId)) {
+                    skippedCount++;
+                    continue;
+                }
+
                 try {
-                    // Pre-validar datos del suscriptor antes de encolar
                     const subscriberResult = await this.userService.getById(subscriberId);
                     if (subscriberResult.isFail()) {
                         console.warn(`[CourseNotificationService] No se pudo obtener datos del suscriptor ${subscriberId}`);
@@ -191,7 +195,8 @@ export class CourseNotificationService {
             senderUsername: creatorUsername,
             senderAvatarUrl: creator.avatar_url || creator.avatarUrl || null,
             thumbnailUrl: this._getThumbnailUrl(course),
-            metadata: { courseId: course.id, courseTitle }
+            metadata: { courseId: course.id, courseTitle },
+            creatorUserId: creator.id
         });
     }
 
