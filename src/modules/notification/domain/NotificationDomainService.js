@@ -17,6 +17,27 @@ export class NotificationDomainService {
         this.taskReminderTimers = new Map();
     }
 
+    _normalizeUserId(value) {
+        const userId = Number(value);
+        return Number.isInteger(userId) && userId > 0 ? userId : null;
+    }
+
+    _resolveExcludedUserIds(notifData = {}) {
+        const excluded = new Set();
+        const actorUserId = this._normalizeUserId(notifData.actorUserId ?? notifData.senderUserId ?? notifData.creatorUserId);
+
+        if (actorUserId) excluded.add(actorUserId);
+
+        if (Array.isArray(notifData.excludeUserIds)) {
+            for (const userId of notifData.excludeUserIds) {
+                const normalizedUserId = this._normalizeUserId(userId);
+                if (normalizedUserId) excluded.add(normalizedUserId);
+            }
+        }
+
+        return excluded;
+    }
+
     async getByUser(userId, pagination) {
         const notifs = await this.notifRepo.findByUser(userId, pagination);
         const unreadCount = await this.notifRepo.countUnread(userId);
@@ -33,11 +54,18 @@ export class NotificationDomainService {
         return Result.ok({ message: 'Todas las notificaciones leídas' });
     }
 
-    async sendNotification({ userId, title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
-        return this.send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata });
+    async sendNotification({ userId, title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata, actorUserId, senderUserId, creatorUserId, excludeUserIds }) {
+        return this.send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata, actorUserId, senderUserId, creatorUserId, excludeUserIds });
     }
 
-    async send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
+    async send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata, actorUserId, senderUserId, creatorUserId, excludeUserIds }) {
+        const recipientUserId = this._normalizeUserId(userId);
+        const excludedUserIds = this._resolveExcludedUserIds({ actorUserId, senderUserId, creatorUserId, excludeUserIds });
+
+        if (recipientUserId && excludedUserIds.has(recipientUserId)) {
+            return Result.ok({ skipped: true });
+        }
+
         // If global opt-out is enabled or this is a chat-originated notification, skip sending/storing
         const disableChatNotifications = process.env.DISABLE_CHAT_NOTIFICATIONS === 'true';
         const isChatType = type === 'chat_response' || (metadata && (metadata.channel === 'chat' || metadata.from === 'chat'));
@@ -202,10 +230,15 @@ export class NotificationDomainService {
 
         return course.thumbnail_uri || course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl || null;
     }
-    async sendBulk(userIds, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata }) {
+    async sendBulk(userIds, notifData) {
+        const excludedUserIds = this._resolveExcludedUserIds(notifData);
+        const filteredUserIds = (userIds || []).filter(userId => {
+            const normalizedUserId = this._normalizeUserId(userId);
+            return normalizedUserId && !excludedUserIds.has(normalizedUserId);
+        });
         const results = [];
-        for (const userId of userIds) {
-            const result = await this.send(userId, { title, message, type, data, relatedId, senderUsername, senderAvatarUrl, thumbnailUrl, metadata });
+        for (const userId of filteredUserIds) {
+            const result = await this.send(userId, notifData);
             results.push({ userId, success: result.isOk() });
         }
         return Result.ok(results);
