@@ -65,7 +65,8 @@ export class LikeDomainService {
                         senderUsername: senderUsername,
                         senderAvatarUrl: senderAvatar,
                         thumbnailUrl: video.thumbnailUri || video.thumbnail_uri || '',
-                        metadata: JSON.stringify({ video_id: entityId })
+                        metadata: JSON.stringify({ video_id: entityId }),
+                        actorUserId: userId
                     });
 
                     if (notifResult?.isFail?.()) {
@@ -88,11 +89,12 @@ export class LikeDomainService {
                         title: 'Like en tu comentario',
                         message: `${senderUsername} le gustó tu comentario`,
                         data: { videoId: commentVideoId, commentId: entityId, type: 'comment_like' },
-                        relatedId: commentVideoId, // Link to video
+                        relatedId: commentVideoId,
                         senderUsername: senderUsername,
                         senderAvatarUrl: senderAvatar,
                         thumbnailUrl: video ? (video.thumbnailUri || video.thumbnail_uri || '') : '',
-                        metadata: JSON.stringify({ comment_id: entityId })
+                        metadata: JSON.stringify({ comment_id: entityId }),
+                        actorUserId: userId
                     });
                 }
             }

@@ -68,7 +68,8 @@ export class CommentDomainService {
                         senderUsername: senderName,
                         senderAvatarUrl: avatar,
                         thumbnailUrl: video.thumbnail_uri,
-                        metadata: JSON.stringify({ comment_id: comment.id, replyText: comment.comment || comment.content })
+                        metadata: JSON.stringify({ comment_id: comment.id, replyText: comment.comment || comment.content }),
+                        actorUserId: userId
                     });
                 }
             }
@@ -84,7 +85,8 @@ export class CommentDomainService {
                     senderUsername: senderName,
                     senderAvatarUrl: avatar,
                     thumbnailUrl: video.thumbnailUri || video.thumbnail_uri || '',
-                    metadata: JSON.stringify({ comment_id: comment.id, commentText: comment.comment || comment.content })
+                    metadata: JSON.stringify({ comment_id: comment.id, commentText: comment.comment || comment.content }),
+                    actorUserId: userId
                 });
             }
         } catch (error) {

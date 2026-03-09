@@ -172,7 +172,8 @@ export class TaskDomainService {
                     courseTitle: cleanCourseTitle,
                     style: 'minimal',
                     type: 'new_task'
-                })
+                }),
+                actorUserId: currentUserId
             });
         });
         await Promise.all(promises);

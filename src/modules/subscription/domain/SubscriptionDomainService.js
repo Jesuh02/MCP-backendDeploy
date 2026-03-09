@@ -93,6 +93,7 @@ export class SubscriptionDomainService {
             relatedId: subscriberId,
             senderUsername: username,
             senderAvatarUrl: subscriber?.avatar || null,
+            actorUserId: subscriberId
         });
     }
 }
