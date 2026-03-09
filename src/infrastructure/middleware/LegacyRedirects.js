@@ -191,7 +191,7 @@ function mountLegacyNotifications(app, container) {
                 await notifService.sendBulk(subscriberIds, {
                     title: `${creatorUsername || 'Un creador'} subió un nuevo video`,
                     message: videoTitle || courseTitle || 'Nuevo video disponible',
-                    type: 'new_video', relatedId: courseId, senderUsername: creatorUsername, thumbnailUrl,
+                    type: 'new_video', relatedId: courseId, senderUsername: creatorUsername, thumbnailUrl, actorUserId: parseInt(creatorUserId),
                 });
             }
             res.json({ success: true, notificationsSent: subscriberIds.length });
@@ -213,7 +213,7 @@ function mountLegacyNotifications(app, container) {
                 await notifService.sendBulk(subscriberIds, {
                     title: `${creatorUsername || 'Un creador'} publicó un nuevo curso`,
                     message: courseTitle || 'Nuevo curso disponible',
-                    type: 'new_course', relatedId: courseId, senderUsername: creatorUsername, thumbnailUrl: courseThumbnailUrl,
+                    type: 'new_course', relatedId: courseId, senderUsername: creatorUsername, thumbnailUrl: courseThumbnailUrl, actorUserId: parseInt(creatorUserId),
                 });
             }
             res.json({ success: true, notificationsSent: subscriberIds.length });
