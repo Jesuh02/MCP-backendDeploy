@@ -17,6 +17,16 @@ export class VideoController {
         } catch (err) { next(err); }
     };
 
+    changes = async(req, res, next) => {
+        try {
+            const since = req.query.since;
+            if (!since) return res.status(400).json({ success: false, error: 'since parameter is required (unix ms)' });
+            const result = await this.videoService.getChanges(since);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getById = async(req, res, next) => {
         try {
             const result = await this.videoService.getById(parseInt(req.params.id));

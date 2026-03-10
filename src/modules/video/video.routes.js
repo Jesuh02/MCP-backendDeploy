@@ -21,6 +21,7 @@ export function videoRoutes({ videoController }) {
     const router = Router();
 
     router.get('/', videoController.list);
+    router.get('/changes', videoController.changes);
     router.get('/search', videoController.search);
     router.get('/by-courses', videoController.getByCourseIds);
     router.get('/creator/:username', videoController.getByCreator);

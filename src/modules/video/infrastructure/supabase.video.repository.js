@@ -165,7 +165,7 @@ export class SupabaseVideoRepository {
     }
 
     async update(id, updateData) {
-        const payload = {};
+        const payload = { updated_at: new Date().toISOString() };
         if (updateData.title !== undefined) payload.title = updateData.title;
         if (updateData.description !== undefined) payload.description = updateData.description;
         if (updateData.videoUri !== undefined) payload.video_uri_string = updateData.videoUri;
@@ -241,6 +241,30 @@ export class SupabaseVideoRepository {
             .in('id', ids);
         if (error) throw new Error(error.message);
         return (data || []).map(v => this._mapVideo(v));
+    }
+
+    async findModifiedSince(sinceIso, { limit = 100 } = {}) {
+        this._requireClient();
+        const { data, error } = await this.client
+            .from('videos')
+            .select('*, usuarios!remote_id(username)')
+            .gt('updated_at', sinceIso)
+            .order('updated_at', { ascending: false })
+            .limit(limit);
+        if (error) throw new Error(error.message);
+        return (data || []).map(v => this._mapVideo(v));
+    }
+
+    async getMaxUpdatedAt() {
+        this._requireClient();
+        const { data, error } = await this.client
+            .from('videos')
+            .select('updated_at')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .single();
+        if (error || !data) return null;
+        return data.updated_at;
     }
 }
 export default SupabaseVideoRepository;
