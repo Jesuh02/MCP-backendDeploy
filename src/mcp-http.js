@@ -7,8 +7,8 @@
 import './config/env.js';
 import express from 'express';
 import os from 'os';
-import { MCPService } from './modules/ai/domain/MCPService.js';
-import { SupabaseService } from './infrastructure/database/SupabaseService.js';
+import { MCPService } from './modules/ai/mcp-legacy.service.js';
+import { SupabaseService } from './shared/database/SupabaseService.js';
 
 const app = express();
 const PORT = process.env.MCP_HTTP_PORT || 3000;

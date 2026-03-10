@@ -2,9 +2,9 @@ import express from 'express';
 import { networkInterfaces } from 'os';
 import { createContainer } from './container.js';
 import { createRouter } from '../interfaces/routes/index.js';
-import { createAuthMiddleware, createOptionalAuthMiddleware, requireRoles } from '../infrastructure/middleware/AuthMiddleware.js';
-import { errorHandler } from '../infrastructure/middleware/ErrorHandler.js';
-import { mountLegacyRedirects } from '../infrastructure/middleware/LegacyRedirects.js';
+import { createAuthMiddleware, createOptionalAuthMiddleware, requireRoles } from '../shared/middleware/AuthMiddleware.js';
+import { errorHandler } from '../shared/middleware/ErrorHandler.js';
+import { mountLegacyRedirects } from '../shared/middleware/LegacyRedirects.js';
 
 export function createApp() {
     const app = express();

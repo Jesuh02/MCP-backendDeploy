@@ -12,9 +12,9 @@ import { PDFLoader } from 'langchain/document_loaders/fs/pdf';
 import { TextLoader } from 'langchain/document_loaders/fs/text';
 import { DocxLoader } from 'langchain/document_loaders/fs/docx';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { LLMService } from './src/infrastructure/ai/LLMService.js';
+import { LLMService } from './src/modules/ai/infrastructure/llm.service.js';
 import { MCPService, setUseRemoteLLM } from './src/domain/services/MCPService.js';
-import { SupabaseService } from './src/infrastructure/database/SupabaseService.js';
+import { SupabaseService } from './src/shared/database/SupabaseService.js';
 import { RAGService } from './src/domain/services/RAGService.js';
 
 // AWS SDK for Cloudflare R2 (S3-compatible)
@@ -25,8 +25,8 @@ import { S3Client, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/clien
 // ============================================================
 import { createContainer } from './src/config/container.js';
 import { createRouter } from './src/interfaces/routes/index.js';
-import { createAuthMiddleware, requireRoles } from './src/infrastructure/middleware/AuthMiddleware.js';
-import { errorHandler } from './src/infrastructure/middleware/ErrorHandler.js';
+import { createAuthMiddleware, requireRoles } from './src/shared/middleware/AuthMiddleware.js';
+import { errorHandler } from './src/shared/middleware/ErrorHandler.js';
 
 // ============================================================
 // 📦 REFACTORED MODULES - New modular architecture

@@ -5,8 +5,8 @@
  */
 
 import './config/env.js';
-import { MCPService } from './modules/ai/domain/MCPService.js';
-import { SupabaseService } from './infrastructure/database/SupabaseService.js';
+import { MCPService } from './modules/ai/mcp-legacy.service.js';
+import { SupabaseService } from './shared/database/SupabaseService.js';
 
 // CRITICAL: Redirect ALL stdout to stderr before any other imports
 // MCP protocol requires ONLY JSON-RPC messages on stdout
