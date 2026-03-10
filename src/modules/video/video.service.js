@@ -322,6 +322,14 @@ export class VideoDomainService {
         await this._signUrls(videos);
         return Result.ok(videos);
     }
+
+    async getChanges(sinceMs) {
+        const sinceIso = new Date(Number(sinceMs)).toISOString();
+        const videos = await this.videoRepo.findModifiedSince(sinceIso);
+        await this._signUrls(videos);
+        const serverNow = Date.now();
+        return Result.ok({ videos, serverTimestamp: serverNow });
+    }
 }
 export default VideoDomainService;
 
