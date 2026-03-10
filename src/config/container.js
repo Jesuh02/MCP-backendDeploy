@@ -1,126 +1,126 @@
-import { JWTAdapter } from '../infrastructure/auth/JWTAdapter.js';
-import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
+import { JWTAdapter } from '../modules/auth/infrastructure/jwt.adapter.js';
+import { SupabaseService } from '../shared/database/SupabaseService.js';
 
-import { R2StorageAdapter } from '../infrastructure/storage/R2StorageAdapter.js';
-import { FCMAdapter } from '../infrastructure/notifications/FCMAdapter.js';
-import { EmailAdapter } from '../infrastructure/notifications/EmailAdapter.js';
-import { EmailQueueService } from '../infrastructure/notifications/EmailQueueService.js';
-import { WompiAdapter } from '../infrastructure/payment/WompiAdapter.js';
-import { OpenAITTSAdapter } from '../infrastructure/tts/OpenAITTSAdapter.js';
-import { FFmpegVideoAdapter } from '../infrastructure/video/FFmpegVideoAdapter.js';
-import { LLMAdapter } from '../infrastructure/ai/LLMAdapter.js';
-import { RAGAdapter } from '../infrastructure/ai/RAGAdapter.js';
-import { GitHubAdapter } from '../infrastructure/github/GitHubAdapter.js';
-import { CacheAdapter } from '../infrastructure/cache/CacheAdapter.js';
-import { MetaWhatsAppAdapter } from '../infrastructure/messaging/MetaWhatsAppAdapter.js';
+import { R2StorageAdapter } from '../modules/storage/infrastructure/r2.storage.adapter.js';
+import { FCMAdapter } from '../modules/notification/infrastructure/fcm.adapter.js';
+import { EmailAdapter } from '../modules/notification/infrastructure/email.adapter.js';
+import { EmailQueueService } from '../modules/notification/infrastructure/email-queue.service.js';
+import { WompiAdapter } from '../modules/payment/infrastructure/wompi.adapter.js';
+import { OpenAITTSAdapter } from '../modules/tts/infrastructure/openai-tts.adapter.js';
+import { FFmpegVideoAdapter } from '../modules/video/infrastructure/ffmpeg.adapter.js';
+import { LLMAdapter } from '../modules/ai/infrastructure/llm.adapter.js';
+import { RAGAdapter } from '../modules/ai/infrastructure/rag.adapter.js';
+import { GitHubAdapter } from '../shared/github/GitHubAdapter.js';
+import { CacheAdapter } from '../shared/cache/CacheAdapter.js';
+import { MetaWhatsAppAdapter } from '../modules/whatsapp/infrastructure/meta-whatsapp.adapter.js';
 
-import { AuthService } from '../modules/auth/domain/AuthService.js';
-import { AuthController } from '../modules/auth/controller/AuthController.js';
+import { AuthService } from '../modules/auth/auth.service.js';
+import { AuthController } from '../modules/auth/auth.controller.js';
 
-import { UserDomainService } from '../modules/user/domain/UserDomainService.js';
-import { SupabaseUserRepository } from '../modules/user/repository/SupabaseUserRepository.js';
-import { UserController } from '../modules/user/controller/UserController.js';
+import { UserDomainService } from '../modules/user/user.service.js';
+import { SupabaseUserRepository } from '../modules/user/infrastructure/supabase.user.repository.js';
+import { UserController } from '../modules/user/user.controller.js';
 
-import { PersonaDomainService } from '../modules/persona/domain/PersonaDomainService.js';
-import { SupabasePersonaRepository } from '../modules/persona/repository/SupabasePersonaRepository.js';
-import { PersonaController } from '../modules/persona/controller/PersonaController.js';
+import { PersonaDomainService } from '../modules/persona/persona.service.js';
+import { SupabasePersonaRepository } from '../modules/persona/infrastructure/supabase.persona.repository.js';
+import { PersonaController } from '../modules/persona/persona.controller.js';
 
-import { RolDomainService } from '../modules/rol/domain/RolDomainService.js';
-import { SupabaseRolRepository } from '../modules/rol/repository/SupabaseRolRepository.js';
-import { RolController } from '../modules/rol/controller/RolController.js';
+import { RolDomainService } from '../modules/rol/rol.service.js';
+import { SupabaseRolRepository } from '../modules/rol/infrastructure/supabase.rol.repository.js';
+import { RolController } from '../modules/rol/rol.controller.js';
 
-import { CourseDomainService } from '../modules/course/domain/CourseDomainService.js';
-import { CourseNotificationService } from '../modules/course/domain/CourseNotificationService.js';
-import { SupabaseCourseRepository } from '../modules/course/repository/SupabaseCourseRepository.js';
-import { CourseController } from '../modules/course/controller/CourseController.js';
+import { CourseDomainService } from '../modules/course/course.service.js';
+import { CourseNotificationService } from '../modules/course/course-notification.service.js';
+import { SupabaseCourseRepository } from '../modules/course/infrastructure/supabase.course.repository.js';
+import { CourseController } from '../modules/course/course.controller.js';
 
-import { TopicDomainService } from '../modules/topic/domain/TopicDomainService.js';
-import { SupabaseTopicRepository } from '../modules/topic/repository/SupabaseTopicRepository.js';
-import { TopicController } from '../modules/topic/controller/TopicController.js';
+import { TopicDomainService } from '../modules/topic/topic.service.js';
+import { SupabaseTopicRepository } from '../modules/topic/infrastructure/supabase.topic.repository.js';
+import { TopicController } from '../modules/topic/topic.controller.js';
 
-import { TaskDomainService } from '../modules/task/domain/TaskDomainService.js';
-import { SupabaseTaskRepository } from '../modules/task/repository/SupabaseTaskRepository.js';
-import { TaskController } from '../modules/task/controller/TaskController.js';
+import { TaskDomainService } from '../modules/task/task.service.js';
+import { SupabaseTaskRepository } from '../modules/task/infrastructure/supabase.task.repository.js';
+import { TaskController } from '../modules/task/task.controller.js';
 
-import { ContentItemDomainService } from '../modules/content-item/domain/ContentItemDomainService.js';
-import { SupabaseContentItemRepository } from '../modules/content-item/repository/SupabaseContentItemRepository.js';
-import { ContentItemController } from '../modules/content-item/controller/ContentItemController.js';
+import { ContentItemDomainService } from '../modules/content-item/content-item.service.js';
+import { SupabaseContentItemRepository } from '../modules/content-item/infrastructure/supabase.content-item.repository.js';
+import { ContentItemController } from '../modules/content-item/content-item.controller.js';
 
-import { VideoDomainService } from '../modules/video/domain/VideoDomainService.js';
-import { VideoProcessingDomainService } from '../modules/video/domain/VideoProcessingDomainService.js';
-import { VideoStreamingDomainService } from '../modules/video/domain/VideoStreamingDomainService.js';
-import { SupabaseVideoRepository } from '../modules/video/repository/SupabaseVideoRepository.js';
-import { VideoController } from '../modules/video/controller/VideoController.js';
-import { VideoProcessingController } from '../modules/video/controller/VideoProcessingController.js';
-import { VideoStreamingController } from '../modules/video/controller/VideoStreamingController.js';
+import { VideoDomainService } from '../modules/video/video.service.js';
+import { VideoProcessingDomainService } from '../modules/video/video-processing.service.js';
+import { VideoStreamingDomainService } from '../modules/video/video-streaming.service.js';
+import { SupabaseVideoRepository } from '../modules/video/infrastructure/supabase.video.repository.js';
+import { VideoController } from '../modules/video/video.controller.js';
+import { VideoProcessingController } from '../modules/video/video-processing.controller.js';
+import { VideoStreamingController } from '../modules/video/video-streaming.controller.js';
 
-import { SubmissionDomainService } from '../modules/submission/domain/SubmissionDomainService.js';
-import { SupabaseSubmissionRepository } from '../modules/submission/repository/SupabaseSubmissionRepository.js';
-import { SubmissionController } from '../modules/submission/controller/SubmissionController.js';
+import { SubmissionDomainService } from '../modules/submission/submission.service.js';
+import { SupabaseSubmissionRepository } from '../modules/submission/infrastructure/supabase.submission.repository.js';
+import { SubmissionController } from '../modules/submission/submission.controller.js';
 
-import { SubscriptionDomainService } from '../modules/subscription/domain/SubscriptionDomainService.js';
-import { SupabaseSubscriptionRepository } from '../modules/subscription/repository/SupabaseSubscriptionRepository.js';
-import { SubscriptionController } from '../modules/subscription/controller/SubscriptionController.js';
+import { SubscriptionDomainService } from '../modules/subscription/subscription.service.js';
+import { SupabaseSubscriptionRepository } from '../modules/subscription/infrastructure/supabase.subscription.repository.js';
+import { SubscriptionController } from '../modules/subscription/subscription.controller.js';
 
-import { ProgressDomainService } from '../modules/progress/domain/ProgressDomainService.js';
-import { SupabaseProgressRepository } from '../modules/progress/repository/SupabaseProgressRepository.js';
-import { ProgressController } from '../modules/progress/controller/ProgressController.js';
+import { ProgressDomainService } from '../modules/progress/progress.service.js';
+import { SupabaseProgressRepository } from '../modules/progress/infrastructure/supabase.progress.repository.js';
+import { ProgressController } from '../modules/progress/progress.controller.js';
 
-import { LikeDomainService } from '../modules/like/domain/LikeDomainService.js';
-import { SupabaseLikeRepository } from '../modules/like/repository/SupabaseLikeRepository.js';
-import { LikeController } from '../modules/like/controller/LikeController.js';
+import { LikeDomainService } from '../modules/like/like.service.js';
+import { SupabaseLikeRepository } from '../modules/like/infrastructure/supabase.like.repository.js';
+import { LikeController } from '../modules/like/like.controller.js';
 
-import { CommentDomainService } from '../modules/comment/domain/CommentDomainService.js';
-import { SupabaseCommentRepository } from '../modules/comment/repository/SupabaseCommentRepository.js';
-import { CommentController } from '../modules/comment/controller/CommentController.js';
+import { CommentDomainService } from '../modules/comment/comment.service.js';
+import { SupabaseCommentRepository } from '../modules/comment/infrastructure/supabase.comment.repository.js';
+import { CommentController } from '../modules/comment/comment.controller.js';
 
-import { NotificationDomainService } from '../modules/notification/domain/NotificationDomainService.js';
-import { SupabaseNotificationRepository } from '../modules/notification/repository/SupabaseNotificationRepository.js';
-import { NotificationController } from '../modules/notification/controller/NotificationController.js';
+import { NotificationDomainService } from '../modules/notification/notification.service.js';
+import { SupabaseNotificationRepository } from '../modules/notification/infrastructure/supabase.notification.repository.js';
+import { NotificationController } from '../modules/notification/notification.controller.js';
 
-import { PaymentDomainService } from '../modules/payment/domain/PaymentDomainService.js';
-import { SupabaseTransactionRepository } from '../modules/payment/repository/SupabaseTransactionRepository.js';
-import { PaymentController } from '../modules/payment/controller/PaymentController.js';
+import { PaymentDomainService } from '../modules/payment/payment.service.js';
+import { SupabaseTransactionRepository } from '../modules/payment/infrastructure/supabase.transaction.repository.js';
+import { PaymentController } from '../modules/payment/payment.controller.js';
 
-import { StorageDomainService } from '../modules/storage/domain/StorageDomainService.js';
-import { StorageController } from '../modules/storage/controller/StorageController.js';
+import { StorageDomainService } from '../modules/storage/storage.service.js';
+import { StorageController } from '../modules/storage/storage.controller.js';
 
-import { ReinforcementDomainService } from '../modules/reinforcement/domain/ReinforcementDomainService.js';
-import { SupabaseReinforcementRepository } from '../modules/reinforcement/repository/SupabaseReinforcementRepository.js';
-import { ReinforcementController } from '../modules/reinforcement/controller/ReinforcementController.js';
+import { ReinforcementDomainService } from '../modules/reinforcement/reinforcement.service.js';
+import { SupabaseReinforcementRepository } from '../modules/reinforcement/infrastructure/supabase.reinforcement.repository.js';
+import { ReinforcementController } from '../modules/reinforcement/reinforcement.controller.js';
 
-import { FileContextDomainService } from '../modules/file-context/domain/FileContextDomainService.js';
-import { SupabaseFileContextRepository } from '../modules/file-context/repository/SupabaseFileContextRepository.js';
-import { FileContextController } from '../modules/file-context/controller/FileContextController.js';
+import { FileContextDomainService } from '../modules/file-context/file-context.service.js';
+import { SupabaseFileContextRepository } from '../modules/file-context/infrastructure/supabase.file-context.repository.js';
+import { FileContextController } from '../modules/file-context/file-context.controller.js';
 
-import { ChatMessageDomainService } from '../modules/chat/domain/ChatMessageDomainService.js';
-import { SupabaseChatMessageRepository } from '../modules/chat/repository/SupabaseChatMessageRepository.js';
-import { ChatMessageController } from '../modules/chat/controller/ChatMessageController.js';
+import { ChatMessageDomainService } from '../modules/chat/chat.service.js';
+import { SupabaseChatMessageRepository } from '../modules/chat/infrastructure/supabase.chat.repository.js';
+import { ChatMessageController } from '../modules/chat/chat.controller.js';
 
-import { LLMDomainService } from '../modules/ai/domain/LLMDomainService.js';
-import { RAGDomainService } from '../modules/ai/domain/RAGDomainService.js';
-import { RAGService } from '../modules/ai/domain/RAGService.js';
-import { MCPDomainService } from '../modules/ai/domain/MCPDomainService.js';
-import { MCPService } from '../modules/ai/domain/MCPService.js';
-import { LearningContextService } from '../modules/ai/domain/LearningContextService.js';
-import { LLMController } from '../modules/ai/controller/LLMController.js';
-import { RAGController } from '../modules/ai/controller/RAGController.js';
-import { MCPController } from '../modules/ai/controller/MCPController.js';
+import { LLMDomainService } from '../modules/ai/llm.service.js';
+import { RAGDomainService } from '../modules/ai/rag.service.js';
+import { RAGService } from '../modules/ai/rag-legacy.service.js';
+import { MCPDomainService } from '../modules/ai/mcp.service.js';
+import { MCPService } from '../modules/ai/mcp-legacy.service.js';
+import { LearningContextService } from '../modules/ai/learning-context.service.js';
+import { LLMController } from '../modules/ai/llm.controller.js';
+import { RAGController } from '../modules/ai/rag.controller.js';
+import { MCPController } from '../modules/ai/mcp.controller.js';
 
-import { TTSDomainService } from '../modules/tts/domain/TTSDomainService.js';
-import { TTSController } from '../modules/tts/controller/TTSController.js';
+import { TTSDomainService } from '../modules/tts/tts.service.js';
+import { TTSController } from '../modules/tts/tts.controller.js';
 
-import { WhatsAppDomainService } from '../modules/whatsapp/domain/WhatsAppDomainService.js';
-import { SupabaseWhatsAppSessionRepository } from '../modules/whatsapp/repository/SupabaseWhatsAppSessionRepository.js';
-import { WhatsAppController } from '../modules/whatsapp/controller/WhatsAppController.js';
+import { WhatsAppDomainService } from '../modules/whatsapp/whatsapp.service.js';
+import { SupabaseWhatsAppSessionRepository } from '../modules/whatsapp/infrastructure/supabase.whatsapp-session.repository.js';
+import { WhatsAppController } from '../modules/whatsapp/whatsapp.controller.js';
 
-import { HealthController } from '../modules/health/controller/HealthController.js';
+import { HealthController } from '../modules/health/health.controller.js';
 
-import { AppDistributionDomainService } from '../modules/app-distribution/domain/AppDistributionDomainService.js';
-import { AppDistributionController } from '../modules/app-distribution/controller/AppDistributionController.js';
+import { AppDistributionDomainService } from '../modules/app-distribution/app-distribution.service.js';
+import { AppDistributionController } from '../modules/app-distribution/app-distribution.controller.js';
 
-import { ExcelDomainService } from '../modules/excel/domain/ExcelDomainService.js';
-import { ExcelController } from '../modules/excel/controller/ExcelController.js';
+import { ExcelDomainService } from '../modules/excel/excel.service.js';
+import { ExcelController } from '../modules/excel/excel.controller.js';
 
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los

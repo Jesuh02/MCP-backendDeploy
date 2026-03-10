@@ -13,7 +13,7 @@
 //
 // Aquí se muestra un ejemplo simplificado para documentación.
 
-import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
+import { SupabaseService } from '../shared/database/SupabaseService.js';
 
 const supabaseService = SupabaseService.getInstance();
 
