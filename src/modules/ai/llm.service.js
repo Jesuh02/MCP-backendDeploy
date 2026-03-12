@@ -416,37 +416,8 @@ Si la solicitud es una pregunta general o no implica calificación formal (ej: "
             // which uses MCPService with full uniqueness flow (hash + embedding + semantic dedup)
             // and correctly passes topicId/taskId. Do NOT save here to avoid duplicates.
 
-            // 9. AUTO-SAVE GRADE: If LLM detected a grading request, persist to task_submissions
-            if (esCalificacion && nota !== null && !isNaN(nota)) {
-                const gradeValue = Math.max(0, Math.min(10, nota));
-                const feedbackText = content; // The LLM response is the feedback
-
-                try {
-                    let targetSubmission = null;
-
-                    // Strategy 1: Find by submissionId
-                    if (submissionId && this.submissionRepo) {
-                        targetSubmission = await this.submissionRepo.findById(submissionId);
-                    }
-
-                    // Strategy 2: Find by taskId + studentId
-                    if (!targetSubmission && taskId && studentId && this.submissionRepo) {
-                        targetSubmission = await this.submissionRepo.findByUserAndTask(studentId, taskId);
-                    }
-
-                    if (targetSubmission) {
-                        await this.submissionRepo.update(targetSubmission.id, {
-                            grade: gradeValue,
-                            feedback: feedbackText.substring(0, 5000), // Limit feedback length
-                        });
-                        console.log(`✅ [LLMDomainService] Auto-saved grade ${gradeValue} to submission #${targetSubmission.id}`);
-                    } else {
-                        console.warn(`⚠️ [LLMDomainService] Grading detected (nota=${nota}) but no submission found (submissionId=${submissionId}, taskId=${taskId}, studentId=${studentId})`);
-                    }
-                } catch (gradeErr) {
-                    console.error(`❌ [LLMDomainService] Failed to auto-save grade:`, gradeErr.message);
-                }
-            }
+            // 9. Grade is saved only when the user explicitly confirms via the green button
+            // (POST /submission/:id/grade). Do NOT auto-save here.
 
             return Result.ok({
                 response: content,
