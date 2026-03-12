@@ -166,10 +166,17 @@ export class LLMDomainService {
 
             // INSTRUCCIÓN SEMÁNTICA: Detección de intención de calificación (Requerimiento estricto: NO usar regex en input usuario)
             // El LLM es responsable de señalizar si es una solicitud de nota válida.
-            systemPrompt += `\n\nIMPORTANTE: Tu eres capaz de detectar la intención del usuario. Si el usuario te pide explícitamente CALIFICAR, EVALUAR o dar una NOTA a la entrega/tarea adjunta, debes iniciar tu respuesta con la etiqueta exacta: [GRADING_REQUEST].
-Si además determinas una nota numérica (0-10), usa el formato: [GRADING_REQUEST: <monto>] (Ejemplo: "[GRADING_REQUEST: 8.5]").
-La escala de calificación es SIEMPRE del 0 al 10. NUNCA uses escala de 100.
-Si la solicitud es una pregunta general o no implica calificación formal (ej: "¿Qué nota tiene la escala musical?"), NO incluyas esta etiqueta.`;
+            systemPrompt += `\n\nREGLA CRÍTICA — ETIQUETA [GRADING_REQUEST]:
+Usa esta etiqueta ÚNICAMENTE cuando el usuario te pida de forma DIRECTA e IMPERATIVA que asignes una nota numérica a la entrega/tarea que está adjunta en este contexto.
+Ejemplos que SÍ activan la etiqueta: "califica esta tarea", "ponle nota", "dame una calificación numérica", "¿qué nota le pondrías a esta entrega?", "evalúa y asigna puntaje".
+Ejemplos que NUNCA activan la etiqueta (preguntas informativas, hipotéticas o sobre metodología):
+  - "¿Qué criterios usas para calificar?" → NO (pregunta sobre metodología)
+  - "¿Qué diferencia hay entre una buena y una mala tarea?" → NO (pregunta conceptual)
+  - "¿Cómo se calcula la nota?" → NO (pregunta informativa)
+  - "¿Qué nota tiene la escala musical?" → NO (uso de la palabra "nota" sin contexto de evaluación)
+  - "¿Qué se necesita para sacar 10?" → NO (pregunta hipotética o criterial)
+Regla semántica: la intención debe ser una ACCIÓN DIRECTA de asignación de nota a ESTA entrega concreta, no una consulta, comparación, criterio o pregunta hipotética.
+Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] (escala 0-10 siempre, NUNCA 0-100).`;
 
             if (taskDescription) {
                 systemPrompt += `\n\nContexto de la tarea: ${taskDescription}`;
