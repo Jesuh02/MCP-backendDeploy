@@ -44,7 +44,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
@@ -63,17 +63,19 @@ export class LLMDomainService {
             if (this.rag && courseId) {
                 try {
                     if (this._isReinforcementRequest(prompt) && userId) {
-                        // Count existing questions to determine which chunk page to use
+                        const isEasyDifficulty = String(difficulty || '').toUpperCase() === 'EASY';
                         let existingCount = 0;
-                        try {
-                            const { MCPService } = await
-                            import ('./MCPService.js');
-                            const mcpService = new MCPService();
-                            const history = await mcpService.getReinforcementHistory(
-                                userId, courseId, topicId || null, taskId || null
-                            );
-                            existingCount = (history && history.length) || 0;
-                        } catch (_) { /* ignore — will use page 0 */ }
+                        if (!isEasyDifficulty) {
+                            try {
+                                const { MCPService } = await
+                                import ('./MCPService.js');
+                                const mcpService = new MCPService();
+                                const history = await mcpService.getReinforcementHistory(
+                                    userId, courseId, topicId || null, taskId || null
+                                );
+                                existingCount = (history && history.length) || 0;
+                            } catch (_) { /* ignore — will use page 0 */ }
+                        }
 
                         const sessionIndex = Math.floor(existingCount / 10);
 
@@ -275,11 +277,9 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                 fullPrompt = `Contenido del archivo:\n${resolvedFileContent}\n\nPregunta/Instrucción: ${prompt}`;
             }
 
-            // 4. Check reinforcement history to avoid repetitions
-            // IMPORTANT: Do NOT filter by topic/task here because hash duplicate detection
-            // in saveReinforcementHistory() checks ALL questions for the user (no topic/task filter).
-            // This ensures the LLM sees ALL previously generated questions to avoid duplicates.
-            if (userId && courseId && this._isReinforcementRequest(prompt)) {
+            // 4. Check reinforcement history to avoid repetitions (skip for EASY — allow repeats for fast loading)
+            const isEasyMode = String(difficulty || '').toUpperCase() === 'EASY';
+            if (!isEasyMode && userId && courseId && this._isReinforcementRequest(prompt)) {
                 try {
                     // Use MCPService WITHOUT topic/task filter to match the duplicate detection scope
                     const { MCPService } = await
