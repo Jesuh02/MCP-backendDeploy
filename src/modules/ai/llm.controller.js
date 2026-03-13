@@ -32,6 +32,7 @@ export class LLMController {
                 taskId: value.taskId,
                 topicId: value.topicId || value.topic_id,
                 freeLearning: value.freeLearning || false,
+                difficulty: value.difficulty || null,
             };
 
             const result = await this.llmService.processPrompt(params);
