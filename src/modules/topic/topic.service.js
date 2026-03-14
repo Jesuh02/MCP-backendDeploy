@@ -17,6 +17,11 @@ export class TopicDomainService {
         return Result.ok(topics);
     }
 
+    async getByCourse(courseId) {
+        const topics = await this.topicRepo.findByCourse(courseId);
+        return Result.ok(topics);
+    }
+
     async getById(id) {
         const topic = await this.topicRepo.findById(id);
         if (!topic) return Result.fail(new NotFoundError('Tema', id));
