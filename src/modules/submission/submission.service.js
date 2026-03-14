@@ -1,9 +1,9 @@
 import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
-import { generateGradeEmailHTML } from '../../templates/emailTemplates.js';
+import { generateGradeEmailHTML, generateGenericEmailHTML } from '../../templates/emailTemplates.js';
 
 export class SubmissionDomainService {
-    constructor({ submissionRepository, taskRepository, progressRepository, progressService, notificationService, courseService, topicService, userService, fileStoragePort, collaboratorService }) {
+    constructor({ submissionRepository, taskRepository, progressRepository, progressService, notificationService, courseService, topicService, subjectService, userService, fileStoragePort, collaboratorService }) {
         this.subRepo = submissionRepository;
         this.taskRepo = taskRepository;
         this.progressRepo = progressRepository;
@@ -11,6 +11,7 @@ export class SubmissionDomainService {
         this.notificationService = notificationService || null;
         this.courseService = courseService || null;
         this.topicService = topicService || null;
+        this.subjectService = subjectService || null;
         this.userService = userService || null;
         this.storage = fileStoragePort || null;
         this.collaboratorService = collaboratorService || null;
@@ -107,9 +108,8 @@ export class SubmissionDomainService {
         const courseResult = await this.courseService.getById(courseId);
         if (courseResult.isFail()) return;
         const course = courseResult.getValue();
-        const creatorId = course.creator_user_id || course.creatorUserId;
-
-        if (!creatorId || creatorId === data.userId) return;
+        const courseCreatorId = course.creator_user_id || course.creatorUserId;
+        const thumbnailUrl = course.thumbnail_url || course.thumbnailUri || course.thumbnail_uri || null;
 
         let senderAvatarUrl = null;
         if (this.userService) {
@@ -119,18 +119,49 @@ export class SubmissionDomainService {
             }
         }
 
-        await this.notificationService.sendNotification({
-            userId: creatorId,
+        const subjectCreatorId = await this._resolveSubjectCreator(topicId);
+        const recipientIds = new Set();
+        if (courseCreatorId && courseCreatorId !== data.userId) recipientIds.add(Number(courseCreatorId));
+        if (subjectCreatorId && subjectCreatorId !== data.userId) recipientIds.add(Number(subjectCreatorId));
+
+        const notifPayload = {
             title: `Nueva entrega: ${task.title}`,
             message: `${data.username} ha enviado una entrega para la tarea '${task.title}'`,
             type: 'task_submission',
             relatedId: data.taskId,
             senderUsername: data.username,
             senderAvatarUrl,
-            thumbnailUrl: course.thumbnail_url || course.thumbnailUri || course.thumbnail_uri || senderAvatarUrl,
+            thumbnailUrl: thumbnailUrl || senderAvatarUrl,
             metadata: JSON.stringify({ taskId: data.taskId, courseId, type: 'task_submission' }),
             actorUserId: data.userId
-        });
+        };
+
+        for (const recipientId of recipientIds) {
+            await this.notificationService.sendNotification({ ...notifPayload, userId: recipientId });
+            await this._sendSubmissionEmail(recipientId, task.title, data.username);
+        }
+    }
+
+    async _resolveSubjectCreator(topicId) {
+        if (!this.subjectService || !this.topicService) return null;
+        const subjectId = await this.topicService.resolveSubjectId(topicId);
+        if (!subjectId) return null;
+        const subjectResult = await this.subjectService.getById(subjectId);
+        if (subjectResult.isFail()) return null;
+        const subject = subjectResult.getValue();
+        return subject.created_by || subject.createdBy || null;
+    }
+
+    async _sendSubmissionEmail(recipientId, taskTitle, studentUsername) {
+        if (!this.notificationService || !this.userService) return;
+        const title = `Nueva entrega: ${taskTitle}`;
+        const message = `${studentUsername} ha enviado una entrega para la tarea '${taskTitle}'`;
+        const html = generateGenericEmailHTML(title, message, 'task_submission', studentUsername);
+        await this.notificationService.sendEmail(recipientId, {
+            subject: title,
+            html,
+            text: message
+        }).catch(() => {});
     }
 
     /**
