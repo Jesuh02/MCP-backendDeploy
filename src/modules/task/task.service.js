@@ -20,13 +20,22 @@ export class TaskDomainService {
      * @param {import('./ProgressDomainService.js').ProgressDomainService} [deps.progressService]
      * @param {import('./UserDomainService.js').UserDomainService} [deps.userService]
      */
-    constructor({ taskRepository, topicRepository, notificationService, courseService, progressService, userService }) {
+    constructor({ taskRepository, topicRepository, subjectRepository, notificationService, courseService, progressService, userService }) {
         this.taskRepo = taskRepository;
         this.topicRepo = topicRepository;
+        this.subjectRepo = subjectRepository || null;
         this.notificationService = notificationService || null;
         this.courseService = courseService || null;
         this.progressService = progressService || null;
         this.userService = userService || null;
+    }
+
+    async _getCourseIdFromTopic(topic) {
+        if (!topic) return null;
+        const subjectId = topic.materia_id || topic.subjectId;
+        if (!subjectId || !this.subjectRepo) return null;
+        const subject = await this.subjectRepo.findById(subjectId);
+        return subject?.course_id || null;
     }
 
     /** Lista paginada de tareas. */
@@ -63,7 +72,7 @@ export class TaskDomainService {
         if (data.topicId) {
             const topic = await this.topicRepo.findById(data.topicId);
             if (!topic) return Result.fail(new NotFoundError('Tema', data.topicId));
-            courseId = topic.course_id || topic.courseId || null;
+            courseId = await this._getCourseIdFromTopic(topic);
         }
         const created = await this.taskRepo.create(data);
 
@@ -126,7 +135,7 @@ export class TaskDomainService {
 
         const topic = await this.topicRepo.findById(topicId);
         if (!topic) return;
-        const courseId = topic.course_id || topic.courseId;
+        const courseId = await this._getCourseIdFromTopic(topic);
         if (!courseId) return;
 
         const courseResult = await this.courseService.getById(courseId);
@@ -200,7 +209,7 @@ export class TaskDomainService {
         const topic = await this.topicRepo.findById(topicId);
         if (!topic) return;
 
-        const courseId = topic.course_id || topic.courseId;
+        const courseId = await this._getCourseIdFromTopic(topic);
         if (!courseId) return;
 
         const courseResult = this.courseService ? await this.courseService.getById(courseId) : null;
@@ -233,7 +242,7 @@ export class TaskDomainService {
         const topic = await this.topicRepo.findById(topicId);
         if (!topic) return;
 
-        const courseId = topic.course_id || topic.courseId;
+        const courseId = await this._getCourseIdFromTopic(topic);
         if (!courseId) return;
 
         const progressResult = await this.progressService.getAllByCourse(courseId);

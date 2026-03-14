@@ -71,11 +71,14 @@ export class SupabaseTaskRepository {
      *   2. Filtrar tareas por esos topic IDs.
      */
     async findByCourse(courseId) {
-        // Paso 1: obtener IDs de temas del curso
+        const { data: subjects, error: subErr } = await this.client
+            .from('subjects').select('id').eq('course_id', courseId);
+        if (subErr) throw new Error(subErr.message);
+        if (!subjects || subjects.length === 0) return [];
+
+        const subjectIds = subjects.map(s => s.id);
         const { data: topics, error: topicErr } = await this.client
-            .from('topics')
-            .select('id')
-            .eq('course_id', courseId);
+            .from('topics').select('id').in('materia_id', subjectIds);
         if (topicErr) throw new Error(topicErr.message);
         if (!topics || topics.length === 0) return [];
 

@@ -42,12 +42,17 @@ export class SupabaseContentItemRepository {
 
     async findByCourse(courseId, topicRepository) {
         let topicIds;
-        if (topicRepository) {
+        if (topicRepository?.findByCourse) {
             const topics = await topicRepository.findByCourse(courseId);
             topicIds = (topics || []).map(t => t.id);
         } else {
+            const { data: subjects, error: subErr } = await this.client
+                .from('subjects').select('id').eq('course_id', courseId);
+            if (subErr) throw new Error(subErr.message);
+            if (!subjects || subjects.length === 0) return [];
+            const subjectIds = subjects.map(s => s.id);
             const { data: topics, error: topicErr } = await this.client
-                .from('topics').select('id').eq('course_id', courseId);
+                .from('topics').select('id').in('materia_id', subjectIds);
             if (topicErr) throw new Error(topicErr.message);
             topicIds = (topics || []).map(t => t.id);
         }

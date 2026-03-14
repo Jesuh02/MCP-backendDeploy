@@ -76,6 +76,7 @@ export class SupabaseProgressRepository {
             porcentaje_progreso: progressData.progressPercentage || 0,
             ultima_calculada_en: new Date().toISOString(),
         };
+        if (progressData.subjectId) payload.materia_id = progressData.subjectId;
         // State is usually generated or has a default, avoid inserting if causing issues
         // if (progressData.status) payload.estado = progressData.status;
 
@@ -450,6 +451,7 @@ export class SupabaseProgressRepository {
         return {
             userId: dbRecord.usuario_estudiante,
             courseId: dbRecord.curso_id,
+            subjectId: dbRecord.materia_id || null,
             completedTasks: dbRecord.tareas_completadas,
             totalTasks: dbRecord.tareas_totales,
             averageGrade: dbRecord.promedio,

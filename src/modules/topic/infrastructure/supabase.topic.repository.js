@@ -22,6 +22,21 @@ export class SupabaseTopicRepository {
         return data || [];
     }
 
+    async findByCourse(courseId) {
+        const { data: subjects, error: subErr } = await this.client
+            .from('subjects').select('id').eq('course_id', courseId);
+        if (subErr) throw new Error(subErr.message);
+        if (!subjects || subjects.length === 0) return [];
+
+        const subjectIds = subjects.map(s => s.id);
+        const { data, error } = await this.client
+            .from('topics').select('*')
+            .in('materia_id', subjectIds)
+            .order('order_index', { ascending: true });
+        if (error) throw new Error(error.message);
+        return data || [];
+    }
+
     async create(topicData) {
         const payload = {
             name: topicData.title,

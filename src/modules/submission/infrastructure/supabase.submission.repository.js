@@ -107,7 +107,7 @@ export class SupabaseSubmissionRepository {
     async getGradedByUserAndCourse(userId, courseId) {
         const { data, error } = await this.client
             .from('task_submissions')
-            .select('*, tasks!inner(id, title, topic_id, topics!inner(id, name, course_id))')
+            .select('*, tasks!inner(id, title, topic_id, topics!inner(id, name, course_id, subject_id))')
             .eq('student_id', userId)
             .eq('tasks.topics.course_id', courseId)
             .not('grade', 'is', null);
