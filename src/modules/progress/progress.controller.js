@@ -40,11 +40,12 @@ export class ProgressController {
     upsert = async(req, res, next) => {
         try {
             const data = {...req.body, userId: req.user.userId };
-            // Normalize: accept both camelCase and snake_case from clients
             if (!data.courseId && data.curso_id) data.courseId = data.curso_id;
             if (!data.courseId && data.cursoId) data.courseId = data.cursoId;
             if (!data.userId && data.usuario_estudiante) data.userId = data.usuario_estudiante;
             if (!data.userId && data.usuarioEstudiante) data.userId = data.usuarioEstudiante;
+            if (!data.subjectId && data.materia_id) data.subjectId = data.materia_id;
+            if (!data.subjectId && data.materiaId) data.subjectId = data.materiaId;
 
             // Normalize progress metrics from Spanish/camel/snake variants
             if (data.completedTasks === undefined || data.completedTasks === null) {
@@ -92,6 +93,10 @@ export class ProgressController {
             if (data.averageGrade !== undefined && data.averageGrade !== null) {
                 const avg = parseFloat(data.averageGrade);
                 data.averageGrade = Number.isNaN(avg) ? null : avg;
+            }
+            if (data.subjectId) {
+                const sid = parseInt(data.subjectId);
+                data.subjectId = Number.isNaN(sid) || sid <= 0 ? null : sid;
             }
             const result = await this.progressService.upsert(data);
             if (result.isFail()) return next(result.getError());

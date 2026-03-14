@@ -272,19 +272,24 @@ export class ProgressDomainService {
     async _buildGradedTasksWithSubject(userId, courseId) {
         if (!this.submissionRepo) return [];
         const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
-        let subjects = [];
+        let subjectsById = new Map();
         if (this.subjectRepo && typeof this.subjectRepo.findByCourse === 'function') {
-            subjects = await this.subjectRepo.findByCourse(courseId);
+            const subjects = await this.subjectRepo.findByCourse(courseId);
+            subjectsById = new Map(subjects.map(s => [s.id, s]));
         }
-        const subjectsMap = subjects.map(s => ({ id: s.id, name: s.name }));
-        return graded.map(sub => ({
-            taskId: sub.task_id,
-            taskTitle: sub.tasks?.title || null,
-            topicId: sub.tasks?.topic_id || null,
-            topicName: sub.tasks?.topics?.name || null,
-            grade: sub.grade,
-            subjects: subjectsMap,
-        }));
+        return graded.map(sub => {
+            const subjectId = sub.tasks?.topics?.subject_id || null;
+            const subject = subjectId ? subjectsById.get(subjectId) : null;
+            return {
+                taskId: sub.task_id,
+                taskTitle: sub.tasks?.title || null,
+                topicId: sub.tasks?.topic_id || null,
+                topicName: sub.tasks?.topics?.name || null,
+                subjectId,
+                subjectName: subject?.name || null,
+                grade: sub.grade,
+            };
+        });
     }
 
     async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null) {
