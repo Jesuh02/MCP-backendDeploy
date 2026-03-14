@@ -19,8 +19,17 @@ export class TopicController {
 
     getBySubject = async(req, res, next) => {
         try {
-            const subjectId = parseInt(req.params.subjectId || req.params.courseId);
+            const subjectId = parseInt(req.params.subjectId);
             const result = await this.topicService.getBySubject(subjectId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getByCourse = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            const result = await this.topicService.getByCourse(courseId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

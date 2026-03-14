@@ -5,7 +5,7 @@ export function topicRoutes({ topicController }) {
 
     router.get('/', topicController.list);
     router.get('/subject/:subjectId', topicController.getBySubject);
-    router.get('/course/:courseId', topicController.getBySubject);
+    router.get('/course/:courseId', topicController.getByCourse);
     router.get('/:id', topicController.getById);
     router.post('/', topicController.create);
     router.put('/:id', topicController.update);
