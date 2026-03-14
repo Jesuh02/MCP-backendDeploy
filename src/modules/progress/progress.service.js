@@ -2,22 +2,25 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
 export class ProgressDomainService {
-    constructor({ progressRepository, taskRepository, submissionRepository, courseRepository, userRepository }) {
+    constructor({ progressRepository, taskRepository, submissionRepository, courseRepository, userRepository, subjectRepository }) {
         this.progressRepo = progressRepository;
         this.taskRepo = taskRepository || null;
         this.submissionRepo = submissionRepository || null;
         this.courseRepo = courseRepository || null;
         this.userRepo = userRepository || null;
+        this.subjectRepo = subjectRepository || null;
     }
 
     async getByUserAndCourse(userId, courseId) {
+        let progress;
         if (this.taskRepo && this.submissionRepo) {
-            const refreshed = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
-            return Result.ok(refreshed);
+            progress = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
+        } else {
+            progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
+            if (!progress) progress = { userId, courseId, completedTasks: 0, totalTasks: 0, progressPercentage: 0, averageGrade: 0, status: 'Perdido' };
         }
-        const progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
-        if (!progress) return Result.ok({ userId, courseId, completedTasks: 0, totalTasks: 0, progressPercentage: 0, averageGrade: 0, status: 'Perdido' });
-        return Result.ok(progress);
+        const gradedTasks = await this._buildGradedTasksWithSubject(userId, courseId);
+        return Result.ok({ ...progress, gradedTasks });
     }
 
     async refreshForUserCourse(userId, courseId) {
@@ -260,6 +263,24 @@ export class ProgressDomainService {
         }
 
         return [...ids];
+    }
+
+    async _buildGradedTasksWithSubject(userId, courseId) {
+        if (!this.submissionRepo) return [];
+        const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
+        let subjects = [];
+        if (this.subjectRepo && typeof this.subjectRepo.findByCourse === 'function') {
+            subjects = await this.subjectRepo.findByCourse(courseId);
+        }
+        const subjectsMap = subjects.map(s => ({ id: s.id, name: s.name }));
+        return graded.map(sub => ({
+            taskId: sub.task_id,
+            taskTitle: sub.tasks?.title || null,
+            topicId: sub.tasks?.topic_id || null,
+            topicName: sub.tasks?.topics?.name || null,
+            grade: sub.grade,
+            subjects: subjectsMap,
+        }));
     }
 
     async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null) {
