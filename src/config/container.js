@@ -78,6 +78,10 @@ import { CommentDomainService } from '../modules/comment/comment.service.js';
 import { SupabaseCommentRepository } from '../modules/comment/infrastructure/supabase.comment.repository.js';
 import { CommentController } from '../modules/comment/comment.controller.js';
 
+import { CollaboratorDomainService } from '../modules/collaborator/collaborator.service.js';
+import { SupabaseCollaboratorRepository } from '../modules/collaborator/infrastructure/supabase.collaborator.repository.js';
+import { CollaboratorController } from '../modules/collaborator/collaborator.controller.js';
+
 import { NotificationDomainService } from '../modules/notification/notification.service.js';
 import { SupabaseNotificationRepository } from '../modules/notification/infrastructure/supabase.notification.repository.js';
 import { NotificationController } from '../modules/notification/notification.controller.js';
@@ -213,6 +217,7 @@ export function createContainer() {
     const reinforcementRepo = new SupabaseReinforcementRepository(client);
     const chatMessageRepo = new SupabaseChatMessageRepository(client);
     const whatsAppSessionRepo = new SupabaseWhatsAppSessionRepository(client);
+    const collaboratorRepo = new SupabaseCollaboratorRepository(client);
 
     // ═══════════════════════════════════════════════════════════
     // 3. SERVICIOS DE DOMINIO — Inyectar repositorios y adaptadores
@@ -226,7 +231,8 @@ export function createContainer() {
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
-    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo, subjectRepository: subjectRepo });
+    const collaboratorService = new CollaboratorDomainService({ collaboratorRepository: collaboratorRepo, courseRepository: courseRepo });
+    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo, subjectRepository: subjectRepo, collaboratorRepository: collaboratorRepo });
     const notificationService = new NotificationDomainService({
         notificationRepository: notificationRepo,
         userRepository: userRepo,
@@ -342,6 +348,7 @@ export function createContainer() {
 
     const authController = new AuthController({ authService });
     const userController = new UserController({ userService, whatsAppService: whatsAppDomainService });
+    const collaboratorController = new CollaboratorController({ collaboratorService });
     const courseController = new CourseController({ courseService });
     const videoController = new VideoController({ videoService });
     const topicController = new TopicController({ topicService });
@@ -399,6 +406,7 @@ export function createContainer() {
         contentItemController,
         submissionController,
         subscriptionController,
+        collaboratorController,
         progressController,
         likeController,
         commentController,
@@ -433,6 +441,7 @@ export function createContainer() {
         contentItemService,
         submissionService,
         subscriptionService,
+        collaboratorService,
         progressService,
         likeService,
         commentService,

@@ -78,13 +78,10 @@ export class SupabaseCourseRepository {
             title: courseData.title,
             description: courseData.description || '',
             thumbnail_uri: courseData.thumbnailUri || null,
-            // creator_username column does not exist in the schema
             creator_user_id: courseData.creatorUserId || null,
-            // Map isFree to is_premium
             is_premium: courseData.isFree === false,
             price: courseData.price || 0,
             category: courseData.category || null,
-            // level and language columns do not exist in the schema
             is_published: courseData.isPublished !== false,
         };
         const { data, error } = await this.client.from('courses').insert(payload).select().single();

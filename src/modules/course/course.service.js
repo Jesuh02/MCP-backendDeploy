@@ -56,6 +56,12 @@ export class CourseDomainService {
         return Result.ok(normalizedId);
     }
 
+    async isCreatorOrCollaborator(userId, courseId) {
+        const course = await this.courseRepo.findById(courseId);
+        if (!course) return false;
+        return Number(course.creator_user_id) === Number(userId);
+    }
+
     /**
      * Sign R2 thumbnail URLs for courses so they are not blocked by private bucket.
      */
@@ -280,7 +286,6 @@ export class CourseDomainService {
         if (course.creator_user_id && course.creator_user_id !== requesterId) {
             return Result.fail(new ForbiddenError('No tienes permiso para editar este curso'));
         }
-        // If price is being updated, ensure isFree is consistent with new price
         this._ensureIsFreeFlag(data);
         const updated = await this.courseRepo.update(id, data);
         return Result.ok(updated);

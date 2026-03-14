@@ -166,6 +166,8 @@ export class LLMDomainService {
             // 2. Build system prompt with context
             let systemPrompt = 'Eres un asistente educativo experto. Responde de manera clara, precisa y útil.';
 
+            systemPrompt += `\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos de base de datos (user_id, course_id, id, etc.) al usuario.\n- Para personas: muestra siempre el username o nombre (first_name, last_name).\n- Para cursos: muestra siempre el título (title).\n- Para temas: muestra siempre el nombre (name).\n- Para tareas: muestra siempre el título (title).\n- En tus consultas SQL, usa JOIN para obtener nombres/títulos en vez de mostrar IDs.\n- Si una columna es una FK (ej: creator_user_id), haz JOIN con la tabla correspondiente y muestra el nombre legible.\n- Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos"\n- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos"\n- Esta regla aplica a TODAS las respuestas sin excepción.`;
+
             // INSTRUCCIÓN SEMÁNTICA: Detección de intención de calificación (Requerimiento estricto: NO usar regex en input usuario)
             // El LLM es responsable de señalizar si es una solicitud de nota válida.
             systemPrompt += `\n\nREGLA CRÍTICA — ETIQUETA [GRADING_REQUEST]:

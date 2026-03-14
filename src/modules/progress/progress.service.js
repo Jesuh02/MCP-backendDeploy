@@ -1,14 +1,15 @@
 import { Result } from '../../shared/Result.js';
-import { NotFoundError } from '../../shared/errors/index.js';
+import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class ProgressDomainService {
-    constructor({ progressRepository, taskRepository, submissionRepository, courseRepository, userRepository, subjectRepository }) {
+    constructor({ progressRepository, taskRepository, submissionRepository, courseRepository, userRepository, subjectRepository, collaboratorRepository }) {
         this.progressRepo = progressRepository;
         this.taskRepo = taskRepository || null;
         this.submissionRepo = submissionRepository || null;
         this.courseRepo = courseRepository || null;
         this.userRepo = userRepository || null;
         this.subjectRepo = subjectRepository || null;
+        this.collaboratorRepo = collaboratorRepository || null;
     }
 
     async getByUserAndCourse(userId, courseId) {
@@ -44,6 +45,11 @@ export class ProgressDomainService {
     }
 
     async upsert(data) {
+        if (data?.userId && data?.courseId) {
+            const blocked = await this._isCreatorOrCollaborator(data.userId, data.courseId);
+            if (blocked) return Result.fail(new ForbiddenError('Creadores y colaboradores no pueden estar en el progreso de estudiantes'));
+        }
+
         let progress = null;
 
         if (this.taskRepo && this.submissionRepo && data?.userId && data?.courseId) {
@@ -52,8 +58,6 @@ export class ProgressDomainService {
             progress = await this.progressRepo.upsert(data);
         }
 
-        // Auto-issue certificate if passed (status 'Ganado' or grade >= 6) and not yet issued
-        // 'Ganado' logic is consistent with DB generated column
         if ((progress.status === 'Ganado' || progress.averageGrade >= 6) && !progress.certificateIssuedAt) {
             progress = await this.progressRepo.updateCertificate(data.userId, data.courseId, {
                 certificateIssuedAt: new Date().toISOString(),
@@ -316,6 +320,15 @@ export class ProgressDomainService {
             progressPercentage,
             status,
         };
+    }
+
+    async _isCreatorOrCollaborator(userId, courseId) {
+        if (!this.courseRepo) return false;
+        const course = await this.courseRepo.findById(courseId);
+        if (!course) return false;
+        if (Number(course.creator_user_id) === Number(userId)) return true;
+        if (!this.collaboratorRepo) return false;
+        return this.collaboratorRepo.isCollaborator(Number(userId), courseId);
     }
 }
 export default ProgressDomainService;

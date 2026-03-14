@@ -1565,7 +1565,16 @@ GROUP BY u.id, u.username
 - ❌ usuarios.usuario (NO EXISTE - usa username)
 - ❌ Columnas inventadas
 
-**IMPORTANTE:** Cuando recibas datos exitosos, presenta la respuesta final al usuario. NO sigas generando SQL.`);
+**IMPORTANTE:** Cuando recibas datos exitosos, presenta la respuesta final al usuario. NO sigas generando SQL.
+
+**REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:**
+- NUNCA muestres IDs numéricos de base de datos (user_id, course_id, id, etc.) al usuario.
+- Para personas: muestra siempre el username o nombre (first_name, last_name).
+- Para cursos: muestra siempre el título (title).
+- Para temas: muestra el nombre (name). Para tareas: muestra el título (title).
+- En tus consultas SQL, siempre haz JOIN para obtener nombres/títulos en lugar de IDs.
+- Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos" o "course_id: 5"
+- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o "Curso: Introducción a SQL"`);
 
             conversationHistory.push(systemMessage);
             conversationHistory.push(new HumanMessage(query));
