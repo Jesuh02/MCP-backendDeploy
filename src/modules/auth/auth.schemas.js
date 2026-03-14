@@ -17,6 +17,7 @@ export const registerSchema = Joi.object({
         'string.min': 'La contraseña debe tener al menos 6 caracteres',
         'any.required': 'La contraseña es requerida',
     }),
+    personaId: Joi.number().integer().positive().optional(),
     persona: Joi.object({
         nombre: Joi.string().required(),
         apellido: Joi.string().allow(''),
