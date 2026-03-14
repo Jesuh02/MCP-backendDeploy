@@ -17,9 +17,12 @@ export class SupabaseTopicRepository {
     }
 
     async findBySubject(subjectId) {
-        const { data, error } = await this.client.from('topics').select('*').eq('materia_id', subjectId).order('order_index', { ascending: true });
+        const { data, error } = await this.client.from('topics').select('*')
+            .or(`materia_id.eq.${subjectId},subject_id.eq.${subjectId}`)
+            .order('order_index', { ascending: true });
         if (error) throw new Error(error.message);
-        return data || [];
+        const seen = new Set();
+        return (data || []).filter(t => seen.has(t.id) ? false : seen.add(t.id));
     }
 
     async findByCourse(courseId) {
@@ -29,12 +32,14 @@ export class SupabaseTopicRepository {
         if (!subjects || subjects.length === 0) return [];
 
         const subjectIds = subjects.map(s => s.id);
+        const orFilter = subjectIds.map(id => `materia_id.eq.${id},subject_id.eq.${id}`).join(',');
         const { data, error } = await this.client
             .from('topics').select('*')
-            .in('materia_id', subjectIds)
+            .or(orFilter)
             .order('order_index', { ascending: true });
         if (error) throw new Error(error.message);
-        return data || [];
+        const seen = new Set();
+        return (data || []).filter(t => seen.has(t.id) ? false : seen.add(t.id));
     }
 
     async create(topicData) {
@@ -42,6 +47,7 @@ export class SupabaseTopicRepository {
             name: topicData.title,
             description: topicData.description || '',
             materia_id: topicData.subjectId,
+            subject_id: topicData.subjectId,
             order_index: topicData.orderIndex || 0,
         };
         if (topicData.createdBy) payload.created_by = topicData.createdBy;
@@ -55,6 +61,10 @@ export class SupabaseTopicRepository {
         if (data.title !== undefined) payload.name = data.title;
         if (data.description !== undefined) payload.description = data.description;
         if (data.orderIndex !== undefined) payload.order_index = data.orderIndex;
+        if (data.subjectId !== undefined) {
+            payload.materia_id = data.subjectId;
+            payload.subject_id = data.subjectId;
+        }
         if (data.updatedBy) payload.updated_by = data.updatedBy;
         payload.updated_at = new Date().toISOString();
         const { data: updated, error } = await this.client.from('topics').update(payload).eq('id', id).select().single();

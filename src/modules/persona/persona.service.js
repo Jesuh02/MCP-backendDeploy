@@ -27,6 +27,13 @@ export class PersonaDomainService {
     }
 
     async create(data) {
+        if (data.identificacion) {
+            const existing = await this.personaRepo.findByIdentificacion(data.identificacion);
+            if (existing) {
+                const updated = await this.personaRepo.update(existing.id, data);
+                return Result.ok(updated);
+            }
+        }
         const created = await this.personaRepo.create(data);
         return Result.ok(created);
     }
