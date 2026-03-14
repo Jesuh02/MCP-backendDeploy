@@ -30,6 +30,7 @@ export class SupabasePersonaRepository {
             telefono: personaData.telefono || '',
             direccion: personaData.direccion || '',
             fecha_nacimiento: personaData.fecha_nacimiento || null,
+            ...(personaData.institucion_id != null && { institucion_id: personaData.institucion_id }),
         };
         const { data, error } = await this.client.from('personas').insert(payload).select().single();
         if (error) throw new Error(`Error creando persona: ${error.message}`);
