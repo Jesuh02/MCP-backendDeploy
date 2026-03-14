@@ -38,6 +38,10 @@ import { TopicDomainService } from '../modules/topic/topic.service.js';
 import { SupabaseTopicRepository } from '../modules/topic/infrastructure/supabase.topic.repository.js';
 import { TopicController } from '../modules/topic/topic.controller.js';
 
+import { SubjectDomainService } from '../modules/subject/subject.service.js';
+import { SupabaseSubjectRepository } from '../modules/subject/infrastructure/supabase.subject.repository.js';
+import { SubjectController } from '../modules/subject/subject.controller.js';
+
 import { TaskDomainService } from '../modules/task/task.service.js';
 import { SupabaseTaskRepository } from '../modules/task/infrastructure/supabase.task.repository.js';
 import { TaskController } from '../modules/task/task.controller.js';
@@ -193,6 +197,7 @@ export function createContainer() {
     const courseRepo = new SupabaseCourseRepository(client);
     const videoRepo = new SupabaseVideoRepository(client);
     const topicRepo = new SupabaseTopicRepository(client);
+    const subjectRepo = new SupabaseSubjectRepository(client);
     const taskRepo = new SupabaseTaskRepository(client);
     const contentItemRepo = new SupabaseContentItemRepository(client);
     const submissionRepo = new SupabaseSubmissionRepository(client);
@@ -219,6 +224,7 @@ export function createContainer() {
     const userService = new UserDomainService({ userRepository: userRepo, fileStoragePort: storageAdapter });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
+    const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
     const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo });
     const notificationService = new NotificationDomainService({
@@ -339,6 +345,7 @@ export function createContainer() {
     const courseController = new CourseController({ courseService });
     const videoController = new VideoController({ videoService });
     const topicController = new TopicController({ topicService });
+    const subjectController = new SubjectController({ subjectService });
     const taskController = new TaskController({ taskService });
     const contentItemController = new ContentItemController({ contentItemService });
     const submissionController = new SubmissionController({ submissionService, storageService, storageAdapter });
@@ -387,6 +394,7 @@ export function createContainer() {
         courseController,
         videoController,
         topicController,
+        subjectController,
         taskController,
         contentItemController,
         submissionController,
@@ -420,6 +428,7 @@ export function createContainer() {
         courseService,
         videoService,
         topicService,
+        subjectService,
         taskService,
         contentItemService,
         submissionService,
