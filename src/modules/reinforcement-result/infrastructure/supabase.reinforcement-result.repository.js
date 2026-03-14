@@ -27,7 +27,7 @@ export class SupabaseReinforcementResultRepository {
     async findByUser(userId, { offset = 0, limit = 50 } = {}) {
         const { data, error } = await this.client
             .from('reinforcement_results')
-            .select('*, courses!course_id(title, thumbnail_uri), usuarios!user_id(username, avatar)')
+            .select('*, courses!course_id(title, thumbnail_uri), usuarios!user_id(username, avatar), topics!topic_id(name, subjects!materia_id(name)), tasks!task_id(title)')
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
@@ -38,7 +38,7 @@ export class SupabaseReinforcementResultRepository {
     async findByCourse(courseId, { offset = 0, limit = 100 } = {}) {
         const { data, error } = await this.client
             .from('reinforcement_results')
-            .select('*, usuarios!user_id(id, username, avatar)')
+            .select('*, usuarios!user_id(id, username, avatar), topics!topic_id(name, subjects!materia_id(name)), tasks!task_id(title)')
             .eq('course_id', courseId)
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
@@ -60,7 +60,7 @@ export class SupabaseReinforcementResultRepository {
     async findAllWithUsers({ offset = 0, limit = 100 } = {}) {
         const { data, error } = await this.client
             .from('reinforcement_results')
-            .select('*, usuarios!user_id(id, username, avatar), courses!course_id(id, title)')
+            .select('*, usuarios!user_id(id, username, avatar), courses!course_id(id, title, thumbnail_uri), topics!topic_id(name, subjects!materia_id(name)), tasks!task_id(title)')
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
         if (error) throw new Error(`Error fetching all results: ${error.message}`);
