@@ -1056,7 +1056,7 @@ export class WhatsAppDomainService {
                     "```sql\n" +
                     "-- Ejemplo relevante\nSELECT ...\n" +
                     "```\n" +
-                    `\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\n🎯 ¡Bienvenido/a, ${username}!`;
+                    `\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos (user_id, course_id, id, etc.).\n- Para personas: muestra username o nombre. Para cursos: muestra título. Para temas: muestra nombre.\n- En SQL, usa JOIN para obtener nombres/títulos en vez de IDs.\n- Ejemplo PROHIBIDO: \"Usuario 42\" — Ejemplo CORRECTO: \"juanperez\"\n\n🎯 ¡Bienvenido/a, ${username}!`;
                 promptToSend = biPrompt;
             }
 
