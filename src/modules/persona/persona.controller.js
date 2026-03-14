@@ -11,6 +11,7 @@ const createPersonaSchema = Joi.object({
     telefono: Joi.string().max(30).allow('').optional(),
     direccion: Joi.string().max(200).allow('').optional(),
     fecha_nacimiento: Joi.string().allow('', null).optional(),
+    institucion_id: Joi.number().integer().positive().allow(null).optional(),
 });
 
 const updatePersonaSchema = Joi.object({
@@ -20,6 +21,7 @@ const updatePersonaSchema = Joi.object({
     telefono: Joi.string().max(30).allow('').optional(),
     direccion: Joi.string().max(200).allow('').optional(),
     fecha_nacimiento: Joi.string().allow('', null).optional(),
+    institucion_id: Joi.number().integer().positive().allow(null).optional(),
 }).min(1);
 
 export class PersonaController {

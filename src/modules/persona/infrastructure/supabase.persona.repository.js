@@ -44,6 +44,7 @@ export class SupabasePersonaRepository {
         if (personaData.telefono !== undefined) payload.telefono = personaData.telefono;
         if (personaData.direccion !== undefined) payload.direccion = personaData.direccion;
         if (personaData.fecha_nacimiento !== undefined) payload.fecha_nacimiento = personaData.fecha_nacimiento;
+        if (personaData.institucion_id !== undefined) payload.institucion_id = personaData.institucion_id;
         const { data, error } = await this.client.from('personas').update(payload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando persona: ${error.message}`);
         return data;
