@@ -4,6 +4,7 @@ import { userRoutes } from '../../modules/user/user.routes.js';
 import { courseRoutes } from '../../modules/course/course.routes.js';
 import { videoRoutes } from '../../modules/video/video.routes.js';
 import { topicRoutes } from '../../modules/topic/topic.routes.js';
+import { subjectRoutes } from '../../modules/subject/subject.routes.js';
 import { taskRoutes } from '../../modules/task/task.routes.js';
 import { contentItemRoutes } from '../../modules/content-item/content-item.routes.js';
 import { submissionRoutes } from '../../modules/submission/submission.routes.js';
@@ -61,6 +62,7 @@ export function createRouter(deps) {
     router.use('/courses', courseRoutes(deps));
     router.use('/videos', videoRoutes(deps));
     router.use('/topics', topicRoutes(deps));
+    router.use('/subjects', subjectRoutes(deps));
     router.use('/tasks', taskRoutes(deps));
     router.use('/content-items', contentItemRoutes(deps));
     router.use('/submissions', submissionRoutes(deps));
