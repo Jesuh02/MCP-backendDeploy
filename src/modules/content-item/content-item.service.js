@@ -2,8 +2,9 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
 export class ContentItemDomainService {
-    constructor({ contentItemRepository }) {
+    constructor({ contentItemRepository, topicRepository }) {
         this.contentRepo = contentItemRepository;
+        this.topicRepo = topicRepository;
     }
 
     async getById(id) {
@@ -23,7 +24,7 @@ export class ContentItemDomainService {
     }
 
     async getByCourse(courseId) {
-        const items = await this.contentRepo.findByCourse(courseId);
+        const items = await this.contentRepo.findByCourse(courseId, this.topicRepo);
         return Result.ok(items);
     }
 

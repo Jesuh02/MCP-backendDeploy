@@ -17,9 +17,10 @@ export class TopicController {
         } catch (err) { next(err); }
     };
 
-    getByCourse = async(req, res, next) => {
+    getBySubject = async(req, res, next) => {
         try {
-            const result = await this.topicService.getByCourse(parseInt(req.params.courseId));
+            const subjectId = parseInt(req.params.subjectId || req.params.courseId);
+            const result = await this.topicService.getBySubject(subjectId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

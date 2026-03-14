@@ -98,6 +98,7 @@ export class SupabaseCourseRepository {
         if (data.price !== undefined) payload.price = data.price;
         if (data.category !== undefined) payload.category = data.category;
         if (data.isPublished !== undefined) payload.is_published = data.isPublished;
+        if (data.lastModifiedBy !== undefined) payload.last_modified_by = data.lastModifiedBy;
         payload.last_modified_date = new Date().toISOString();
 
         const { data: updated, error } = await this.client.from('courses').update(payload).eq('id', id).select().single();

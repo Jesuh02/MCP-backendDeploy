@@ -2,9 +2,9 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
 export class TopicDomainService {
-    constructor({ topicRepository, courseRepository }) {
+    constructor({ topicRepository, subjectRepository }) {
         this.topicRepo = topicRepository;
-        this.courseRepo = courseRepository;
+        this.subjectRepo = subjectRepository;
     }
 
     async list(pg) {
@@ -12,8 +12,8 @@ export class TopicDomainService {
         return Result.ok({ topics, total });
     }
 
-    async getByCourse(courseId) {
-        const topics = await this.topicRepo.findByCourse(courseId);
+    async getBySubject(subjectId) {
+        const topics = await this.topicRepo.findBySubject(subjectId);
         return Result.ok(topics);
     }
 
@@ -24,8 +24,8 @@ export class TopicDomainService {
     }
 
     async create(data) {
-        const course = await this.courseRepo.findById(data.courseId);
-        if (!course) return Result.fail(new NotFoundError('Curso', data.courseId));
+        const subject = await this.subjectRepo.findById(data.subjectId);
+        if (!subject) return Result.fail(new NotFoundError('Materia', data.subjectId));
         const created = await this.topicRepo.create(data);
         return Result.ok(created);
     }

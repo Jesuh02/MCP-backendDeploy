@@ -233,9 +233,9 @@ export function createContainer() {
     const authService = new AuthService({ userRepository: userRepo, jwtAdapter });
     const userService = new UserDomainService({ userRepository: userRepo, fileStoragePort: storageAdapter });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
-    const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
-    const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo });
-    const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
+    const topicService = new TopicDomainService({ topicRepository: topicRepo, subjectRepository: subjectRepo });
+    const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
+    const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo, topicRepository: topicRepo });
     const collaboratorService = new CollaboratorDomainService({ collaboratorRepository: collaboratorRepo, courseRepository: courseRepo });
     const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo, subjectRepository: subjectRepo, collaboratorRepository: collaboratorRepo });
     const notificationService = new NotificationDomainService({
@@ -281,7 +281,8 @@ export function createContainer() {
         transactionRepository: transactionRepo,
         progressRepository: progressRepo,
         fileStoragePort: storageAdapter,
-        courseNotificationService
+        courseNotificationService,
+        collaboratorRepository: collaboratorRepo
     });
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios

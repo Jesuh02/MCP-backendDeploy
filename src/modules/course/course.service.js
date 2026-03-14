@@ -2,12 +2,13 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
-    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService }) {
+    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService, collaboratorRepository }) {
         this.courseRepo = courseRepository;
         this.transactionRepo = transactionRepository;
         this.progressRepo = progressRepository;
         this.storage = fileStoragePort || null;
         this.courseNotificationService = courseNotificationService || null;
+        this.collaboratorRepo = collaboratorRepository || null;
     }
 
     // Derive `isFree` flag from a price value and mutate the object provided.
@@ -59,7 +60,9 @@ export class CourseDomainService {
     async isCreatorOrCollaborator(userId, courseId) {
         const course = await this.courseRepo.findById(courseId);
         if (!course) return false;
-        return Number(course.creator_user_id) === Number(userId);
+        if (Number(course.creator_user_id) === Number(userId)) return true;
+        if (this.collaboratorRepo) return this.collaboratorRepo.isCollaborator(userId, courseId);
+        return false;
     }
 
     /**
@@ -283,10 +286,10 @@ export class CourseDomainService {
     async update(id, data, requesterId) {
         const course = await this.courseRepo.findById(id);
         if (!course) return Result.fail(new NotFoundError('Curso', id));
-        if (course.creator_user_id && course.creator_user_id !== requesterId) {
-            return Result.fail(new ForbiddenError('No tienes permiso para editar este curso'));
-        }
+        const hasAccess = await this.isCreatorOrCollaborator(requesterId, id);
+        if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para editar este curso'));
         this._ensureIsFreeFlag(data);
+        data.lastModifiedBy = requesterId;
         const updated = await this.courseRepo.update(id, data);
         return Result.ok(updated);
     }
@@ -294,9 +297,8 @@ export class CourseDomainService {
     async delete(id, requesterId) {
         const course = await this.courseRepo.findById(id);
         if (!course) return Result.fail(new NotFoundError('Curso', id));
-        if (course.creator_user_id && course.creator_user_id !== requesterId) {
-            return Result.fail(new ForbiddenError('No tienes permiso para eliminar este curso'));
-        }
+        const hasAccess = await this.isCreatorOrCollaborator(requesterId, id);
+        if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para eliminar este curso'));
         await this.courseRepo.delete(id);
         return Result.ok({ message: 'Curso eliminado' });
     }

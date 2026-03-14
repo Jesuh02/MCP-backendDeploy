@@ -16,8 +16,8 @@ export class SupabaseTopicRepository {
         return data;
     }
 
-    async findByCourse(courseId) {
-        const { data, error } = await this.client.from('topics').select('*').eq('course_id', courseId).order('order_index', { ascending: true });
+    async findBySubject(subjectId) {
+        const { data, error } = await this.client.from('topics').select('*').eq('materia_id', subjectId).order('order_index', { ascending: true });
         if (error) throw new Error(error.message);
         return data || [];
     }
@@ -26,9 +26,10 @@ export class SupabaseTopicRepository {
         const payload = {
             name: topicData.title,
             description: topicData.description || '',
-            course_id: topicData.courseId,
+            materia_id: topicData.subjectId,
             order_index: topicData.orderIndex || 0,
         };
+        if (topicData.createdBy) payload.created_by = topicData.createdBy;
         const { data, error } = await this.client.from('topics').insert(payload).select().single();
         if (error) throw new Error(error.message);
         return data;
@@ -39,6 +40,7 @@ export class SupabaseTopicRepository {
         if (data.title !== undefined) payload.name = data.title;
         if (data.description !== undefined) payload.description = data.description;
         if (data.orderIndex !== undefined) payload.order_index = data.orderIndex;
+        if (data.updatedBy) payload.updated_by = data.updatedBy;
         payload.updated_at = new Date().toISOString();
         const { data: updated, error } = await this.client.from('topics').update(payload).eq('id', id).select().single();
         if (error) throw new Error(error.message);

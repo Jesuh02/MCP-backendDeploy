@@ -12,6 +12,15 @@ export class CollaboratorController {
         } catch (err) { next(err); }
     };
 
+    checkAccess = async (req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            const userId = req.user.userId;
+            const hasAccess = await this.collaboratorService.isCreatorOrCollaborator(userId, courseId);
+            res.json({ success: true, data: { hasAccess } });
+        } catch (err) { next(err); }
+    };
+
     add = async (req, res, next) => {
         try {
             const courseId = parseInt(req.params.courseId);
