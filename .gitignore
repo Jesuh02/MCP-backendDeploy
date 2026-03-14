@@ -77,3 +77,4 @@ docs/resultado_2rondasdepreguntas.txt
 docs/CLAUDE.MD
 scripts/migration_whatsapp_unlink_rpc.sql
 scripts/migration_course_collaborators.sql
+scripts/migration_instituciones.sql

@@ -1374,6 +1374,15 @@ export class MCPService {
 - Si el prompt incluye palabras como "pagos", "users", "transacciones", "username" o similares, genera una consulta detallada que liste cada registro relevante en lugar de un solo valor agregado.
 - **IMPORTANTE:** cuando el texto mencione explícitamente que se quiere un "excel" o un reporte, prioriza siempre un resultado tabular con filas completas y evita valores agregados, incluso si el usuario pregunta "cuántos" o "cuántas". Esta regla garantiza que los archivos Excel contengan datos en lugar de sólo totales.
 
+**REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:**
+- NUNCA incluyas columnas de IDs numéricos (id, user_id, course_id, creator_user_id, student_id, topic_id, task_id, etc.) en el SELECT.
+- Para personas: selecciona username, first_name, last_name en vez de user_id.
+- Para cursos: selecciona title en vez de course_id.
+- Para temas: selecciona name en vez de topic_id. Para tareas: selecciona title en vez de task_id.
+- Siempre haz JOIN con las tablas correspondientes para resolver FKs a nombres legibles.
+- Ejemplo PROHIBIDO: SELECT user_id, course_id FROM subscriptions
+- Ejemplo CORRECTO: SELECT u.username, c.title FROM subscriptions s JOIN usuarios u ON s.subscriber_id = u.id JOIN courses c ON c.creator_user_id = s.creator_id
+
 **FORMATO:**
 \`\`\`json
 {"tool": "nombre", "arguments": {"query": "SELECT..."}}
@@ -1569,12 +1578,13 @@ GROUP BY u.id, u.username
 
 **REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:**
 - NUNCA muestres IDs numéricos de base de datos (user_id, course_id, id, etc.) al usuario.
-- Para personas: muestra siempre el username o nombre (first_name, last_name).
-- Para cursos: muestra siempre el título (title).
+- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.
+- Para personas: muestra siempre el username o nombre (first_name, last_name). Haz JOIN con usuarios.
+- Para cursos: muestra siempre el título (title). Haz JOIN con courses.
 - Para temas: muestra el nombre (name). Para tareas: muestra el título (title).
-- En tus consultas SQL, siempre haz JOIN para obtener nombres/títulos en lugar de IDs.
-- Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos" o "course_id: 5"
-- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o "Curso: Introducción a SQL"`);
+- Si una columna es una FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el nombre legible.
+- Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos" o "course_id: 5" o SELECT user_id FROM ...
+- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o SELECT u.username FROM ... JOIN usuarios u ON ...`);
 
             conversationHistory.push(systemMessage);
             conversationHistory.push(new HumanMessage(query));

@@ -128,6 +128,10 @@ import { AppDistributionDomainService } from '../modules/app-distribution/app-di
 import { AppDistributionController } from '../modules/app-distribution/app-distribution.controller.js';
 
 import { ExcelDomainService } from '../modules/excel/excel.service.js';
+
+import { InstitucionDomainService } from '../modules/institucion/institucion.service.js';
+import { SupabaseInstitucionRepository } from '../modules/institucion/infrastructure/supabase.institucion.repository.js';
+import { InstitucionController } from '../modules/institucion/institucion.controller.js';
 import { ExcelController } from '../modules/excel/excel.controller.js';
 
 /**
@@ -218,6 +222,7 @@ export function createContainer() {
     const chatMessageRepo = new SupabaseChatMessageRepository(client);
     const whatsAppSessionRepo = new SupabaseWhatsAppSessionRepository(client);
     const collaboratorRepo = new SupabaseCollaboratorRepository(client);
+    const institucionRepo = new SupabaseInstitucionRepository(client);
 
     // ═══════════════════════════════════════════════════════════
     // 3. SERVICIOS DE DOMINIO — Inyectar repositorios y adaptadores
@@ -251,6 +256,7 @@ export function createContainer() {
     const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo });
 
     const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
+    const institucionService = new InstitucionDomainService({ institucionRepository: institucionRepo });
 
     // Nivel 1: servicios que dependen de servicios del Nivel 0
     const videoService = new VideoDomainService({
@@ -383,6 +389,7 @@ export function createContainer() {
 
     // Excel
     const excelController = new ExcelController({ excelService });
+    const institucionController = new InstitucionController({ institucionService });
 
     // WhatsApp
     const whatsAppController = safeInit('WhatsAppController', () => new WhatsAppController({
@@ -428,6 +435,7 @@ export function createContainer() {
         mcpController,
         appDistributionController,
         excelController,
+        institucionController,
         whatsAppController,
 
         // Servicios de dominio
@@ -461,6 +469,7 @@ export function createContainer() {
         mcpDomainService,
         appDistributionService,
         excelService,
+        institucionService,
         mcpServiceLegacy, // Injected for server.js legacy tools
         learningContextService,
         whatsAppDomainService,
