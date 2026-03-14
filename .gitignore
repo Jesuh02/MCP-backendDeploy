@@ -81,3 +81,4 @@ scripts/migration_instituciones.sql
 scripts/migration_modified_by.sql
 scripts/migration_backfill_subject_id.sql
 scripts/migration_reinforcement_results.sql
+scripts/migration_reinforcement_results_fix_course_id.sql

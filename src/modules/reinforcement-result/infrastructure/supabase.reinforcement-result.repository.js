@@ -27,7 +27,7 @@ export class SupabaseReinforcementResultRepository {
     async findByUser(userId, { offset = 0, limit = 50 } = {}) {
         const { data, error } = await this.client
             .from('reinforcement_results')
-            .select('*, cursos(title, thumbnail_uri), usuarios(usuario, avatar)')
+            .select('*, courses(title, thumbnail_uri), usuarios(usuario, avatar)')
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
@@ -60,7 +60,7 @@ export class SupabaseReinforcementResultRepository {
     async findAllWithUsers({ offset = 0, limit = 100 } = {}) {
         const { data, error } = await this.client
             .from('reinforcement_results')
-            .select('*, usuarios(id, usuario, avatar), cursos(id, title)')
+            .select('*, usuarios(id, usuario, avatar), courses(id, title)')
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
         if (error) throw new Error(`Error fetching all results: ${error.message}`);
