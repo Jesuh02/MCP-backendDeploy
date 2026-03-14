@@ -495,9 +495,8 @@ export class MCPService {
                 };
             }
 
-            // Import services dynamically to avoid circular deps
             const EmbeddingService = (await
-                import ('../../../infrastructure/ai/EmbeddingService.js')).EmbeddingService;
+                import ('./infrastructure/embedding.service.js')).EmbeddingService;
             const embeddingService = EmbeddingService.getInstance();
             const supabase = this.supabase.client;
 
