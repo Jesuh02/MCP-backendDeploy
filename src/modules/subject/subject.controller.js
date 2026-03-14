@@ -37,7 +37,7 @@ export class SubjectController {
         try {
             const { error, value } = createSubjectSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.subjectService.create(value);
+            const result = await this.subjectService.create(value, req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.status(201).json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -47,7 +47,7 @@ export class SubjectController {
         try {
             const { error, value } = updateSubjectSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.subjectService.update(parseInt(req.params.id), value);
+            const result = await this.subjectService.update(parseInt(req.params.id), value, req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -55,7 +55,7 @@ export class SubjectController {
 
     delete = async (req, res, next) => {
         try {
-            const result = await this.subjectService.delete(parseInt(req.params.id));
+            const result = await this.subjectService.delete(parseInt(req.params.id), req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

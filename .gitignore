@@ -78,3 +78,4 @@ docs/CLAUDE.MD
 scripts/migration_whatsapp_unlink_rpc.sql
 scripts/migration_course_collaborators.sql
 scripts/migration_instituciones.sql
+scripts/migration_modified_by.sql

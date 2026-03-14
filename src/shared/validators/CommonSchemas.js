@@ -9,6 +9,9 @@ export const createTopicSchema = Joi.object({
     title: Joi.string().min(1).max(200).optional(),
     name: Joi.string().min(1).max(200).optional(),
     description: Joi.string().max(2000).allow('').optional(),
+    subjectId: Joi.number().integer().optional(),
+    materiaId: Joi.number().integer().optional(),
+    materia_id: Joi.number().integer().optional(),
     courseId: Joi.number().integer().optional(),
     course_id: Joi.number().integer().optional(),
     orderIndex: Joi.number().integer().min(0).default(0),
@@ -16,14 +19,16 @@ export const createTopicSchema = Joi.object({
     created_at: Joi.any().strip().optional(),
     updated_at: Joi.any().strip().optional(),
 }).custom((value, helpers) => {
-    // Normalizar: aceptar 'name' como alias de 'title'
     if (!value.title && value.name) value.title = value.name;
-    if (!value.courseId && value.course_id) value.courseId = value.course_id;
+    value.subjectId = value.subjectId || value.materiaId || value.materia_id || value.courseId || value.course_id;
     delete value.name;
+    delete value.materiaId;
+    delete value.materia_id;
+    delete value.courseId;
     delete value.course_id;
     delete value.order_index;
     if (!value.title) return helpers.error('any.required', { key: 'title' });
-    if (!value.courseId) return helpers.error('any.required', { key: 'courseId' });
+    if (!value.subjectId) return helpers.error('any.required', { key: 'subjectId' });
     return value;
 });
 

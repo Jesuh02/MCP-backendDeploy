@@ -4,7 +4,8 @@ export function topicRoutes({ topicController }) {
     const router = Router();
 
     router.get('/', topicController.list);
-    router.get('/course/:courseId', topicController.getByCourse);
+    router.get('/subject/:subjectId', topicController.getBySubject);
+    router.get('/course/:courseId', topicController.getBySubject);
     router.get('/:id', topicController.getById);
     router.post('/', topicController.create);
     router.put('/:id', topicController.update);
