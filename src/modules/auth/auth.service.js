@@ -7,7 +7,7 @@ export class AuthService {
         this.jwt = jwtAdapter;
     }
 
-    async register({ username, email, password, persona }) {
+    async register({ username, email, password, persona, personaId }) {
         const existingUser = await this.userRepo.findByUsername(username);
         if (existingUser) return Result.fail(new ConflictError('Usuario', username));
 
@@ -15,7 +15,7 @@ export class AuthService {
         if (existingEmail) return Result.fail(new ConflictError('Email', email));
 
         const hashedPassword = await this.jwt.hashPassword(password);
-        const user = await this.userRepo.create({ username, email, password: hashedPassword, persona });
+        const user = await this.userRepo.create({ username, email, password: hashedPassword, persona, personaId });
 
         const tokens = this._generateTokens(user);
         return Result.ok({ user: this._safeUser(user), ...tokens });
