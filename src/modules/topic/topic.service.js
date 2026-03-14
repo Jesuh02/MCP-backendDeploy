@@ -25,6 +25,11 @@ export class TopicDomainService {
     async getById(id) {
         const topic = await this.topicRepo.findById(id);
         if (!topic) return Result.fail(new NotFoundError('Tema', id));
+        const subjectId = topic.materia_id || topic.subject_id;
+        if (subjectId && this.subjectRepo) {
+            const subject = await this.subjectRepo.findById(subjectId);
+            if (subject?.course_id) topic.course_id = subject.course_id;
+        }
         return Result.ok(topic);
     }
 
@@ -47,6 +52,21 @@ export class TopicDomainService {
         if (!topic) return Result.fail(new NotFoundError('Tema', id));
         await this.topicRepo.delete(id);
         return Result.ok({ message: 'Tema eliminado' });
+    }
+
+    async resolveCourseId(topicId) {
+        const topic = await this.topicRepo.findById(topicId);
+        if (!topic) return null;
+        const subjectId = topic.materia_id || topic.subject_id;
+        if (!subjectId) return null;
+        const subject = await this.subjectRepo.findById(subjectId);
+        return subject?.course_id || null;
+    }
+
+    async resolveSubjectId(topicId) {
+        const topic = await this.topicRepo.findById(topicId);
+        if (!topic) return null;
+        return topic.materia_id || topic.subject_id || null;
     }
 
     async deleteTopicOnly(id) {

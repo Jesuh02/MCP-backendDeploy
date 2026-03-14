@@ -100,10 +100,7 @@ export class SubmissionDomainService {
         const topicId = task.topicId || task.topic_id;
         if (!topicId) return;
 
-        const topicResult = await this.topicService.getById(topicId);
-        if (topicResult.isFail()) return;
-        const topic = topicResult.getValue();
-        const courseId = topic.course_id || topic.courseId;
+        const courseId = await this.topicService.resolveCourseId(topicId);
         if (!courseId) return;
 
         const courseResult = await this.courseService.getById(courseId);
@@ -229,17 +226,12 @@ export class SubmissionDomainService {
             const task = await this.taskRepo.findById(taskId);
             if (!task) return;
 
-            let courseId = task.courseId || task.course_id || null;
-            if (!courseId && task.topicId && this.topicService) {
-                const topicResult = await this.topicService.getById(task.topicId);
-                if (topicResult.isOk()) {
-                    const topic = topicResult.getValue();
-                    courseId = topic.courseId || topic.course_id || null;
-                }
-            }
+            const topicId = task.topicId || task.topic_id;
+            if (!topicId || !this.topicService) return;
+
+            const courseId = await this.topicService.resolveCourseId(topicId);
             if (!courseId) return;
 
-            // Prefer domain orchestration for progress recalculation (hexagonal use-case boundary)
             if (this.progressService && typeof this.progressService.refreshForUserCourse === 'function') {
                 await this.progressService.refreshForUserCourse(userId, courseId);
                 return;

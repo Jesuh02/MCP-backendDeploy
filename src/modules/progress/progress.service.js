@@ -44,7 +44,14 @@ export class ProgressDomainService {
         return Result.ok(board);
     }
 
-    async upsert(data) {
+    async upsert(data) {        if (data?.userId && data?.courseId && this.courseRepo) {
+            const course = await this.courseRepo.findById(data.courseId);
+            if (!course) {
+                const resolved = await this._resolveCourseFromSubjectId(data.courseId);
+                if (resolved) data.courseId = resolved;
+                else return Result.fail(new NotFoundError('Curso', data.courseId));
+            }
+        }
         if (data?.userId && data?.courseId) {
             const blocked = await this._isCreatorOrCollaborator(data.userId, data.courseId);
             if (blocked) return Result.fail(new ForbiddenError('Creadores y colaboradores no pueden estar en el progreso de estudiantes'));
@@ -53,7 +60,7 @@ export class ProgressDomainService {
         let progress = null;
 
         if (this.taskRepo && this.submissionRepo && data?.userId && data?.courseId) {
-            progress = await this._recalculateAndUpsertUserCourseProgress(data.userId, data.courseId);
+            progress = await this._recalculateAndUpsertUserCourseProgress(data.userId, data.courseId, null, data.subjectId);
         } else {
             progress = await this.progressRepo.upsert(data);
         }
@@ -274,11 +281,11 @@ export class ProgressDomainService {
         const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
         let subjectsById = new Map();
         if (this.subjectRepo && typeof this.subjectRepo.findByCourse === 'function') {
-            const subjects = await this.subjectRepo.findByCourse(courseId);
+            const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
             subjectsById = new Map(subjects.map(s => [s.id, s]));
         }
         return graded.map(sub => {
-            const subjectId = sub.tasks?.topics?.subject_id || null;
+            const subjectId = sub.tasks?.topics?.materia_id || sub.tasks?.topics?.subject_id || null;
             const subject = subjectId ? subjectsById.get(subjectId) : null;
             return {
                 taskId: sub.task_id,
@@ -292,7 +299,7 @@ export class ProgressDomainService {
         });
     }
 
-    async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null) {
+    async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null, subjectIdFallback = null) {
         const totalTasks = totalTasksFromCaller ?? await this.taskRepo.countByCourse(courseId);
         const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId);
         const completedTasks = submittedTaskIds.length;
@@ -304,7 +311,17 @@ export class ProgressDomainService {
 
         const progressPercentageRaw = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
         const progressPercentage = Math.round(progressPercentageRaw * 100) / 100;
-        const status = averageGrade >= 6 ? 'Ganado' : 'Perdido';
+
+        let subjectId = null;
+        for (const sub of graded) {
+            const sid = sub.tasks?.topics?.materia_id || sub.tasks?.topics?.subject_id;
+            if (sid) { subjectId = sid; break; }
+        }
+        if (!subjectId && this.subjectRepo) {
+            const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
+            if (subjects?.length > 0) subjectId = subjects[0].id;
+        }
+        if (!subjectId && subjectIdFallback) subjectId = subjectIdFallback;
 
         const persisted = await this.progressRepo.upsert({
             userId,
@@ -313,7 +330,7 @@ export class ProgressDomainService {
             totalTasks,
             averageGrade,
             progressPercentage,
-            status,
+            subjectId,
         });
 
         return persisted || {
@@ -323,8 +340,14 @@ export class ProgressDomainService {
             totalTasks,
             averageGrade,
             progressPercentage,
-            status,
+            subjectId,
         };
+    }
+
+    async _resolveCourseFromSubjectId(subjectId) {
+        if (!this.subjectRepo) return null;
+        const subject = await this.subjectRepo.findById(subjectId);
+        return subject?.course_id || null;
     }
 
     async _isCreatorOrCollaborator(userId, courseId) {

@@ -17,11 +17,12 @@ export class SupabaseSubjectRepository {
         return data;
     }
 
-    async findByCourse(courseId) {
-        const { data, error } = await this.client.from('subjects').select('*')
+    async findByCourse(courseId, { activeOnly = true } = {}) {
+        let query = this.client.from('subjects').select('*')
             .eq('course_id', courseId)
-            .eq('is_active', true)
             .order('order_index', { ascending: true });
+        if (activeOnly) query = query.eq('is_active', true);
+        const { data, error } = await query;
         if (error) throw new Error(error.message);
         return data || [];
     }

@@ -160,16 +160,16 @@ export class SupabaseTaskRepository {
      * Cuenta las tareas de un curso (via join con topics).
      */
     async countByCourse(courseId) {
-        // Paso 1: obtener IDs de temas del curso
+        const { data: subjects, error: subErr } = await this.client
+            .from('subjects').select('id').eq('course_id', courseId);
+        if (subErr || !subjects || subjects.length === 0) return 0;
+
+        const subjectIds = subjects.map(s => s.id);
         const { data: topics, error: topicErr } = await this.client
-            .from('topics')
-            .select('id')
-            .eq('course_id', courseId);
+            .from('topics').select('id').in('materia_id', subjectIds);
         if (topicErr || !topics || topics.length === 0) return 0;
 
         const topicIds = topics.map(t => t.id);
-
-        // Paso 2: contar tareas de esos temas
         const { count, error } = await this.client
             .from('tasks')
             .select('id', { count: 'exact', head: true })
