@@ -226,7 +226,7 @@ export function createContainer() {
     const topicService = new TopicDomainService({ topicRepository: topicRepo, courseRepository: courseRepo });
     const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo });
-    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo });
+    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo, subjectRepository: subjectRepo });
     const notificationService = new NotificationDomainService({
         notificationRepository: notificationRepo,
         userRepository: userRepo,
