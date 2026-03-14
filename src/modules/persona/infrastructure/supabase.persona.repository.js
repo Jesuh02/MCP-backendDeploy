@@ -24,10 +24,12 @@ export class SupabasePersonaRepository {
 
     async create(personaData) {
         const payload = {
-            nombre: personaData.nombre,
-            apellido: personaData.apellido || '',
+            nombres: personaData.nombres,
+            apellidos: personaData.apellidos || '',
             identificacion: personaData.identificacion || '',
             telefono: personaData.telefono || '',
+            direccion: personaData.direccion || '',
+            fecha_nacimiento: personaData.fecha_nacimiento || null,
         };
         const { data, error } = await this.client.from('personas').insert(payload).select().single();
         if (error) throw new Error(`Error creando persona: ${error.message}`);
@@ -36,10 +38,12 @@ export class SupabasePersonaRepository {
 
     async update(id, personaData) {
         const payload = {};
-        if (personaData.nombre !== undefined) payload.nombre = personaData.nombre;
-        if (personaData.apellido !== undefined) payload.apellido = personaData.apellido;
+        if (personaData.nombres !== undefined) payload.nombres = personaData.nombres;
+        if (personaData.apellidos !== undefined) payload.apellidos = personaData.apellidos;
         if (personaData.identificacion !== undefined) payload.identificacion = personaData.identificacion;
         if (personaData.telefono !== undefined) payload.telefono = personaData.telefono;
+        if (personaData.direccion !== undefined) payload.direccion = personaData.direccion;
+        if (personaData.fecha_nacimiento !== undefined) payload.fecha_nacimiento = personaData.fecha_nacimiento;
         const { data, error } = await this.client.from('personas').update(payload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando persona: ${error.message}`);
         return data;

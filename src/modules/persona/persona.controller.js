@@ -5,17 +5,21 @@ import Joi from 'joi';
 import { ValidationError } from '../../shared/errors/index.js';
 
 const createPersonaSchema = Joi.object({
-    nombre: Joi.string().min(1).max(100).required(),
-    apellido: Joi.string().max(100).allow('').optional(),
+    nombres: Joi.string().min(1).max(100).required(),
+    apellidos: Joi.string().max(100).allow('').optional(),
     identificacion: Joi.string().max(50).allow('').optional(),
     telefono: Joi.string().max(30).allow('').optional(),
+    direccion: Joi.string().max(200).allow('').optional(),
+    fecha_nacimiento: Joi.string().allow('', null).optional(),
 });
 
 const updatePersonaSchema = Joi.object({
-    nombre: Joi.string().min(1).max(100).optional(),
-    apellido: Joi.string().max(100).allow('').optional(),
+    nombres: Joi.string().min(1).max(100).optional(),
+    apellidos: Joi.string().max(100).allow('').optional(),
     identificacion: Joi.string().max(50).allow('').optional(),
     telefono: Joi.string().max(30).allow('').optional(),
+    direccion: Joi.string().max(200).allow('').optional(),
+    fecha_nacimiento: Joi.string().allow('', null).optional(),
 }).min(1);
 
 export class PersonaController {
