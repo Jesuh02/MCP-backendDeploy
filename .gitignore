@@ -80,3 +80,4 @@ scripts/migration_course_collaborators.sql
 scripts/migration_instituciones.sql
 scripts/migration_modified_by.sql
 scripts/migration_backfill_subject_id.sql
+scripts/migration_reinforcement_results.sql

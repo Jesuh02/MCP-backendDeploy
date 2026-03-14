@@ -97,6 +97,10 @@ import { ReinforcementDomainService } from '../modules/reinforcement/reinforceme
 import { SupabaseReinforcementRepository } from '../modules/reinforcement/infrastructure/supabase.reinforcement.repository.js';
 import { ReinforcementController } from '../modules/reinforcement/reinforcement.controller.js';
 
+import { ReinforcementResultService } from '../modules/reinforcement-result/reinforcement-result.service.js';
+import { SupabaseReinforcementResultRepository } from '../modules/reinforcement-result/infrastructure/supabase.reinforcement-result.repository.js';
+import { ReinforcementResultController } from '../modules/reinforcement-result/reinforcement-result.controller.js';
+
 import { FileContextDomainService } from '../modules/file-context/file-context.service.js';
 import { SupabaseFileContextRepository } from '../modules/file-context/infrastructure/supabase.file-context.repository.js';
 import { FileContextController } from '../modules/file-context/file-context.controller.js';
@@ -219,6 +223,7 @@ export function createContainer() {
     const rolRepo = new SupabaseRolRepository(client);
     const fileContextRepo = new SupabaseFileContextRepository(client);
     const reinforcementRepo = new SupabaseReinforcementRepository(client);
+    const reinforcementResultRepo = new SupabaseReinforcementResultRepository(client);
     const chatMessageRepo = new SupabaseChatMessageRepository(client);
     const whatsAppSessionRepo = new SupabaseWhatsAppSessionRepository(client);
     const collaboratorRepo = new SupabaseCollaboratorRepository(client);
@@ -254,6 +259,7 @@ export function createContainer() {
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
     const fileContextService = new FileContextDomainService({ fileContextRepository: fileContextRepo });
     const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo });
+    const reinforcementResultService = new ReinforcementResultService({ reinforcementResultRepository: reinforcementResultRepo });
 
     const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
     const institucionService = new InstitucionDomainService({ institucionRepository: institucionRepo });
@@ -375,6 +381,7 @@ export function createContainer() {
     const rolController = new RolController({ rolService });
     const fileContextController = new FileContextController({ fileContextService });
     const reinforcementController = new ReinforcementController({ reinforcementService, learningContextService });
+    const reinforcementResultController = new ReinforcementResultController({ reinforcementResultService });
     const chatMessageController = new ChatMessageController({ chatMessageService });
 
     const ttsController = new TTSController({ ttsService });
@@ -426,6 +433,7 @@ export function createContainer() {
         rolController,
         fileContextController,
         reinforcementController,
+        reinforcementResultController,
         chatMessageController,
 
         ttsController,
@@ -461,6 +469,7 @@ export function createContainer() {
         rolService,
         fileContextService,
         reinforcementService,
+        reinforcementResultService,
         chatMessageService,
         ttsService,
         videoProcessingService,

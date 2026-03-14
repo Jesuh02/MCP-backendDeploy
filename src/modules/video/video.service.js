@@ -243,7 +243,7 @@ export class VideoDomainService {
             senderUsername: creatorUsername,
             senderAvatarUrl: creatorAvatar,
             thumbnailUrl: video.thumbnail_uri || video.thumbnailUri || null,
-            metadata: JSON.stringify({ videoId: video.id, creatorId }),
+            metadata: JSON.stringify({ videoId: video.id, creatorId, ...(video.course_id ? { courseId: video.course_id } : {}) }),
             actorUserId: creatorId
         };
 

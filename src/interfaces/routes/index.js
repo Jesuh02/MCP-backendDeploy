@@ -21,6 +21,7 @@ import { personaRoutes } from '../../modules/persona/persona.routes.js';
 import { rolRoutes } from '../../modules/rol/rol.routes.js';
 import { fileContextRoutes } from '../../modules/file-context/file-context.routes.js';
 import { reinforcementRoutes } from '../../modules/reinforcement/reinforcement.routes.js';
+import { reinforcementResultRoutes } from '../../modules/reinforcement-result/reinforcement-result.routes.js';
 import { chatMessageRoutes } from '../../modules/chat/chat.routes.js';
 import { ttsRoutes } from '../../modules/tts/tts.routes.js';
 import { llmRoutes } from '../../modules/ai/llm.routes.js';
@@ -81,6 +82,7 @@ export function createRouter(deps) {
     router.use('/roles', rolRoutes(deps));
     router.use('/file-contexts', fileContextRoutes(deps));
     router.use('/reinforcement', reinforcementRoutes(deps));
+    router.use('/reinforcement-results', reinforcementResultRoutes(deps));
     router.use('/chat-messages', chatMessageRoutes(deps));
 
     router.use('/tts', ttsRoutes(deps));
