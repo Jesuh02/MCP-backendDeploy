@@ -3,7 +3,7 @@ import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 import { generateGradeEmailHTML } from '../../templates/emailTemplates.js';
 
 export class SubmissionDomainService {
-    constructor({ submissionRepository, taskRepository, progressRepository, progressService, notificationService, courseService, topicService, userService, fileStoragePort }) {
+    constructor({ submissionRepository, taskRepository, progressRepository, progressService, notificationService, courseService, topicService, userService, fileStoragePort, collaboratorService }) {
         this.subRepo = submissionRepository;
         this.taskRepo = taskRepository;
         this.progressRepo = progressRepository;
@@ -13,6 +13,7 @@ export class SubmissionDomainService {
         this.topicService = topicService || null;
         this.userService = userService || null;
         this.storage = fileStoragePort || null;
+        this.collaboratorService = collaboratorService || null;
     }
 
     async getById(id) {
@@ -181,13 +182,33 @@ export class SubmissionDomainService {
         });
     }
 
+    async _resolveCourseIdFromSubmission(sub) {
+        const taskId = sub.task_id || sub.taskId;
+        if (!taskId || !this.topicService) return null;
+        const task = await this.taskRepo.findById(taskId);
+        if (!task) return null;
+        const topicId = task.topicId || task.topic_id;
+        if (!topicId) return null;
+        return this.topicService.resolveCourseId(topicId);
+    }
+
     async grade(id, { grade, feedback }, graderId) {
         const sub = await this.subRepo.findById(id);
         if (!sub) return Result.fail(new NotFoundError('Entrega', id));
 
+        if (graderId && this.collaboratorService) {
+            const courseId = await this._resolveCourseIdFromSubmission(sub);
+            if (courseId) {
+                const hasAccess = await this.collaboratorService.isCreatorOrCollaborator(graderId, courseId);
+                if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para calificar en este curso'));
+            }
+        }
+
         const updated = await this.subRepo.update(id, {
             grade,
             feedback,
+            gradedBy: graderId || null,
+            gradedAt: new Date().toISOString(),
         });
 
         // Recalcular progreso del estudiante si es posible

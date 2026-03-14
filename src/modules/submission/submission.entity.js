@@ -2,8 +2,8 @@
  * Submission — Entrega de tarea de un estudiante.
  */
 export class Submission {
-    constructor({ id = null, taskId, userId, username = null, fileUri = null, fileName = null, textContent = null, grade = null, feedback = null, status = 'pending', submittedAt = null, gradedAt = null, createdAt = null, updatedAt = null } = {}) {
-        Object.assign(this, { id, taskId, userId, username, fileUri, fileName, textContent, grade, feedback, status, submittedAt, gradedAt, createdAt, updatedAt });
+    constructor({ id = null, taskId, userId, username = null, fileUri = null, fileName = null, textContent = null, grade = null, feedback = null, status = 'pending', submittedAt = null, gradedAt = null, gradedBy = null, createdAt = null, updatedAt = null } = {}) {
+        Object.assign(this, { id, taskId, userId, username, fileUri, fileName, textContent, grade, feedback, status, submittedAt, gradedAt, gradedBy, createdAt, updatedAt });
     }
     static fromSupabaseRow(row) {
         return new Submission({
@@ -19,6 +19,7 @@ export class Submission {
             status: row.status || 'pending',
             submittedAt: row.submitted_at || row.submittedAt || null,
             gradedAt: row.graded_at || row.gradedAt || null,
+            gradedBy: row.graded_by || row.gradedBy || null,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         });
