@@ -191,12 +191,21 @@ export class SupabaseCourseRepository {
 
         if (coursesErr || !courses || courses.length === 0) return [];
 
-        // Step 2: Get topics for these courses
+        // Step 2: Get subjects for these courses
         const courseIds = courses.map(c => c.id);
-        const { data: topics } = await this.client
-            .from('topics')
+        const { data: subjects } = await this.client
+            .from('subjects')
             .select('id, course_id')
             .in('course_id', courseIds);
+
+        if (!subjects || subjects.length === 0) return [];
+
+        // Step 2b: Get topics for these subjects
+        const subjectIds = subjects.map(s => s.id);
+        const { data: topics } = await this.client
+            .from('topics')
+            .select('id, materia_id')
+            .in('materia_id', subjectIds);
 
         if (!topics || topics.length === 0) return [];
 
@@ -219,12 +228,16 @@ export class SupabaseCourseRepository {
         if (!submissions || submissions.length === 0) return [];
 
         // Step 5: Map back to courses that have submissions
+        const subjectByCourseId = new Map(subjects.map(s => [s.id, s.course_id]));
         const taskIdsWithSubs = new Set(submissions.map(s => s.task_id));
         const topicIdsWithSubs = new Set(
             tasks.filter(t => taskIdsWithSubs.has(t.id)).map(t => t.topic_id)
         );
+        const subjectIdsWithSubs = new Set(
+            topics.filter(t => topicIdsWithSubs.has(t.id)).map(t => t.materia_id)
+        );
         const courseIdsWithSubs = new Set(
-            topics.filter(t => topicIdsWithSubs.has(t.id)).map(t => t.course_id)
+            subjects.filter(s => subjectIdsWithSubs.has(s.id)).map(s => s.course_id)
         );
 
         return courses.filter(c => courseIdsWithSubs.has(c.id));

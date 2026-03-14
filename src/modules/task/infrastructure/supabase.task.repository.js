@@ -13,8 +13,8 @@ import { Task } from '../task.entity.js';
  *   id | topic_id | title | description | due_date | time_limit_minutes | created_at
  *
  * Nota: NO existe `course_id` en `tasks`; la relaci�n con cursos va
- *       tasks.topic_id ? topics.course_id. Los m�todos que necesitan filtrar
- *       por curso hacen join a trav�s de `topics`.
+ *       tasks.topic_id → topics.materia_id → subjects.course_id. Los métodos que necesitan filtrar
+ *       por curso hacen join a través de `subjects` y `topics`.
  */
 export class SupabaseTaskRepository {
     constructor(client) { this.client = client; }

@@ -102,10 +102,20 @@ export class SupabaseNotificationRepository {
             if (topicIds.length > 0) {
                 const { data: topics } = await this.client
                     .from('topics')
-                    .select('id, course_id')
+                    .select('id, materia_id')
                     .in('id', topicIds);
 
-                const courseIdByTopicId = new Map((topics || []).map(t => [Number(t.id), Number(t.course_id)]));
+                const subjectIds = [...new Set((topics || []).map(t => Number(t.materia_id)).filter(id => Number.isInteger(id) && id > 0))];
+                let subjectToCourseId = new Map();
+                if (subjectIds.length > 0) {
+                    const { data: subjects } = await this.client
+                        .from('subjects')
+                        .select('id, course_id')
+                        .in('id', subjectIds);
+                    subjectToCourseId = new Map((subjects || []).map(s => [Number(s.id), Number(s.course_id)]));
+                }
+
+                const courseIdByTopicId = new Map((topics || []).map(t => [Number(t.id), subjectToCourseId.get(Number(t.materia_id))]));
                 for (const task of tasks || []) {
                     const taskId = Number(task.id);
                     const topicId = Number(task.topic_id);

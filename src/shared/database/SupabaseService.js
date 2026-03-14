@@ -977,16 +977,17 @@ CREATE TABLE public.videos (
             // 2. Delete videos associated with this course
             await this.client.from('videos').delete().eq('course_id', courseId);
 
-            // 3. Topics and tasks
-            // Get topics to delete their tasks
-            const { data: topics } = await this.client.from('topics').select('id').eq('course_id', courseId);
-            if (topics && topics.length > 0) {
-                const topicIds = topics.map(t => t.id);
-                // Delete tasks for these topics
-                if (topicIds.length > 0) {
-                    await this.client.from('tasks').delete().in('topic_id', topicIds);
-                    // Delete topics
-                    await this.client.from('topics').delete().in('id', topicIds);
+            // 3. Topics and tasks via subjects
+            const { data: subjects } = await this.client.from('subjects').select('id').eq('course_id', courseId);
+            if (subjects && subjects.length > 0) {
+                const subjectIds = subjects.map(s => s.id);
+                const { data: topics } = await this.client.from('topics').select('id').in('materia_id', subjectIds);
+                if (topics && topics.length > 0) {
+                    const topicIds = topics.map(t => t.id);
+                    if (topicIds.length > 0) {
+                        await this.client.from('tasks').delete().in('topic_id', topicIds);
+                        await this.client.from('topics').delete().in('id', topicIds);
+                    }
                 }
             }
 
