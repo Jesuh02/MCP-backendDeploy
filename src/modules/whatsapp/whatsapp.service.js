@@ -454,7 +454,16 @@ export class WhatsAppDomainService {
                             const payload = mcpResult.data ?? mcpResult.rows ?? mcpResult;
                             let replyText = '';
                             if (Array.isArray(payload) && payload.length > 0) {
-                                const sample = payload.slice(0, 10).map(r => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n');
+                                const stripIds = (row) => {
+                                    if (typeof row !== 'object' || row === null) return row;
+                                    const cleaned = {};
+                                    for (const [k, v] of Object.entries(row)) {
+                                        if (/^id$|_id$/i.test(k)) continue;
+                                        cleaned[k] = v;
+                                    }
+                                    return Object.keys(cleaned).length > 0 ? cleaned : row;
+                                };
+                                const sample = payload.slice(0, 10).map(r => (typeof r === 'string' ? r : JSON.stringify(stripIds(r)))).join('\n');
                                 replyText = `Resultados (muestra hasta 10 filas):\n${sample}`;
                             } else if (typeof payload === 'object') {
                                 replyText = JSON.stringify(payload, null, 2);
@@ -1056,7 +1065,7 @@ export class WhatsAppDomainService {
                     "```sql\n" +
                     "-- Ejemplo relevante\nSELECT ...\n" +
                     "```\n" +
-                    `\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos (user_id, course_id, id, etc.).\n- Para personas: muestra username o nombre. Para cursos: muestra título. Para temas: muestra nombre.\n- En SQL, usa JOIN para obtener nombres/títulos en vez de IDs.\n- Ejemplo PROHIBIDO: \"Usuario 42\" — Ejemplo CORRECTO: \"juanperez\"\n\n🎯 ¡Bienvenido/a, ${username}!`;
+                    `\n\n## Acción inmediata\n[Acción concreta]\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta \"query_database\" del agente MCP y espera su respuesta antes de concluir.\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.).\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra username o nombre (first_name, last_name). Haz JOIN con usuarios.\n- Para cursos: muestra título (title). Haz JOIN con courses.\n- Para temas: muestra nombre (name). Para tareas: muestra título (title).\n- Si una columna es FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible.\n- Ejemplo PROHIBIDO: \"Usuario 42\" o SELECT user_id FROM ...\n- Ejemplo CORRECTO: \"juanperez\" o SELECT u.username FROM ... JOIN usuarios u ON ...\n\n🎯 ¡Bienvenido/a, ${username}!`;
                 promptToSend = biPrompt;
             }
 
@@ -1107,7 +1116,16 @@ export class WhatsAppDomainService {
                             if (mcpResult) {
                                 const payload = mcpResult.data ?? mcpResult.rows ?? mcpResult;
                                 if (Array.isArray(payload) && payload.length > 0) {
-                                    const sample = payload.slice(0, 10).map(r => JSON.stringify(r)).join('\n');
+                                    const stripIds = (row) => {
+                                        if (typeof row !== 'object' || row === null) return row;
+                                        const cleaned = {};
+                                        for (const [k, v] of Object.entries(row)) {
+                                            if (/^id$|_id$/i.test(k)) continue;
+                                            cleaned[k] = v;
+                                        }
+                                        return Object.keys(cleaned).length > 0 ? cleaned : row;
+                                    };
+                                    const sample = payload.slice(0, 10).map(r => JSON.stringify(stripIds(r))).join('\n');
                                     return markdownToWhatsApp(`Resultados (muestra hasta 10 filas):\n${sample}`);
                                 }
                                 if (typeof payload === 'object') return markdownToWhatsApp(JSON.stringify(payload, null, 2));

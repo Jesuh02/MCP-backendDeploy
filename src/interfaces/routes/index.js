@@ -31,6 +31,7 @@ import { mcpRoutes } from '../../modules/ai/mcp.routes.js';
 import { appDistributionRoutes } from '../../modules/app-distribution/app-distribution.routes.js';
 import { excelRoutes } from '../../modules/excel/excel.routes.js';
 import { publicRoutes } from '../../modules/health/public.routes.js';
+import { institucionRoutes } from '../../modules/institucion/institucion.routes.js';
 import { whatsappRoutes } from '../../modules/whatsapp/whatsapp.routes.js';
 
 export function createRouter(deps) {
@@ -50,6 +51,7 @@ export function createRouter(deps) {
         router.get('/payment/status/:transactionId', deps.optionalAuthMiddleware, deps.paymentController.checkStatus);
     }
 
+    router.use('/instituciones', institucionRoutes(deps));
     router.use('/mcp', mcpRoutes(deps));
     router.use('/app', appDistributionRoutes(deps));
 
