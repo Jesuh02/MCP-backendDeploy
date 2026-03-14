@@ -107,9 +107,29 @@ export class SupabaseUserRepository {
     }
 
     async searchByUsername(query, limit = 20) {
-        const { data, error } = await this.client.from('usuarios').select('id, username, email, avatar').ilike('username', `%${query}%`).limit(limit);
-        if (error) return [];
-        return data || [];
+        const baseSelect = 'id, username, email, avatar, personas!fk_usuarios_persona(nombres, apellidos)';
+        const innerSelect = 'id, username, email, avatar, personas!inner(nombres, apellidos)';
+        const [byUsername, byNombres, byApellidos] = await Promise.all([
+            this.client.from('usuarios').select(baseSelect).ilike('username', `%${query}%`).limit(limit),
+            this.client.from('usuarios').select(innerSelect).ilike('personas.nombres', `%${query}%`).limit(limit),
+            this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${query}%`).limit(limit),
+        ]);
+        const seen = new Set();
+        const results = [];
+        for (const { data } of [byUsername, byNombres, byApellidos]) {
+            for (const u of data || []) {
+                if (seen.has(u.id)) continue;
+                seen.add(u.id);
+                results.push({
+                    id: u.id,
+                    username: u.username,
+                    email: u.email,
+                    avatar: u.avatar,
+                    fullName: u.personas ? `${u.personas.nombres || ''} ${u.personas.apellidos || ''}`.trim() : null
+                });
+            }
+        }
+        return results.slice(0, limit);
     }
 
     async findByIds(ids) {

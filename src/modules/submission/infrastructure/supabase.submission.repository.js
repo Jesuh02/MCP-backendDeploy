@@ -1,6 +1,19 @@
 export class SupabaseSubmissionRepository {
     constructor(client) { this.client = client; }
 
+    async _getTaskIdsByCourse(courseId) {
+        const { data: subjects, error: subErr } = await this.client
+            .from('subjects').select('id').eq('course_id', courseId);
+        if (subErr || !subjects?.length) return [];
+        const { data: topics, error: topErr } = await this.client
+            .from('topics').select('id').in('materia_id', subjects.map(s => s.id));
+        if (topErr || !topics?.length) return [];
+        const { data: tasks, error: taskErr } = await this.client
+            .from('tasks').select('id').in('topic_id', topics.map(t => t.id));
+        if (taskErr || !tasks?.length) return [];
+        return tasks.map(t => t.id);
+    }
+
     async findById(id) {
         const { data, error } = await this.client.from('task_submissions').select('*').eq('id', id).single();
         if (error || !data) return null;
@@ -26,19 +39,7 @@ export class SupabaseSubmissionRepository {
     }
 
     async findByCourse(courseId, { offset = 0, limit = 50, ungradedOnly = false } = {}) {
-        // Enforce strict filtering: 1. Get tasks for the course, 2. Get submissions for those tasks
-        // This avoids deep nesting issues with Supabase filters
-        const { data: tasks, error: taskError } = await this.client
-            .from('tasks')
-            .select('id, topics!inner(course_id)')
-            .eq('topics.course_id', courseId);
-
-        if (taskError) {
-            console.error('Error fetching tasks for course:', taskError);
-            return [];
-        }
-
-        const taskIds = tasks.map(t => t.id);
+        const taskIds = await this._getTaskIdsByCourse(courseId);
         if (taskIds.length === 0) return [];
 
         let query = this.client
@@ -95,45 +96,44 @@ export class SupabaseSubmissionRepository {
     }
 
     async countByUserAndCourse(userId, courseId) {
+        const taskIds = await this._getTaskIdsByCourse(courseId);
+        if (taskIds.length === 0) return 0;
         const { data, error } = await this.client
             .from('task_submissions')
-            .select('id, tasks!inner(topics!inner(course_id))')
+            .select('id')
             .eq('student_id', userId)
-            .eq('tasks.topics.course_id', courseId);
+            .in('task_id', taskIds);
         if (error) return 0;
         return (data || []).length;
     }
 
     async getGradedByUserAndCourse(userId, courseId) {
+        const taskIds = await this._getTaskIdsByCourse(courseId);
+        if (taskIds.length === 0) return [];
         const { data, error } = await this.client
             .from('task_submissions')
-            .select('*, tasks!inner(id, title, topic_id, topics!inner(id, name, course_id, subject_id))')
+            .select('*, tasks!inner(id, title, topic_id, topics!inner(id, name, materia_id))')
             .eq('student_id', userId)
-            .eq('tasks.topics.course_id', courseId)
+            .in('task_id', taskIds)
             .not('grade', 'is', null);
         if (error) return [];
         return data || [];
     }
 
     async getTaskIdsByUserAndCourse(userId, courseId) {
+        const taskIds = await this._getTaskIdsByCourse(courseId);
+        if (taskIds.length === 0) return [];
         const { data, error } = await this.client
             .from('task_submissions')
-            .select('task_id, tasks!inner(topics!inner(course_id))')
+            .select('task_id')
             .eq('student_id', userId)
-            .eq('tasks.topics.course_id', courseId);
+            .in('task_id', taskIds);
         if (error || !data) return [];
         return [...new Set(data.map(item => item.task_id).filter(Boolean))];
     }
 
     async getStudentIdsByCourse(courseId) {
-        const { data: tasks, error: taskError } = await this.client
-            .from('tasks')
-            .select('id, topics!inner(course_id)')
-            .eq('topics.course_id', courseId);
-
-        if (taskError || !tasks || tasks.length === 0) return [];
-
-        const taskIds = tasks.map(t => t.id).filter(Boolean);
+        const taskIds = await this._getTaskIdsByCourse(courseId);
         if (taskIds.length === 0) return [];
 
         const { data, error } = await this.client
