@@ -76,6 +76,8 @@ export class R2StorageAdapter {
                 region: 'auto',
                 endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
                 credentials: { accessKeyId, secretAccessKey },
+                requestChecksumCalculation: 'WHEN_REQUIRED',
+                responseChecksumValidation: 'WHEN_REQUIRED',
             });
             console.log('? R2StorageAdapter: Client initialized');
         } else {
