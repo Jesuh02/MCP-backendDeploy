@@ -27,6 +27,24 @@ export class ProgressController {
         } catch (err) { next(err); }
     };
 
+    getSubjectProgress = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            const result = await this.progressService.getSubjectProgress(req.user.userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getBySubject = async(req, res, next) => {
+        try {
+            const subjectId = parseInt(req.params.subjectId);
+            const result = await this.progressService.getByUserAndSubject(req.user.userId, subjectId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getLeaderboard = async(req, res, next) => {
         try {
             const courseId = parseInt(req.params.courseId);
@@ -189,6 +207,21 @@ export class ProgressController {
                 return res.status(400).json({ success: false, error: 'courseId must be a positive integer' });
             }
             const result = await this.progressService.recalculateForCourse(courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+    getCreatorCertificates = async(req, res, next) => {
+        try {
+            const result = await this.progressService.getCreatorCertificates(req.user.userId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    bulkIssueCertificates = async(req, res, next) => {
+        try {
+            const result = await this.progressService.bulkIssueCertificatesForCreator(req.user.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

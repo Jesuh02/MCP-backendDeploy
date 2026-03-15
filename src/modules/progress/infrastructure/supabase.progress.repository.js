@@ -2,19 +2,19 @@ export class SupabaseProgressRepository {
     constructor(client) { this.client = client; }
 
     async findByUserAndCourse(userId, courseId) {
-        const { data, error } = await this.client.from('progreso_estudiante').select('*').eq('usuario_estudiante', userId).eq('curso_id', courseId).single();
+        const { data, error } = await this.client.from('progreso_estudiante').select('*').eq('usuario_estudiante', userId).eq('curso_id', courseId).eq('materia_id', 0).single();
         if (error || !data) return null;
         return this._mapToDomain(data);
     }
 
     async findByUser(userId) {
-        const { data, error } = await this.client.from('progreso_estudiante').select('*').eq('usuario_estudiante', userId).order('ultima_calculada_en', { ascending: false });
+        const { data, error } = await this.client.from('progreso_estudiante').select('*').eq('usuario_estudiante', userId).eq('materia_id', 0).order('ultima_calculada_en', { ascending: false });
         if (error) return [];
         return data ? data.map(this._mapToDomain) : [];
     }
 
     async findByCourse(courseId) {
-        const { data, error } = await this.client.from('progreso_estudiante').select('*').eq('curso_id', courseId);
+        const { data, error } = await this.client.from('progreso_estudiante').select('*').eq('curso_id', courseId).eq('materia_id', 0);
         if (error) return [];
         return data ? data.map(this._mapToDomain) : [];
     }
@@ -24,7 +24,8 @@ export class SupabaseProgressRepository {
         const { data, error } = await this.client
             .from('progreso_estudiante')
             .select('*')
-            .in('curso_id', courseIds);
+            .in('curso_id', courseIds)
+            .eq('materia_id', 0);
         if (error) return [];
         return data ? data.map(this._mapToDomain) : [];
     }
@@ -37,6 +38,7 @@ export class SupabaseProgressRepository {
         const { data, error } = await this.client
             .from('progreso_estudiante')
             .select('curso_id, usuario_estudiante')
+            .eq('materia_id', 0)
             .not('curso_id', 'is', null)
             .not('usuario_estudiante', 'is', null);
 
@@ -64,65 +66,66 @@ export class SupabaseProgressRepository {
     }
 
     async upsert(progressData) {
-        // Guard against null/undefined required fields
         if (!progressData.courseId) throw new Error('courseId is required for progress upsert');
         if (!progressData.userId) throw new Error('userId is required for progress upsert');
         const payload = {
             usuario_estudiante: progressData.userId,
             curso_id: progressData.courseId,
+            materia_id: progressData.subjectId || 0,
             tareas_completadas: progressData.completedTasks || 0,
             tareas_totales: progressData.totalTasks || 0,
             promedio: (progressData.averageGrade !== undefined && progressData.averageGrade !== null) ? progressData.averageGrade : 0,
             porcentaje_progreso: progressData.progressPercentage || 0,
             ultima_calculada_en: new Date().toISOString(),
         };
-        if (progressData.subjectId) payload.materia_id = progressData.subjectId;
 
         if (progressData.averageGrade !== undefined && progressData.averageGrade !== null) {
             payload.calificacion_ponderada = progressData.averageGrade;
         }
 
-        const { data, error } = await this.client.from('progreso_estudiante').upsert(payload, { onConflict: 'usuario_estudiante,curso_id' }).select().single();
+        const { data, error } = await this.client.from('progreso_estudiante').upsert(payload, { onConflict: 'usuario_estudiante,curso_id,materia_id' }).select().single();
         if (error) throw new Error(error.message);
         return this._mapToDomain(data);
     }
 
-    async delete(userId, courseId) {
-        const { error } = await this.client.from('progreso_estudiante').delete().eq('usuario_estudiante', userId).eq('curso_id', courseId);
+    async delete(userId, courseId, subjectId = null) {
+        let query = this.client.from('progreso_estudiante').delete().eq('usuario_estudiante', userId).eq('curso_id', courseId);
+        query = query.eq('materia_id', subjectId || 0);
+        const { error } = await query;
         if (error) throw new Error(error.message);
         return true;
     }
 
     async getLeaderboard(courseId, limit) {
         limit = limit || 10;
-        const { data, error } = await this.client.from('progreso_estudiante').select('*').eq('curso_id', courseId).order('porcentaje_progreso', { ascending: false }).limit(limit);
+        const { data, error } = await this.client.from('progreso_estudiante').select('*').eq('curso_id', courseId).eq('materia_id', 0).order('porcentaje_progreso', { ascending: false }).limit(limit);
         if (error) return [];
         return data ? data.map(this._mapToDomain) : [];
     }
 
     async countByCourse(courseId) {
-        const { count, error } = await this.client.from('progreso_estudiante').select('usuario_estudiante', { count: 'exact', head: true }).eq('curso_id', courseId);
+        const { count, error } = await this.client.from('progreso_estudiante').select('usuario_estudiante', { count: 'exact', head: true }).eq('curso_id', courseId).eq('materia_id', 0);
         return error ? 0 : count;
     }
 
     async findEnrolledCourseIds(userId) {
-        const { data, error } = await this.client.from('progreso_estudiante').select('curso_id').eq('usuario_estudiante', userId);
+        const { data, error } = await this.client.from('progreso_estudiante').select('curso_id').eq('usuario_estudiante', userId).eq('materia_id', 0);
         if (error || !data) return [];
         return data.map(p => p.curso_id);
     }
 
     async isEnrolled(userId, courseId) {
-        const { count, error } = await this.client.from('progreso_estudiante').select('usuario_estudiante', { count: 'exact', head: true }).eq('usuario_estudiante', userId).eq('curso_id', courseId);
+        const { count, error } = await this.client.from('progreso_estudiante').select('usuario_estudiante', { count: 'exact', head: true }).eq('usuario_estudiante', userId).eq('curso_id', courseId).eq('materia_id', 0);
         return !error && count > 0;
     }
 
     async countEnrolled(userId) {
-        const { count, error } = await this.client.from('progreso_estudiante').select('curso_id', { count: 'exact', head: true }).eq('usuario_estudiante', userId);
+        const { count, error } = await this.client.from('progreso_estudiante').select('curso_id', { count: 'exact', head: true }).eq('usuario_estudiante', userId).eq('materia_id', 0);
         return error ? 0 : count;
     }
 
     async findEnrolledCourseIdsPaginated(userId, { offset = 0, limit = 20 } = {}) {
-        const { data, error } = await this.client.from('progreso_estudiante').select('curso_id').eq('usuario_estudiante', userId).order('ultima_calculada_en', { ascending: false }).range(offset, offset + limit - 1);
+        const { data, error } = await this.client.from('progreso_estudiante').select('curso_id').eq('usuario_estudiante', userId).eq('materia_id', 0).order('ultima_calculada_en', { ascending: false }).range(offset, offset + limit - 1);
         if (error) return [];
         return data.map(p => p.curso_id);
     }
@@ -140,6 +143,7 @@ export class SupabaseProgressRepository {
             .from('progreso_estudiante')
             .select('usuario_estudiante, curso_id, calificacion_ponderada, promedio')
             .in('curso_id', courseIds)
+            .eq('materia_id', 0)
             .eq('estado', 'Ganado')
             .not('usuario_estudiante', 'is', null);
 
@@ -160,6 +164,7 @@ export class SupabaseProgressRepository {
             .from('progreso_estudiante')
             .select('curso_id, certificado_url, certificado_emitido_en, estado, promedio, calificacion_ponderada')
             .eq('usuario_estudiante', userId)
+            .eq('materia_id', 0)
             .not('certificado_url', 'is', null)
             .order('certificado_emitido_en', { ascending: false });
 
@@ -193,8 +198,8 @@ export class SupabaseProgressRepository {
     async updateCertificate(userId, courseId, data) {
         const payload = {};
         if (data.certificateIssuedAt) payload.certificado_emitido_en = data.certificateIssuedAt;
-        if (data.certificateUrl) payload.certificado_url = data.certificateUrl; // Fixed column name from previous read
-        const { data: updated, error } = await this.client.from('progreso_estudiante').update(payload).eq('usuario_estudiante', userId).eq('curso_id', courseId).select().single();
+        if (data.certificateUrl) payload.certificado_url = data.certificateUrl;
+        const { data: updated, error } = await this.client.from('progreso_estudiante').update(payload).eq('usuario_estudiante', userId).eq('curso_id', courseId).eq('materia_id', 0).select().single();
         if (error) throw new Error(error.message);
         return this._mapToDomain(updated);
     }
@@ -231,6 +236,7 @@ export class SupabaseProgressRepository {
             .from('progreso_estudiante')
             .select('usuario_estudiante, estado, calificacion_ponderada, promedio')
             .in('curso_id', courseIds)
+            .eq('materia_id', 0)
             .eq('estado', 'Ganado')
             .not('usuario_estudiante', 'is', null);
 
@@ -325,7 +331,8 @@ export class SupabaseProgressRepository {
         const { data: progressRows, error: progressError } = await this.client
             .from('progreso_estudiante')
             .select('creado_en, ultima_calculada_en')
-            .in('curso_id', courseIds);
+            .in('curso_id', courseIds)
+            .eq('materia_id', 0);
 
         if (progressError || !progressRows) {
             return this._buildEmptyCreatorEnrollmentAnalytics(safeWeeklyDays, safeMonthlyMonths);
@@ -443,12 +450,95 @@ export class SupabaseProgressRepository {
         return `${year}-${month}`;
     }
 
+    async findWonProgressByCreatorCourses(creatorUserId) {
+        const { data: creatorCourses, error: coursesError } = await this.client
+            .from('courses').select('id, title, thumbnail_uri').eq('creator_user_id', creatorUserId);
+        if (coursesError || !creatorCourses || creatorCourses.length === 0) return [];
+
+        const courseIds = creatorCourses.map(c => c.id);
+        const coursesById = new Map(creatorCourses.map(c => [c.id, c]));
+
+        const { data: rows, error } = await this.client
+            .from('progreso_estudiante')
+            .select('usuario_estudiante, curso_id, estado, promedio, calificacion_ponderada, certificado_url, certificado_emitido_en, tareas_completadas, tareas_totales, porcentaje_progreso')
+            .in('curso_id', courseIds)
+            .eq('estado', 'Ganado');
+        if (error || !rows || rows.length === 0) return [];
+
+        const userIds = [...new Set(rows.map(r => r.usuario_estudiante).filter(Boolean))];
+        let usersById = new Map();
+        if (userIds.length > 0) {
+            const { data: users } = await this.client.from('usuarios').select('id, username, avatar').in('id', userIds);
+            usersById = new Map((users || []).map(u => [u.id, u]));
+        }
+
+        return rows.map(row => {
+            const course = coursesById.get(row.curso_id) || {};
+            const user = usersById.get(row.usuario_estudiante) || {};
+            return {
+                userId: row.usuario_estudiante,
+                username: user.username || null,
+                avatar: user.avatar || null,
+                courseId: row.curso_id,
+                courseName: course.title || null,
+                courseThumbnail: course.thumbnail_uri || null,
+                certificateUrl: row.certificado_url || null,
+                certificateIssuedAt: row.certificado_emitido_en || null,
+                status: row.estado,
+                averageGrade: row.calificacion_ponderada ?? row.promedio ?? null,
+                completedTasks: row.tareas_completadas || 0,
+                totalTasks: row.tareas_totales || 0,
+                progressPercentage: row.porcentaje_progreso || 0,
+            };
+        });
+    }
+
+    async bulkIssueCertificates(pairs) {
+        const now = new Date().toISOString();
+        const results = [];
+        for (const { userId, courseId } of pairs) {
+            const { data, error } = await this.client
+                .from('progreso_estudiante')
+                .update({ certificado_emitido_en: now })
+                .eq('usuario_estudiante', userId)
+                .eq('curso_id', courseId)
+                .is('certificado_emitido_en', null)
+                .select()
+                .maybeSingle();
+            if (!error && data) results.push(this._mapToDomain(data));
+        }
+        return results;
+    }
+
+    async findSubjectProgressByUserAndCourse(userId, courseId) {
+        const { data, error } = await this.client
+            .from('progreso_estudiante')
+            .select('*')
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId)
+            .gt('materia_id', 0)
+            .order('materia_id');
+        if (error) return [];
+        return data ? data.map(this._mapToDomain) : [];
+    }
+
+    async findByUserAndSubject(userId, subjectId) {
+        const { data, error } = await this.client
+            .from('progreso_estudiante')
+            .select('*')
+            .eq('usuario_estudiante', userId)
+            .eq('materia_id', subjectId)
+            .single();
+        if (error || !data) return null;
+        return this._mapToDomain(data);
+    }
+
     _mapToDomain(dbRecord) {
         if (!dbRecord) return null;
         return {
             userId: dbRecord.usuario_estudiante,
             courseId: dbRecord.curso_id,
-            subjectId: dbRecord.materia_id || null,
+            subjectId: dbRecord.materia_id > 0 ? dbRecord.materia_id : null,
             completedTasks: dbRecord.tareas_completadas,
             totalTasks: dbRecord.tareas_totales,
             averageGrade: dbRecord.promedio,
