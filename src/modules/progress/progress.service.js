@@ -312,6 +312,8 @@ export class ProgressDomainService {
         const progressPercentageRaw = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
         const progressPercentage = Math.round(progressPercentageRaw * 100) / 100;
 
+        const status = averageGrade >= 6 ? 'Ganado' : 'Perdido';
+
         let subjectId = null;
         for (const sub of graded) {
             const sid = sub.tasks?.topics?.materia_id || sub.tasks?.topics?.subject_id;
@@ -331,6 +333,7 @@ export class ProgressDomainService {
             averageGrade,
             progressPercentage,
             subjectId,
+            status,
         });
 
         return persisted || {
@@ -341,6 +344,7 @@ export class ProgressDomainService {
             averageGrade,
             progressPercentage,
             subjectId,
+            status,
         };
     }
 
