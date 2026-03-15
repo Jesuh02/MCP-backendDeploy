@@ -71,29 +71,17 @@ export class CourseDomainService {
     async _signUrls(courses) {
         const list = Array.isArray(courses) ? courses : [courses];
         list.forEach((course) => this._normalizeCourseShape(course));
-        if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) {
-            return Array.isArray(courses) ? list : list[0];
-        }
-        await Promise.all(list.map(async(c) => {
+        if (!this.storage) return Array.isArray(courses) ? list : list[0];
+        list.forEach((c) => {
             if (!c) return;
-            try {
-                this._normalizeCourseShape(c);
-                const url = c.thumbnail_url || c.thumbnail_uri || c.thumbnailUri;
-                if (url) {
-                    if (!url.includes('X-Amz-Signature')) {
-                        const key = this.storage.extractObjectKey(url);
-                        if (key) {
-                            const signed = await this.storage.generateDownloadUrl(key, 3600);
-                            c.thumbnail_uri = signed;
-                            c.thumbnailUri = signed;
-                            c.thumbnail_url = signed;
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn('[CourseDomainService] Error signing URL for course', c.id, e.message);
-            }
-        }));
+            const url = c.thumbnail_url || c.thumbnail_uri || c.thumbnailUri;
+            if (!url) return;
+            const key = this.storage.extractObjectKey(url) || url;
+            const publicUrl = this.storage.getPublicUrl(key);
+            c.thumbnail_uri = publicUrl;
+            c.thumbnailUri = publicUrl;
+            c.thumbnail_url = publicUrl;
+        });
         return Array.isArray(courses) ? list : list[0];
     }
 
