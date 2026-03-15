@@ -226,5 +226,21 @@ export class ProgressController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    getAllCertificates = async(req, res, next) => {
+        try {
+            const result = await this.progressService.getAllWonCertificates();
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    bulkIssueCertificatesAll = async(req, res, next) => {
+        try {
+            const result = await this.progressService.bulkIssueCertificatesGlobal();
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ProgressController;
