@@ -183,18 +183,25 @@ export const createSubmissionSchema = Joi.object({
     task_id: Joi.number().integer().optional(),
     student_id: Joi.any().strip().optional(), // Ignorar student_id (viene del token)
     fileUri: Joi.string().allow(null, '').optional(),
+    file_uri: Joi.string().allow(null, '').optional(),
     file_url: Joi.string().allow(null, '').optional(),
     fileName: Joi.string().max(255).allow(null, '').optional(),
-    content: Joi.string().max(255).allow(null, '').optional(), // Android envía content como fileName
+    file_name: Joi.string().max(255).allow(null, '').optional(),
+    content: Joi.string().max(255).allow(null, '').optional(),
     textContent: Joi.string().max(50000).allow(null, '').optional(),
-    status: Joi.any().strip().optional(), // Ignorar status
+    text: Joi.string().max(50000).allow(null, '').optional(),
+    status: Joi.any().strip().optional(),
 }).custom((value, helpers) => {
     if (!value.taskId && value.task_id) value.taskId = value.task_id;
-    if (!value.fileUri && value.file_url) value.fileUri = value.file_url;
-    if (!value.fileName && value.content) value.fileName = value.content;
+    if (!value.fileUri && (value.file_url || value.file_uri)) value.fileUri = value.file_url || value.file_uri;
+    if (!value.fileName && (value.content || value.file_name)) value.fileName = value.file_name || value.content;
+    if (!value.textContent && value.text) value.textContent = value.text;
     delete value.task_id;
     delete value.file_url;
+    delete value.file_uri;
     delete value.content;
+    delete value.file_name;
+    delete value.text;
 
     if (!value.taskId) return helpers.error('any.required', { key: 'taskId' });
     return value;
