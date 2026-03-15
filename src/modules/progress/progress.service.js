@@ -21,7 +21,22 @@ export class ProgressDomainService {
             if (!progress) progress = { userId, courseId, completedTasks: 0, totalTasks: 0, progressPercentage: 0, averageGrade: 0, status: 'Perdido' };
         }
         const gradedTasks = await this._buildGradedTasksWithSubject(userId, courseId);
-        return Result.ok({ ...progress, gradedTasks });
+        const subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
+        return Result.ok({ ...progress, gradedTasks, subjectProgress });
+    }
+
+    async getSubjectProgress(userId, courseId) {
+        if (this.taskRepo && this.submissionRepo && this.subjectRepo) {
+            await this._recalculateSubjectsForUserCourse(userId, courseId);
+        }
+        const subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
+        return Result.ok(subjectProgress);
+    }
+
+    async getByUserAndSubject(userId, subjectId) {
+        const progress = await this.progressRepo.findByUserAndSubject(userId, subjectId);
+        if (!progress) return Result.ok({ userId, subjectId, completedTasks: 0, totalTasks: 0, progressPercentage: 0, averageGrade: 0, status: 'Perdido' });
+        return Result.ok(progress);
     }
 
     async refreshForUserCourse(userId, courseId) {
@@ -214,6 +229,20 @@ export class ProgressDomainService {
         return Result.ok(certificates);
     }
 
+    async getCreatorCertificates(creatorUserId) {
+        const rows = await this.progressRepo.findWonProgressByCreatorCourses(creatorUserId);
+        return Result.ok(rows);
+    }
+
+    async bulkIssueCertificatesForCreator(creatorUserId) {
+        const rows = await this.progressRepo.findWonProgressByCreatorCourses(creatorUserId);
+        const pending = rows.filter(r => !r.certificateIssuedAt);
+        if (pending.length === 0) return Result.ok({ issued: 0 });
+        const pairs = pending.map(r => ({ userId: r.userId, courseId: r.courseId }));
+        const issued = await this.progressRepo.bulkIssueCertificates(pairs);
+        return Result.ok({ issued: issued.length });
+    }
+
     async updateCertificateUrl(userId, courseId, url) {
         const updated = await this.progressRepo.updateCertificate(userId, courseId, {
             certificateUrl: url,
@@ -314,18 +343,62 @@ export class ProgressDomainService {
 
         const status = averageGrade >= 6 ? 'Ganado' : 'Perdido';
 
-        let subjectId = null;
-        for (const sub of graded) {
-            const sid = sub.tasks?.topics?.materia_id || sub.tasks?.topics?.subject_id;
-            if (sid) { subjectId = sid; break; }
-        }
-        if (!subjectId && this.subjectRepo) {
-            const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
-            if (subjects?.length > 0) subjectId = subjects[0].id;
-        }
-        if (!subjectId && subjectIdFallback) subjectId = subjectIdFallback;
-
         const persisted = await this.progressRepo.upsert({
+            userId,
+            courseId,
+            completedTasks,
+            totalTasks,
+            averageGrade,
+            progressPercentage,
+            subjectId: 0,
+            status,
+        });
+
+        await this._recalculateSubjectsForUserCourse(userId, courseId);
+
+        return persisted || {
+            userId,
+            courseId,
+            completedTasks,
+            totalTasks,
+            averageGrade,
+            progressPercentage,
+            status,
+        };
+    }
+
+    async _recalculateSubjectsForUserCourse(userId, courseId) {
+        if (!this.subjectRepo || !this.taskRepo || !this.submissionRepo) return;
+        const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
+        if (!subjects?.length) return;
+
+        for (const subject of subjects) {
+            try {
+                await this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id);
+            } catch (err) {
+                console.error(`[ProgressService] Error recalculating subject ${subject.id} for user ${userId}:`, err.message);
+            }
+        }
+    }
+
+    async _recalculateAndUpsertUserSubjectProgress(userId, courseId, subjectId) {
+        const totalTasks = await this.taskRepo.countBySubject(subjectId);
+        if (totalTasks === 0) return null;
+
+        const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndSubject(userId, subjectId);
+        const completedTasks = submittedTaskIds.length;
+
+        const graded = await this.submissionRepo.getGradedByUserAndSubject(userId, subjectId);
+        const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
+        const averageGradeRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
+        const averageGrade = Math.round(averageGradeRaw * 100) / 100;
+
+        const progressPercentageRaw = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+        const progressPercentage = Math.round(progressPercentageRaw * 100) / 100;
+
+        const status = averageGrade >= 6 ? 'Ganado' : 'Perdido';
+
+        return this.progressRepo.upsert({
             userId,
             courseId,
             completedTasks,
@@ -335,17 +408,6 @@ export class ProgressDomainService {
             subjectId,
             status,
         });
-
-        return persisted || {
-            userId,
-            courseId,
-            completedTasks,
-            totalTasks,
-            averageGrade,
-            progressPercentage,
-            subjectId,
-            status,
-        };
     }
 
     async _resolveCourseFromSubjectId(subjectId) {

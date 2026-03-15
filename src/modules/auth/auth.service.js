@@ -1,5 +1,5 @@
 import { Result } from '../../shared/Result.js';
-import { UnauthorizedError, ConflictError, ValidationError } from '../../shared/errors/index.js';
+import { UnauthorizedError, ConflictError, ValidationError, NotFoundError } from '../../shared/errors/index.js';
 
 export class AuthService {
     constructor({ userRepository, jwtAdapter }) {
@@ -163,39 +163,9 @@ export class AuthService {
             }
         }
 
-        // 3. User doesn't exist - create new account
-        console.log(`[AuthService] Creating new user for Google email: ${email}`);
-
-        const newUsername = email.split('@')[0];
-        const nameParts = (displayName || newUsername).split(' ');
-        const nombres = nameParts[0] || newUsername;
-        const apellidos = nameParts.slice(1).join(' ') || '';
-
-        // Generate a random password for Google users (they won't use it)
-        const randomPassword = `google_${Date.now()}_${Math.random().toString(36).substring(2)}`;
-        const hashedPassword = await this.jwt.hashPassword(randomPassword);
-
-        try {
-            user = await this.userRepo.create({
-                username: newUsername,
-                email,
-                password: hashedPassword,
-                avatar: avatarUrl || null,
-                persona: {
-                    nombres,
-                    apellidos,
-                    identificacion: '',
-                    telefono: '',
-                },
-            });
-
-            console.log(`[AuthService] Created new Google user: ${user.id}, username: ${user.username}`);
-            const tokens = this._generateTokens(user);
-            return Result.ok({ user: this._safeUser(user), ...tokens, isNewUser: true });
-        } catch (createError) {
-            console.error(`[AuthService] Error creating Google user: ${createError.message}`);
-            return Result.fail(new ValidationError(`Error creando usuario: ${createError.message}`));
-        }
+        // 3. User doesn't exist — redirect to registration
+        console.log(`[AuthService] No user found for Google email: ${email}, requires registration`);
+        return Result.fail(new NotFoundError('Usuario', email));
     }
 }
 export default AuthService;

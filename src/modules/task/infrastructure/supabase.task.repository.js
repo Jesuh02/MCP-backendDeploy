@@ -180,6 +180,14 @@ export class SupabaseTaskRepository {
             .from('tasks').select('id').in('topic_id', topicIds);
         return (error || !data) ? 0 : data.length;
     }
+
+    async countBySubject(subjectId) {
+        const topicIds = await this._getTopicIdsBySubjects([subjectId]);
+        if (topicIds.length === 0) return 0;
+        const { data, error } = await this.client
+            .from('tasks').select('id').in('topic_id', topicIds);
+        return (error || !data) ? 0 : data.length;
+    }
 }
 export default SupabaseTaskRepository;
 

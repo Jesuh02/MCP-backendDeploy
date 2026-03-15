@@ -155,5 +155,39 @@ export class SupabaseSubmissionRepository {
 
         return [...new Set(data.map(item => item.student_id).filter(id => Number.isInteger(id) && id > 0))];
     }
+
+    async _getTaskIdsBySubject(subjectId) {
+        const topicIds = await this._getTopicIdsBySubjects([subjectId]);
+        if (topicIds.length === 0) return [];
+        const { data, error } = await this.client
+            .from('tasks').select('id').in('topic_id', topicIds);
+        if (error || !data?.length) return [];
+        return data.map(t => t.id);
+    }
+
+    async getTaskIdsByUserAndSubject(userId, subjectId) {
+        const taskIds = await this._getTaskIdsBySubject(subjectId);
+        if (taskIds.length === 0) return [];
+        const { data, error } = await this.client
+            .from('task_submissions')
+            .select('task_id')
+            .eq('student_id', userId)
+            .in('task_id', taskIds);
+        if (error || !data) return [];
+        return [...new Set(data.map(item => item.task_id).filter(Boolean))];
+    }
+
+    async getGradedByUserAndSubject(userId, subjectId) {
+        const taskIds = await this._getTaskIdsBySubject(subjectId);
+        if (taskIds.length === 0) return [];
+        const { data, error } = await this.client
+            .from('task_submissions')
+            .select('*, tasks!inner(id, title, topic_id, topics!inner(id, name, materia_id))')
+            .eq('student_id', userId)
+            .in('task_id', taskIds)
+            .not('grade', 'is', null);
+        if (error) return [];
+        return data || [];
+    }
 }
 export default SupabaseSubmissionRepository;
