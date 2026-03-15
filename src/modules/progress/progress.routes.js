@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-export function progressRoutes({ progressController }) {
+export function progressRoutes({ progressController, requireRoles }) {
     const router = Router();
 
     router.get('/my', progressController.getMyProgress);
@@ -21,6 +21,9 @@ export function progressRoutes({ progressController }) {
     router.post('/course/:courseId/certificate', progressController.issueCertificate);
     router.put('/course/:courseId/certificate-url', progressController.updateCertificateUrl);
     router.post('/course/:courseId/recalculate', progressController.recalculate);
+
+    router.get('/admin/certificates', requireRoles(3), progressController.getAllCertificates);
+    router.post('/admin/certificates/bulk-issue', requireRoles(3), progressController.bulkIssueCertificatesAll);
 
     return router;
 }

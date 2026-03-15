@@ -462,10 +462,55 @@ export class SupabaseProgressRepository {
             .from('progreso_estudiante')
             .select('usuario_estudiante, curso_id, estado, promedio, calificacion_ponderada, certificado_url, certificado_emitido_en, tareas_completadas, tareas_totales, porcentaje_progreso')
             .in('curso_id', courseIds)
+            .eq('materia_id', 0)
             .eq('estado', 'Ganado');
         if (error || !rows || rows.length === 0) return [];
 
         const userIds = [...new Set(rows.map(r => r.usuario_estudiante).filter(Boolean))];
+        let usersById = new Map();
+        if (userIds.length > 0) {
+            const { data: users } = await this.client.from('usuarios').select('id, username, avatar').in('id', userIds);
+            usersById = new Map((users || []).map(u => [u.id, u]));
+        }
+
+        return rows.map(row => {
+            const course = coursesById.get(row.curso_id) || {};
+            const user = usersById.get(row.usuario_estudiante) || {};
+            return {
+                userId: row.usuario_estudiante,
+                username: user.username || null,
+                avatar: user.avatar || null,
+                courseId: row.curso_id,
+                courseName: course.title || null,
+                courseThumbnail: course.thumbnail_uri || null,
+                certificateUrl: row.certificado_url || null,
+                certificateIssuedAt: row.certificado_emitido_en || null,
+                status: row.estado,
+                averageGrade: row.calificacion_ponderada ?? row.promedio ?? null,
+                completedTasks: row.tareas_completadas || 0,
+                totalTasks: row.tareas_totales || 0,
+                progressPercentage: row.porcentaje_progreso || 0,
+            };
+        });
+    }
+
+    async findAllWonProgress() {
+        const { data: rows, error } = await this.client
+            .from('progreso_estudiante')
+            .select('usuario_estudiante, curso_id, estado, promedio, calificacion_ponderada, certificado_url, certificado_emitido_en, tareas_completadas, tareas_totales, porcentaje_progreso')
+            .eq('materia_id', 0)
+            .eq('estado', 'Ganado');
+        if (error || !rows || rows.length === 0) return [];
+
+        const courseIds = [...new Set(rows.map(r => r.curso_id).filter(Boolean))];
+        const userIds = [...new Set(rows.map(r => r.usuario_estudiante).filter(Boolean))];
+
+        let coursesById = new Map();
+        if (courseIds.length > 0) {
+            const { data: courses } = await this.client.from('courses').select('id, title, thumbnail_uri').in('id', courseIds);
+            coursesById = new Map((courses || []).map(c => [c.id, c]));
+        }
+
         let usersById = new Map();
         if (userIds.length > 0) {
             const { data: users } = await this.client.from('usuarios').select('id, username, avatar').in('id', userIds);
@@ -502,6 +547,7 @@ export class SupabaseProgressRepository {
                 .update({ certificado_emitido_en: now })
                 .eq('usuario_estudiante', userId)
                 .eq('curso_id', courseId)
+                .eq('materia_id', 0)
                 .is('certificado_emitido_en', null)
                 .select()
                 .maybeSingle();

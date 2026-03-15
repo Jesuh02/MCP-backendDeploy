@@ -71,7 +71,7 @@ export function createRouter(deps) {
     router.use('/content-items', contentItemRoutes(deps));
     router.use('/submissions', submissionRoutes(deps));
     router.use('/subscriptions', subscriptionRoutes(deps));
-    router.use('/progress', progressRoutes(deps));
+    router.use('/progress', progressRoutes({...deps, requireRoles }));
     router.use('/collaborators', collaboratorRoutes(deps));
     router.use('/likes', likeRoutes(deps));
     router.use('/comments', commentRoutes(deps));

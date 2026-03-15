@@ -243,6 +243,20 @@ export class ProgressDomainService {
         return Result.ok({ issued: issued.length });
     }
 
+    async getAllWonCertificates() {
+        const rows = await this.progressRepo.findAllWonProgress();
+        return Result.ok(rows);
+    }
+
+    async bulkIssueCertificatesGlobal() {
+        const rows = await this.progressRepo.findAllWonProgress();
+        const pending = rows.filter(r => !r.certificateIssuedAt);
+        if (pending.length === 0) return Result.ok({ issued: 0 });
+        const pairs = pending.map(r => ({ userId: r.userId, courseId: r.courseId }));
+        const issued = await this.progressRepo.bulkIssueCertificates(pairs);
+        return Result.ok({ issued: issued.length });
+    }
+
     async updateCertificateUrl(userId, courseId, url) {
         const updated = await this.progressRepo.updateCertificate(userId, courseId, {
             certificateUrl: url,
