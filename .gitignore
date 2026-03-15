@@ -84,3 +84,4 @@ scripts/migration_reinforcement_results.sql
 scripts/migration_reinforcement_results_fix_course_id.sql
 docs/materias
 scripts/migration_graded_by.sql
+docs/comandosusados.txt
