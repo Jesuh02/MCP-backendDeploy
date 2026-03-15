@@ -80,27 +80,23 @@ export class SupabaseTaskRepository {
         return this._toDomainList(data);
     }
 
-    /**
-     * Busca todas las tareas de un curso.
-     * Como `tasks` no tiene `course_id`, se resuelve a trav�s de `topics`:
-     *   1. Obtener los topic IDs del curso.
-     *   2. Filtrar tareas por esos topic IDs.
-     */
+    async _getTopicIdsBySubjects(subjectIds) {
+        const orFilter = subjectIds.map(id => `materia_id.eq.${id},subject_id.eq.${id}`).join(',');
+        const { data, error } = await this.client
+            .from('topics').select('id').or(orFilter);
+        if (error || !data?.length) return [];
+        return [...new Set(data.map(t => t.id))];
+    }
+
     async findByCourse(courseId) {
         const { data: subjects, error: subErr } = await this.client
             .from('subjects').select('id').eq('course_id', courseId);
         if (subErr) throw new Error(subErr.message);
         if (!subjects || subjects.length === 0) return [];
 
-        const subjectIds = subjects.map(s => s.id);
-        const { data: topics, error: topicErr } = await this.client
-            .from('topics').select('id').in('materia_id', subjectIds);
-        if (topicErr) throw new Error(topicErr.message);
-        if (!topics || topics.length === 0) return [];
+        const topicIds = await this._getTopicIdsBySubjects(subjects.map(s => s.id));
+        if (topicIds.length === 0) return [];
 
-        const topicIds = topics.map(t => t.id);
-
-        // Paso 2: obtener tareas de esos temas
         const { data, error } = await this.client
             .from('tasks')
             .select('*')
@@ -172,25 +168,17 @@ export class SupabaseTaskRepository {
         return true;
     }
 
-    /**
-     * Cuenta las tareas de un curso (via join con topics).
-     */
     async countByCourse(courseId) {
         const { data: subjects, error: subErr } = await this.client
             .from('subjects').select('id').eq('course_id', courseId);
-        if (subErr || !subjects || subjects.length === 0) return 0;
+        if (subErr || !subjects?.length) return 0;
 
-        const subjectIds = subjects.map(s => s.id);
-        const { data: topics, error: topicErr } = await this.client
-            .from('topics').select('id').in('materia_id', subjectIds);
-        if (topicErr || !topics || topics.length === 0) return 0;
+        const topicIds = await this._getTopicIdsBySubjects(subjects.map(s => s.id));
+        if (topicIds.length === 0) return 0;
 
-        const topicIds = topics.map(t => t.id);
-        const { count, error } = await this.client
-            .from('tasks')
-            .select('id', { count: 'exact', head: true })
-            .in('topic_id', topicIds);
-        return error ? 0 : count;
+        const { data, error } = await this.client
+            .from('tasks').select('id').in('topic_id', topicIds);
+        return (error || !data) ? 0 : data.length;
     }
 }
 export default SupabaseTaskRepository;

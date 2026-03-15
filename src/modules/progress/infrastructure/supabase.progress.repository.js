@@ -77,9 +77,7 @@ export class SupabaseProgressRepository {
             ultima_calculada_en: new Date().toISOString(),
         };
         if (progressData.subjectId) payload.materia_id = progressData.subjectId;
-        if (progressData.status) payload.estado = progressData.status;
 
-        // Ensure calificacion_ponderada is set if averageGrade is provided, as it drives 'estado'
         if (progressData.averageGrade !== undefined && progressData.averageGrade !== null) {
             payload.calificacion_ponderada = progressData.averageGrade;
         }
