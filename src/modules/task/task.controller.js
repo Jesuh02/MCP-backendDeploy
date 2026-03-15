@@ -35,6 +35,10 @@ export class TaskController extends BaseController {
         this.store(req, res, next, () => this.taskService.getByCourse(parseInt(req.params.courseId)));
     };
 
+    getBySubject = async(req, res, next) => {
+        this.store(req, res, next, () => this.taskService.getBySubject(parseInt(req.params.subjectId)));
+    };
+
     create = async(req, res, next) => {
         const { error, value } = createTaskSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
