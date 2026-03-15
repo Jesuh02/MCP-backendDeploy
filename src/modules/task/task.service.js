@@ -66,6 +66,11 @@ export class TaskDomainService {
         return Result.ok(tasks);
     }
 
+    async getBySubject(subjectId) {
+        const tasks = await this.taskRepo.findBySubject(subjectId);
+        return Result.ok(tasks);
+    }
+
     /** Crea una nueva tarea, validando que el tema exista. */
     async create(data) {
         let courseId = null;

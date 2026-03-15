@@ -64,6 +64,22 @@ export class SupabaseTaskRepository {
         return this._toDomainList(data);
     }
 
+    async findBySubject(subjectId) {
+        const { data: topics, error: topicErr } = await this.client
+            .from('topics').select('id').eq('materia_id', subjectId);
+        if (topicErr) throw new Error(topicErr.message);
+        if (!topics || topics.length === 0) return [];
+
+        const topicIds = topics.map(t => t.id);
+        const { data, error } = await this.client
+            .from('tasks')
+            .select('*')
+            .in('topic_id', topicIds)
+            .order('created_at', { ascending: true });
+        if (error) throw new Error(error.message);
+        return this._toDomainList(data);
+    }
+
     /**
      * Busca todas las tareas de un curso.
      * Como `tasks` no tiene `course_id`, se resuelve a trav�s de `topics`:
