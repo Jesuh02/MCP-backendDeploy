@@ -548,7 +548,7 @@ export class SupabaseProgressRepository {
                 .eq('usuario_estudiante', userId)
                 .eq('curso_id', courseId)
                 .eq('materia_id', 0)
-                .is('certificado_emitido_en', null)
+                .or('certificado_emitido_en.is.null,certificado_emitido_en.eq.')
                 .select()
                 .maybeSingle();
             if (!error && data) results.push(this._mapToDomain(data));

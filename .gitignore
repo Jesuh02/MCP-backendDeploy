@@ -86,3 +86,6 @@ docs/materias
 scripts/migration_graded_by.sql
 docs/comandosusados.txt
 scripts/migration_progress_subject_level.sql
+docs/respuestaclaude.txt
+scripts/migration_subjects_thumbnail.sql
+scripts/migration_subjects_thumbnail.sql
