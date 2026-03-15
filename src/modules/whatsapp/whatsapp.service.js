@@ -539,7 +539,7 @@ export class WhatsAppDomainService {
                     // the intent somehow is set to GRADE_TASK we fall through to the
                     // general question handler as a safety measure.
                     case 'STUDENT_PROGRESS':
-                        response = await this._handleStudentProgress(text, user);
+                        response = await this._handleStudentProgress(text, user, userRoles);
                         break;
                     case 'MCP_QUERY':
                         response = await this._handleMCPQuery(text, user, userRoles);
@@ -1168,10 +1168,9 @@ export class WhatsAppDomainService {
 
             // Buscar la cadena: submission → task → topic → course → creator
             // Usamos courseRepo para verificar autoría
-            const courses = await this.courseRepo.findByCreatorId(userId);
+            const courses = await this.courseRepo.findByCreatorUserId(userId);
             if (!courses || courses.length === 0) return false;
 
-            // Obtenemos los IDs de cursos del docente
             const courseIds = courses.map(c => c.id);
 
             // Verificar si la tarea pertenece a alguno de esos cursos
@@ -1185,14 +1184,16 @@ export class WhatsAppDomainService {
     /**
      * Handler: Progreso de estudiantes (docente).
      */
-    async _handleStudentProgress(text, user) {
+    async _handleStudentProgress(text, user, userRoles = []) {
         try {
+            const excelResp = await this._maybeHandleExcel(text, user, userRoles);
+            if (excelResp !== null) return excelResp;
+
             if (!this.progressRepo || !this.courseRepo) {
                 return 'El servicio de progreso no está disponible.';
             }
 
-            // Obtener cursos del docente
-            const courses = await this.courseRepo.findByCreatorId(user.id);
+            const courses = await this.courseRepo.findByCreatorUserId(user.id);
             if (!courses || courses.length === 0) {
                 return '📚 No tienes cursos creados. Crea un curso primero para ver el progreso de tus estudiantes.';
             }
