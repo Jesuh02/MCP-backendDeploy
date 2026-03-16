@@ -22,7 +22,7 @@ export class ProgressDomainService {
         }
         const gradedTasks = await this._buildGradedTasksWithSubject(userId, courseId);
         const subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
-        return Result.ok({ ...progress, gradedTasks, subjectProgress });
+        return Result.ok({...progress, gradedTasks, subjectProgress });
     }
 
     async getSubjectProgress(userId, courseId) {
@@ -59,7 +59,8 @@ export class ProgressDomainService {
         return Result.ok(board);
     }
 
-    async upsert(data) {        if (data?.userId && data?.courseId && this.courseRepo) {
+    async upsert(data) {
+        if (data ? .userId && data ? .courseId && this.courseRepo) {
             const course = await this.courseRepo.findById(data.courseId);
             if (!course) {
                 const resolved = await this._resolveCourseFromSubjectId(data.courseId);
@@ -67,14 +68,14 @@ export class ProgressDomainService {
                 else return Result.fail(new NotFoundError('Curso', data.courseId));
             }
         }
-        if (data?.userId && data?.courseId) {
+        if (data ? .userId && data ? .courseId) {
             const blocked = await this._isCreatorOrCollaborator(data.userId, data.courseId);
             if (blocked) return Result.fail(new ForbiddenError('Creadores y colaboradores no pueden estar en el progreso de estudiantes'));
         }
 
         let progress = null;
 
-        if (this.taskRepo && this.submissionRepo && data?.userId && data?.courseId) {
+        if (this.taskRepo && this.submissionRepo && data ? .userId && data ? .courseId) {
             progress = await this._recalculateAndUpsertUserCourseProgress(data.userId, data.courseId, null, data.subjectId);
         } else {
             progress = await this.progressRepo.upsert(data);
@@ -304,7 +305,7 @@ export class ProgressDomainService {
 
         const existingProgress = await this.progressRepo.findByCourse(courseId);
         for (const item of existingProgress || []) {
-            const userId = Number(item?.userId);
+            const userId = Number(item ? .userId);
             if (Number.isInteger(userId) && userId > 0) ids.add(userId);
         }
 
@@ -328,22 +329,22 @@ export class ProgressDomainService {
             subjectsById = new Map(subjects.map(s => [s.id, s]));
         }
         return graded.map(sub => {
-            const subjectId = sub.tasks?.topics?.materia_id || sub.tasks?.topics?.subject_id || null;
+            const subjectId = sub.tasks ? .topics ? .materia_id || sub.tasks ? .topics ? .subject_id || null;
             const subject = subjectId ? subjectsById.get(subjectId) : null;
             return {
                 taskId: sub.task_id,
-                taskTitle: sub.tasks?.title || null,
-                topicId: sub.tasks?.topic_id || null,
-                topicName: sub.tasks?.topics?.name || null,
+                taskTitle: sub.tasks ? .title || null,
+                topicId: sub.tasks ? .topic_id || null,
+                topicName: sub.tasks ? .topics ? .name || null,
                 subjectId,
-                subjectName: subject?.name || null,
+                subjectName: subject ? .name || null,
                 grade: sub.grade,
             };
         });
     }
 
     async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null, subjectIdFallback = null) {
-        const totalTasks = totalTasksFromCaller ?? await this.taskRepo.countByCourse(courseId);
+        const totalTasks = totalTasksFromCaller ? ? await this.taskRepo.countByCourse(courseId);
         const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId);
         const completedTasks = submittedTaskIds.length;
 
@@ -384,7 +385,7 @@ export class ProgressDomainService {
     async _recalculateSubjectsForUserCourse(userId, courseId) {
         if (!this.subjectRepo || !this.taskRepo || !this.submissionRepo) return;
         const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
-        if (!subjects?.length) return;
+        if (!subjects ? .length) return;
 
         for (const subject of subjects) {
             try {
@@ -427,7 +428,7 @@ export class ProgressDomainService {
     async _resolveCourseFromSubjectId(subjectId) {
         if (!this.subjectRepo) return null;
         const subject = await this.subjectRepo.findById(subjectId);
-        return subject?.course_id || null;
+        return subject ? .course_id || null;
     }
 
     async _isCreatorOrCollaborator(userId, courseId) {
@@ -437,6 +438,93 @@ export class ProgressDomainService {
         if (Number(course.creator_user_id) === Number(userId)) return true;
         if (!this.collaboratorRepo) return false;
         return this.collaboratorRepo.isCollaborator(Number(userId), courseId);
+    }
+
+    // ─── Enrollment request flow (Matrícula) ────────────────────────────────
+
+    /**
+     * Student requests enrollment in a course. Creates a progress record with
+     * enrollment_status = 'pendiente_aprobacion'. Does NOT allow duplicate requests.
+     */
+    async requestEnrollment(userId, courseId) {
+        if (!this.courseRepo) return Result.fail(new Error('CourseRepository not available'));
+
+        const course = await this.courseRepo.findById(courseId);
+        if (!course) return Result.fail(new NotFoundError('Curso', courseId));
+
+        // Check course deadline — expired courses reject new enrollments
+        if (course.deadline && new Date(course.deadline) < new Date()) {
+            return Result.fail(new ForbiddenError('El curso ha expirado y no acepta nuevas matriculaciones'));
+        }
+
+        // Prevent creators/collaborators from enrolling
+        const blocked = await this._isCreatorOrCollaborator(userId, courseId);
+        if (blocked) return Result.fail(new ForbiddenError('Creadores y colaboradores no pueden matricularse'));
+
+        // Check if already enrolled or pending
+        const existing = await this.progressRepo.findByUserAndCourse(userId, courseId);
+        if (existing) {
+            if (existing.enrollment_status === 'activo' || existing.enrollment_status === null) {
+                return Result.ok({...existing, message: 'Ya estás matriculado' });
+            }
+            if (existing.enrollment_status === 'pendiente_aprobacion') {
+                return Result.ok({...existing, message: 'Tu solicitud ya está pendiente de aprobación' });
+            }
+            // rechazado — allow re-request
+        }
+
+        const pending = await this.progressRepo.upsertWithStatus({
+            userId,
+            courseId,
+            completedTasks: 0,
+            totalTasks: 0,
+            progressPercentage: 0,
+            averageGrade: 0,
+            status: 'Perdido',
+            enrollmentStatus: 'pendiente_aprobacion',
+        });
+
+        return Result.ok({...pending, message: 'Solicitud de matrícula enviada' });
+    }
+
+    /**
+     * Admin approves an enrollment request.
+     */
+    async approveEnrollment(userId, courseId) {
+        const existing = await this.progressRepo.findByUserAndCourse(userId, courseId);
+        if (!existing) return Result.fail(new NotFoundError('Solicitud de matrícula', `${userId}/${courseId}`));
+
+        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'activo');
+        return Result.ok({...updated, message: 'Matrícula aprobada' });
+    }
+
+    /**
+     * Admin rejects an enrollment request.
+     */
+    async rejectEnrollment(userId, courseId) {
+        const existing = await this.progressRepo.findByUserAndCourse(userId, courseId);
+        if (!existing) return Result.fail(new NotFoundError('Solicitud de matrícula', `${userId}/${courseId}`));
+
+        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'rechazado');
+        return Result.ok({...updated, message: 'Matrícula rechazada' });
+    }
+
+    /**
+     * Admin: get all pending enrollment requests (optionally for a specific course).
+     */
+    async getPendingEnrollments(courseId = null) {
+        const rows = await this.progressRepo.findPendingEnrollments(courseId);
+        return Result.ok(rows || []);
+    }
+
+    /**
+     * Check if student has an approved enrollment in a course.
+     */
+    async isEnrolledAndApproved(userId, courseId) {
+        const row = await this.progressRepo.findByUserAndCourse(userId, courseId);
+        if (!row) return Result.ok({ enrolled: false, status: null });
+        const status = row.enrollment_status || 'activo'; // legacy rows default to activo
+        return Result.ok({ enrolled: status === 'activo', status });
     }
 }
 export default ProgressDomainService;

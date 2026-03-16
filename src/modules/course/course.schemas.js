@@ -12,6 +12,7 @@ const courseBaseUpdateSchema = {
     category: Joi.string().max(100).allow(null, '').optional(),
     level: Joi.string().valid('beginner', 'intermediate', 'advanced').allow(null).optional(),
     isPublished: Joi.boolean().optional(),
+    deadline: Joi.date().iso().allow(null).optional(),
 };
 
 export const createCourseSchema = Joi.object({
@@ -24,6 +25,7 @@ export const createCourseSchema = Joi.object({
     category: Joi.string().max(100).allow(null, '').optional(),
     level: Joi.string().valid('beginner', 'intermediate', 'advanced').allow(null).optional(),
     language: Joi.string().max(10).default('es'),
+    deadline: Joi.date().iso().allow(null).optional(),
 });
 
 export const updateCourseSchema = Joi.object(courseBaseUpdateSchema)
@@ -35,4 +37,3 @@ export const updateCourseSchema = Joi.object(courseBaseUpdateSchema)
         return obj;
     })
     .min(1);
-

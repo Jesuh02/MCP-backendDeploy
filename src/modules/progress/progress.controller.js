@@ -242,5 +242,54 @@ export class ProgressController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    // ─── Enrollment request / approval ────────────────────────────────────────
+
+    requestEnrollment = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            const result = await this.progressService.requestEnrollment(req.user.userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getEnrollmentStatus = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            const result = await this.progressService.isEnrolledAndApproved(req.user.userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getPendingEnrollments = async(req, res, next) => {
+        try {
+            const courseId = req.query.courseId ? parseInt(req.query.courseId) : null;
+            const result = await this.progressService.getPendingEnrollments(courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    approveEnrollment = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const courseId = parseInt(req.params.courseId);
+            const result = await this.progressService.approveEnrollment(userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    rejectEnrollment = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const courseId = parseInt(req.params.courseId);
+            const result = await this.progressService.rejectEnrollment(userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ProgressController;

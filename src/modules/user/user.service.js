@@ -7,6 +7,35 @@ export class UserDomainService {
         this.storage = fileStoragePort;
     }
 
+    _normalizeRoles(roles, fallbackRoles = []) {
+        const source = Array.isArray(roles) ? roles : fallbackRoles;
+        return Array.isArray(source) ? source : [];
+    }
+
+    async _loadAuthoritativeRoles(userId, fallbackRoles = []) {
+        if (!userId || !this.userRepo?.getUserRoles) {
+            return this._normalizeRoles(fallbackRoles);
+        }
+
+        try {
+            const roles = await this.userRepo.getUserRoles(userId);
+            return this._normalizeRoles(roles, fallbackRoles);
+        } catch (error) {
+            return this._normalizeRoles(fallbackRoles);
+        }
+    }
+
+    async _attachAuthoritativeRoles(user) {
+        if (!user || !user.id) return user;
+        const roles = await this._loadAuthoritativeRoles(user.id, user.roles || []);
+        return {...user, roles };
+    }
+
+    async _attachAuthoritativeRolesToMany(users) {
+        if (!Array.isArray(users) || users.length === 0) return users;
+        return Promise.all(users.map((user) => this._attachAuthoritativeRoles(user)));
+    }
+
     /**
      * Sign R2 avatar URLs so they are accessible (bucket is private).
      */
@@ -59,7 +88,8 @@ export class UserDomainService {
     async getById(id) {
         const user = await this.userRepo.findById(id);
         if (!user) return Result.fail(new NotFoundError('Usuario', id));
-        const { password, ...safe } = user;
+        const { password, ...unsafeSafe } = user;
+        const safe = await this._attachAuthoritativeRoles(unsafeSafe);
         await this._signAvatarUrl(safe);
         return Result.ok(safe);
     }
@@ -67,24 +97,32 @@ export class UserDomainService {
     async getByUsername(username) {
         const user = await this.userRepo.findByUsername(username);
         if (!user) return Result.fail(new NotFoundError('Usuario', username));
-        const { password, ...safe } = user;
+        const { password, ...unsafeSafe } = user;
+        const safe = await this._attachAuthoritativeRoles(unsafeSafe);
         await this._signAvatarUrl(safe);
         return Result.ok(safe);
     }
     async updateProfile(id, data) {
         const user = await this.userRepo.findById(id);
         if (!user) return Result.fail(new NotFoundError('Usuario', id));
-        const updated = await this.userRepo.update(id, data);
+        const updated = await this._attachAuthoritativeRoles(await this.userRepo.update(id, data));
+        await this._signAvatarUrl(updated);
         return Result.ok(updated);
     }
 
     async search(query, limit = 20) {
         const users = await this.userRepo.searchByUsername(query, limit);
-        return Result.ok(users);
+        const safeUsers = (users || []).map((user) => {
+            const { password, ...rest } = user;
+            return rest;
+        });
+        const safe = await this._attachAuthoritativeRolesToMany(safeUsers);
+        await Promise.all((safe || []).map((user) => this._signAvatarUrl(user)));
+        return Result.ok(safe);
     }
 
     async getUserRoles(userId) {
-        const roles = await this.userRepo.getUserRoles(userId);
+        const roles = await this._loadAuthoritativeRoles(userId);
         return Result.ok(roles);
     }
 
@@ -101,13 +139,14 @@ export class UserDomainService {
     async getByEmail(email) {
         const user = await this.userRepo.findByEmail(email);
         if (!user) return Result.fail(new NotFoundError('Usuario (email)', email));
-        const { password, ...safe } = user;
+        const { password, ...unsafeSafe } = user;
+        const safe = await this._attachAuthoritativeRoles(unsafeSafe);
         await this._signAvatarUrl(safe);
         return Result.ok(safe);
     }
 
     async getByIds(ids) {
-        const users = await this.userRepo.findByIds(ids);
+        const users = await this._attachAuthoritativeRolesToMany(await this.userRepo.findByIds(ids));
         if (Array.isArray(users)) {
             await Promise.all(users.map(u => this._signAvatarUrl(u)));
         }
@@ -202,6 +241,65 @@ export class UserDomainService {
             return Result.fail(error);
         }
     }
+
+    // ─── Admin: activate / deactivate users ───────────────────────────────────
+
+    async deactivateUser(userId) {
+        const user = await this.userRepo.findById(userId);
+        if (!user) return Result.fail(new NotFoundError('Usuario', userId));
+        await this.userRepo.update(userId, { is_active: false });
+        return Result.ok({ message: 'Usuario desactivado', userId });
+    }
+
+    async activateUser(userId) {
+        const user = await this.userRepo.findById(userId);
+        if (!user) return Result.fail(new NotFoundError('Usuario', userId));
+        await this.userRepo.update(userId, { is_active: true });
+        return Result.ok({ message: 'Usuario activado', userId });
+    }
+
+    /**
+     * List all users (admin only). Returns safe objects (no passwords).
+     */
+    async listAll(limit = 100, offset = 0) {
+        const users = await this.userRepo.findAll({ limit, offset });
+        const safeUsers = (users || []).map(u => {
+            const { password, ...rest } = u;
+            return rest;
+        });
+        const safe = await this._attachAuthoritativeRolesToMany(safeUsers);
+        for (const u of safe) await this._signAvatarUrl(u);
+        return Result.ok(safe);
+    }
+
+    /**
+     * Process expired courses: deactivate collaborators (role 2) 
+     * whose ONLY active courses have expired. courseService is used to find expired courses.
+     */
+    async processExpiredCourseUsers(expiredCourseIds = []) {
+        if (!expiredCourseIds || expiredCourseIds.length === 0) return Result.ok({ deactivated: 0 });
+
+        // Get all collaborator user IDs for expired courses
+        let collaboratorIds = [];
+        if (this._collaboratorRepo) {
+            for (const courseId of expiredCourseIds) {
+                const ids = await this._collaboratorRepo.findUserIdsByCourse(courseId).catch(() => []);
+                collaboratorIds = collaboratorIds.concat(ids || []);
+            }
+        }
+        collaboratorIds = [...new Set(collaboratorIds.map(Number).filter(n => n > 0))];
+
+        let deactivated = 0;
+        for (const userId of collaboratorIds) {
+            await this.userRepo.update(userId, { is_active: false }).catch(() => {});
+            deactivated++;
+        }
+
+        return Result.ok({ deactivated });
+    }
+
+    setCollaboratorRepo(repo) {
+        this._collaboratorRepo = repo;
+    }
 }
 export default UserDomainService;
-
