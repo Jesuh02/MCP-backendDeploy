@@ -91,7 +91,7 @@ export class VideoDomainService {
         }
 
         if (raw.startsWith('http://') || raw.startsWith('https://')) {
-            const extracted = this.storage ? .extractObjectKey ? .(raw);
+            const extracted = this.storage?.extractObjectKey?.(raw);
             if (extracted) return extracted;
 
             try {
@@ -308,8 +308,8 @@ export class VideoDomainService {
         if (!subscriberIds || subscriberIds.length === 0) return;
 
         const creator = this.userRepo ? await this.userRepo.findById(creatorId) : null;
-        const creatorUsername = creator ? .username || 'Un creador';
-        const creatorAvatar = creator ? .avatar || null;
+        const creatorUsername = creator?.username || 'Un creador';
+        const creatorAvatar = creator?.avatar || null;
 
         const notificationData = {
             title: `📹 Nuevo video de ${creatorUsername}`,
