@@ -11,7 +11,7 @@ export class ProgressDomainService {
         this.subjectRepo = subjectRepository || null;
         this.collaboratorRepo = collaboratorRepository || null;
     }
-
+            if (data?.userId && data?.courseId) {
             if (data?.userId && data?.courseId) {
         let progress;
         if (this.taskRepo && this.submissionRepo) {
@@ -68,7 +68,7 @@ export class ProgressDomainService {
                 else return Result.fail(new NotFoundError('Curso', data.courseId));
             }
         }
-        if (data ? .userId && data ? .courseId) {
+        if (data?.userId && data?.courseId) {
             const blocked = await this._isCreatorOrCollaborator(data.userId, data.courseId);
             if (blocked) return Result.fail(new ForbiddenError('Creadores y colaboradores no pueden estar en el progreso de estudiantes'));
         }
