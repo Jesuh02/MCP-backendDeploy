@@ -15,7 +15,7 @@ export class ProgressDomainService {
     async getByUserAndCourse(userId, courseId) {
         let progress;
         if (this.taskRepo && this.submissionRepo) {
-                    existing.total_grade += Number(row.grade) || 0;
+            progress = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
         } else {
             progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
             if (!progress) progress = { userId, courseId, completedTasks: 0, totalTasks: 0, progressPercentage: 0, averageGrade: 0, status: 'Perdido' };
