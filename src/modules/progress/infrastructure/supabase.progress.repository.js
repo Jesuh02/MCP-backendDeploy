@@ -581,27 +581,64 @@ export class SupabaseProgressRepository {
 
     async findPendingEnrollments(courseId = null) {
         let query = this.client
-            .from('progreso_estudiante')
-            .select('*')
-            .eq('materia_id', 0)
-            .eq('enrollment_status', 'pendiente_aprobacion');
-        if (courseId) query = query.eq('curso_id', courseId);
-        const { data, error } = await query.order('creado_en', { ascending: false });
+            .from('pre_enrollments')
+            .select('*, usuarios!pre_enrollments_user_id_fkey(id, usuario, persona_id, personas(nombre, apellido, foto_perfil_url)), courses!pre_enrollments_course_id_fkey(id, title)')
+            .eq('status', 'pending');
+        if (courseId) query = query.eq('course_id', courseId);
+        const { data, error } = await query.order('requested_at', { ascending: false });
         if (error || !data) return [];
-        return data.map(r => ({ ...this._mapToDomain(r), enrollment_status: r.enrollment_status }));
+        return data.map(r => ({
+            userId: r.user_id,
+            courseId: r.course_id,
+            enrollmentStatus: r.status,
+            requestedAt: r.requested_at,
+            username: r.usuarios?.usuario,
+            avatar: r.usuarios?.personas?.foto_perfil_url,
+            fullName: r.usuarios?.personas ? `${r.usuarios.personas.nombre || ''} ${r.usuarios.personas.apellido || ''}`.trim() : null,
+            courseName: r.courses?.title,
+        }));
     }
 
-    async updateEnrollmentStatus(userId, courseId, status) {
+    async updateEnrollmentStatus(userId, courseId, status, reviewedBy = null) {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
-            .update({ enrollment_status: status })
-            .eq('usuario_estudiante', userId)
-            .eq('curso_id', courseId)
-            .eq('materia_id', 0)
+            .from('pre_enrollments')
+            .update({
+                status,
+                reviewed_at: new Date().toISOString(),
+                ...(reviewedBy ? { reviewed_by: reviewedBy } : {}),
+            })
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
             .select()
             .single();
         if (error) throw new Error(error.message);
-        return { ...this._mapToDomain(data), enrollment_status: data.enrollment_status };
+        return { userId: data.user_id, courseId: data.course_id, enrollmentStatus: data.status };
+    }
+
+    async findPreEnrollment(userId, courseId) {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .maybeSingle();
+        if (error || !data) return null;
+        return { userId: data.user_id, courseId: data.course_id, enrollmentStatus: data.status, requestedAt: data.requested_at };
+    }
+
+    async upsertPreEnrollment(userId, courseId, status = 'pending') {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .upsert({
+                user_id: userId,
+                course_id: courseId,
+                status,
+                requested_at: new Date().toISOString(),
+            }, { onConflict: 'user_id,course_id' })
+            .select()
+            .single();
+        if (error) throw new Error(error.message);
+        return { userId: data.user_id, courseId: data.course_id, enrollmentStatus: data.status, requestedAt: data.requested_at };
     }
 
     _mapToDomain(dbRecord) {
