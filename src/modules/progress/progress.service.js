@@ -440,11 +440,11 @@ export class ProgressDomainService {
         return this.collaboratorRepo.isCollaborator(Number(userId), courseId);
     }
 
-    // ─── Enrollment request flow (Matrícula) ────────────────────────────────
+    // ─── Enrollment request flow (Pre-enrollment / Matrícula) ─────────────
 
     /**
-     * Student requests enrollment in a course. Creates a progress record with
-     * enrollment_status = 'pendiente_aprobacion'. Does NOT allow duplicate requests.
+     * Student requests enrollment in a course. Creates a pre_enrollment record
+     * with status = 'pending'. Does NOT allow duplicate requests.
      */
     async requestEnrollment(userId, courseId) {
         if (!this.courseRepo) return Result.fail(new Error('CourseRepository not available'));
@@ -461,52 +461,42 @@ export class ProgressDomainService {
         const blocked = await this._isCreatorOrCollaborator(userId, courseId);
         if (blocked) return Result.fail(new ForbiddenError('Creadores y colaboradores no pueden matricularse'));
 
-        // Check if already enrolled or pending
-        const existing = await this.progressRepo.findByUserAndCourse(userId, courseId);
+        // Check existing pre-enrollment
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (existing) {
-            if (existing.enrollment_status === 'activo' || existing.enrollment_status === null) {
-                return Result.ok({...existing, message: 'Ya estás matriculado' });
+            if (existing.enrollmentStatus === 'approved') {
+                return Result.ok({ ...existing, message: 'Ya estás matriculado' });
             }
-            if (existing.enrollment_status === 'pendiente_aprobacion') {
-                return Result.ok({...existing, message: 'Tu solicitud ya está pendiente de aprobación' });
+            if (existing.enrollmentStatus === 'pending') {
+                return Result.ok({ ...existing, message: 'Tu solicitud ya está pendiente de aprobación' });
             }
-            // rechazado — allow re-request
+            // rejected — allow re-request
         }
 
-        const pending = await this.progressRepo.upsertWithStatus({
-            userId,
-            courseId,
-            completedTasks: 0,
-            totalTasks: 0,
-            progressPercentage: 0,
-            averageGrade: 0,
-            status: 'Perdido',
-            enrollmentStatus: 'pendiente_aprobacion',
-        });
-
-        return Result.ok({...pending, message: 'Solicitud de matrícula enviada' });
+        const pending = await this.progressRepo.upsertPreEnrollment(userId, courseId, 'pending');
+        return Result.ok({ ...pending, message: 'Solicitud de matrícula enviada' });
     }
 
     /**
      * Admin approves an enrollment request.
      */
     async approveEnrollment(userId, courseId) {
-        const existing = await this.progressRepo.findByUserAndCourse(userId, courseId);
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!existing) return Result.fail(new NotFoundError('Solicitud de matrícula', `${userId}/${courseId}`));
 
-        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'activo');
-        return Result.ok({...updated, message: 'Matrícula aprobada' });
+        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
+        return Result.ok({ ...updated, message: 'Matrícula aprobada' });
     }
 
     /**
      * Admin rejects an enrollment request.
      */
     async rejectEnrollment(userId, courseId) {
-        const existing = await this.progressRepo.findByUserAndCourse(userId, courseId);
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!existing) return Result.fail(new NotFoundError('Solicitud de matrícula', `${userId}/${courseId}`));
 
-        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'rechazado');
-        return Result.ok({...updated, message: 'Matrícula rechazada' });
+        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'rejected');
+        return Result.ok({ ...updated, message: 'Matrícula rechazada' });
     }
 
     /**
@@ -521,10 +511,13 @@ export class ProgressDomainService {
      * Check if student has an approved enrollment in a course.
      */
     async isEnrolledAndApproved(userId, courseId) {
-        const row = await this.progressRepo.findByUserAndCourse(userId, courseId);
-        if (!row) return Result.ok({ enrolled: false, status: null });
-        const status = row.enrollment_status || 'activo'; // legacy rows default to activo
-        return Result.ok({ enrolled: status === 'activo', status });
+        const row = await this.progressRepo.findPreEnrollment(userId, courseId);
+        if (!row) return Result.ok({ enrolled: false, status: null, enrollmentStatus: null });
+        return Result.ok({
+            enrolled: row.enrollmentStatus === 'approved',
+            status: row.enrollmentStatus,
+            enrollmentStatus: row.enrollmentStatus,
+        });
     }
 }
 export default ProgressDomainService;

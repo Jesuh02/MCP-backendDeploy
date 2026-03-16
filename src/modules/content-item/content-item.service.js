@@ -29,6 +29,11 @@ export class ContentItemDomainService {
     }
 
     async create(data) {
+        // Check for duplicate before inserting
+        const existing = await this.contentRepo.findDuplicate(data);
+        if (existing) {
+            return Result.ok(existing);
+        }
         const created = await this.contentRepo.create(data);
         return Result.ok(created);
     }

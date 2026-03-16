@@ -91,3 +91,5 @@ scripts/migration_subjects_thumbnail.sql
 scripts/migration_subjects_thumbnail.sql
 docs/chat.txt
 scripts/migration_deadline_enrollment.sql
+scripts/migration_pre_enrollments.sql
+scripts/migration_pre_enrollments.sql
