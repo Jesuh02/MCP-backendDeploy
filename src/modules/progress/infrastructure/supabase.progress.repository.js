@@ -579,6 +579,31 @@ export class SupabaseProgressRepository {
         return this._mapToDomain(data);
     }
 
+    async findPendingEnrollments(courseId = null) {
+        let query = this.client
+            .from('progreso_estudiante')
+            .select('*')
+            .eq('materia_id', 0)
+            .eq('enrollment_status', 'pendiente_aprobacion');
+        if (courseId) query = query.eq('curso_id', courseId);
+        const { data, error } = await query.order('creado_en', { ascending: false });
+        if (error || !data) return [];
+        return data.map(r => ({ ...this._mapToDomain(r), enrollment_status: r.enrollment_status }));
+    }
+
+    async updateEnrollmentStatus(userId, courseId, status) {
+        const { data, error } = await this.client
+            .from('progreso_estudiante')
+            .update({ enrollment_status: status })
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId)
+            .eq('materia_id', 0)
+            .select()
+            .single();
+        if (error) throw new Error(error.message);
+        return { ...this._mapToDomain(data), enrollment_status: data.enrollment_status };
+    }
+
     _mapToDomain(dbRecord) {
         if (!dbRecord) return null;
         return {
@@ -590,6 +615,7 @@ export class SupabaseProgressRepository {
             averageGrade: dbRecord.promedio,
             progressPercentage: dbRecord.porcentaje_progreso,
             status: dbRecord.estado,
+            enrollment_status: dbRecord.enrollment_status || 'activo',
             lastActivityAt: dbRecord.ultima_calculada_en,
             certificateIssuedAt: dbRecord.certificado_emitido_en,
             certificateUrl: dbRecord.certificado_url

@@ -85,6 +85,18 @@ export class SupabaseUserRepository {
         if (error) throw new Error(`Error actualizando usuario: ${error.message}`);
         return this._mapUser(updated);
     }
+    async findAll({ limit = 100, offset = 0 } = {}) {
+        const { data, error } = await this.client
+            .from('usuarios')
+            .select('*, personas!fk_usuarios_persona(*)')
+            .order('id', { ascending: true })
+            .range(offset, offset + limit - 1);
+        if (error) throw new Error(`Error listando usuarios: ${error.message}`);
+        if (!data) return [];
+        const mapped = data.map(u => this._mapUser(u));
+        return Promise.all(mapped.map(u => this._enrichWithRoles(u)));
+    }
+
     async exists(username) {
         const { count, error } = await this.client.from('usuarios').select('id', { count: 'exact', head: true }).ilike('username', username);
         return !error && count > 0;
