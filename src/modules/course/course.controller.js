@@ -31,7 +31,7 @@ export class CourseController {
     };
 
     getFilterCounts = async(req, res, next) => {
-        const userId = req.query.userId ? parseInt(req.query.userId) : (req.user ? .userId || null);
+        const userId = req.query.userId ? parseInt(req.query.userId) : (req.user?.userId || null);
         const result = await this.courseService.getFilterCounts(userId);
         if (result.isFail()) return next(result.getError());
         res.json({ success: true, data: result.getValue() });
