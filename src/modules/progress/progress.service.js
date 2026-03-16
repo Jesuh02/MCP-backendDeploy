@@ -11,18 +11,18 @@ export class ProgressDomainService {
         this.subjectRepo = subjectRepository || null;
         this.collaboratorRepo = collaboratorRepository || null;
     }
-            if (data?.userId && data?.courseId) {
-            if (data?.userId && data?.courseId) {
+
+    async getByUserAndCourse(userId, courseId) {
         let progress;
         if (this.taskRepo && this.submissionRepo) {
-            progress = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
+                    existing.total_grade += Number(row.grade) || 0;
         } else {
             progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
             if (!progress) progress = { userId, courseId, completedTasks: 0, totalTasks: 0, progressPercentage: 0, averageGrade: 0, status: 'Perdido' };
         }
         const gradedTasks = await this._buildGradedTasksWithSubject(userId, courseId);
         const subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
-        return Result.ok({...progress, gradedTasks, subjectProgress });
+        return Result.ok({ ...progress, gradedTasks, subjectProgress });
     }
 
     async getSubjectProgress(userId, courseId) {
@@ -158,7 +158,7 @@ export class ProgressDomainService {
 
             existing.approved_courses += 1;
             if (Number.isFinite(row.grade)) {
-                    if (data?.userId && data?.courseId) {
+                existing.total_grade += Number(row.grade) || 0;
                 existing.graded_courses += 1;
             }
             aggregated.set(row.userId, existing);
@@ -344,7 +344,7 @@ export class ProgressDomainService {
     }
 
     async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null, subjectIdFallback = null) {
-        const totalTasks = totalTasksFromCaller ? ? await this.taskRepo.countByCourse(courseId);
+        const totalTasks = totalTasksFromCaller ?? await this.taskRepo.countByCourse(courseId);
         const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId);
         const completedTasks = submittedTaskIds.length;
 
