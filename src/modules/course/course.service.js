@@ -164,9 +164,9 @@ export class CourseDomainService {
             countPromises.push(Promise.resolve(0));
         }
 
-        const popularPromise = this.progressRepo && typeof this.progressRepo.findCourseEnrollmentRanking === 'function'
-            ? this.progressRepo.findCourseEnrollmentRanking().then(r => (r || []).length)
-            : Promise.resolve(0);
+        const popularPromise = this.progressRepo && typeof this.progressRepo.findCourseEnrollmentRanking === 'function' ?
+            this.progressRepo.findCourseEnrollmentRanking().then(r => (r || []).length) :
+            Promise.resolve(0);
         countPromises.push(popularPromise);
 
         const [total, free, premium, myCreated, otherCreators, enrolled, purchased, popular] = await Promise.all(countPromises);
@@ -211,19 +211,19 @@ export class CourseDomainService {
         let approvedRows = 0;
 
         for (const row of progressRows || []) {
-            const userId = Number(row?.userId);
+            const userId = Number(row ? .userId);
             if (!Number.isInteger(userId) || userId <= 0) continue;
 
             uniqueUsers.add(userId);
 
-            const isCertified = Boolean(row?.certificateIssuedAt) || (typeof row?.certificateUrl === 'string' && row.certificateUrl.trim().length > 0);
+            const isCertified = Boolean(row ? .certificateIssuedAt) || (typeof row ? .certificateUrl === 'string' && row.certificateUrl.trim().length > 0);
             if (isCertified) certifiedUsers.add(userId);
 
-            const progressPercentage = Number(row?.progressPercentage || 0);
-            const completedTasks = Number(row?.completedTasks || 0);
-            const totalTasks = Number(row?.totalTasks || 0);
-            const status = String(row?.status || '').trim().toLowerCase();
-            const averageGrade = Number(row?.averageGrade);
+            const progressPercentage = Number(row ? .progressPercentage || 0);
+            const completedTasks = Number(row ? .completedTasks || 0);
+            const totalTasks = Number(row ? .totalTasks || 0);
+            const status = String(row ? .status || '').trim().toLowerCase();
+            const averageGrade = Number(row ? .averageGrade);
 
             const isCompleted = progressPercentage >= 100 || (totalTasks > 0 && completedTasks >= totalTasks);
             if (isCompleted) completedRows++;
@@ -267,7 +267,12 @@ export class CourseDomainService {
         return Result.ok({ courses, total });
     }
 
-    async create(courseData, requesterId) {
+    async create(courseData, requesterId, requesterRoles = []) {
+        const isAdmin = (requesterRoles || []).some(r => r === 3);
+        if (!isAdmin) {
+            return Result.fail(new ForbiddenError('Solo el rol 3 puede crear cursos'));
+        }
+
         courseData.creatorUserId = requesterId;
         // Ensure isFree is consistent with price (price > 0 => premium)
         this._ensureIsFreeFlag(courseData);
@@ -283,22 +288,26 @@ export class CourseDomainService {
         return Result.ok(created);
     }
 
-    async update(id, data, requesterId) {
+    async update(id, data, requesterId, requesterRoles = []) {
         const course = await this.courseRepo.findById(id);
         if (!course) return Result.fail(new NotFoundError('Curso', id));
-        const hasAccess = await this.isCreatorOrCollaborator(requesterId, id);
-        if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para editar este curso'));
+        const isPrivileged = (requesterRoles || []).some(r => r === 3);
+        if (!isPrivileged) {
+            return Result.fail(new ForbiddenError('Solo el rol 3 puede editar cursos'));
+        }
         this._ensureIsFreeFlag(data);
         data.lastModifiedBy = requesterId;
         const updated = await this.courseRepo.update(id, data);
         return Result.ok(updated);
     }
 
-    async delete(id, requesterId) {
+    async delete(id, requesterId, requesterRoles = []) {
         const course = await this.courseRepo.findById(id);
         if (!course) return Result.fail(new NotFoundError('Curso', id));
-        const hasAccess = await this.isCreatorOrCollaborator(requesterId, id);
-        if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para eliminar este curso'));
+        const isPrivileged = (requesterRoles || []).some(r => r === 3);
+        if (!isPrivileged) {
+            return Result.fail(new ForbiddenError('Solo el rol 3 puede eliminar cursos'));
+        }
         await this.courseRepo.delete(id);
         return Result.ok({ message: 'Curso eliminado' });
     }
@@ -393,9 +402,9 @@ export class CourseDomainService {
             return Result.ok({ courses: [], total: 0 });
         }
 
-        const offset = Number(pagination?.offset) || 0;
-        const limit = Number(pagination?.limit) || 20;
-        const excludeCreatorId = pagination?.excludeCreatorId ? Number(pagination.excludeCreatorId) : null;
+        const offset = Number(pagination ? .offset) || 0;
+        const limit = Number(pagination ? .limit) || 20;
+        const excludeCreatorId = pagination ? .excludeCreatorId ? Number(pagination.excludeCreatorId) : null;
 
         const ranking = await this.progressRepo.findCourseEnrollmentRanking();
         if (!ranking || ranking.length === 0) return Result.ok({ courses: [], total: 0 });
@@ -408,7 +417,7 @@ export class CourseDomainService {
 
         let filteredIds = rankedCourseIds.filter((id) => courseById.has(id));
         if (excludeCreatorId && Number.isInteger(excludeCreatorId) && excludeCreatorId > 0) {
-            filteredIds = filteredIds.filter((id) => Number(courseById.get(id)?.creator_user_id) !== excludeCreatorId);
+            filteredIds = filteredIds.filter((id) => Number(courseById.get(id) ? .creator_user_id) !== excludeCreatorId);
         }
 
         const total = filteredIds.length;
@@ -440,6 +449,29 @@ export class CourseDomainService {
         } catch (err) {
             return Result.fail(new Error(`Error fetching courses with submissions: ${err.message}`));
         }
+    }
+
+    /**
+     * Returns all courses whose deadline has passed and are still marked published.
+     * Used by the admin expiry job.
+     */
+    async findExpiredCourses() {
+        try {
+            const now = new Date().toISOString();
+            const courses = await this.courseRepo.findExpired(now);
+            return Result.ok(courses || []);
+        } catch (err) {
+            return Result.fail(new Error(`Error fetching expired courses: ${err.message}`));
+        }
+    }
+
+    /**
+     * Checks course is_active status — a course is "active" when deadline is null or in the future.
+     */
+    isCourseActive(course) {
+        if (!course) return false;
+        if (!course.deadline) return true;
+        return new Date(course.deadline) > new Date();
     }
 
 
