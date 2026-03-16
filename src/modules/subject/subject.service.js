@@ -52,7 +52,10 @@ export class SubjectDomainService {
             const isCourseOwner = course && Number(course.creator_user_id) === Number(requesterId);
             if (!isCourseOwner) {
                 const isSubjectCreator = subject.created_by && Number(subject.created_by) === Number(requesterId);
-                if (!isSubjectCreator) return Result.fail(new ForbiddenError('No tienes permiso para editar esta materia'));
+                if (!isSubjectCreator) {
+                    const isCollab = this.collaboratorRepo && await this.collaboratorRepo.isCollaborator(requesterId, subject.course_id);
+                    if (!isCollab) return Result.fail(new ForbiddenError('No tienes permiso para editar esta materia'));
+                }
             }
             data.updatedBy = requesterId;
         }
@@ -68,7 +71,10 @@ export class SubjectDomainService {
             const isCourseOwner = course && Number(course.creator_user_id) === Number(requesterId);
             if (!isCourseOwner) {
                 const isSubjectCreator = subject.created_by && Number(subject.created_by) === Number(requesterId);
-                if (!isSubjectCreator) return Result.fail(new ForbiddenError('No tienes permiso para eliminar esta materia'));
+                if (!isSubjectCreator) {
+                    const isCollab = this.collaboratorRepo && await this.collaboratorRepo.isCollaborator(requesterId, subject.course_id);
+                    if (!isCollab) return Result.fail(new ForbiddenError('No tienes permiso para eliminar esta materia'));
+                }
             }
         }
         await this.subjectRepo.delete(id);
