@@ -36,6 +36,23 @@ export class TopicDomainService {
     async create(data) {
         const subject = await this.subjectRepo.findById(data.subjectId);
         if (!subject) return Result.fail(new NotFoundError('Materia', data.subjectId));
+
+        // Protección anti-duplicados: verificar si ya existe un tema reciente con mismo nombre y materia
+        if (data.title && data.subjectId) {
+            const existing = await this.topicRepo.findBySubject(data.subjectId);
+            const duplicate = (existing || []).find(t => {
+                const existingName = String(t.name || t.title || '').trim().toLowerCase();
+                const newName = String(data.title).trim().toLowerCase();
+                if (existingName !== newName) return false;
+                const createdAt = new Date(t.created_at || t.createdAt);
+                return (Date.now() - createdAt.getTime()) < 60000; // creado hace menos de 60 segundos
+            });
+            if (duplicate) {
+                console.log(`[TopicDomainService] Duplicate topic blocked: "${data.title}" in subject ${data.subjectId}`);
+                return Result.ok(duplicate);
+            }
+        }
+
         const created = await this.topicRepo.create(data);
         return Result.ok(created);
     }

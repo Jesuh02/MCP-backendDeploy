@@ -9,6 +9,8 @@ export class SupabaseUserRepository {
         if (!data) return null;
         const mapped = {...data, password: data.contrasena };
         delete mapped.contrasena;
+        // Expose is_active also as isActive for frontend clients
+        if (mapped.is_active !== undefined) mapped.isActive = mapped.is_active;
         return mapped;
     }
 
@@ -81,6 +83,7 @@ export class SupabaseUserRepository {
         if (data.email !== undefined) updatePayload.email = data.email;
         if (data.avatar !== undefined) updatePayload.avatar = data.avatar;
         if (data.password !== undefined) updatePayload.contrasena = data.password;
+        if (data.is_active !== undefined) updatePayload.is_active = data.is_active;
         const { data: updated, error } = await this.client.from('usuarios').update(updatePayload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando usuario: ${error.message}`);
         return this._mapUser(updated);
