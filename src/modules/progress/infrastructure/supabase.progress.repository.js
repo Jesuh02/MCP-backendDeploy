@@ -582,21 +582,56 @@ export class SupabaseProgressRepository {
     async findPendingEnrollments(courseId = null) {
         let query = this.client
             .from('pre_enrollments')
-            .select('*, usuarios!pre_enrollments_user_id_fkey(id, usuario, persona_id, personas(nombre, apellido, foto_perfil_url)), courses!pre_enrollments_course_id_fkey(id, title)')
+            .select('user_id, course_id, status, requested_at')
             .eq('status', 'pending');
         if (courseId) query = query.eq('course_id', courseId);
         const { data, error } = await query.order('requested_at', { ascending: false });
         if (error || !data) return [];
-        return data.map(r => ({
-            userId: r.user_id,
-            courseId: r.course_id,
-            enrollmentStatus: r.status,
-            requestedAt: r.requested_at,
-            username: r.usuarios?.usuario,
-            avatar: r.usuarios?.personas?.foto_perfil_url,
-            fullName: r.usuarios?.personas ? `${r.usuarios.personas.nombre || ''} ${r.usuarios.personas.apellido || ''}`.trim() : null,
-            courseName: r.courses?.title,
-        }));
+
+        const userIds = [...new Set(data.map((row) => Number(row.user_id)).filter((id) => Number.isInteger(id) && id > 0))];
+        const courseIds = [...new Set(data.map((row) => Number(row.course_id)).filter((id) => Number.isInteger(id) && id > 0))];
+
+        let usersById = new Map();
+        let personasById = new Map();
+        let coursesById = new Map();
+
+        if (userIds.length > 0) {
+            const { data: users } = await this.client
+                .from('usuarios')
+                .select('id, username, avatar, persona_id')
+                .in('id', userIds);
+
+            usersById = new Map((users || []).map((user) => [Number(user.id), user]));
+
+            const personaIds = [...new Set((users || []).map((user) => Number(user.persona_id)).filter((id) => Number.isInteger(id) && id > 0))];
+            if (personaIds.length > 0) {
+                const { data: personas } = await this.client
+                    .from('personas')
+                    .select('id, nombres, apellidos')
+                    .in('id', personaIds);
+                personasById = new Map((personas || []).map((persona) => [Number(persona.id), persona]));
+            }
+        }
+
+        if (courseIds.length > 0) {
+            const { data: courses } = await this.client
+                .from('courses')
+                .select('id, title')
+                .in('id', courseIds);
+            coursesById = new Map((courses || []).map((course) => [Number(course.id), course]));
+        }
+
+        return data.map((row) => {
+            const user = usersById.get(Number(row.user_id)) || null;
+            const persona = user?.persona_id ? personasById.get(Number(user.persona_id)) || null : null;
+            const course = coursesById.get(Number(row.course_id)) || null;
+            return this._mapPreEnrollmentRecord(row, {
+                username: user?.username || null,
+                avatar: user?.avatar || null,
+                fullName: persona ? `${persona.nombres || ''} ${persona.apellidos || ''}`.trim() || null : null,
+                courseName: course?.title || null,
+            });
+        });
     }
 
     async updateEnrollmentStatus(userId, courseId, status, reviewedBy = null) {
@@ -612,7 +647,7 @@ export class SupabaseProgressRepository {
             .select()
             .single();
         if (error) throw new Error(error.message);
-        return { userId: data.user_id, courseId: data.course_id, enrollmentStatus: data.status };
+        return this._mapPreEnrollmentRecord(data);
     }
 
     async findPreEnrollment(userId, courseId) {
@@ -623,7 +658,7 @@ export class SupabaseProgressRepository {
             .eq('course_id', courseId)
             .maybeSingle();
         if (error || !data) return null;
-        return { userId: data.user_id, courseId: data.course_id, enrollmentStatus: data.status, requestedAt: data.requested_at };
+        return this._mapPreEnrollmentRecord(data);
     }
 
     async upsertPreEnrollment(userId, courseId, status = 'pending') {
@@ -638,7 +673,22 @@ export class SupabaseProgressRepository {
             .select()
             .single();
         if (error) throw new Error(error.message);
-        return { userId: data.user_id, courseId: data.course_id, enrollmentStatus: data.status, requestedAt: data.requested_at };
+        return this._mapPreEnrollmentRecord(data);
+    }
+
+    _mapPreEnrollmentRecord(record, extras = {}) {
+        if (!record) return null;
+        const status = record.enrollmentStatus || record.enrollment_status || record.status || null;
+        return {
+            userId: record.userId ?? record.user_id ?? null,
+            courseId: record.courseId ?? record.course_id ?? null,
+            status,
+            enrollmentStatus: status,
+            enrollment_status: status,
+            requestedAt: record.requestedAt || record.requested_at || null,
+            requested_at: record.requestedAt || record.requested_at || null,
+            ...extras,
+        };
     }
 
     _mapToDomain(dbRecord) {

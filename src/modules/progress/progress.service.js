@@ -464,10 +464,11 @@ export class ProgressDomainService {
         // Check existing pre-enrollment
         const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (existing) {
-            if (existing.enrollmentStatus === 'approved') {
+            const existingStatus = this._getEnrollmentStatusValue(existing);
+            if (existingStatus === 'approved') {
                 return Result.ok({ ...existing, message: 'Ya estás matriculado' });
             }
-            if (existing.enrollmentStatus === 'pending') {
+            if (existingStatus === 'pending') {
                 return Result.ok({ ...existing, message: 'Tu solicitud ya está pendiente de aprobación' });
             }
             // rejected — allow re-request
@@ -513,11 +514,17 @@ export class ProgressDomainService {
     async isEnrolledAndApproved(userId, courseId) {
         const row = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!row) return Result.ok({ enrolled: false, status: null, enrollmentStatus: null });
+        const status = this._getEnrollmentStatusValue(row);
         return Result.ok({
-            enrolled: row.enrollmentStatus === 'approved',
-            status: row.enrollmentStatus,
-            enrollmentStatus: row.enrollmentStatus,
+            enrolled: status === 'approved',
+            status,
+            enrollmentStatus: status,
         });
+    }
+
+    _getEnrollmentStatusValue(record) {
+        const status = record?.enrollmentStatus ?? record?.enrollment_status ?? record?.status ?? null;
+        return typeof status === 'string' ? status.trim().toLowerCase() : null;
     }
 }
 export default ProgressDomainService;
