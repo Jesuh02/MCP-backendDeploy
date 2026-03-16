@@ -71,7 +71,7 @@ export class TaskDomainService {
         return Result.ok(tasks);
     }
 
-    /** Crea una nueva tarea, validando que el tema exista. */
+    /** Crea una nueva tarea, validando que el tema exista. Previene duplicados. */
     async create(data) {
         let courseId = null;
         if (data.topicId) {
@@ -79,6 +79,21 @@ export class TaskDomainService {
             if (!topic) return Result.fail(new NotFoundError('Tema', data.topicId));
             courseId = await this._getCourseIdFromTopic(topic);
         }
+
+        // Protección anti-duplicados: verificar si ya existe una tarea reciente con mismo título y tema
+        if (data.topicId && data.title) {
+            const existing = await this.taskRepo.findByTopic(data.topicId);
+            const duplicate = (existing || []).find(t => {
+                if (String(t.title).trim().toLowerCase() !== String(data.title).trim().toLowerCase()) return false;
+                const createdAt = new Date(t.createdAt || t.created_at);
+                return (Date.now() - createdAt.getTime()) < 60000; // creada hace menos de 60 segundos
+            });
+            if (duplicate) {
+                console.log(`[TaskDomainService] Duplicate task blocked: "${data.title}" in topic ${data.topicId}`);
+                return Result.ok(duplicate);
+            }
+        }
+
         const created = await this.taskRepo.create(data);
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {

@@ -5,6 +5,7 @@ import { createRouter } from '../interfaces/routes/index.js';
 import { createAuthMiddleware, createOptionalAuthMiddleware, requireRoles } from '../shared/middleware/AuthMiddleware.js';
 import { errorHandler } from '../shared/middleware/ErrorHandler.js';
 import { mountLegacyRedirects } from '../shared/middleware/LegacyRedirects.js';
+import { idempotencyGuard } from '../shared/middleware/IdempotencyMiddleware.js';
 
 export function createApp() {
     const app = express();
@@ -43,7 +44,7 @@ export function createApp() {
         requireRoles,
     });
 
-    app.use('/api/v1', router);
+    app.use('/api/v1', idempotencyGuard, router);
     app.use('/api/v1', errorHandler);
 
     mountLegacyRedirects(app, container);

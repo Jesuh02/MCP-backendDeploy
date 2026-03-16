@@ -79,6 +79,15 @@ export class NotificationDomainService {
             resolvedThumbnailUrl = await this._resolveCourseThumbnail({ type, relatedId, metadata });
         }
 
+        // Protección anti-duplicados: verificar si ya existe una notificación reciente idéntica
+        if (recipientUserId && type && relatedId) {
+            const isDuplicate = await this._isDuplicateNotification(recipientUserId || userId, type, relatedId);
+            if (isDuplicate) {
+                console.log(`[NotificationDomainService] Duplicate notification blocked: type=${type}, userId=${userId}, relatedId=${relatedId}`);
+                return Result.ok({ skipped: true, reason: 'duplicate' });
+            }
+        }
+
         // 1. Guardar en BD
         const notif = await this.notifRepo.create({
             userId,
@@ -138,6 +147,12 @@ export class NotificationDomainService {
         }
 
         return data;
+    }
+
+    async _isDuplicateNotification(userId, type, relatedId) {
+        if (!this.notifRepo.findRecentByUserTypeAndRelated) return false;
+        const existing = await this.notifRepo.findRecentByUserTypeAndRelated(userId, type, relatedId, 60);
+        return !!existing;
     }
 
     _normalizeMetadata(metadata) {
