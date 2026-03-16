@@ -54,7 +54,9 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
         // ── Extraer token ──
         const authHeader = req.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return next(new UnauthorizedError('Token de autenticación requerido'));
+            const err = new UnauthorizedError('Token de autenticación requerido');
+            err.silent = true; // No loguear warning — ya es manejado por IdempotencyMiddleware
+            return next(err);
         }
 
         const token = authHeader.slice(7);
