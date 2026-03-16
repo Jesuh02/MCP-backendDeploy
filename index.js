@@ -1,6 +1,6 @@
 /**
  * index.js — Entry Point (Bootstrap)
- *
+ * reliazadopor jesus
  * Responsabilidad única: cargar configuración y arrancar el servidor.
  * Toda la lógica de negocio vive en src/domain/services/*.
  * Todo el wiring de dependencias vive en src/config/container.js.
