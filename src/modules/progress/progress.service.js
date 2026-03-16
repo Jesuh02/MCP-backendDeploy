@@ -12,7 +12,7 @@ export class ProgressDomainService {
         this.collaboratorRepo = collaboratorRepository || null;
     }
 
-    async getByUserAndCourse(userId, courseId) {
+            if (data?.userId && data?.courseId) {
         let progress;
         if (this.taskRepo && this.submissionRepo) {
             progress = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
@@ -60,7 +60,7 @@ export class ProgressDomainService {
     }
 
     async upsert(data) {
-        if (data ? .userId && data ? .courseId && this.courseRepo) {
+        if (data?.userId && data?.courseId && this.courseRepo) {
             const course = await this.courseRepo.findById(data.courseId);
             if (!course) {
                 const resolved = await this._resolveCourseFromSubjectId(data.courseId);
@@ -75,7 +75,7 @@ export class ProgressDomainService {
 
         let progress = null;
 
-        if (this.taskRepo && this.submissionRepo && data ? .userId && data ? .courseId) {
+        if (this.taskRepo && this.submissionRepo && data?.userId && data?.courseId) {
             progress = await this._recalculateAndUpsertUserCourseProgress(data.userId, data.courseId, null, data.subjectId);
         } else {
             progress = await this.progressRepo.upsert(data);
@@ -158,7 +158,7 @@ export class ProgressDomainService {
 
             existing.approved_courses += 1;
             if (Number.isFinite(row.grade)) {
-                existing.total_grade += row.grade;
+                    if (data?.userId && data?.courseId) {
                 existing.graded_courses += 1;
             }
             aggregated.set(row.userId, existing);
@@ -305,7 +305,7 @@ export class ProgressDomainService {
 
         const existingProgress = await this.progressRepo.findByCourse(courseId);
         for (const item of existingProgress || []) {
-            const userId = Number(item ? .userId);
+            const userId = Number(item?.userId);
             if (Number.isInteger(userId) && userId > 0) ids.add(userId);
         }
 
@@ -329,15 +329,15 @@ export class ProgressDomainService {
             subjectsById = new Map(subjects.map(s => [s.id, s]));
         }
         return graded.map(sub => {
-            const subjectId = sub.tasks ? .topics ? .materia_id || sub.tasks ? .topics ? .subject_id || null;
+            const subjectId = sub.tasks?.topics?.materia_id || sub.tasks?.topics?.subject_id || null;
             const subject = subjectId ? subjectsById.get(subjectId) : null;
             return {
                 taskId: sub.task_id,
-                taskTitle: sub.tasks ? .title || null,
-                topicId: sub.tasks ? .topic_id || null,
-                topicName: sub.tasks ? .topics ? .name || null,
+                taskTitle: sub.tasks?.title || null,
+                topicId: sub.tasks?.topic_id || null,
+                topicName: sub.tasks?.topics?.name || null,
                 subjectId,
-                subjectName: subject ? .name || null,
+                subjectName: subject?.name || null,
                 grade: sub.grade,
             };
         });
@@ -385,7 +385,7 @@ export class ProgressDomainService {
     async _recalculateSubjectsForUserCourse(userId, courseId) {
         if (!this.subjectRepo || !this.taskRepo || !this.submissionRepo) return;
         const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
-        if (!subjects ? .length) return;
+        if (!subjects?.length) return;
 
         for (const subject of subjects) {
             try {
@@ -428,7 +428,7 @@ export class ProgressDomainService {
     async _resolveCourseFromSubjectId(subjectId) {
         if (!this.subjectRepo) return null;
         const subject = await this.subjectRepo.findById(subjectId);
-        return subject ? .course_id || null;
+        return subject?.course_id || null;
     }
 
     async _isCreatorOrCollaborator(userId, courseId) {
