@@ -38,7 +38,7 @@ export class CourseController {
     };
 
     getMyCreatorMetrics = async(req, res, next) => {
-        const userId = req.user ? .userId;
+        const userId = req.user?.userId;
         if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
 
         const result = await this.courseService.getCreatorDashboardMetrics(userId);
