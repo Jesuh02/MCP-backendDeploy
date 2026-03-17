@@ -1,5 +1,5 @@
 import { Result } from '../../shared/Result.js';
-import { NotFoundError } from '../../shared/errors/index.js';
+import { ForbiddenError, NotFoundError } from '../../shared/errors/index.js';
 
 /**
  * TaskDomainService — Servicio de dominio (casos de uso) para Tareas.
@@ -20,22 +20,79 @@ export class TaskDomainService {
      * @param {import('./ProgressDomainService.js').ProgressDomainService} [deps.progressService]
      * @param {import('./UserDomainService.js').UserDomainService} [deps.userService]
      */
-    constructor({ taskRepository, topicRepository, subjectRepository, notificationService, courseService, progressService, userService }) {
+    constructor({ taskRepository, topicRepository, subjectRepository, courseRepository, collaboratorRepository, notificationService, courseService, progressService, userService }) {
         this.taskRepo = taskRepository;
         this.topicRepo = topicRepository;
         this.subjectRepo = subjectRepository || null;
+        this.courseRepo = courseRepository || null;
+        this.collaboratorRepo = collaboratorRepository || null;
         this.notificationService = notificationService || null;
         this.courseService = courseService || null;
         this.progressService = progressService || null;
         this.userService = userService || null;
+        this.cacheTtlMs = 30000;
+        this.topicCache = new Map();
+        this.subjectCache = new Map();
+        this.tasksByTopicCache = new Map();
+    }
+
+    async _remember(cache, key, loader) {
+        const now = Date.now();
+        const entry = cache.get(key);
+        if (entry && entry.expiresAt > now) return entry.value;
+        const value = await loader();
+        cache.set(key, { value, expiresAt: now + this.cacheTtlMs });
+        return value;
+    }
+
+    async _getTopic(topicId) {
+        if (!topicId) return null;
+        return this._remember(this.topicCache, topicId, () => this.topicRepo.findById(topicId));
+    }
+
+    async _getSubject(subjectId) {
+        if (!subjectId || !this.subjectRepo) return null;
+        return this._remember(this.subjectCache, subjectId, () => this.subjectRepo.findById(subjectId));
+    }
+
+    async _getTasksByTopic(topicId) {
+        if (!topicId) return [];
+        return this._remember(this.tasksByTopicCache, topicId, () => this.taskRepo.findByTopic(topicId));
+    }
+
+    _invalidateTopic(topicId, subjectId) {
+        if (topicId) {
+            this.topicCache.delete(topicId);
+            this.tasksByTopicCache.delete(topicId);
+        }
+        if (subjectId) this.subjectCache.delete(subjectId);
     }
 
     async _getCourseIdFromTopic(topic) {
         if (!topic) return null;
-        const subjectId = topic.materia_id || topic.subjectId;
+        const subjectId = topic.materia_id || topic.subject_id || topic.subjectId;
         if (!subjectId || !this.subjectRepo) return null;
-        const subject = await this.subjectRepo.findById(subjectId);
+        const subject = await this._getSubject(subjectId);
         return subject?.course_id || null;
+    }
+
+    async _getSubjectFromTopic(topic) {
+        if (!topic) return null;
+        const subjectId = topic.materia_id || topic.subject_id || topic.subjectId;
+        return this._getSubject(subjectId);
+    }
+
+    async _canManageSubject(requesterId, subject) {
+        if (!requesterId || !subject || !this.courseRepo) return false;
+
+        const course = await this.courseRepo.findById(subject.course_id);
+        if (!course) return false;
+        if (Number(course.creator_user_id) === Number(requesterId)) return true;
+        if (subject.created_by && Number(subject.created_by) === Number(requesterId)) return true;
+
+        if (!this.collaboratorRepo) return false;
+        const isCollab = await this.collaboratorRepo.isCollaborator(requesterId, subject.course_id);
+        return Boolean(isCollab && !subject.created_by);
     }
 
     _dedupeTasks(tasks = []) {
@@ -64,9 +121,9 @@ export class TaskDomainService {
     /** Obtiene todas las tareas de un tema. */
     async getByTopic(topicId) {
         // Validar que el tema exista
-        const topic = await this.topicRepo.findById(topicId);
+        const topic = await this._getTopic(topicId);
         if (!topic) return Result.fail(new NotFoundError('Tema', topicId));
-        const tasks = this._dedupeTasks(await this.taskRepo.findByTopic(topicId));
+        const tasks = this._dedupeTasks(await this._getTasksByTopic(topicId));
         return Result.ok(tasks);
     }
 
@@ -82,19 +139,31 @@ export class TaskDomainService {
     }
 
     /** Crea una nueva tarea, validando que el tema exista. Previene duplicados. */
-    async create(data) {
+    async create(data, requesterId) {
         let courseId = null;
+        let subjectId = null;
+        let subject = null;
         if (data.topicId) {
-            const topic = await this.topicRepo.findById(data.topicId);
+            const topic = await this._getTopic(data.topicId);
             if (!topic) return Result.fail(new NotFoundError('Tema', data.topicId));
+            subjectId = topic.materia_id || topic.subject_id || topic.subjectId || null;
             courseId = await this._getCourseIdFromTopic(topic);
+            subject = await this._getSubjectFromTopic(topic);
+        }
+
+        if (requesterId) {
+            const canManage = await this._canManageSubject(requesterId, subject);
+            if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para crear tareas en esta materia'));
+            data.createdBy = requesterId;
         }
 
         // Protección anti-duplicados: verificar si ya existe una tarea reciente con mismo título y tema
         if (data.topicId && data.title) {
-            const existing = await this.taskRepo.findByTopic(data.topicId);
+            const existing = await this._getTasksByTopic(data.topicId);
             const duplicate = (existing || []).find(t => {
-                if (String(t.title).trim().toLowerCase() !== String(data.title).trim().toLowerCase()) return false;
+                const existingTitle = String(t.title || t.name || '').trim().toLowerCase();
+                const nextTitle = String(data.title).trim().toLowerCase();
+                if (existingTitle !== nextTitle) return false;
                 const createdAt = new Date(t.createdAt || t.created_at);
                 return (Date.now() - createdAt.getTime()) < 60000; // creada hace menos de 60 segundos
             });
@@ -105,6 +174,7 @@ export class TaskDomainService {
         }
 
         const created = await this.taskRepo.create(data);
+        this._invalidateTopic(data.topicId, subjectId);
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
             await this.progressService.recalculateForCourse(courseId);
@@ -119,8 +189,8 @@ export class TaskDomainService {
      * @param {object} data - Datos de la tarea
      * @param {object} [currentUser] - Usuario que crea la tarea (para excluirlo de la notificación)
      */
-    async createAndNotify(data, currentUser) {
-        const createResult = await this.create(data);
+    async createAndNotify(data, requesterId, currentUser) {
+        const createResult = await this.create(data, requesterId);
         if (createResult.isFail()) return createResult;
 
         const task = createResult.getValue();
@@ -134,8 +204,8 @@ export class TaskDomainService {
         return createResult;
     }
 
-    async updateAndNotify(id, data, _currentUser) {
-        const updateResult = await this.update(id, data);
+    async updateAndNotify(id, data, requesterId, _currentUser) {
+        const updateResult = await this.update(id, data, requesterId);
         if (updateResult.isFail()) return updateResult;
 
         const task = updateResult.getValue();
@@ -163,7 +233,7 @@ export class TaskDomainService {
         const topicId = task.topicId || task.topic_id;
         if (!topicId) return;
 
-        const topic = await this.topicRepo.findById(topicId);
+        const topic = await this._getTopic(topicId);
         if (!topic) return;
         const courseId = await this._getCourseIdFromTopic(topic);
         if (!courseId) return;
@@ -236,7 +306,7 @@ export class TaskDomainService {
         const topicId = task.topicId || task.topic_id;
         if (!topicId) return;
 
-        const topic = await this.topicRepo.findById(topicId);
+        const topic = await this._getTopic(topicId);
         if (!topic) return;
 
         const courseId = await this._getCourseIdFromTopic(topic);
@@ -269,7 +339,7 @@ export class TaskDomainService {
         const topicId = task.topicId || task.topic_id;
         if (!topicId) return;
 
-        const topic = await this.topicRepo.findById(topicId);
+        const topic = await this._getTopic(topicId);
         if (!topic) return;
 
         const courseId = await this._getCourseIdFromTopic(topic);
@@ -284,26 +354,49 @@ export class TaskDomainService {
     }
 
     /** Actualiza una tarea existente. */
-    async update(id, data) {
+    async update(id, data, requesterId) {
         const task = await this.taskRepo.findById(id);
         if (!task) return Result.fail(new NotFoundError('Tarea', id));
+
+        const permissionTopicId = task.topicId || task.topic_id;
+        if (requesterId && permissionTopicId) {
+            const permissionTopic = await this._getTopic(permissionTopicId);
+            const permissionSubject = await this._getSubjectFromTopic(permissionTopic);
+            const canManage = await this._canManageSubject(requesterId, permissionSubject);
+            if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para editar esta tarea'));
+            data.updatedBy = requesterId;
+        }
 
         const originalTopicId = task.topicId || task.topic_id;
         const nextTopicId = data.topicId || originalTopicId;
         let originalCourseId = null;
         let nextCourseId = null;
+        let originalSubjectId = null;
+        let nextSubjectId = null;
 
         if (originalTopicId) {
-            const originalTopic = await this.topicRepo.findById(originalTopicId);
+            const originalTopic = await this._getTopic(originalTopicId);
+            originalSubjectId = originalTopic?.materia_id || originalTopic?.subject_id || originalTopic?.subjectId || null;
             originalCourseId = originalTopic ?.course_id || originalTopic ?.courseId || null;
+            if (!originalCourseId && originalTopic) {
+                originalCourseId = await this._getCourseIdFromTopic(originalTopic);
+            }
         }
 
         if (nextTopicId) {
-            const topic = await this.topicRepo.findById(nextTopicId);
+            const topic = await this._getTopic(nextTopicId);
+            nextSubjectId = topic?.materia_id || topic?.subject_id || topic?.subjectId || null;
             nextCourseId = topic ?.course_id || topic ?.courseId || null;
+            if (!nextCourseId && topic) {
+                nextCourseId = await this._getCourseIdFromTopic(topic);
+            }
         }
 
         const updated = await this.taskRepo.update(id, data);
+        this._invalidateTopic(originalTopicId, originalSubjectId);
+        if (nextTopicId !== originalTopicId) {
+            this._invalidateTopic(nextTopicId, nextSubjectId);
+        }
 
         if (this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
             const affectedCourseIds = [...new Set([originalCourseId, nextCourseId].filter(Boolean))];
@@ -316,15 +409,25 @@ export class TaskDomainService {
     }
 
     /** Elimina una tarea por ID. */
-    async delete(id) {
+    async delete(id, requesterId) {
         const task = await this.taskRepo.findById(id);
         if (!task) return Result.fail(new NotFoundError('Tarea', id));
 
         const topicId = task.topicId || task.topic_id;
         let courseId = null;
+        let subjectId = null;
         if (topicId) {
-            const topic = await this.topicRepo.findById(topicId);
+            const topic = await this._getTopic(topicId);
+            subjectId = topic?.materia_id || topic?.subject_id || topic?.subjectId || null;
             courseId = topic ?.course_id || topic ?.courseId || null;
+            if (requesterId) {
+                const subject = await this._getSubjectFromTopic(topic);
+                const canManage = await this._canManageSubject(requesterId, subject);
+                if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para eliminar esta tarea'));
+            }
+            if (!courseId && topic) {
+                courseId = await this._getCourseIdFromTopic(topic);
+            }
         }
 
         if (this.notificationService && task ?.id) {
@@ -336,6 +439,7 @@ export class TaskDomainService {
         }
 
         await this.taskRepo.delete(id);
+        this._invalidateTopic(topicId, subjectId);
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
             await this.progressService.recalculateForCourse(courseId);

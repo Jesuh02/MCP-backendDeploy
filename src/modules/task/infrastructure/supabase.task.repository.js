@@ -116,6 +116,7 @@ export class SupabaseTaskRepository {
             due_date: taskData.dueDate || null,
             time_limit_minutes: taskData.timeLimitMinutes ?? null,
         };
+        if (taskData.createdBy) payload.created_by = taskData.createdBy;
         const { data, error } = await this.client
             .from('tasks')
             .insert(payload)
@@ -131,6 +132,7 @@ export class SupabaseTaskRepository {
         if (updateData.description !== undefined) payload.description = updateData.description;
         if (updateData.dueDate !== undefined) payload.due_date = updateData.dueDate;
         if (updateData.timeLimitMinutes !== undefined) payload.time_limit_minutes = updateData.timeLimitMinutes;
+        if (updateData.updatedBy) payload.updated_by = updateData.updatedBy;
         // No se incluyen campos inexistentes (max_score, is_active, updated_at)
 
         const { data, error } = await this.client

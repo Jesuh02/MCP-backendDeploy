@@ -42,7 +42,7 @@ export class ContentItemController {
         try {
             const { error, value } = createContentItemSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.contentService.create(value);
+            const result = await this.contentService.create(value, req.user?.userId, req.user);
             if (result.isFail()) return next(result.getError());
             res.status(201).json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -51,7 +51,7 @@ export class ContentItemController {
         try {
             const { error, value } = updateContentItemSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.contentService.update(parseInt(req.params.id), value);
+            const result = await this.contentService.update(parseInt(req.params.id), value, req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -59,7 +59,7 @@ export class ContentItemController {
 
     delete = async(req, res, next) => {
         try {
-            const result = await this.contentService.delete(parseInt(req.params.id));
+            const result = await this.contentService.delete(parseInt(req.params.id), req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -67,7 +67,7 @@ export class ContentItemController {
 
     deleteByTask = async(req, res, next) => {
         try {
-            const result = await this.contentService.deleteByTask(parseInt(req.params.taskId));
+            const result = await this.contentService.deleteByTask(parseInt(req.params.taskId), req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
