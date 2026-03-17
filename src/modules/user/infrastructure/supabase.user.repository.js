@@ -130,21 +130,39 @@ export class SupabaseUserRepository {
             this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${query}%`).limit(limit),
         ]);
         const seen = new Set();
-        const results = [];
+        const userIds = [];
+        const userMap = new Map();
         for (const { data } of [byUsername, byNombres, byApellidos]) {
             for (const u of data || []) {
                 if (seen.has(u.id)) continue;
                 seen.add(u.id);
-                results.push({
+                userIds.push(u.id);
+                userMap.set(u.id, {
                     id: u.id,
                     username: u.username,
                     email: u.email,
                     avatar: u.avatar,
-                    fullName: u.personas ? `${u.personas.nombres || ''} ${u.personas.apellidos || ''}`.trim() : null
+                    fullName: u.personas ? `${u.personas.nombres || ''} ${u.personas.apellidos || ''}`.trim() : null,
+                    roles: []
                 });
             }
         }
-        return results.slice(0, limit);
+        // Fetch roles for all found users
+        if (userIds.length > 0) {
+            const { data: rolesData } = await this.client
+                .from('usuarios_roles')
+                .select('usuario_id, rol_id, roles(id, nombre)')
+                .in('usuario_id', userIds);
+            if (rolesData) {
+                for (const r of rolesData) {
+                    const user = userMap.get(r.usuario_id);
+                    if (user && r.roles) {
+                        user.roles.push({ id: r.roles.id, nombre: r.roles.nombre });
+                    }
+                }
+            }
+        }
+        return Array.from(userMap.values()).slice(0, limit);
     }
 
     async findByIds(ids) {
