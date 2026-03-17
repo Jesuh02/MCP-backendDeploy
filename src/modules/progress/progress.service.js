@@ -81,7 +81,7 @@ export class ProgressDomainService {
             progress = await this.progressRepo.upsert(data);
         }
 
-        if ((progress.status === 'Ganado' || progress.averageGrade >= 6) && !progress.certificateIssuedAt) {
+        if (this._isProgressWon(progress) && !progress.certificateIssuedAt) {
             progress = await this.progressRepo.updateCertificate(data.userId, data.courseId, {
                 certificateIssuedAt: new Date().toISOString(),
             });
@@ -219,6 +219,9 @@ export class ProgressDomainService {
     async issueCertificate(userId, courseId) {
         const progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
         if (!progress) return Result.fail(new NotFoundError('Progreso', `${userId}-${courseId}`));
+        if (!this._isProgressWon(progress)) {
+            return Result.fail(new ForbiddenError('Solo se pueden emitir certificados para progreso con estado Ganado'));
+        }
         const updated = await this.progressRepo.updateCertificate(userId, courseId, {
             certificateIssuedAt: new Date().toISOString(),
         });
@@ -237,7 +240,7 @@ export class ProgressDomainService {
 
     async bulkIssueCertificatesForCreator(creatorUserId) {
         const rows = await this.progressRepo.findWonProgressByCreatorCourses(creatorUserId);
-        const pending = rows.filter(r => !r.certificateIssuedAt);
+        const pending = rows.filter(r => this._isProgressWon(r) && !r.certificateIssuedAt);
         if (pending.length === 0) return Result.ok({ issued: 0 });
         const pairs = pending.map(r => ({ userId: r.userId, courseId: r.courseId }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);
@@ -251,7 +254,7 @@ export class ProgressDomainService {
 
     async bulkIssueCertificatesGlobal() {
         const rows = await this.progressRepo.findAllWonProgress();
-        const pending = rows.filter(r => !r.certificateIssuedAt);
+        const pending = rows.filter(r => this._isProgressWon(r) && !r.certificateIssuedAt);
         if (pending.length === 0) return Result.ok({ issued: 0 });
         const pairs = pending.map(r => ({ userId: r.userId, courseId: r.courseId }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);
@@ -259,6 +262,8 @@ export class ProgressDomainService {
     }
 
     async updateCertificateUrl(userId, courseId, url) {
+        // url puede ser una URL completa o un path relativo de Storage.
+        // El repositorio almacena storage_path; la URL pública se construye en el cliente.
         const updated = await this.progressRepo.updateCertificate(userId, courseId, {
             certificateUrl: url,
         });
@@ -440,6 +445,39 @@ export class ProgressDomainService {
         return this.collaboratorRepo.isCollaborator(Number(userId), courseId);
     }
 
+    _isProgressWon(progress) {
+        return String(progress?.status || '').trim().toLowerCase() === 'ganado';
+    }
+
+    _normalizeRoleIds(roles = []) {
+        return [...new Set((roles || [])
+            .map((role) => Number(role?.id ?? role))
+            .filter((roleId) => Number.isInteger(roleId) && roleId > 0))];
+    }
+
+    async _getUserRoleIds(userId) {
+        if (!userId || !this.userRepo || typeof this.userRepo.getUserRoles !== 'function') return [];
+        try {
+            const roles = await this.userRepo.getUserRoles(userId);
+            return this._normalizeRoleIds(roles);
+        } catch {
+            return [];
+        }
+    }
+
+    _isCourseAvailableForEnrollment(course) {
+        const storedActive = course?.isActive ?? course?.is_active;
+        const isActive = typeof storedActive === 'undefined'
+            ? true
+            : ['false', '0', 'no'].includes(String(storedActive).trim().toLowerCase())
+                ? false
+                : Boolean(storedActive);
+        if (!isActive) return false;
+        if (!course?.deadline) return true;
+        const deadline = new Date(course.deadline);
+        return Number.isNaN(deadline.getTime()) || deadline > new Date();
+    }
+
     // ─── Enrollment request flow (Pre-enrollment / Matrícula) ─────────────
 
     /**
@@ -452,9 +490,19 @@ export class ProgressDomainService {
         const course = await this.courseRepo.findById(courseId);
         if (!course) return Result.fail(new NotFoundError('Curso', courseId));
 
-        // Check course deadline — expired courses reject new enrollments
-        if (course.deadline && new Date(course.deadline) < new Date()) {
-            return Result.fail(new ForbiddenError('El curso ha expirado y no acepta nuevas matriculaciones'));
+        const roleIds = await this._getUserRoleIds(userId);
+        if (roleIds.includes(3)) {
+            return Result.fail(new ForbiddenError('Los administradores no pueden matricularse en cursos'));
+        }
+        if (!roleIds.some((roleId) => roleId === 1 || roleId === 2)) {
+            return Result.fail(new ForbiddenError('Solo los usuarios con rol 1 o rol 2 pueden solicitar matricula'));
+        }
+
+        if (!this._isCourseAvailableForEnrollment(course)) {
+            if (course.deadline && new Date(course.deadline) <= new Date() && typeof this.courseRepo.updateActiveState === 'function') {
+                await this.courseRepo.updateActiveState(courseId, false).catch(() => {});
+            }
+            return Result.fail(new ForbiddenError('El curso esta inactivo o expirado y no acepta nuevas matriculaciones'));
         }
 
         // Prevent creators/collaborators from enrolling

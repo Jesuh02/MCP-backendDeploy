@@ -21,6 +21,7 @@ export class SubjectController {
         try {
             const result = await this.subjectService.getByCourse(parseInt(req.params.courseId), req.user?.userId);
             if (result.isFail()) return next(result.getError());
+            res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
@@ -29,6 +30,7 @@ export class SubjectController {
         try {
             const result = await this.subjectService.getById(parseInt(req.params.id));
             if (result.isFail()) return next(result.getError());
+            res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };

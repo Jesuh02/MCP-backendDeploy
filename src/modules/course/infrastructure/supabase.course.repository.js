@@ -79,10 +79,12 @@ export class SupabaseCourseRepository {
             description: courseData.description || '',
             thumbnail_uri: courseData.thumbnailUri || null,
             creator_user_id: courseData.creatorUserId || null,
+            is_active: courseData.isActive ?? courseData.is_active ?? true,
             is_premium: courseData.isFree === false,
             price: courseData.price || 0,
             category: courseData.category || null,
             is_published: courseData.isPublished !== false,
+            deadline: courseData.deadline ?? null,
         };
         const { data, error } = await this.client.from('courses').insert(payload).select().single();
         if (error) throw new Error(`Error creando curso: ${error.message}`);
@@ -94,10 +96,12 @@ export class SupabaseCourseRepository {
         if (data.title !== undefined) payload.title = data.title;
         if (data.description !== undefined) payload.description = data.description;
         if (data.thumbnailUri !== undefined) payload.thumbnail_uri = data.thumbnailUri;
+        if (data.isActive !== undefined || data.is_active !== undefined) payload.is_active = data.isActive ?? data.is_active;
         if (data.isFree !== undefined) payload.is_premium = data.isFree === false;
         if (data.price !== undefined) payload.price = data.price;
         if (data.category !== undefined) payload.category = data.category;
         if (data.isPublished !== undefined) payload.is_published = data.isPublished;
+        if (data.deadline !== undefined) payload.deadline = data.deadline;
         if (data.lastModifiedBy !== undefined) payload.last_modified_by = data.lastModifiedBy;
         payload.last_modified_date = new Date().toISOString();
 
@@ -110,6 +114,45 @@ export class SupabaseCourseRepository {
         const { error } = await this.client.from('courses').delete().eq('id', id);
         if (error) throw new Error(`Error eliminando curso: ${error.message}`);
         return true;
+    }
+
+    async updateActiveState(id, isActive) {
+        const { data, error } = await this.client
+            .from('courses')
+            .update({
+                is_active: Boolean(isActive),
+                last_modified_date: new Date().toISOString(),
+            })
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw new Error(`Error actualizando estado activo del curso: ${error.message}`);
+        return data;
+    }
+
+    async deactivateCourses(ids = []) {
+        if (!Array.isArray(ids) || ids.length === 0) return [];
+        const { data, error } = await this.client
+            .from('courses')
+            .update({
+                is_active: false,
+                last_modified_date: new Date().toISOString(),
+            })
+            .in('id', ids)
+            .select();
+        if (error) throw new Error(`Error desactivando cursos expirados: ${error.message}`);
+        return data || [];
+    }
+
+    async findExpired(nowIso = new Date().toISOString()) {
+        const { data, error } = await this.client
+            .from('courses')
+            .select('*')
+            .not('deadline', 'is', null)
+            .lt('deadline', nowIso)
+            .eq('is_active', true);
+        if (error) throw new Error(`Error consultando cursos expirados: ${error.message}`);
+        return data || [];
     }
 
     async existsByTitle(title) {

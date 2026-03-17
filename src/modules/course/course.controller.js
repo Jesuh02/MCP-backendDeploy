@@ -27,6 +27,7 @@ export class CourseController {
     getStats = async(req, res, next) => {
         const result = await this.courseService.getStats();
         if (result.isFail()) return next(result.getError());
+        res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
         res.json({ success: true, data: result.getValue() });
     };
 
@@ -54,8 +55,9 @@ export class CourseController {
             return next(error);
         }
 
-        const result = await this.courseService.getById(courseId);
+        const result = await this.courseService.getById(courseId, req.user || {});
         if (result.isFail()) return next(result.getError());
+        res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
         res.json({ success: true, data: result.getValue() });
     };
 

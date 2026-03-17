@@ -2,9 +2,11 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
 export class UserDomainService {
-    constructor({ userRepository, fileStoragePort }) {
+    constructor({ userRepository, fileStoragePort, courseRepository = null, collaboratorRepository = null }) {
         this.userRepo = userRepository;
         this.storage = fileStoragePort;
+        this.courseRepo = courseRepository;
+        this._collaboratorRepo = collaboratorRepository;
     }
 
     _normalizeRoles(roles, fallbackRoles = []) {
@@ -277,12 +279,25 @@ export class UserDomainService {
      * whose ONLY active courses have expired. courseService is used to find expired courses.
      */
     async processExpiredCourseUsers(expiredCourseIds = []) {
-        if (!expiredCourseIds || expiredCourseIds.length === 0) return Result.ok({ deactivated: 0 });
+        let resolvedCourseIds = Array.isArray(expiredCourseIds)
+            ? expiredCourseIds.map(Number).filter(n => Number.isInteger(n) && n > 0)
+            : [];
+
+        if (resolvedCourseIds.length === 0 && this.courseRepo && typeof this.courseRepo.findExpired === 'function') {
+            const expiredCourses = await this.courseRepo.findExpired(new Date().toISOString()).catch(() => []);
+            resolvedCourseIds = (expiredCourses || []).map((course) => Number(course.id)).filter((id) => Number.isInteger(id) && id > 0);
+        }
+
+        if (resolvedCourseIds.length === 0) return Result.ok({ deactivated: 0, expiredCourseIds: [] });
+
+        if (this.courseRepo && typeof this.courseRepo.deactivateCourses === 'function') {
+            await this.courseRepo.deactivateCourses(resolvedCourseIds).catch(() => {});
+        }
 
         // Get all collaborator user IDs for expired courses
         let collaboratorIds = [];
         if (this._collaboratorRepo) {
-            for (const courseId of expiredCourseIds) {
+            for (const courseId of resolvedCourseIds) {
                 const ids = await this._collaboratorRepo.findUserIdsByCourse(courseId).catch(() => []);
                 collaboratorIds = collaboratorIds.concat(ids || []);
             }
@@ -295,7 +310,7 @@ export class UserDomainService {
             deactivated++;
         }
 
-        return Result.ok({ deactivated });
+        return Result.ok({ deactivated, expiredCourseIds: resolvedCourseIds });
     }
 
     setCollaboratorRepo(repo) {
