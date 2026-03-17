@@ -47,13 +47,14 @@ export const changePasswordSchema = Joi.object({
 });
 
 export const googleLoginSchema = Joi.object({
-    email: Joi.string().email().required().messages({
+    email: Joi.string().email().optional().messages({
         'string.email': 'Email inválido',
-        'any.required': 'El email es requerido',
     }),
     displayName: Joi.string().allow('').optional(),
     avatarUrl: Joi.string().uri().allow(null, '').optional(),
-    idToken: Joi.string().allow('').optional(), // For future server-side verification
-    username: Joi.string().min(3).max(30).allow(null, '').optional(), // Hint to link Google email to existing account
+    idToken: Joi.string().allow('').optional(),
+    username: Joi.string().min(3).max(30).allow(null, '').optional(),
+}).or('email', 'idToken').messages({
+    'object.missing': 'El email o el idToken es requerido',
 });
 
