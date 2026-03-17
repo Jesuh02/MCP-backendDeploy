@@ -89,3 +89,11 @@ scripts/migration_progress_subject_level.sql
 docs/respuestaclaude.txt
 scripts/migration_subjects_thumbnail.sql
 scripts/migration_subjects_thumbnail.sql
+docs/chat.txt
+scripts/migration_deadline_enrollment.sql
+scripts/migration_pre_enrollments.sql
+scripts/migration_pre_enrollments.sql
+scripts/migration_normalize_progress.sql
+scripts/migration_rename_certificates.sql
+scripts/migration_clean_progreso_estudiante.sql
+scripts/migration_certificates_integrity.sql

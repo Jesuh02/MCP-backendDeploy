@@ -27,7 +27,7 @@ export class VideoDomainService {
     async _signUrls(videos) {
         if (!this.storage || !this.storage.isAvailable || !this.storage.isAvailable()) return videos;
         const list = Array.isArray(videos) ? videos : [videos];
-        await Promise.all(list.map(async (v) => {
+        await Promise.all(list.map(async(v) => {
             if (!v) return;
             try {
                 // Sign video URL
@@ -83,9 +83,88 @@ export class VideoDomainService {
         return this.storage.generateDownloadUrl(objectKey, 3600);
     }
 
+    _normalizeAssetKey(raw) {
+        if (!raw) return null;
+
+        if (raw.startsWith('file://') || raw.startsWith('content://')) {
+            return null;
+        }
+
+        if (raw.startsWith('http://') || raw.startsWith('https://')) {
+            const extracted = this.storage?.extractObjectKey?.(raw);
+            if (extracted) return extracted;
+
+            try {
+                const url = new URL(raw);
+                return url.pathname.replace(/^\/+/, '') || null;
+            } catch {
+                return raw.split('?')[0] || null;
+            }
+        }
+
+        return raw;
+    }
+
+    _clearThumbnail(video) {
+        if (!video) return;
+        video.thumbnail_uri = null;
+        video.thumbnailUri = null;
+    }
+
+    async _removeCourseThumbnailFallback(videos) {
+        if (!this.courseRepo) return videos;
+
+        const list = Array.isArray(videos) ? videos : [videos];
+        const candidates = list.filter((video) => {
+            if (!video) return false;
+            const thumb = video.thumbnail_uri || video.thumbnailUri;
+            const courseId = video.course_id || video.courseId;
+            return Boolean(thumb && courseId);
+        });
+
+        if (candidates.length === 0) return videos;
+
+        const courseIds = [...new Set(candidates
+            .map((video) => Number(video.course_id || video.courseId))
+            .filter((courseId) => !Number.isNaN(courseId) && courseId > 0))];
+
+        if (courseIds.length === 0) return videos;
+
+        let courses = [];
+        try {
+            if (typeof this.courseRepo.findByIds === 'function') {
+                courses = await this.courseRepo.findByIds(courseIds);
+            } else {
+                courses = (await Promise.all(courseIds.map((courseId) => this.courseRepo.findById(courseId))))
+                    .filter(Boolean);
+            }
+        } catch (error) {
+            console.warn('[VideoDomainService] Error loading course thumbnails for sanitization:', error.message);
+            return videos;
+        }
+
+        const courseThumbById = new Map(courses.map((course) => [
+            Number(course.id),
+            this._normalizeAssetKey(course.thumbnail_url || course.thumbnail_uri || course.thumbnailUri || null),
+        ]));
+
+        for (const video of candidates) {
+            const courseId = Number(video.course_id || video.courseId);
+            const videoThumb = this._normalizeAssetKey(video.thumbnail_uri || video.thumbnailUri);
+            const courseThumb = courseThumbById.get(courseId);
+
+            if (videoThumb && courseThumb && videoThumb === courseThumb) {
+                this._clearThumbnail(video);
+            }
+        }
+
+        return videos;
+    }
+
     async getById(id) {
         const video = await this.videoRepo.findById(id);
         if (!video) return Result.fail(new NotFoundError('Video', id));
+        await this._removeCourseThumbnailFallback(video);
         await this._signUrls(video);
         return Result.ok(video);
     }
@@ -95,30 +174,35 @@ export class VideoDomainService {
             this.videoRepo.findAll(pagination),
             this.videoRepo.count({}),
         ]);
+        await this._removeCourseThumbnailFallback(videos);
         await this._signUrls(videos);
         return Result.ok({ videos, total });
     }
 
     async findByCreator(username, pagination) {
         const videos = await this.videoRepo.findByCreator(username, pagination);
+        await this._removeCourseThumbnailFallback(videos);
         await this._signUrls(videos);
         return Result.ok(videos);
     }
 
     async findByCreatorId(userId, pagination) {
         const videos = await this.videoRepo.findByCreatorId(userId, pagination);
+        await this._removeCourseThumbnailFallback(videos);
         await this._signUrls(videos);
         return Result.ok(videos);
     }
 
     async findByCourse(courseId, pagination) {
         const videos = await this.videoRepo.findByCourse(courseId, pagination);
+        await this._removeCourseThumbnailFallback(videos);
         await this._signUrls(videos);
         return Result.ok(videos);
     }
 
     async search(query, pagination) {
         const videos = await this.videoRepo.search(query, pagination);
+        await this._removeCourseThumbnailFallback(videos);
         await this._signUrls(videos);
         return Result.ok(videos);
     }
@@ -172,13 +256,13 @@ export class VideoDomainService {
             const sanitizedTitle = (metadata.title || 'video').replace(/[^a-zA-Z0-9._-]/g, '_');
             const videoExt = path.extname(videoFilename || '.mp4') || '.mp4';
             const videoKey = `videos/${Date.now()}_${sanitizedTitle}${videoExt}`;
-            const videoPublicUrl = await this.storage.uploadFile(videoBuffer, videoKey, videoMimeType || 'video/mp4');
+            await this.storage.uploadFile(videoBuffer, videoKey, videoMimeType || 'video/mp4');
 
             // 2. Upload thumbnail if provided
             let thumbnailUrl = null;
             if (thumbnailBuffer && thumbnailBuffer.length > 0) {
                 const thumbExt = path.extname(thumbnailFilename || '.jpg') || '.jpg';
-                const thumbKey = `thumbnails/courses/thumb_${Date.now()}${thumbExt}`;
+                const thumbKey = `thumbnails/videos/thumb_${Date.now()}${thumbExt}`;
                 thumbnailUrl = await this.storage.uploadFile(thumbnailBuffer, thumbKey, thumbnailMimeType || 'image/jpeg');
             }
 
@@ -198,16 +282,8 @@ export class VideoDomainService {
 
             const created = await this.videoRepo.create(videoData);
 
-            // 4. Update the associated course with the thumbnail if one exists
-            if (metadata.courseId && thumbnailUrl && this.courseRepo) {
-                try {
-                    await this.courseRepo.update(metadata.courseId, { thumbnailUri: thumbnailUrl });
-                } catch (err) {
-                    console.warn('[VideoDomainService] Error updating course thumbnail:', err.message);
-                }
-            }
-
             // Sign URLs before returning
+            await this._removeCourseThumbnailFallback(created);
             await this._signUrls(created);
 
             // Notify subscribers about new video (fire-and-forget)
@@ -252,6 +328,7 @@ export class VideoDomainService {
 
     async create(videoData) {
         const created = await this.videoRepo.create(videoData);
+        await this._removeCourseThumbnailFallback(created);
         return Result.ok(created);
     }
 
@@ -262,6 +339,7 @@ export class VideoDomainService {
             return Result.fail(new ForbiddenError('No tienes permiso para editar este video'));
         }
         const updated = await this.videoRepo.update(id, data);
+        await this._removeCourseThumbnailFallback(updated);
         return Result.ok(updated);
     }
 
@@ -300,6 +378,7 @@ export class VideoDomainService {
             }
 
             // Sign all URLs in parallel for maximum speed
+            await this._removeCourseThumbnailFallback(videos);
             await this._signUrls(videos);
 
             // Build a lookup map keyed by video ID
@@ -319,6 +398,7 @@ export class VideoDomainService {
 
     async findByCourseIds(courseIds, pagination) {
         const videos = await this.videoRepo.findByCourseIds(courseIds, pagination);
+        await this._removeCourseThumbnailFallback(videos);
         await this._signUrls(videos);
         return Result.ok(videos);
     }
@@ -326,10 +406,10 @@ export class VideoDomainService {
     async getChanges(sinceMs) {
         const sinceIso = new Date(Number(sinceMs)).toISOString();
         const videos = await this.videoRepo.findModifiedSince(sinceIso);
+        await this._removeCourseThumbnailFallback(videos);
         await this._signUrls(videos);
         const serverNow = Date.now();
         return Result.ok({ videos, serverTimestamp: serverNow });
     }
 }
 export default VideoDomainService;
-

@@ -22,6 +22,79 @@ export class CourseDomainService {
         obj.is_premium = price > 0;
     }
 
+    _coerceBoolean(value, fallback = true) {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') return value !== 0;
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (['true', '1', 'yes', 'si'].includes(normalized)) return true;
+            if (['false', '0', 'no'].includes(normalized)) return false;
+        }
+        return fallback;
+    }
+
+    _readCourseActiveFlag(course) {
+        return this._coerceBoolean(course?.isActive ?? course?.is_active, true);
+    }
+
+    _hasDeadlineExpired(deadline) {
+        if (!deadline) return false;
+        const parsed = new Date(deadline);
+        return !Number.isNaN(parsed.getTime()) && parsed <= new Date();
+    }
+
+    _computeEffectiveActiveState(course) {
+        if (!course) return false;
+        if (!this._readCourseActiveFlag(course)) return false;
+        return !this._hasDeadlineExpired(course.deadline);
+    }
+
+    _prepareCourseWriteData(data, { isCreate = false } = {}) {
+        const payload = { ...(data || {}) };
+
+        if (payload.deadline === '') {
+            payload.deadline = null;
+        }
+
+        const rawIsActive = payload.isActive ?? payload.is_active;
+        const desiredIsActive = rawIsActive === undefined
+            ? (isCreate ? true : undefined)
+            : this._coerceBoolean(rawIsActive, true);
+
+        if (desiredIsActive !== undefined) {
+            payload.isActive = desiredIsActive;
+            payload.is_active = desiredIsActive;
+        }
+
+        if (payload.deadline && this._hasDeadlineExpired(payload.deadline)) {
+            payload.isActive = false;
+            payload.is_active = false;
+        }
+
+        return payload;
+    }
+
+    async _persistExpiredCourseState(course) {
+        if (!course || !course.id || !this.courseRepo || typeof this.courseRepo.updateActiveState !== 'function') {
+            return course;
+        }
+
+        if (this._readCourseActiveFlag(course) && this._hasDeadlineExpired(course.deadline)) {
+            const updated = await this.courseRepo.updateActiveState(course.id, false);
+            return updated || course;
+        }
+
+        return course;
+    }
+
+    _shouldRestrictInactiveAccess(requesterRoles = []) {
+        const normalizedRoles = (requesterRoles || [])
+            .map((role) => Number(role?.id ?? role))
+            .filter((roleId) => Number.isInteger(roleId) && roleId > 0);
+        if (normalizedRoles.includes(3)) return false;
+        return normalizedRoles.includes(1) || normalizedRoles.includes(2);
+    }
+
     _normalizeCourseShape(course) {
         if (!course || typeof course !== 'object') return course;
 
@@ -44,6 +117,14 @@ export class CourseDomainService {
 
         if (typeof course.category !== 'string' || course.category.trim().length === 0) {
             course.category = 'General';
+        }
+
+        const effectiveIsActive = this._computeEffectiveActiveState(course);
+        course.is_active = effectiveIsActive;
+        course.isActive = effectiveIsActive;
+
+        if (!Object.prototype.hasOwnProperty.call(course, 'deadline')) {
+            course.deadline = null;
         }
 
         return course;
@@ -85,19 +166,26 @@ export class CourseDomainService {
         return Array.isArray(courses) ? list : list[0];
     }
 
-    async getById(id) {
+    async getById(id, requester = {}) {
         const idValidation = this._validateCourseId(id);
         if (idValidation.isFail()) return idValidation;
 
         const courseId = idValidation.getValue();
-        const course = await this.courseRepo.findById(courseId);
+        let course = await this.courseRepo.findById(courseId);
         if (!course) {
             const err = new NotFoundError('Curso', courseId);
             // Missing resources are expected on client navigation retries.
             err.silent = true;
             return Result.fail(err);
         }
+
+        course = await this._persistExpiredCourseState(course);
         this._normalizeCourseShape(course);
+
+        if (this._shouldRestrictInactiveAccess(requester?.roles) && !this.isCourseActive(course)) {
+            return Result.fail(new ForbiddenError('El curso está inactivo y no esta disponible para este rol'));
+        }
+
         await this._signUrls(course);
         return Result.ok(course);
     }
@@ -152,9 +240,9 @@ export class CourseDomainService {
             countPromises.push(Promise.resolve(0));
         }
 
-        const popularPromise = this.progressRepo && typeof this.progressRepo.findCourseEnrollmentRanking === 'function'
-            ? this.progressRepo.findCourseEnrollmentRanking().then(r => (r || []).length)
-            : Promise.resolve(0);
+        const popularPromise = this.progressRepo && typeof this.progressRepo.findCourseEnrollmentRanking === 'function' ?
+            this.progressRepo.findCourseEnrollmentRanking().then(r => (r || []).length) :
+            Promise.resolve(0);
         countPromises.push(popularPromise);
 
         const [total, free, premium, myCreated, otherCreators, enrolled, purchased, popular] = await Promise.all(countPromises);
@@ -255,11 +343,18 @@ export class CourseDomainService {
         return Result.ok({ courses, total });
     }
 
-    async create(courseData, requesterId) {
+    async create(courseData, requesterId, requesterRoles = []) {
+        const isAdmin = (requesterRoles || []).some(r => r === 3);
+        if (!isAdmin) {
+            return Result.fail(new ForbiddenError('Solo el rol 3 puede crear cursos'));
+        }
+
+        courseData = this._prepareCourseWriteData(courseData, { isCreate: true });
         courseData.creatorUserId = requesterId;
         // Ensure isFree is consistent with price (price > 0 => premium)
         this._ensureIsFreeFlag(courseData);
         const created = await this.courseRepo.create(courseData);
+        this._normalizeCourseShape(created);
 
         // Fire-and-forget: Notificar a los suscriptores del creador sobre el nuevo curso
         if (this.courseNotificationService) {
@@ -271,22 +366,28 @@ export class CourseDomainService {
         return Result.ok(created);
     }
 
-    async update(id, data, requesterId) {
+    async update(id, data, requesterId, requesterRoles = []) {
         const course = await this.courseRepo.findById(id);
         if (!course) return Result.fail(new NotFoundError('Curso', id));
-        const hasAccess = await this.isCreatorOrCollaborator(requesterId, id);
-        if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para editar este curso'));
+        const isPrivileged = (requesterRoles || []).some(r => r === 3);
+        if (!isPrivileged) {
+            return Result.fail(new ForbiddenError('Solo el rol 3 puede editar cursos'));
+        }
+        data = this._prepareCourseWriteData(data);
         this._ensureIsFreeFlag(data);
         data.lastModifiedBy = requesterId;
         const updated = await this.courseRepo.update(id, data);
+        this._normalizeCourseShape(updated);
         return Result.ok(updated);
     }
 
-    async delete(id, requesterId) {
+    async delete(id, requesterId, requesterRoles = []) {
         const course = await this.courseRepo.findById(id);
         if (!course) return Result.fail(new NotFoundError('Curso', id));
-        const hasAccess = await this.isCreatorOrCollaborator(requesterId, id);
-        if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para eliminar este curso'));
+        const isPrivileged = (requesterRoles || []).some(r => r === 3);
+        if (!isPrivileged) {
+            return Result.fail(new ForbiddenError('Solo el rol 3 puede eliminar cursos'));
+        }
         await this.courseRepo.delete(id);
         return Result.ok({ message: 'Curso eliminado' });
     }
@@ -428,6 +529,28 @@ export class CourseDomainService {
         } catch (err) {
             return Result.fail(new Error(`Error fetching courses with submissions: ${err.message}`));
         }
+    }
+
+    /**
+     * Returns all courses whose deadline has passed and are still marked published.
+     * Used by the admin expiry job.
+     */
+    async findExpiredCourses() {
+        try {
+            const now = new Date().toISOString();
+            const courses = await this.courseRepo.findExpired(now);
+            return Result.ok(courses || []);
+        } catch (err) {
+            return Result.fail(new Error(`Error fetching expired courses: ${err.message}`));
+        }
+    }
+
+    /**
+     * Checks course is_active status — a course is "active" when deadline is null or in the future.
+     */
+    isCourseActive(course) {
+        if (!course) return false;
+        return this._computeEffectiveActiveState(course);
     }
 
 

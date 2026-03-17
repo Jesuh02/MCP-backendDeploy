@@ -1,5 +1,5 @@
 import { Result } from '../../shared/Result.js';
-import { UnauthorizedError, ConflictError, ValidationError, NotFoundError } from '../../shared/errors/index.js';
+import { UnauthorizedError, ConflictError, ValidationError, NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class AuthService {
     constructor({ userRepository, jwtAdapter }) {
@@ -34,6 +34,11 @@ export class AuthService {
         if (!user) {
             console.log(`[AuthService] User/Email '${username}' not found`);
             return Result.fail(new UnauthorizedError('Credenciales inválidas'));
+        }
+
+        if (user.isActive === false) {
+            console.log(`[AuthService] User '${username}' is deactivated`);
+            return Result.fail(new ForbiddenError('Tu usuario ha sido desactivado, por favor contactar a soporte'));
         }
 
         let valid = false;
@@ -71,6 +76,7 @@ export class AuthService {
             if (!result.valid) return Result.fail(new UnauthorizedError('Refresh token inválido'));
             const user = await this.userRepo.findById(result.decoded.userId);
             if (!user) return Result.fail(new UnauthorizedError('Usuario no encontrado'));
+            if (user.isActive === false) return Result.fail(new ForbiddenError('Tu usuario ha sido desactivado, por favor contactar a soporte'));
             const tokens = this._generateTokens(user);
             return Result.ok(tokens);
         } catch {
@@ -116,6 +122,11 @@ export class AuthService {
         if (user) {
             console.log(`[AuthService] Found existing user for Google email: ${email}, userId: ${user.id}, username: ${user.username}`);
 
+            if (user.isActive === false) {
+                console.log(`[AuthService] Google user '${email}' is deactivated`);
+                return Result.fail(new ForbiddenError('Tu usuario ha sido desactivado, por favor contactar a soporte'));
+            }
+
             // Update avatar if provided and different
             if (avatarUrl && user.avatar !== avatarUrl) {
                 try {
@@ -135,6 +146,10 @@ export class AuthService {
         if (username && username.trim().length >= 3) {
             const existingUser = await this.userRepo.findByUsername(username.trim());
             if (existingUser) {
+                if (existingUser.isActive === false) {
+                    console.log(`[AuthService] Google linked user '${username}' is deactivated`);
+                    return Result.fail(new ForbiddenError('Tu usuario ha sido desactivado, por favor contactar a soporte'));
+                }
                 // Only link when the account has no email (avoids overwriting a different verified email)
                 if (!existingUser.email) {
                     try {

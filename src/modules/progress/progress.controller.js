@@ -242,5 +242,69 @@ export class ProgressController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    // ─── Enrollment request / approval ────────────────────────────────────────
+
+    requestEnrollment = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            if (!courseId || isNaN(courseId) || courseId <= 0) {
+                return res.status(400).json({ success: false, error: 'courseId must be a positive integer' });
+            }
+            const result = await this.progressService.requestEnrollment(req.user.userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getEnrollmentStatus = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            if (!courseId || isNaN(courseId) || courseId <= 0) {
+                return res.status(400).json({ success: false, error: 'courseId must be a positive integer' });
+            }
+            const result = await this.progressService.isEnrolledAndApproved(req.user.userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getPendingEnrollments = async(req, res, next) => {
+        try {
+            const courseId = req.query.courseId ? parseInt(req.query.courseId) : null;
+            if (req.query.courseId && (!courseId || isNaN(courseId) || courseId <= 0)) {
+                return res.status(400).json({ success: false, error: 'courseId must be a positive integer' });
+            }
+            const result = await this.progressService.getPendingEnrollments(courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    approveEnrollment = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const courseId = parseInt(req.params.courseId);
+            if (!userId || isNaN(userId) || userId <= 0 || !courseId || isNaN(courseId) || courseId <= 0) {
+                return res.status(400).json({ success: false, error: 'userId and courseId must be positive integers' });
+            }
+            const result = await this.progressService.approveEnrollment(userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    rejectEnrollment = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const courseId = parseInt(req.params.courseId);
+            if (!userId || isNaN(userId) || userId <= 0 || !courseId || isNaN(courseId) || courseId <= 0) {
+                return res.status(400).json({ success: false, error: 'userId and courseId must be positive integers' });
+            }
+            const result = await this.progressService.rejectEnrollment(userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ProgressController;

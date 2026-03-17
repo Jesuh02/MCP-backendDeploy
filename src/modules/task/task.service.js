@@ -38,6 +38,16 @@ export class TaskDomainService {
         return subject?.course_id || null;
     }
 
+    _dedupeTasks(tasks = []) {
+        const seen = new Set();
+        return (tasks || []).filter(task => {
+            const taskId = Number(task?.id);
+            if (!Number.isInteger(taskId) || taskId <= 0 || seen.has(taskId)) return false;
+            seen.add(taskId);
+            return true;
+        });
+    }
+
     /** Lista paginada de tareas. */
     async list(pg) {
         const { tasks, total } = await this.taskRepo.findAll(pg);
@@ -56,22 +66,22 @@ export class TaskDomainService {
         // Validar que el tema exista
         const topic = await this.topicRepo.findById(topicId);
         if (!topic) return Result.fail(new NotFoundError('Tema', topicId));
-        const tasks = await this.taskRepo.findByTopic(topicId);
+        const tasks = this._dedupeTasks(await this.taskRepo.findByTopic(topicId));
         return Result.ok(tasks);
     }
 
     /** Obtiene todas las tareas de un curso (via topics). */
     async getByCourse(courseId) {
-        const tasks = await this.taskRepo.findByCourse(courseId);
+        const tasks = this._dedupeTasks(await this.taskRepo.findByCourse(courseId));
         return Result.ok(tasks);
     }
 
     async getBySubject(subjectId) {
-        const tasks = await this.taskRepo.findBySubject(subjectId);
+        const tasks = this._dedupeTasks(await this.taskRepo.findBySubject(subjectId));
         return Result.ok(tasks);
     }
 
-    /** Crea una nueva tarea, validando que el tema exista. */
+    /** Crea una nueva tarea, validando que el tema exista. Previene duplicados. */
     async create(data) {
         let courseId = null;
         if (data.topicId) {
@@ -79,6 +89,21 @@ export class TaskDomainService {
             if (!topic) return Result.fail(new NotFoundError('Tema', data.topicId));
             courseId = await this._getCourseIdFromTopic(topic);
         }
+
+        // Protección anti-duplicados: verificar si ya existe una tarea reciente con mismo título y tema
+        if (data.topicId && data.title) {
+            const existing = await this.taskRepo.findByTopic(data.topicId);
+            const duplicate = (existing || []).find(t => {
+                if (String(t.title).trim().toLowerCase() !== String(data.title).trim().toLowerCase()) return false;
+                const createdAt = new Date(t.createdAt || t.created_at);
+                return (Date.now() - createdAt.getTime()) < 60000; // creada hace menos de 60 segundos
+            });
+            if (duplicate) {
+                console.log(`[TaskDomainService] Duplicate task blocked: "${data.title}" in topic ${data.topicId}`);
+                return Result.ok(duplicate);
+            }
+        }
+
         const created = await this.taskRepo.create(data);
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {

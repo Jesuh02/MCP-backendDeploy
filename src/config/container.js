@@ -236,7 +236,12 @@ export function createContainer() {
 
     // Nivel 0: servicios sin dependencias inter-servicio
     const authService = new AuthService({ userRepository: userRepo, jwtAdapter });
-    const userService = new UserDomainService({ userRepository: userRepo, fileStoragePort: storageAdapter });
+    const userService = new UserDomainService({
+        userRepository: userRepo,
+        fileStoragePort: storageAdapter,
+        courseRepository: courseRepo,
+        collaboratorRepository: collaboratorRepo,
+    });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, subjectRepository: subjectRepo });
     const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });

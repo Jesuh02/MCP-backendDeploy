@@ -27,6 +27,7 @@ export class CourseController {
     getStats = async(req, res, next) => {
         const result = await this.courseService.getStats();
         if (result.isFail()) return next(result.getError());
+        res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
         res.json({ success: true, data: result.getValue() });
     };
 
@@ -54,8 +55,9 @@ export class CourseController {
             return next(error);
         }
 
-        const result = await this.courseService.getById(courseId);
+        const result = await this.courseService.getById(courseId, req.user || {});
         if (result.isFail()) return next(result.getError());
+        res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
         res.json({ success: true, data: result.getValue() });
     };
 
@@ -77,19 +79,19 @@ export class CourseController {
     create = async(req, res, next) => {
         const { error, value } = createCourseSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
-        const result = await this.courseService.create(value, req.user.userId);
+        const result = await this.courseService.create(value, req.user.userId, req.user.roles || []);
         if (result.isFail()) return next(result.getError());
         res.status(201).json({ success: true, data: result.getValue() });
     };
     update = async(req, res, next) => {
         const { error, value } = updateCourseSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
-        const result = await this.courseService.update(parseInt(req.params.id), value, req.user.userId);
+        const result = await this.courseService.update(parseInt(req.params.id), value, req.user.userId, req.user.roles || []);
         if (result.isFail()) return next(result.getError());
         res.json({ success: true, data: result.getValue() });
     };
     delete = async(req, res, next) => {
-        const result = await this.courseService.delete(parseInt(req.params.id), req.user.userId);
+        const result = await this.courseService.delete(parseInt(req.params.id), req.user.userId, req.user.roles || []);
         if (result.isFail()) {
             const error = result.getError();
             // Idempotencia: Si el curso no existe, consideramos que ya fue eliminado (Clean Code)

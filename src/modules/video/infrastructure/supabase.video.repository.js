@@ -248,8 +248,8 @@ export class SupabaseVideoRepository {
         const { data, error } = await this.client
             .from('videos')
             .select('*, usuarios!remote_id(username)')
-            .gt('updated_at', sinceIso)
-            .order('updated_at', { ascending: false })
+            .gt('created_at', sinceIso)
+            .order('created_at', { ascending: false })
             .limit(limit);
         if (error) throw new Error(error.message);
         return (data || []).map(v => this._mapVideo(v));
@@ -259,12 +259,12 @@ export class SupabaseVideoRepository {
         this._requireClient();
         const { data, error } = await this.client
             .from('videos')
-            .select('updated_at')
-            .order('updated_at', { ascending: false })
+            .select('created_at')
+            .order('created_at', { ascending: false })
             .limit(1)
             .single();
         if (error || !data) return null;
-        return data.updated_at;
+        return data.created_at;
     }
 }
 export default SupabaseVideoRepository;
