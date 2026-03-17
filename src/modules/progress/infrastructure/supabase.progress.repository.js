@@ -339,9 +339,26 @@ export class SupabaseProgressRepository {
 
     /**
      * Emite o actualiza el certificado de (userId, courseId).
+     * Lanza error si el progreso del curso no tiene estado='Ganado'.
      * Retorna el progreso del curso con la info del certificado adjunta.
      */
     async updateCertificate(userId, courseId, data) {
+        // Verificar que el estudiante haya ganado el curso antes de emitir
+        const { data: prog, error: progError } = await this.client
+            .from('progreso_estudiante')
+            .select('*')
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId)
+            .is('materia_id', null)
+            .single();
+
+        if (progError || !prog) {
+            throw new Error(`El estudiante ${userId} no tiene progreso registrado para el curso ${courseId}`);
+        }
+        if (prog.estado !== 'Ganado') {
+            throw new Error(`No se puede emitir el certificado: el estudiante ${userId} no ha ganado el curso ${courseId} (estado actual: ${prog.estado})`);
+        }
+
         const payload = { user_id: userId, course_id: courseId };
         if (data.certificateIssuedAt) payload.issued_at    = data.certificateIssuedAt;
         if (data.certificateUrl)      payload.storage_path = data.certificateUrl;
@@ -353,20 +370,34 @@ export class SupabaseProgressRepository {
             .single();
         if (error) throw new Error(error.message);
 
-        const { data: prog } = await this.client
-            .from('progreso_estudiante')
-            .select('*')
-            .eq('usuario_estudiante', userId)
-            .eq('curso_id', courseId)
-            .is('materia_id', null)
-            .single();
         return this._mapToDomain(prog, cert);
     }
 
     async bulkIssueCertificates(pairs) {
+        if (!pairs?.length) return [];
+
+        // Filtrar solo los pares donde el progreso del curso es 'Ganado'
+        const courseIds = [...new Set(pairs.map(p => p.courseId))];
+        const userIds   = [...new Set(pairs.map(p => p.userId))];
+
+        const { data: wonRows, error: wonError } = await this.client
+            .from('progreso_estudiante')
+            .select('usuario_estudiante, curso_id')
+            .in('curso_id', courseIds)
+            .in('usuario_estudiante', userIds)
+            .is('materia_id', null)
+            .eq('estado', 'Ganado');
+
+        if (wonError) throw new Error(wonError.message);
+
+        const wonSet = new Set((wonRows || []).map(r => `${r.usuario_estudiante}-${r.curso_id}`));
+        const eligiblePairs = pairs.filter(({ userId, courseId }) => wonSet.has(`${userId}-${courseId}`));
+
+        if (!eligiblePairs.length) return [];
+
         const now = new Date().toISOString();
         const results = [];
-        for (const { userId, courseId } of pairs) {
+        for (const { userId, courseId } of eligiblePairs) {
             const { data, error } = await this.client
                 .from('certificates')
                 .upsert(

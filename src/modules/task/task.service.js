@@ -38,6 +38,16 @@ export class TaskDomainService {
         return subject?.course_id || null;
     }
 
+    _dedupeTasks(tasks = []) {
+        const seen = new Set();
+        return (tasks || []).filter(task => {
+            const taskId = Number(task?.id);
+            if (!Number.isInteger(taskId) || taskId <= 0 || seen.has(taskId)) return false;
+            seen.add(taskId);
+            return true;
+        });
+    }
+
     /** Lista paginada de tareas. */
     async list(pg) {
         const { tasks, total } = await this.taskRepo.findAll(pg);
@@ -56,18 +66,18 @@ export class TaskDomainService {
         // Validar que el tema exista
         const topic = await this.topicRepo.findById(topicId);
         if (!topic) return Result.fail(new NotFoundError('Tema', topicId));
-        const tasks = await this.taskRepo.findByTopic(topicId);
+        const tasks = this._dedupeTasks(await this.taskRepo.findByTopic(topicId));
         return Result.ok(tasks);
     }
 
     /** Obtiene todas las tareas de un curso (via topics). */
     async getByCourse(courseId) {
-        const tasks = await this.taskRepo.findByCourse(courseId);
+        const tasks = this._dedupeTasks(await this.taskRepo.findByCourse(courseId));
         return Result.ok(tasks);
     }
 
     async getBySubject(subjectId) {
-        const tasks = await this.taskRepo.findBySubject(subjectId);
+        const tasks = this._dedupeTasks(await this.taskRepo.findBySubject(subjectId));
         return Result.ok(tasks);
     }
 
