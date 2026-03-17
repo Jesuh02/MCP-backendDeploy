@@ -19,7 +19,7 @@ export class SubjectController {
 
     getByCourse = async (req, res, next) => {
         try {
-            const result = await this.subjectService.getByCourse(parseInt(req.params.courseId));
+            const result = await this.subjectService.getByCourse(parseInt(req.params.courseId), req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

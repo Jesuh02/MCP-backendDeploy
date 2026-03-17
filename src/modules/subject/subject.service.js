@@ -21,8 +21,19 @@ export class SubjectDomainService {
         return Result.ok({ subjects, total });
     }
 
-    async getByCourse(courseId) {
+    async getByCourse(courseId, requesterId) {
         const subjects = await this.subjectRepo.findByCourse(courseId);
+        if (requesterId) {
+            const course = await this.courseRepo.findById(courseId);
+            const isCourseOwner = course && Number(course.creator_user_id) === Number(requesterId);
+            if (!isCourseOwner) {
+                const isCollab = this.collaboratorRepo && await this.collaboratorRepo.isCollaborator(requesterId, courseId);
+                if (isCollab) {
+                    const filtered = subjects.filter(s => s.created_by && Number(s.created_by) === Number(requesterId));
+                    return Result.ok(filtered);
+                }
+            }
+        }
         return Result.ok(subjects);
     }
 
