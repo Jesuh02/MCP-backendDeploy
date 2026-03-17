@@ -17,7 +17,12 @@ export function userRoutes({ userController, requireRoles }) {
     router.post('/fcm-token', userController.registerFCMToken);
     router.post('/:id/role', requireRoles(3), userController.assignRole); // Admin only
 
+    // Admin — user activation management
+    router.get('/admin/list', requireRoles(3), userController.listAll);
+    router.post('/:id/deactivate', requireRoles(3), userController.deactivateUser);
+    router.post('/:id/activate', requireRoles(3), userController.activateUser);
+    router.post('/admin/process-expired-courses', requireRoles(3), userController.processExpiredCourseUsers);
+
     return router;
 }
 export default userRoutes;
-

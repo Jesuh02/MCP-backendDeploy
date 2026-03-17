@@ -16,6 +16,7 @@ export class Course {
         language = 'es',
         isPublished = true,
         subscriberCount = 0,
+        deadline = null,
         createdAt = null,
         updatedAt = null,
     } = {}) {
@@ -32,6 +33,7 @@ export class Course {
         this.language = language;
         this.isPublished = isPublished;
         this.subscriberCount = subscriberCount;
+        this.deadline = deadline;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
     }
@@ -59,6 +61,7 @@ export class Course {
             language: row.language || 'es',
             isPublished: row.is_published !== false,
             subscriberCount: row.subscriber_count || 0,
+            deadline: row.deadline || null,
             createdAt: row.created_at || null,
             updatedAt: row.updated_at || null,
         });
@@ -66,4 +69,3 @@ export class Course {
 }
 
 export default Course;
-

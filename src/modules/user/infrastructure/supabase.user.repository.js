@@ -9,6 +9,8 @@ export class SupabaseUserRepository {
         if (!data) return null;
         const mapped = {...data, password: data.contrasena };
         delete mapped.contrasena;
+        // Expose is_active also as isActive for frontend clients
+        if (mapped.is_active !== undefined) mapped.isActive = mapped.is_active;
         return mapped;
     }
 
@@ -81,10 +83,23 @@ export class SupabaseUserRepository {
         if (data.email !== undefined) updatePayload.email = data.email;
         if (data.avatar !== undefined) updatePayload.avatar = data.avatar;
         if (data.password !== undefined) updatePayload.contrasena = data.password;
+        if (data.is_active !== undefined) updatePayload.is_active = data.is_active;
         const { data: updated, error } = await this.client.from('usuarios').update(updatePayload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando usuario: ${error.message}`);
         return this._mapUser(updated);
     }
+    async findAll({ limit = 100, offset = 0 } = {}) {
+        const { data, error } = await this.client
+            .from('usuarios')
+            .select('*, personas!fk_usuarios_persona(*)')
+            .order('id', { ascending: true })
+            .range(offset, offset + limit - 1);
+        if (error) throw new Error(`Error listando usuarios: ${error.message}`);
+        if (!data) return [];
+        const mapped = data.map(u => this._mapUser(u));
+        return Promise.all(mapped.map(u => this._enrichWithRoles(u)));
+    }
+
     async exists(username) {
         const { count, error } = await this.client.from('usuarios').select('id', { count: 'exact', head: true }).ilike('username', username);
         return !error && count > 0;
@@ -115,21 +130,39 @@ export class SupabaseUserRepository {
             this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${query}%`).limit(limit),
         ]);
         const seen = new Set();
-        const results = [];
+        const userIds = [];
+        const userMap = new Map();
         for (const { data } of [byUsername, byNombres, byApellidos]) {
             for (const u of data || []) {
                 if (seen.has(u.id)) continue;
                 seen.add(u.id);
-                results.push({
+                userIds.push(u.id);
+                userMap.set(u.id, {
                     id: u.id,
                     username: u.username,
                     email: u.email,
                     avatar: u.avatar,
-                    fullName: u.personas ? `${u.personas.nombres || ''} ${u.personas.apellidos || ''}`.trim() : null
+                    fullName: u.personas ? `${u.personas.nombres || ''} ${u.personas.apellidos || ''}`.trim() : null,
+                    roles: []
                 });
             }
         }
-        return results.slice(0, limit);
+        // Fetch roles for all found users
+        if (userIds.length > 0) {
+            const { data: rolesData } = await this.client
+                .from('usuarios_roles')
+                .select('usuario_id, rol_id, roles(id, nombre)')
+                .in('usuario_id', userIds);
+            if (rolesData) {
+                for (const r of rolesData) {
+                    const user = userMap.get(r.usuario_id);
+                    if (user && r.roles) {
+                        user.roles.push({ id: r.roles.id, nombre: r.roles.nombre });
+                    }
+                }
+            }
+        }
+        return Array.from(userMap.values()).slice(0, limit);
     }
 
     async findByIds(ids) {

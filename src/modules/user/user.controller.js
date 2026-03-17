@@ -34,6 +34,7 @@ export class UserController extends BaseController {
                 }
             }
 
+            res.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
             res.json({ success: true, data: userData });
         } catch (err) {
             next(err);
@@ -88,6 +89,29 @@ export class UserController extends BaseController {
         if (ids.length === 0) return res.json({ success: true, data: [] });
         this.store(req, res, next, () => this.userService.getByIds(ids));
     };
+
+    deactivateUser = async(req, res, next) => {
+        const userId = parseInt(req.params.id);
+        if (!userId || userId <= 0) return next(new ValidationError('userId inválido'));
+        this.store(req, res, next, () => this.userService.deactivateUser(userId));
+    };
+
+    activateUser = async(req, res, next) => {
+        const userId = parseInt(req.params.id);
+        if (!userId || userId <= 0) return next(new ValidationError('userId inválido'));
+        this.store(req, res, next, () => this.userService.activateUser(userId));
+    };
+
+    listAll = async(req, res, next) => {
+        const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+        const offset = parseInt(req.query.offset) || 0;
+        this.store(req, res, next, () => this.userService.listAll(limit, offset));
+    };
+
+    processExpiredCourseUsers = async(req, res, next) => {
+        const { expiredCourseIds } = req.body || {};
+        const ids = (expiredCourseIds || []).map(Number).filter(n => n > 0);
+        this.store(req, res, next, () => this.userService.processExpiredCourseUsers(ids));
+    };
 }
 export default UserController;
-

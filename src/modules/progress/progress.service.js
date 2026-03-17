@@ -59,7 +59,8 @@ export class ProgressDomainService {
         return Result.ok(board);
     }
 
-    async upsert(data) {        if (data?.userId && data?.courseId && this.courseRepo) {
+    async upsert(data) {
+        if (data?.userId && data?.courseId && this.courseRepo) {
             const course = await this.courseRepo.findById(data.courseId);
             if (!course) {
                 const resolved = await this._resolveCourseFromSubjectId(data.courseId);
@@ -80,7 +81,7 @@ export class ProgressDomainService {
             progress = await this.progressRepo.upsert(data);
         }
 
-        if ((progress.status === 'Ganado' || progress.averageGrade >= 6) && !progress.certificateIssuedAt) {
+        if (this._isProgressWon(progress) && !progress.certificateIssuedAt) {
             progress = await this.progressRepo.updateCertificate(data.userId, data.courseId, {
                 certificateIssuedAt: new Date().toISOString(),
             });
@@ -157,7 +158,7 @@ export class ProgressDomainService {
 
             existing.approved_courses += 1;
             if (Number.isFinite(row.grade)) {
-                existing.total_grade += row.grade;
+                existing.total_grade += Number(row.grade) || 0;
                 existing.graded_courses += 1;
             }
             aggregated.set(row.userId, existing);
@@ -218,6 +219,9 @@ export class ProgressDomainService {
     async issueCertificate(userId, courseId) {
         const progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
         if (!progress) return Result.fail(new NotFoundError('Progreso', `${userId}-${courseId}`));
+        if (!this._isProgressWon(progress)) {
+            return Result.fail(new ForbiddenError('Solo se pueden emitir certificados para progreso con estado Ganado'));
+        }
         const updated = await this.progressRepo.updateCertificate(userId, courseId, {
             certificateIssuedAt: new Date().toISOString(),
         });
@@ -236,7 +240,7 @@ export class ProgressDomainService {
 
     async bulkIssueCertificatesForCreator(creatorUserId) {
         const rows = await this.progressRepo.findWonProgressByCreatorCourses(creatorUserId);
-        const pending = rows.filter(r => !r.certificateIssuedAt);
+        const pending = rows.filter(r => this._isProgressWon(r) && !r.certificateIssuedAt);
         if (pending.length === 0) return Result.ok({ issued: 0 });
         const pairs = pending.map(r => ({ userId: r.userId, courseId: r.courseId }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);
@@ -250,7 +254,7 @@ export class ProgressDomainService {
 
     async bulkIssueCertificatesGlobal() {
         const rows = await this.progressRepo.findAllWonProgress();
-        const pending = rows.filter(r => !r.certificateIssuedAt);
+        const pending = rows.filter(r => this._isProgressWon(r) && !r.certificateIssuedAt);
         if (pending.length === 0) return Result.ok({ issued: 0 });
         const pairs = pending.map(r => ({ userId: r.userId, courseId: r.courseId }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);
@@ -258,6 +262,8 @@ export class ProgressDomainService {
     }
 
     async updateCertificateUrl(userId, courseId, url) {
+        // url puede ser una URL completa o un path relativo de Storage.
+        // El repositorio almacena storage_path; la URL pública se construye en el cliente.
         const updated = await this.progressRepo.updateCertificate(userId, courseId, {
             certificateUrl: url,
         });
@@ -437,6 +443,136 @@ export class ProgressDomainService {
         if (Number(course.creator_user_id) === Number(userId)) return true;
         if (!this.collaboratorRepo) return false;
         return this.collaboratorRepo.isCollaborator(Number(userId), courseId);
+    }
+
+    _isProgressWon(progress) {
+        return String(progress?.status || '').trim().toLowerCase() === 'ganado';
+    }
+
+    _normalizeRoleIds(roles = []) {
+        return [...new Set((roles || [])
+            .map((role) => Number(role?.id ?? role))
+            .filter((roleId) => Number.isInteger(roleId) && roleId > 0))];
+    }
+
+    async _getUserRoleIds(userId) {
+        if (!userId || !this.userRepo || typeof this.userRepo.getUserRoles !== 'function') return [];
+        try {
+            const roles = await this.userRepo.getUserRoles(userId);
+            return this._normalizeRoleIds(roles);
+        } catch {
+            return [];
+        }
+    }
+
+    _isCourseAvailableForEnrollment(course) {
+        const storedActive = course?.isActive ?? course?.is_active;
+        const isActive = typeof storedActive === 'undefined'
+            ? true
+            : ['false', '0', 'no'].includes(String(storedActive).trim().toLowerCase())
+                ? false
+                : Boolean(storedActive);
+        if (!isActive) return false;
+        if (!course?.deadline) return true;
+        const deadline = new Date(course.deadline);
+        return Number.isNaN(deadline.getTime()) || deadline > new Date();
+    }
+
+    // ─── Enrollment request flow (Pre-enrollment / Matrícula) ─────────────
+
+    /**
+     * Student requests enrollment in a course. Creates a pre_enrollment record
+     * with status = 'pending'. Does NOT allow duplicate requests.
+     */
+    async requestEnrollment(userId, courseId) {
+        if (!this.courseRepo) return Result.fail(new Error('CourseRepository not available'));
+
+        const course = await this.courseRepo.findById(courseId);
+        if (!course) return Result.fail(new NotFoundError('Curso', courseId));
+
+        const roleIds = await this._getUserRoleIds(userId);
+        if (roleIds.includes(3)) {
+            return Result.fail(new ForbiddenError('Los administradores no pueden matricularse en cursos'));
+        }
+        if (!roleIds.some((roleId) => roleId === 1 || roleId === 2)) {
+            return Result.fail(new ForbiddenError('Solo los usuarios con rol 1 o rol 2 pueden solicitar matricula'));
+        }
+
+        if (!this._isCourseAvailableForEnrollment(course)) {
+            if (course.deadline && new Date(course.deadline) <= new Date() && typeof this.courseRepo.updateActiveState === 'function') {
+                await this.courseRepo.updateActiveState(courseId, false).catch(() => {});
+            }
+            return Result.fail(new ForbiddenError('El curso esta inactivo o expirado y no acepta nuevas matriculaciones'));
+        }
+
+        // Prevent creators/collaborators from enrolling
+        const blocked = await this._isCreatorOrCollaborator(userId, courseId);
+        if (blocked) return Result.fail(new ForbiddenError('Creadores y colaboradores no pueden matricularse'));
+
+        // Check existing pre-enrollment
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+        if (existing) {
+            const existingStatus = this._getEnrollmentStatusValue(existing);
+            if (existingStatus === 'approved') {
+                return Result.ok({ ...existing, message: 'Ya estás matriculado' });
+            }
+            if (existingStatus === 'pending') {
+                return Result.ok({ ...existing, message: 'Tu solicitud ya está pendiente de aprobación' });
+            }
+            // rejected — allow re-request
+        }
+
+        const pending = await this.progressRepo.upsertPreEnrollment(userId, courseId, 'pending');
+        return Result.ok({ ...pending, message: 'Solicitud de matrícula enviada' });
+    }
+
+    /**
+     * Admin approves an enrollment request.
+     */
+    async approveEnrollment(userId, courseId) {
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+        if (!existing) return Result.fail(new NotFoundError('Solicitud de matrícula', `${userId}/${courseId}`));
+
+        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
+        return Result.ok({ ...updated, message: 'Matrícula aprobada' });
+    }
+
+    /**
+     * Admin rejects an enrollment request.
+     */
+    async rejectEnrollment(userId, courseId) {
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+        if (!existing) return Result.fail(new NotFoundError('Solicitud de matrícula', `${userId}/${courseId}`));
+
+        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'rejected');
+        return Result.ok({ ...updated, message: 'Matrícula rechazada' });
+    }
+
+    /**
+     * Admin: get all pending enrollment requests (optionally for a specific course).
+     */
+    async getPendingEnrollments(courseId = null) {
+        const rows = await this.progressRepo.findPendingEnrollments(courseId);
+        return Result.ok(rows || []);
+    }
+
+    /**
+     * Check if student has an approved enrollment in a course.
+     */
+    async isEnrolledAndApproved(userId, courseId) {
+        const row = await this.progressRepo.findPreEnrollment(userId, courseId);
+        if (!row) return Result.ok({ enrolled: false, status: null, enrollmentStatus: null });
+        const status = this._getEnrollmentStatusValue(row);
+        return Result.ok({
+            enrolled: status === 'approved',
+            status,
+            enrollmentStatus: status,
+        });
+    }
+
+    _getEnrollmentStatusValue(record) {
+        const status = record?.enrollmentStatus ?? record?.enrollment_status ?? record?.status ?? null;
+        return typeof status === 'string' ? status.trim().toLowerCase() : null;
     }
 }
 export default ProgressDomainService;

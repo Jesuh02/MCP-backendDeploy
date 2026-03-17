@@ -2,7 +2,12 @@ export class SupabaseSubscriptionRepository {
     constructor(client) { this.client = client; }
 
     async findBySubscriberAndCreator(subscriberId, creatorId) {
-        const { data, error } = await this.client.from('subscriptions').select('*').eq('subscriber_id', subscriberId).eq('creator_id', creatorId).single();
+        const { data, error } = await this.client
+            .from('subscriptions')
+            .select('*')
+            .eq('subscriber_id', subscriberId)
+            .eq('creator_id', creatorId)
+            .maybeSingle();
         if (error || !data) return null;
         return data;
     }
@@ -24,8 +29,25 @@ export class SupabaseSubscriptionRepository {
             subscriber_id: subData.subscriberId,
             creator_id: subData.creatorId,
         };
-        const { data, error } = await this.client.from('subscriptions').insert(payload).select().single();
-        if (error) throw new Error(error.message);
+
+        const existing = await this.findBySubscriberAndCreator(subData.subscriberId, subData.creatorId);
+        if (existing) return existing;
+
+        const { data, error } = await this.client
+            .from('subscriptions')
+            .upsert(payload, { onConflict: 'subscriber_id,creator_id' })
+            .select()
+            .single();
+
+        if (error) {
+            const duplicate = String(error.message || '').toLowerCase();
+            if (duplicate.includes('duplicate') || duplicate.includes('unique') || duplicate.includes('23505')) {
+                const found = await this.findBySubscriberAndCreator(subData.subscriberId, subData.creatorId);
+                if (found) return found;
+            }
+            throw new Error(error.message);
+        }
+
         return data;
     }
 

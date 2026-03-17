@@ -298,6 +298,22 @@ export class SupabaseNotificationRepository {
         if (error) throw new Error(error.message);
         return true;
     }
+
+    async findRecentByUserTypeAndRelated(userId, type, relatedId, windowSeconds = 60) {
+        const table = await this._resolveTableName();
+        const since = new Date(Date.now() - windowSeconds * 1000).toISOString();
+        const { data, error } = await this.client
+            .from(table)
+            .select('id')
+            .eq('user_id', userId)
+            .eq('type', type)
+            .eq('related_id', relatedId)
+            .gte('created_at', since)
+            .limit(1)
+            .single();
+        if (error || !data) return null;
+        return data;
+    }
 }
 export default SupabaseNotificationRepository;
 

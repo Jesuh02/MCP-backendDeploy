@@ -65,6 +65,28 @@ export class SupabaseContentItemRepository {
         return data || [];
     }
 
+    async findDuplicate(itemData) {
+        const title = itemData.title || itemData.fileName || '';
+        const body = itemData.body || itemData.fileUri || itemData.content || '';
+        const topicId = itemData.topicId || null;
+        const taskId = itemData.taskId || null;
+
+        let query = this.client.from('content_items').select('*');
+
+        if (topicId) query = query.eq('topic_id', topicId);
+        else query = query.is('topic_id', null);
+
+        if (taskId) query = query.eq('task_id', taskId);
+        else query = query.is('task_id', null);
+
+        if (title) query = query.eq('title', title);
+        if (body) query = query.eq('body', body);
+
+        const { data, error } = await query.limit(1);
+        if (error) return null;
+        return data && data.length > 0 ? data[0] : null;
+    }
+
     async create(itemData) {
         const payload = {
             topic_id: itemData.topicId || null,
