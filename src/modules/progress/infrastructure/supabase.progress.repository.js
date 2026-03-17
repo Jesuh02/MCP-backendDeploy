@@ -154,8 +154,7 @@ export class SupabaseProgressRepository {
             promedio:            averageGrade,
             calificacion_ponderada: averageGrade,
             porcentaje_progreso: progressData.progressPercentage || 0,
-            // estado se guarda explícitamente para que UPDATE también lo corrija
-            estado:              averageGrade >= 6 ? 'Ganado' : 'Perdido',
+            // estado es GENERATED ALWAYS en la BD — no incluir en el payload
             ultima_calculada_en: new Date().toISOString(),
         };
 
