@@ -95,3 +95,4 @@ scripts/migration_pre_enrollments.sql
 scripts/migration_pre_enrollments.sql
 scripts/migration_normalize_progress.sql
 scripts/migration_rename_certificates.sql
+scripts/migration_clean_progreso_estudiante.sql
