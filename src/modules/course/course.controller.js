@@ -172,6 +172,12 @@ export class CourseController {
         res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
     };
 
+    getManageableByUserId = async(req, res, next) => {
+        const result = await this.courseService.findManageableByUserId(parseInt(req.params.userId));
+        if (result.isFail()) return next(result.getError());
+        res.json({ success: true, data: result.getValue() });
+    };
+
     /**
      * GET /creator-id/:userId/with-submissions
      * Courses created by a user that have at least one task submission.

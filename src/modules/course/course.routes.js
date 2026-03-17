@@ -17,6 +17,7 @@ export function courseRoutes({ courseController }) {
     router.get('/my/creator-metrics', asyncHandler(courseController.getMyCreatorMetrics));
     router.get('/creator/:username', asyncHandler(courseController.getByCreator));
     router.get('/creator-id/:userId', asyncHandler(courseController.getByCreatorId));
+    router.get('/manageable/:userId', asyncHandler(courseController.getManageableByUserId));
     router.get('/creator-id/:userId/with-submissions', asyncHandler(courseController.getCreatorCoursesWithSubmissions));
     router.get('/:id', asyncHandler(courseController.getById));
     router.post('/', asyncHandler(courseController.create));

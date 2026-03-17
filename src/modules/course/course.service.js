@@ -413,6 +413,39 @@ export class CourseDomainService {
         return Result.ok({ courses, total });
     }
 
+    async findManageableByUserId(userId) {
+        const numericUserId = Number(userId);
+        if (!Number.isInteger(numericUserId) || numericUserId <= 0) {
+            return Result.ok([]);
+        }
+
+        const creatorCourses = await this.courseRepo.findByCreatorUserId(numericUserId, {
+            offset: 0,
+            limit: 500,
+            sortOrder: 'desc',
+        });
+
+        let collaboratorCourseIds = [];
+        if (this.collaboratorRepo?.findByUser) {
+            const collaborations = await this.collaboratorRepo.findByUser(numericUserId);
+            collaboratorCourseIds = (collaborations || [])
+                .map((entry) => Number(entry.course_id || entry.courseId || entry.courses?.id))
+                .filter((courseId) => Number.isInteger(courseId) && courseId > 0);
+        }
+
+        const ownedIds = new Set((creatorCourses || []).map((course) => Number(course.id)).filter((id) => id > 0));
+        const missingCollaboratorIds = [...new Set(collaboratorCourseIds)].filter((courseId) => !ownedIds.has(courseId));
+        const collaboratorCourses = missingCollaboratorIds.length > 0
+            ? await this.courseRepo.findByIds(missingCollaboratorIds)
+            : [];
+
+        const courses = [...(creatorCourses || []), ...(collaboratorCourses || [])]
+            .filter((course, index, array) => array.findIndex((entry) => Number(entry.id) === Number(course.id)) === index);
+
+        await this._signUrls(courses);
+        return Result.ok(courses);
+    }
+
     async findByIds(ids) {
         const courses = await this.courseRepo.findByIds(ids);
         await this._signUrls(courses);
