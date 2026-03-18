@@ -27,6 +27,27 @@ export class SubmissionDomainService {
     async getByTask(taskId, pagination) {
         const subs = await this.subRepo.findByTask(taskId, pagination);
         await this._signFileUrls(subs);
+        // Enrich submissions with studentUsername and studentAvatar
+        if (subs?.length && this.userService) {
+            const studentIds = [...new Set(subs.map(s => s.student_id).filter(id => id))];
+            if (studentIds.length > 0) {
+                try {
+                    const usersResult = await this.userService.getByIds(studentIds);
+                    if (usersResult.isOk()) {
+                        const usersById = new Map((usersResult.getValue() || []).map(u => [Number(u.id), u]));
+                        for (const s of subs) {
+                            const user = usersById.get(Number(s.student_id));
+                            if (user) {
+                                s.studentUsername = user.username || null;
+                                s.studentAvatar = user.avatar || null;
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[SubmissionService] Error enriching task submissions with usernames:', err.message);
+                }
+            }
+        }
         return Result.ok(subs);
     }
 
@@ -317,9 +338,30 @@ export class SubmissionDomainService {
         return Result.ok(sub);
     }
 
-    async getByCourse(courseId, pagination) {
-        const subs = await this.subRepo.findByCourse(courseId, pagination);
+    async getByCourse(courseId, pagination, options = {}) {
+        const subs = await this.subRepo.findByCourse(courseId, { ...pagination, ungradedOnly: options.ungradedOnly });
         await this._signFileUrls(subs);
+        // Enrich submissions with studentUsername and studentAvatar
+        if (subs?.length && this.userService) {
+            const studentIds = [...new Set(subs.map(s => s.student_id).filter(id => id))];
+            if (studentIds.length > 0) {
+                try {
+                    const usersResult = await this.userService.getByIds(studentIds);
+                    if (usersResult.isOk()) {
+                        const usersById = new Map((usersResult.getValue() || []).map(u => [Number(u.id), u]));
+                        for (const s of subs) {
+                            const user = usersById.get(Number(s.student_id));
+                            if (user) {
+                                s.studentUsername = user.username || null;
+                                s.studentAvatar = user.avatar || null;
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[SubmissionService] Error enriching submissions with usernames:', err.message);
+                }
+            }
+        }
         return Result.ok(subs);
     }
 

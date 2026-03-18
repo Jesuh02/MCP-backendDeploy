@@ -122,17 +122,24 @@ export class SupabaseUserRepository {
     }
 
     async searchByUsername(query, limit = 20) {
-        const baseSelect = 'id, username, email, avatar, personas!fk_usuarios_persona(nombres, apellidos)';
-        const innerSelect = 'id, username, email, avatar, personas!inner(nombres, apellidos)';
-        const [byUsername, byNombres, byApellidos] = await Promise.all([
+        const baseSelect = 'id, username, email, avatar, personas!fk_usuarios_persona(nombres, apellidos, identificacion)';
+        const innerSelect = 'id, username, email, avatar, personas!inner(nombres, apellidos, identificacion)';
+        const searches = [
             this.client.from('usuarios').select(baseSelect).ilike('username', `%${query}%`).limit(limit),
             this.client.from('usuarios').select(innerSelect).ilike('personas.nombres', `%${query}%`).limit(limit),
             this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${query}%`).limit(limit),
-        ]);
+        ];
+        // If query looks numeric, also search by identificacion
+        if (/^\d+$/.test(query.trim())) {
+            searches.push(
+                this.client.from('usuarios').select(innerSelect).eq('personas.identificacion', Number(query.trim())).limit(limit)
+            );
+        }
+        const [byUsername, byNombres, byApellidos, ...rest] = await Promise.all(searches);
         const seen = new Set();
         const userIds = [];
         const userMap = new Map();
-        for (const { data } of [byUsername, byNombres, byApellidos]) {
+        for (const { data } of [byUsername, byNombres, byApellidos, ...rest]) {
             for (const u of data || []) {
                 if (seen.has(u.id)) continue;
                 seen.add(u.id);
@@ -143,6 +150,7 @@ export class SupabaseUserRepository {
                     email: u.email,
                     avatar: u.avatar,
                     fullName: u.personas ? `${u.personas.nombres || ''} ${u.personas.apellidos || ''}`.trim() : null,
+                    identificacion: u.personas?.identificacion ?? null,
                     roles: []
                 });
             }
@@ -167,9 +175,17 @@ export class SupabaseUserRepository {
 
     async findByIds(ids) {
         if (!ids || ids.length === 0) return [];
-        const { data, error } = await this.client.from('usuarios').select('id, username, email, avatar').in('id', ids);
-        if (error) return [];
-        return data || [];
+        const { data, error } = await this.client
+            .from('usuarios')
+            .select('*, personas!fk_usuarios_persona(*)')
+            .in('id', ids);
+        if (error) {
+            console.warn(`[UserRepo] findByIds error (with join): ${error.message}, trying without join`);
+            const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').in('id', ids);
+            if (e2 || !d2) return [];
+            return d2.map(u => this._mapUser(u));
+        }
+        return (data || []).map(u => this._mapUser(u));
     }
 
     async getUserFCMTokens(userId) {
