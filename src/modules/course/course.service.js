@@ -2,13 +2,14 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
-    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService, collaboratorRepository }) {
+    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService, collaboratorRepository, userRepository }) {
         this.courseRepo = courseRepository;
         this.transactionRepo = transactionRepository;
         this.progressRepo = progressRepository;
         this.storage = fileStoragePort || null;
         this.courseNotificationService = courseNotificationService || null;
         this.collaboratorRepo = collaboratorRepository || null;
+        this.userRepo = userRepository || null;
     }
 
     // Derive `isFree` flag from a price value and mutate the object provided.
@@ -130,6 +131,55 @@ export class CourseDomainService {
         return course;
     }
 
+    /**
+     * Enrich courses with creator username from users table.
+     * @param {Array|Object} courses - Single course or array of courses
+     * @returns {Promise<Array|Object>} Enriched courses
+     */
+    async _enrichWithCreatorUsername(courses) {
+        if (!this.userRepo || typeof this.userRepo.findByIds !== 'function') {
+            return courses;
+        }
+
+        const courseList = Array.isArray(courses) ? courses : [courses];
+        if (courseList.length === 0) return courses;
+
+        // Collect unique creator IDs that don't already have a username
+        const creatorIds = [...new Set(
+            courseList
+                .filter(c => c && (c.creator_user_id || c.creatorUserId) && !c.creator_username && !c.creatorUsername)
+                .map(c => Number(c.creator_user_id || c.creatorUserId))
+                .filter(id => Number.isInteger(id) && id > 0)
+        )];
+
+        if (creatorIds.length === 0) return courses;
+
+        try {
+            const users = await this.userRepo.findByIds(creatorIds);
+            const userMap = new Map((users || []).map(u => [Number(u.id), u]));
+
+            courseList.forEach(course => {
+                if (!course) return;
+                const creatorId = Number(course.creator_user_id || course.creatorUserId);
+                if (creatorId > 0 && !course.creator_username && !course.creatorUsername) {
+                    const user = userMap.get(creatorId);
+                    if (user && user.username) {
+                        course.creator_username = user.username;
+                        course.creatorUsername = user.username;
+                        if (user.avatar) {
+                            course.creator_avatar = user.avatar;
+                            course.creatorAvatar = user.avatar;
+                        }
+                    }
+                }
+            });
+        } catch (e) {
+            console.warn('[CourseDomainService] Error enriching courses with creator username:', e.message);
+        }
+
+        return courses;
+    }
+
     _validateCourseId(id) {
         const normalizedId = Number(id);
         if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
@@ -199,6 +249,7 @@ export class CourseDomainService {
         }
 
         await this._signUrls(course);
+        await this._enrichWithCreatorUsername(course);
         return Result.ok(course);
     }
 
@@ -209,6 +260,7 @@ export class CourseDomainService {
         ]);
         (courses || []).forEach((course) => this._normalizeCourseShape(course));
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -343,6 +395,7 @@ export class CourseDomainService {
             this.courseRepo.count({ creatorUsername: username })
         ]);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -351,7 +404,9 @@ export class CourseDomainService {
             this.courseRepo.search(query, pagination),
             this.courseRepo.count({ search: query })
         ]);
+        (courses || []).forEach((course) => this._normalizeCourseShape(course));
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -410,6 +465,7 @@ export class CourseDomainService {
             this.courseRepo.count({ creatorUserId: userId })
         ]);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -443,12 +499,14 @@ export class CourseDomainService {
             .filter((course, index, array) => array.findIndex((entry) => Number(entry.id) === Number(course.id)) === index);
 
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok(courses);
     }
 
     async findByIds(ids) {
         const courses = await this.courseRepo.findByIds(ids);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok(courses);
     }
 
@@ -458,6 +516,7 @@ export class CourseDomainService {
             this.courseRepo.count({ isFree: true, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -467,6 +526,7 @@ export class CourseDomainService {
             this.courseRepo.count({ isFree: false, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -494,6 +554,7 @@ export class CourseDomainService {
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
+        await this._enrichWithCreatorUsername(sortedCourses);
         return Result.ok({ courses: sortedCourses, total });
     }
 
@@ -518,6 +579,7 @@ export class CourseDomainService {
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
+        await this._enrichWithCreatorUsername(sortedCourses);
         return Result.ok({ courses: sortedCourses, total });
     }
 
@@ -557,6 +619,7 @@ export class CourseDomainService {
             }));
 
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -570,6 +633,7 @@ export class CourseDomainService {
         try {
             const courses = await this.courseRepo.findCreatorCoursesWithSubmissions(creatorUserId);
             await this._signUrls(courses);
+            await this._enrichWithCreatorUsername(courses);
             return Result.ok(courses);
         } catch (err) {
             return Result.fail(new Error(`Error fetching courses with submissions: ${err.message}`));
