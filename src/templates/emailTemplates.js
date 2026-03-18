@@ -891,7 +891,8 @@ export default {
     generateNewCourseEmailHTML,
     generateGenericEmailHTML,
     generateChatResponseEmailHTML,
-    generateTaskReminderEmailHTML
+    generateTaskReminderEmailHTML,
+    generateAccountStatusEmailHTML
 };
 
 

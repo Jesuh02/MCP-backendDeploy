@@ -10,6 +10,11 @@ export class ProgressDomainService {
         this.userRepo = userRepository || null;
         this.subjectRepo = subjectRepository || null;
         this.collaboratorRepo = collaboratorRepository || null;
+        this._notificationService = null;
+    }
+
+    setNotificationService(notificationService) {
+        this._notificationService = notificationService;
     }
 
     async getByUserAndCourse(userId, courseId) {
@@ -546,6 +551,27 @@ export class ProgressDomainService {
         if (!existing) return Result.fail(new NotFoundError('Solicitud de matrícula', `${userId}/${courseId}`));
 
         const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
+
+        // Notify the student about enrollment approval
+        if (this._notificationService) {
+            try {
+                let courseName = 'un curso';
+                if (this.courseRepo) {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                }
+                await this._notificationService.send(userId, {
+                    title: '¡Matrícula aprobada!',
+                    message: `Tu solicitud de matrícula en "${courseName}" ha sido aprobada. ¡Ya puedes comenzar!`,
+                    type: 'enrollment_approved',
+                    relatedId: courseId,
+                    metadata: { courseId, courseName },
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending enrollment notification:', err?.message);
+            }
+        }
+
         return Result.ok({ ...updated, message: 'Matrícula aprobada' });
     }
 
