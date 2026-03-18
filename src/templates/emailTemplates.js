@@ -884,6 +884,95 @@ export function generateChatResponseEmailHTML(subject) {
     `;
 }
 
+/**
+ * Plantilla: Estado de cuenta activada/desactivada
+ * @param {string} username
+ * @param {boolean} isActive
+ * @returns {string} HTML del email
+ */
+export function generateAccountStatusEmailHTML(username = 'Usuario', isActive = true) {
+    const safeUsername = username || 'Usuario';
+    const title = isActive ? 'Cuenta activada' : 'Cuenta desactivada';
+    const subtitle = isActive
+        ? 'Tu acceso a CourseV ha sido restablecido'
+        : 'Tu acceso a CourseV se encuentra suspendido';
+    const statusLabel = isActive ? 'Activa' : 'Desactivada';
+    const statusColor = isActive ? '#22c55e' : '#ef4444';
+    const message = isActive
+        ? 'Ya puedes iniciar sesion nuevamente y continuar usando los servicios disponibles en la plataforma.'
+        : 'Por el momento no podras iniciar sesion ni acceder al contenido de la plataforma hasta que tu cuenta sea reactivada.';
+    const support = isActive
+        ? 'Si presentas algun inconveniente para ingresar, contacta al equipo de soporte.'
+        : 'Si consideras que se trata de un error, contacta al equipo de soporte para revisar tu caso.';
+
+    return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <style>
+        ${getEmailBaseStyles()}
+        .status-pill {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 999px;
+            background: ${statusColor}1A;
+            color: ${statusColor};
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin-bottom: 18px;
+        }
+        .status-note {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 18px;
+            margin: 18px 0;
+        }
+        .status-note p {
+            color: #334155;
+            line-height: 1.7;
+            margin: 0;
+            font-size: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-icon">${isActive ? '✅' : '⚠️'}</div>
+            <h1>${title}</h1>
+            <p>${subtitle}</p>
+        </div>
+        <div class="content">
+            <div class="greeting">Hola, <strong>${safeUsername}</strong>.</div>
+
+            <span class="status-pill">Estado actual: ${statusLabel}</span>
+
+            <div class="status-note">
+                <p>${message}</p>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Informacion importante</div>
+                <p class="feedback-text">${support}</p>
+            </div>
+
+            <a href="#" class="cta-button">Abrir CourseV</a>
+        </div>
+        <div class="footer">
+            Este correo fue generado automaticamente por CourseV.<br>
+            © 2026 YisusCompany. Todos los derechos reservados.
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
 export default {
     getEmailBaseStyles,
     generateGradeEmailHTML,
@@ -891,7 +980,8 @@ export default {
     generateNewCourseEmailHTML,
     generateGenericEmailHTML,
     generateChatResponseEmailHTML,
-    generateTaskReminderEmailHTML
+    generateTaskReminderEmailHTML,
+    generateAccountStatusEmailHTML
 };
 
 

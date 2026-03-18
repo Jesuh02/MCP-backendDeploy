@@ -2,13 +2,14 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
 
 export class CourseDomainService {
-    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService, collaboratorRepository }) {
+    constructor({ courseRepository, transactionRepository, progressRepository, fileStoragePort, courseNotificationService, collaboratorRepository, userRepository }) {
         this.courseRepo = courseRepository;
         this.transactionRepo = transactionRepository;
         this.progressRepo = progressRepository;
         this.storage = fileStoragePort || null;
         this.courseNotificationService = courseNotificationService || null;
         this.collaboratorRepo = collaboratorRepository || null;
+        this.userRepo = userRepository || null;
     }
 
     // Derive `isFree` flag from a price value and mutate the object provided.
@@ -95,6 +96,64 @@ export class CourseDomainService {
         return normalizedRoles.includes(1) || normalizedRoles.includes(2);
     }
 
+    _normalizeRoleIds(roles = []) {
+        return [...new Set((roles || [])
+            .map((role) => Number(role?.id ?? role))
+            .filter((roleId) => Number.isInteger(roleId) && roleId > 0))];
+    }
+
+    async _getUserRoleIds(userId) {
+        if (!userId || !this.userRepo || typeof this.userRepo.getUserRoles !== 'function') return [];
+        try {
+            const roles = await this.userRepo.getUserRoles(userId);
+            return this._normalizeRoleIds(roles);
+        } catch {
+            return [];
+        }
+    }
+
+    async _resolveAccessibleCourseIdsForEnrolledView(userId) {
+        const numericUserId = Number(userId);
+        if (!Number.isInteger(numericUserId) || numericUserId <= 0) return [];
+
+        const roleIds = await this._getUserRoleIds(numericUserId);
+        const includeEnrollmentCourses = roleIds.length === 0 || roleIds.includes(1) || roleIds.includes(2);
+        const includeCollaboratorCourses = roleIds.includes(2);
+
+        const orderedCourseIds = [];
+        const seenCourseIds = new Set();
+        const pushCourseId = (courseId) => {
+            const normalizedCourseId = Number(courseId);
+            if (!Number.isInteger(normalizedCourseId) || normalizedCourseId <= 0) return;
+            if (seenCourseIds.has(normalizedCourseId)) return;
+            seenCourseIds.add(normalizedCourseId);
+            orderedCourseIds.push(normalizedCourseId);
+        };
+
+        if (includeEnrollmentCourses && this.progressRepo) {
+            const [progressCourseIds, approvedEnrollmentCourseIds] = await Promise.all([
+                typeof this.progressRepo.findEnrolledCourseIds === 'function'
+                    ? this.progressRepo.findEnrolledCourseIds(numericUserId)
+                    : Promise.resolve([]),
+                typeof this.progressRepo.findApprovedEnrollmentCourseIds === 'function'
+                    ? this.progressRepo.findApprovedEnrollmentCourseIds(numericUserId)
+                    : Promise.resolve([]),
+            ]);
+
+            for (const courseId of approvedEnrollmentCourseIds || []) pushCourseId(courseId);
+            for (const courseId of progressCourseIds || []) pushCourseId(courseId);
+        }
+
+        if (includeCollaboratorCourses && this.collaboratorRepo && typeof this.collaboratorRepo.findByUser === 'function') {
+            const collaboratorRows = await this.collaboratorRepo.findByUser(numericUserId);
+            for (const collaborator of collaboratorRows || []) {
+                pushCourseId(collaborator.courseId ?? collaborator.course_id);
+            }
+        }
+
+        return orderedCourseIds;
+    }
+
     _normalizeCourseShape(course) {
         if (!course || typeof course !== 'object') return course;
 
@@ -128,6 +187,55 @@ export class CourseDomainService {
         }
 
         return course;
+    }
+
+    /**
+     * Enrich courses with creator username from users table.
+     * @param {Array|Object} courses - Single course or array of courses
+     * @returns {Promise<Array|Object>} Enriched courses
+     */
+    async _enrichWithCreatorUsername(courses) {
+        if (!this.userRepo || typeof this.userRepo.findByIds !== 'function') {
+            return courses;
+        }
+
+        const courseList = Array.isArray(courses) ? courses : [courses];
+        if (courseList.length === 0) return courses;
+
+        // Collect unique creator IDs that don't already have a username
+        const creatorIds = [...new Set(
+            courseList
+                .filter(c => c && (c.creator_user_id || c.creatorUserId) && !c.creator_username && !c.creatorUsername)
+                .map(c => Number(c.creator_user_id || c.creatorUserId))
+                .filter(id => Number.isInteger(id) && id > 0)
+        )];
+
+        if (creatorIds.length === 0) return courses;
+
+        try {
+            const users = await this.userRepo.findByIds(creatorIds);
+            const userMap = new Map((users || []).map(u => [Number(u.id), u]));
+
+            courseList.forEach(course => {
+                if (!course) return;
+                const creatorId = Number(course.creator_user_id || course.creatorUserId);
+                if (creatorId > 0 && !course.creator_username && !course.creatorUsername) {
+                    const user = userMap.get(creatorId);
+                    if (user && user.username) {
+                        course.creator_username = user.username;
+                        course.creatorUsername = user.username;
+                        if (user.avatar) {
+                            course.creator_avatar = user.avatar;
+                            course.creatorAvatar = user.avatar;
+                        }
+                    }
+                }
+            });
+        } catch (e) {
+            console.warn('[CourseDomainService] Error enriching courses with creator username:', e.message);
+        }
+
+        return courses;
     }
 
     _validateCourseId(id) {
@@ -187,6 +295,7 @@ export class CourseDomainService {
         }
 
         await this._signUrls(course);
+        await this._enrichWithCreatorUsername(course);
         return Result.ok(course);
     }
 
@@ -197,6 +306,7 @@ export class CourseDomainService {
         ]);
         (courses || []).forEach((course) => this._normalizeCourseShape(course));
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -331,6 +441,7 @@ export class CourseDomainService {
             this.courseRepo.count({ creatorUsername: username })
         ]);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -339,7 +450,9 @@ export class CourseDomainService {
             this.courseRepo.search(query, pagination),
             this.courseRepo.count({ search: query })
         ]);
+        (courses || []).forEach((course) => this._normalizeCourseShape(course));
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -398,12 +511,48 @@ export class CourseDomainService {
             this.courseRepo.count({ creatorUserId: userId })
         ]);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
+    }
+
+    async findManageableByUserId(userId) {
+        const numericUserId = Number(userId);
+        if (!Number.isInteger(numericUserId) || numericUserId <= 0) {
+            return Result.ok([]);
+        }
+
+        const creatorCourses = await this.courseRepo.findByCreatorUserId(numericUserId, {
+            offset: 0,
+            limit: 500,
+            sortOrder: 'desc',
+        });
+
+        let collaboratorCourseIds = [];
+        if (this.collaboratorRepo?.findByUser) {
+            const collaborations = await this.collaboratorRepo.findByUser(numericUserId);
+            collaboratorCourseIds = (collaborations || [])
+                .map((entry) => Number(entry.course_id || entry.courseId || entry.courses?.id))
+                .filter((courseId) => Number.isInteger(courseId) && courseId > 0);
+        }
+
+        const ownedIds = new Set((creatorCourses || []).map((course) => Number(course.id)).filter((id) => id > 0));
+        const missingCollaboratorIds = [...new Set(collaboratorCourseIds)].filter((courseId) => !ownedIds.has(courseId));
+        const collaboratorCourses = missingCollaboratorIds.length > 0
+            ? await this.courseRepo.findByIds(missingCollaboratorIds)
+            : [];
+
+        const courses = [...(creatorCourses || []), ...(collaboratorCourses || [])]
+            .filter((course, index, array) => array.findIndex((entry) => Number(entry.id) === Number(course.id)) === index);
+
+        await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
+        return Result.ok(courses);
     }
 
     async findByIds(ids) {
         const courses = await this.courseRepo.findByIds(ids);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok(courses);
     }
 
@@ -413,6 +562,7 @@ export class CourseDomainService {
             this.courseRepo.count({ isFree: true, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -422,6 +572,7 @@ export class CourseDomainService {
             this.courseRepo.count({ isFree: false, excludeCreatorId: pagination.excludeCreatorId })
         ]);
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -449,6 +600,7 @@ export class CourseDomainService {
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
+        await this._enrichWithCreatorUsername(sortedCourses);
         return Result.ok({ courses: sortedCourses, total });
     }
 
@@ -458,10 +610,12 @@ export class CourseDomainService {
             return Result.ok({ courses: [], total: 0 });
         }
 
-        const [courseIds, total] = await Promise.all([
-            this.progressRepo.findEnrolledCourseIdsPaginated(userId, pagination),
-            this.progressRepo.countEnrolled(userId)
-        ]);
+        const accessibleCourseIds = await this._resolveAccessibleCourseIdsForEnrolledView(userId);
+        const total = accessibleCourseIds.length;
+
+        const offset = Number(pagination?.offset) || 0;
+        const limit = Number(pagination?.limit) || 20;
+        const courseIds = accessibleCourseIds.slice(offset, offset + limit);
 
         if (courseIds.length === 0) return Result.ok({ courses: [], total });
 
@@ -473,6 +627,7 @@ export class CourseDomainService {
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
+        await this._enrichWithCreatorUsername(sortedCourses);
         return Result.ok({ courses: sortedCourses, total });
     }
 
@@ -512,6 +667,7 @@ export class CourseDomainService {
             }));
 
         await this._signUrls(courses);
+        await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
@@ -525,6 +681,7 @@ export class CourseDomainService {
         try {
             const courses = await this.courseRepo.findCreatorCoursesWithSubmissions(creatorUserId);
             await this._signUrls(courses);
+            await this._enrichWithCreatorUsername(courses);
             return Result.ok(courses);
         } catch (err) {
             return Result.fail(new Error(`Error fetching courses with submissions: ${err.message}`));
