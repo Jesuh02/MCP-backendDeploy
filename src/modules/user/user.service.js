@@ -7,6 +7,11 @@ export class UserDomainService {
         this.storage = fileStoragePort;
         this.courseRepo = courseRepository;
         this._collaboratorRepo = collaboratorRepository;
+        this._notificationService = null;
+    }
+
+    setNotificationService(notificationService) {
+        this._notificationService = notificationService;
     }
 
     _normalizeRoles(roles, fallbackRoles = []) {
@@ -250,6 +255,22 @@ export class UserDomainService {
         const user = await this.userRepo.findById(userId);
         if (!user) return Result.fail(new NotFoundError('Usuario', userId));
         await this.userRepo.update(userId, { is_active: false });
+
+        // Send deactivation email
+        if (this._notificationService) {
+            try {
+                const { generateAccountStatusEmailHTML } = await import('../../templates/emailTemplates.js');
+                const html = generateAccountStatusEmailHTML(user.username || 'Usuario', false);
+                await this._notificationService.sendEmail(userId, {
+                    subject: 'Tu cuenta en CourseV ha sido desactivada',
+                    html,
+                    text: `Hola ${user.username || 'Usuario'}, tu cuenta en CourseV ha sido desactivada. Si crees que es un error, contacta a soporte.`,
+                });
+            } catch (err) {
+                console.error('[UserService] Error sending deactivation email:', err?.message);
+            }
+        }
+
         return Result.ok({ message: 'Usuario desactivado', userId });
     }
 
@@ -257,6 +278,22 @@ export class UserDomainService {
         const user = await this.userRepo.findById(userId);
         if (!user) return Result.fail(new NotFoundError('Usuario', userId));
         await this.userRepo.update(userId, { is_active: true });
+
+        // Send activation email
+        if (this._notificationService) {
+            try {
+                const { generateAccountStatusEmailHTML } = await import('../../templates/emailTemplates.js');
+                const html = generateAccountStatusEmailHTML(user.username || 'Usuario', true);
+                await this._notificationService.sendEmail(userId, {
+                    subject: '¡Tu cuenta en CourseV ha sido activada!',
+                    html,
+                    text: `Hola ${user.username || 'Usuario'}, ¡tu cuenta en CourseV ha sido activada! Ya puedes acceder a todos los servicios.`,
+                });
+            } catch (err) {
+                console.error('[UserService] Error sending activation email:', err?.message);
+            }
+        }
+
         return Result.ok({ message: 'Usuario activado', userId });
     }
 
