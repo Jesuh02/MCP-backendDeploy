@@ -116,8 +116,8 @@ export class SupabaseSubmissionRepository {
         return (data || []).length;
     }
 
-    async getGradedByUserAndCourse(userId, courseId) {
-        const taskIds = await this._getTaskIdsByCourse(courseId);
+    async getGradedByUserAndCourse(userId, courseId, precomputedTaskIds = null) {
+        const taskIds = precomputedTaskIds ?? await this._getTaskIdsByCourse(courseId);
         if (taskIds.length === 0) return [];
         const { data, error } = await this.client
             .from('task_submissions')
@@ -129,8 +129,8 @@ export class SupabaseSubmissionRepository {
         return data || [];
     }
 
-    async getTaskIdsByUserAndCourse(userId, courseId) {
-        const taskIds = await this._getTaskIdsByCourse(courseId);
+    async getTaskIdsByUserAndCourse(userId, courseId, precomputedTaskIds = null) {
+        const taskIds = precomputedTaskIds ?? await this._getTaskIdsByCourse(courseId);
         if (taskIds.length === 0) return [];
         const { data, error } = await this.client
             .from('task_submissions')
@@ -141,8 +141,8 @@ export class SupabaseSubmissionRepository {
         return [...new Set(data.map(item => item.task_id).filter(Boolean))];
     }
 
-    async getStudentIdsByCourse(courseId) {
-        const taskIds = await this._getTaskIdsByCourse(courseId);
+    async getStudentIdsByCourse(courseId, precomputedTaskIds = null) {
+        const taskIds = precomputedTaskIds ?? await this._getTaskIdsByCourse(courseId);
         if (taskIds.length === 0) return [];
 
         const { data, error } = await this.client
@@ -165,8 +165,8 @@ export class SupabaseSubmissionRepository {
         return data.map(t => t.id);
     }
 
-    async getTaskIdsByUserAndSubject(userId, subjectId) {
-        const taskIds = await this._getTaskIdsBySubject(subjectId);
+    async getTaskIdsByUserAndSubject(userId, subjectId, precomputedTaskIds = null) {
+        const taskIds = precomputedTaskIds ?? await this._getTaskIdsBySubject(subjectId);
         if (taskIds.length === 0) return [];
         const { data, error } = await this.client
             .from('task_submissions')
@@ -177,8 +177,8 @@ export class SupabaseSubmissionRepository {
         return [...new Set(data.map(item => item.task_id).filter(Boolean))];
     }
 
-    async getGradedByUserAndSubject(userId, subjectId) {
-        const taskIds = await this._getTaskIdsBySubject(subjectId);
+    async getGradedByUserAndSubject(userId, subjectId, precomputedTaskIds = null) {
+        const taskIds = precomputedTaskIds ?? await this._getTaskIdsBySubject(subjectId);
         if (taskIds.length === 0) return [];
         const { data, error } = await this.client
             .from('task_submissions')
