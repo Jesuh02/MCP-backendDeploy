@@ -96,6 +96,64 @@ export class CourseDomainService {
         return normalizedRoles.includes(1) || normalizedRoles.includes(2);
     }
 
+    _normalizeRoleIds(roles = []) {
+        return [...new Set((roles || [])
+            .map((role) => Number(role?.id ?? role))
+            .filter((roleId) => Number.isInteger(roleId) && roleId > 0))];
+    }
+
+    async _getUserRoleIds(userId) {
+        if (!userId || !this.userRepo || typeof this.userRepo.getUserRoles !== 'function') return [];
+        try {
+            const roles = await this.userRepo.getUserRoles(userId);
+            return this._normalizeRoleIds(roles);
+        } catch {
+            return [];
+        }
+    }
+
+    async _resolveAccessibleCourseIdsForEnrolledView(userId) {
+        const numericUserId = Number(userId);
+        if (!Number.isInteger(numericUserId) || numericUserId <= 0) return [];
+
+        const roleIds = await this._getUserRoleIds(numericUserId);
+        const includeEnrollmentCourses = roleIds.length === 0 || roleIds.includes(1) || roleIds.includes(2);
+        const includeCollaboratorCourses = roleIds.includes(2);
+
+        const orderedCourseIds = [];
+        const seenCourseIds = new Set();
+        const pushCourseId = (courseId) => {
+            const normalizedCourseId = Number(courseId);
+            if (!Number.isInteger(normalizedCourseId) || normalizedCourseId <= 0) return;
+            if (seenCourseIds.has(normalizedCourseId)) return;
+            seenCourseIds.add(normalizedCourseId);
+            orderedCourseIds.push(normalizedCourseId);
+        };
+
+        if (includeEnrollmentCourses && this.progressRepo) {
+            const [progressCourseIds, approvedEnrollmentCourseIds] = await Promise.all([
+                typeof this.progressRepo.findEnrolledCourseIds === 'function'
+                    ? this.progressRepo.findEnrolledCourseIds(numericUserId)
+                    : Promise.resolve([]),
+                typeof this.progressRepo.findApprovedEnrollmentCourseIds === 'function'
+                    ? this.progressRepo.findApprovedEnrollmentCourseIds(numericUserId)
+                    : Promise.resolve([]),
+            ]);
+
+            for (const courseId of approvedEnrollmentCourseIds || []) pushCourseId(courseId);
+            for (const courseId of progressCourseIds || []) pushCourseId(courseId);
+        }
+
+        if (includeCollaboratorCourses && this.collaboratorRepo && typeof this.collaboratorRepo.findByUser === 'function') {
+            const collaboratorRows = await this.collaboratorRepo.findByUser(numericUserId);
+            for (const collaborator of collaboratorRows || []) {
+                pushCourseId(collaborator.courseId ?? collaborator.course_id);
+            }
+        }
+
+        return orderedCourseIds;
+    }
+
     _normalizeCourseShape(course) {
         if (!course || typeof course !== 'object') return course;
 
@@ -564,10 +622,12 @@ export class CourseDomainService {
             return Result.ok({ courses: [], total: 0 });
         }
 
-        const [courseIds, total] = await Promise.all([
-            this.progressRepo.findEnrolledCourseIdsPaginated(userId, pagination),
-            this.progressRepo.countEnrolled(userId)
-        ]);
+        const accessibleCourseIds = await this._resolveAccessibleCourseIdsForEnrolledView(userId);
+        const total = accessibleCourseIds.length;
+
+        const offset = Number(pagination?.offset) || 0;
+        const limit = Number(pagination?.limit) || 20;
+        const courseIds = accessibleCourseIds.slice(offset, offset + limit);
 
         if (courseIds.length === 0) return Result.ok({ courses: [], total });
 
