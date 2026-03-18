@@ -47,7 +47,7 @@ export class TopicController {
         try {
             const { error, value } = createTopicSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.topicService.create(value);
+            const result = await this.topicService.create(value, req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.status(201).json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -57,7 +57,7 @@ export class TopicController {
         try {
             const { error, value } = updateTopicSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.topicService.update(parseInt(req.params.id), value);
+            const result = await this.topicService.update(parseInt(req.params.id), value, req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -68,8 +68,8 @@ export class TopicController {
             const preserveTasks = req.query.preserveTasks === 'true';
             const id = parseInt(req.params.id);
             const result = preserveTasks
-                ? await this.topicService.deleteTopicOnly(id)
-                : await this.topicService.delete(id);
+                ? await this.topicService.deleteTopicOnly(id, req.user?.userId)
+                : await this.topicService.delete(id, req.user?.userId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

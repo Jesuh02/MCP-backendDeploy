@@ -1,6 +1,17 @@
 /**
  * SupabasePersonaRepository — CRUD para tabla personas.
  */
+function normalizeCedulaValue(value) {
+    if (value === null || value === undefined) return null;
+    const digitsOnly = String(value).replace(/\D/g, '').trim();
+    return digitsOnly || null;
+}
+
+function resolveCedula(personaData = {}) {
+    const raw = personaData.cedula ?? personaData.identificacion ?? null;
+    return normalizeCedulaValue(raw);
+}
+
 export class SupabasePersonaRepository {
     constructor(client) { this.client = client; }
 
@@ -11,7 +22,13 @@ export class SupabasePersonaRepository {
     }
 
     async findByIdentificacion(identificacion) {
-        const { data, error } = await this.client.from('personas').select('*').eq('identificacion', identificacion).single();
+        const normalized = normalizeCedulaValue(identificacion);
+        if (!normalized) return null;
+        const { data, error } = await this.client
+            .from('personas')
+            .select('*')
+            .or(`identificacion.eq.${normalized},cedula.eq.${normalized}`)
+            .maybeSingle();
         if (error || !data) return null;
         return data;
     }
@@ -23,13 +40,16 @@ export class SupabasePersonaRepository {
     }
 
     async create(personaData) {
+        const cedula = resolveCedula(personaData);
         const payload = {
             nombres: personaData.nombres,
             apellidos: personaData.apellidos || '',
-            identificacion: personaData.identificacion || '',
+            cedula,
+            identificacion: cedula,
             telefono: personaData.telefono || '',
             direccion: personaData.direccion || '',
             fecha_nacimiento: personaData.fecha_nacimiento || null,
+            genero: personaData.genero || null,
             ...(personaData.institucion_id != null && { institucion_id: personaData.institucion_id }),
         };
         const { data, error } = await this.client.from('personas').insert(payload).select().single();
@@ -41,10 +61,15 @@ export class SupabasePersonaRepository {
         const payload = {};
         if (personaData.nombres !== undefined) payload.nombres = personaData.nombres;
         if (personaData.apellidos !== undefined) payload.apellidos = personaData.apellidos;
-        if (personaData.identificacion !== undefined) payload.identificacion = personaData.identificacion;
+        if (personaData.cedula !== undefined || personaData.identificacion !== undefined) {
+            const cedula = resolveCedula(personaData);
+            payload.cedula = cedula;
+            payload.identificacion = cedula;
+        }
         if (personaData.telefono !== undefined) payload.telefono = personaData.telefono;
         if (personaData.direccion !== undefined) payload.direccion = personaData.direccion;
         if (personaData.fecha_nacimiento !== undefined) payload.fecha_nacimiento = personaData.fecha_nacimiento;
+        if (personaData.genero !== undefined) payload.genero = personaData.genero;
         if (personaData.institucion_id !== undefined) payload.institucion_id = personaData.institucion_id;
         const { data, error } = await this.client.from('personas').update(payload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando persona: ${error.message}`);

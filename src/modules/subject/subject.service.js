@@ -6,10 +6,62 @@ export class SubjectDomainService {
         this.subjectRepo = subjectRepository;
         this.courseRepo = courseRepository;
         this.collaboratorRepo = collaboratorRepository || null;
+        this.cacheTtlMs = 60000;
+        this.courseCache = new Map();
+        this.subjectCache = new Map();
+        this.subjectsByCourseCache = new Map();
+    }
+
+    async _canManageSubject(requesterId, subject) {
+        if (!requesterId || !subject) return false;
+
+        const course = await this.courseRepo.findById(subject.course_id);
+        if (!course) return false;
+        if (Number(course.creator_user_id) === Number(requesterId)) return true;
+        if (subject.created_by && Number(subject.created_by) === Number(requesterId)) return true;
+
+        if (!this.collaboratorRepo) return false;
+        const isCollab = await this.collaboratorRepo.isCollaborator(requesterId, subject.course_id);
+        return Boolean(isCollab && !subject.created_by);
+    }
+
+    async _remember(cache, key, loader) {
+        const now = Date.now();
+        const entry = cache.get(key);
+        if (entry && entry.expiresAt > now) return entry.value;
+        const value = await loader();
+        cache.set(key, { value, expiresAt: now + this.cacheTtlMs });
+        return value;
+    }
+
+    _invalidateCourse(courseId) {
+        if (!courseId) return;
+        this.courseCache.delete(courseId);
+        this.subjectsByCourseCache.delete(courseId);
+    }
+
+    _invalidateSubject(subjectId, courseId) {
+        if (subjectId) this.subjectCache.delete(subjectId);
+        this._invalidateCourse(courseId);
+    }
+
+    async _getCourse(courseId) {
+        if (!courseId) return null;
+        return this._remember(this.courseCache, courseId, () => this.courseRepo.findById(courseId));
+    }
+
+    async _getSubject(subjectId) {
+        if (!subjectId) return null;
+        return this._remember(this.subjectCache, subjectId, () => this.subjectRepo.findById(subjectId));
+    }
+
+    async _getSubjectsByCourse(courseId) {
+        if (!courseId) return [];
+        return this._remember(this.subjectsByCourseCache, courseId, () => this.subjectRepo.findByCourse(courseId));
     }
 
     async _checkCourseAccess(userId, courseId) {
-        const course = await this.courseRepo.findById(courseId);
+        const course = await this._getCourse(courseId);
         if (!course) return false;
         if (Number(course.creator_user_id) === Number(userId)) return true;
         if (this.collaboratorRepo) return this.collaboratorRepo.isCollaborator(userId, courseId);
@@ -22,9 +74,9 @@ export class SubjectDomainService {
     }
 
     async getByCourse(courseId, requesterId) {
-        const subjects = await this.subjectRepo.findByCourse(courseId);
+        const subjects = await this._getSubjectsByCourse(courseId);
         if (requesterId) {
-            const course = await this.courseRepo.findById(courseId);
+            const course = await this._getCourse(courseId);
             const isCourseOwner = course && Number(course.creator_user_id) === Number(requesterId);
             if (!isCourseOwner) {
                 const isCollab = this.collaboratorRepo && await this.collaboratorRepo.isCollaborator(requesterId, courseId);
@@ -38,13 +90,13 @@ export class SubjectDomainService {
     }
 
     async getById(id) {
-        const subject = await this.subjectRepo.findById(id);
+        const subject = await this._getSubject(id);
         if (!subject) return Result.fail(new NotFoundError('Materia', id));
         return Result.ok(subject);
     }
 
     async create(data, requesterId) {
-        const course = await this.courseRepo.findById(data.courseId);
+        const course = await this._getCourse(data.courseId);
         if (!course) return Result.fail(new NotFoundError('Curso', data.courseId));
         if (requesterId) {
             const hasAccess = await this._checkCourseAccess(requesterId, data.courseId);
@@ -52,43 +104,36 @@ export class SubjectDomainService {
             data.createdBy = requesterId;
         }
         const created = await this.subjectRepo.create(data);
+        this._invalidateSubject(created?.id, data.courseId);
         return Result.ok(created);
     }
 
     async update(id, data, requesterId) {
-        const subject = await this.subjectRepo.findById(id);
+        const subject = await this._getSubject(id);
         if (!subject) return Result.fail(new NotFoundError('Materia', id));
         if (requesterId) {
-            const course = await this.courseRepo.findById(subject.course_id);
-            const isCourseOwner = course && Number(course.creator_user_id) === Number(requesterId);
-            if (!isCourseOwner) {
-                const isSubjectCreator = subject.created_by && Number(subject.created_by) === Number(requesterId);
-                if (!isSubjectCreator) {
-                    const isCollab = this.collaboratorRepo && await this.collaboratorRepo.isCollaborator(requesterId, subject.course_id);
-                    if (!isCollab) return Result.fail(new ForbiddenError('No tienes permiso para editar esta materia'));
-                }
+            const canManage = await this._canManageSubject(requesterId, subject);
+            if (!canManage) {
+                return Result.fail(new ForbiddenError('No tienes permiso para editar esta materia'));
             }
             data.updatedBy = requesterId;
         }
         const updated = await this.subjectRepo.update(id, data);
+        this._invalidateSubject(id, subject.course_id);
         return Result.ok(updated);
     }
 
     async delete(id, requesterId) {
-        const subject = await this.subjectRepo.findById(id);
+        const subject = await this._getSubject(id);
         if (!subject) return Result.fail(new NotFoundError('Materia', id));
         if (requesterId) {
-            const course = await this.courseRepo.findById(subject.course_id);
-            const isCourseOwner = course && Number(course.creator_user_id) === Number(requesterId);
-            if (!isCourseOwner) {
-                const isSubjectCreator = subject.created_by && Number(subject.created_by) === Number(requesterId);
-                if (!isSubjectCreator) {
-                    const isCollab = this.collaboratorRepo && await this.collaboratorRepo.isCollaborator(requesterId, subject.course_id);
-                    if (!isCollab) return Result.fail(new ForbiddenError('No tienes permiso para eliminar esta materia'));
-                }
+            const canManage = await this._canManageSubject(requesterId, subject);
+            if (!canManage) {
+                return Result.fail(new ForbiddenError('No tienes permiso para eliminar esta materia'));
             }
         }
         await this.subjectRepo.delete(id);
+        this._invalidateSubject(id, subject.course_id);
         return Result.ok({ message: 'Materia eliminada' });
     }
 }

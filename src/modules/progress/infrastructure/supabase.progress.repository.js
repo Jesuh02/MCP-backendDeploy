@@ -154,8 +154,7 @@ export class SupabaseProgressRepository {
             promedio:            averageGrade,
             calificacion_ponderada: averageGrade,
             porcentaje_progreso: progressData.progressPercentage || 0,
-            // estado se guarda explícitamente para que UPDATE también lo corrija
-            estado:              averageGrade >= 6 ? 'Ganado' : 'Perdido',
+            // estado es GENERATED ALWAYS en la BD — no incluir en el payload
             ultima_calculada_en: new Date().toISOString(),
         };
 
@@ -220,6 +219,19 @@ export class SupabaseProgressRepository {
             .is('materia_id', null);
         if (error || !data) return [];
         return data.map(p => p.curso_id);
+    }
+
+    async findApprovedEnrollmentCourseIds(userId) {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .select('course_id')
+            .eq('user_id', userId)
+            .eq('status', 'approved')
+            .order('requested_at', { ascending: false });
+        if (error || !data) return [];
+        return data
+            .map((row) => Number(row.course_id))
+            .filter((courseId) => Number.isInteger(courseId) && courseId > 0);
     }
 
     async isEnrolled(userId, courseId) {
@@ -313,16 +325,36 @@ export class SupabaseProgressRepository {
         if (error || !data?.length) return [];
 
         const courseIds = data.map(r => r.course_id).filter(Boolean);
-        let coursesById = new Map();
+
+        // Validate: only return certificates that have a matching 'Ganado' progress record
+        let validCourseIds = new Set();
         if (courseIds.length > 0) {
+            const { data: progressRows } = await this.client
+                .from('progreso_estudiante')
+                .select('curso_id')
+                .eq('usuario_estudiante', userId)
+                .in('curso_id', courseIds)
+                .is('materia_id', null)
+                .eq('estado', 'Ganado');
+            for (const row of progressRows || []) {
+                validCourseIds.add(row.curso_id);
+            }
+        }
+
+        const validData = data.filter(r => validCourseIds.has(r.course_id));
+        if (validData.length === 0) return [];
+
+        const validIds = validData.map(r => r.course_id);
+        let coursesById = new Map();
+        if (validIds.length > 0) {
             const { data: courses } = await this.client
                 .from('courses')
                 .select('id, title, thumbnail_uri')
-                .in('id', courseIds);
+                .in('id', validIds);
             coursesById = new Map((courses || []).map(c => [c.id, c]));
         }
 
-        return data.map(row => {
+        return validData.map(row => {
             const course = coursesById.get(row.course_id) || {};
             return {
                 courseId:           row.course_id,
@@ -627,7 +659,7 @@ export class SupabaseProgressRepository {
                 .map(u => Number(u.persona_id)).filter(id => Number.isInteger(id) && id > 0))];
             if (personaIds.length > 0) {
                 const { data: personas } = await this.client
-                    .from('personas').select('id, nombres, apellidos').in('id', personaIds);
+                    .from('personas').select('id, nombres, apellidos, identificacion').in('id', personaIds);
                 personasById = new Map((personas || []).map(p => [Number(p.id), p]));
             }
         }
@@ -645,6 +677,7 @@ export class SupabaseProgressRepository {
                 username:   user?.username || null,
                 avatar:     user?.avatar || null,
                 fullName:   persona ? `${persona.nombres || ''} ${persona.apellidos || ''}`.trim() || null : null,
+                identificacion: persona?.identificacion ?? null,
                 courseName: course?.title || null,
             });
         });

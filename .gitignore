@@ -97,3 +97,4 @@ scripts/migration_normalize_progress.sql
 scripts/migration_rename_certificates.sql
 scripts/migration_clean_progreso_estudiante.sql
 scripts/migration_certificates_integrity.sql
+scripts/alter_personas_identificacion_to_bigint.sql

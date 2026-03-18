@@ -27,8 +27,9 @@ export class PersonaDomainService {
     }
 
     async create(data) {
-        if (data.identificacion) {
-            const existing = await this.personaRepo.findByIdentificacion(data.identificacion);
+        const identificacion = data.identificacion ?? data.cedula;
+        if (identificacion) {
+            const existing = await this.personaRepo.findByIdentificacion(identificacion);
             if (existing) {
                 const updated = await this.personaRepo.update(existing.id, data);
                 return Result.ok(updated);

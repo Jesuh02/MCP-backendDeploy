@@ -43,7 +43,7 @@ export class TaskController extends BaseController {
         const { error, value } = createTaskSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
         this.handleResult(res, next, (async() => {
-            const result = await this.taskService.createAndNotify(value, req.user);
+            const result = await this.taskService.createAndNotify(value, req.user?.userId, req.user);
             if (result.isFail()) return result;
             res.status(201);
             return result;
@@ -53,11 +53,11 @@ export class TaskController extends BaseController {
     update = async(req, res, next) => {
         const { error, value } = updateTaskSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
-        this.store(req, res, next, () => this.taskService.updateAndNotify(parseInt(req.params.id), value, req.user));
+        this.store(req, res, next, () => this.taskService.updateAndNotify(parseInt(req.params.id), value, req.user?.userId, req.user));
     };
 
     delete = async(req, res, next) => {
-        this.store(req, res, next, () => this.taskService.delete(parseInt(req.params.id)));
+        this.store(req, res, next, () => this.taskService.delete(parseInt(req.params.id), req.user?.userId));
     };
 }
 export default TaskController;

@@ -243,9 +243,9 @@ export function createContainer() {
         collaboratorRepository: collaboratorRepo,
     });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
-    const topicService = new TopicDomainService({ topicRepository: topicRepo, subjectRepository: subjectRepo });
+    const topicService = new TopicDomainService({ topicRepository: topicRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
     const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
-    const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo, topicRepository: topicRepo });
+    const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo, topicRepository: topicRepo, taskRepository: taskRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
     const collaboratorService = new CollaboratorDomainService({ collaboratorRepository: collaboratorRepo, courseRepository: courseRepo });
     const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo, subjectRepository: subjectRepo, collaboratorRepository: collaboratorRepo });
     const notificationService = new NotificationDomainService({
@@ -259,6 +259,12 @@ export function createContainer() {
         taskRepository: taskRepo,
     });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo, notificationService });
+
+    // Inject notificationService into services that need it (avoids circular constructor deps)
+    collaboratorService.setNotificationService(notificationService);
+    userService.setNotificationService(notificationService);
+    progressService.setNotificationService(notificationService);
+
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
@@ -293,11 +299,12 @@ export function createContainer() {
         progressRepository: progressRepo,
         fileStoragePort: storageAdapter,
         courseNotificationService,
-        collaboratorRepository: collaboratorRepo
+        collaboratorRepository: collaboratorRepo,
+        userRepository: userRepo
     });
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios
-    const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo, subjectRepository: subjectRepo, notificationService, courseService, progressService, userService });
+    const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, notificationService, courseService, progressService, userService });
     const submissionService = new SubmissionDomainService({ submissionRepository: submissionRepo, taskRepository: taskRepo, progressRepository: progressRepo, progressService, notificationService, courseService, topicService, subjectService, userService, fileStoragePort: storageAdapter, collaboratorService });
     const likeService = new LikeDomainService({ likeRepository: likeRepo, notificationService, commentRepository: commentRepo, videoRepository: videoRepo, userRepository: userRepo });
     const commentService = new CommentDomainService({ commentRepository: commentRepo, videoRepository: videoRepo, notificationService, userRepository: userRepo });
