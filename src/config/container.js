@@ -299,7 +299,8 @@ export function createContainer() {
         progressRepository: progressRepo,
         fileStoragePort: storageAdapter,
         courseNotificationService,
-        collaboratorRepository: collaboratorRepo
+        collaboratorRepository: collaboratorRepo,
+        userRepository: userRepo
     });
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios

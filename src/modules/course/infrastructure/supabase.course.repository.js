@@ -13,42 +13,6 @@ export class SupabaseCourseRepository {
             .replace(/\)/g, '\\)');
     }
 
-    /**
-     * Enrich courses with creator_username from usuarios table.
-     * @param {Object|Array} courses - Single course or array of courses
-     * @returns {Promise<Object|Array>} - Enriched course(s)
-     */
-    async _enrichWithCreatorUsernames(courses) {
-        if (!courses) return courses;
-        const isArray = Array.isArray(courses);
-        const list = isArray ? courses : [courses];
-        if (list.length === 0) return courses;
-
-        // Collect unique creator IDs
-        const creatorIds = [...new Set(list.map(c => c?.creator_user_id).filter(id => id != null && id > 0))];
-        if (creatorIds.length === 0) return courses;
-
-        // Fetch usernames in batch
-        const { data: users } = await this.client
-            .from('usuarios')
-            .select('id, username')
-            .in('id', creatorIds);
-
-        if (!users || users.length === 0) return courses;
-
-        // Create lookup map
-        const usernameMap = Object.fromEntries(users.map(u => [u.id, u.username]));
-
-        // Enrich courses
-        list.forEach(course => {
-            if (course && course.creator_user_id && usernameMap[course.creator_user_id]) {
-                course.creator_username = usernameMap[course.creator_user_id];
-            }
-        });
-
-        return isArray ? list : list[0];
-    }
-
     async findById(id) {
         const { data, error } = await this.client
             .from('courses')
@@ -60,7 +24,7 @@ export class SupabaseCourseRepository {
             throw new Error(`Error consultando curso ${id}: ${error.message}`);
         }
 
-        return this._enrichWithCreatorUsernames(data);
+        return data || null;
     }
 
     async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc', excludeCreatorId = null } = {}) {
@@ -69,7 +33,7 @@ export class SupabaseCourseRepository {
 
         const { data, error } = await query.order(sortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
-        return this._enrichWithCreatorUsernames(data || []);
+        return data || [];
     }
 
     async findByCreator(username, { offset = 0, limit = 20 } = {}) {
@@ -78,8 +42,6 @@ export class SupabaseCourseRepository {
         if (!user) return [];
         const { data, error } = await this.client.from('courses').select('*').eq('creator_user_id', user.id).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
-        // For findByCreator, we already know the username
-        (data || []).forEach(c => { c.creator_username = username; });
         return data || [];
     }
 
@@ -89,7 +51,7 @@ export class SupabaseCourseRepository {
 
         const { data, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
-        return this._enrichWithCreatorUsernames(data || []);
+        return data || [];
     }
 
     async findPremium({ offset = 0, limit = 20, excludeCreatorId = null } = {}) {
@@ -98,7 +60,7 @@ export class SupabaseCourseRepository {
 
         const { data, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
-        return this._enrichWithCreatorUsernames(data || []);
+        return data || [];
     }
 
     async search(query, { offset = 0, limit = 20 } = {}) {
@@ -108,7 +70,7 @@ export class SupabaseCourseRepository {
         const filter = `title.ilike."%${safeQuery}%",description.ilike."%${safeQuery}%"`;
         const { data, error } = await this.client.from('courses').select('*').or(filter).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
-        return this._enrichWithCreatorUsernames(data || []);
+        return data || [];
     }
 
     async create(courseData) {
@@ -222,7 +184,7 @@ export class SupabaseCourseRepository {
     async findByCreatorUserId(userId, { offset = 0, limit = 50 } = {}) {
         const { data, error } = await this.client.from('courses').select('*').eq('creator_user_id', userId).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) return [];
-        return this._enrichWithCreatorUsernames(data || []);
+        return data || [];
     }
 
     /**
@@ -247,13 +209,13 @@ export class SupabaseCourseRepository {
         if (!ids || ids.length === 0) return [];
         const { data, error } = await this.client.from('courses').select('*').in('id', ids);
         if (error) return [];
-        return this._enrichWithCreatorUsernames(data || []);
+        return data || [];
     }
 
     async findFreeAll({ offset = 0, limit = 50 } = {}) {
         const { data, error } = await this.client.from('courses').select('*').eq('is_premium', false).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) return [];
-        return this._enrichWithCreatorUsernames(data || []);
+        return data || [];
     }
 
     /**
@@ -321,8 +283,7 @@ export class SupabaseCourseRepository {
             subjects.filter(s => subjectIdsWithSubs.has(s.id)).map(s => s.course_id)
         );
 
-        const filteredCourses = courses.filter(c => courseIdsWithSubs.has(c.id));
-        return this._enrichWithCreatorUsernames(filteredCourses);
+        return courses.filter(c => courseIdsWithSubs.has(c.id));
     }
 }
 export default SupabaseCourseRepository;
