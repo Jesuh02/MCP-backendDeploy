@@ -1,11 +1,15 @@
 /**
  * SupabasePersonaRepository — CRUD para tabla personas.
  */
+function normalizeCedulaValue(value) {
+    if (value === null || value === undefined) return null;
+    const digitsOnly = String(value).replace(/\D/g, '').trim();
+    return digitsOnly || null;
+}
+
 function resolveCedula(personaData = {}) {
     const raw = personaData.cedula ?? personaData.identificacion ?? null;
-    if (raw === null || raw === '') return null;
-    const num = Number(raw);
-    return Number.isFinite(num) ? num : null;
+    return normalizeCedulaValue(raw);
 }
 
 export class SupabasePersonaRepository {
@@ -18,9 +22,13 @@ export class SupabasePersonaRepository {
     }
 
     async findByIdentificacion(identificacion) {
-        const num = Number(identificacion);
-        if (!Number.isFinite(num)) return null;
-        const { data, error } = await this.client.from('personas').select('*').eq('identificacion', num).single();
+        const normalized = normalizeCedulaValue(identificacion);
+        if (!normalized) return null;
+        const { data, error } = await this.client
+            .from('personas')
+            .select('*')
+            .or(`identificacion.eq.${normalized},cedula.eq.${normalized}`)
+            .maybeSingle();
         if (error || !data) return null;
         return data;
     }
