@@ -19,6 +19,31 @@ export class UserDomainService {
         return Array.isArray(source) ? source : [];
     }
 
+    _normalizeNumericQuery(value) {
+        if (value === null || value === undefined) return '';
+        return String(value).replace(/\D/g, '').trim();
+    }
+
+    _normalizeUserShape(user) {
+        if (!user) return user;
+        const persona = user.persona ?? user.personas ?? null;
+        const personaId = user.personaId ?? user.persona_id ?? persona?.id ?? null;
+        const identificacion = persona?.identificacion ?? persona?.cedula ?? user.identificacion ?? null;
+
+        return {
+            ...user,
+            personaId,
+            persona,
+            personas: persona,
+            identificacion,
+        };
+    }
+
+    _normalizeUsersShape(users) {
+        if (!Array.isArray(users)) return users;
+        return users.map((user) => this._normalizeUserShape(user));
+    }
+
     async _loadAuthoritativeRoles(userId, fallbackRoles = []) {
         if (!userId || !this.userRepo?.getUserRoles) {
             return this._normalizeRoles(fallbackRoles);
@@ -35,7 +60,7 @@ export class UserDomainService {
     async _attachAuthoritativeRoles(user) {
         if (!user || !user.id) return user;
         const roles = await this._loadAuthoritativeRoles(user.id, user.roles || []);
-        return {...user, roles };
+        return this._normalizeUserShape({ ...user, roles });
     }
 
     async _attachAuthoritativeRolesToMany(users) {
@@ -96,7 +121,7 @@ export class UserDomainService {
         const user = await this.userRepo.findById(id);
         if (!user) return Result.fail(new NotFoundError('Usuario', id));
         const { password, ...unsafeSafe } = user;
-        const safe = await this._attachAuthoritativeRoles(unsafeSafe);
+        const safe = await this._attachAuthoritativeRoles(this._normalizeUserShape(unsafeSafe));
         await this._signAvatarUrl(safe);
         return Result.ok(safe);
     }
@@ -105,23 +130,41 @@ export class UserDomainService {
         const user = await this.userRepo.findByUsername(username);
         if (!user) return Result.fail(new NotFoundError('Usuario', username));
         const { password, ...unsafeSafe } = user;
-        const safe = await this._attachAuthoritativeRoles(unsafeSafe);
+        const safe = await this._attachAuthoritativeRoles(this._normalizeUserShape(unsafeSafe));
         await this._signAvatarUrl(safe);
         return Result.ok(safe);
     }
     async updateProfile(id, data) {
         const user = await this.userRepo.findById(id);
         if (!user) return Result.fail(new NotFoundError('Usuario', id));
-        const updated = await this._attachAuthoritativeRoles(await this.userRepo.update(id, data));
+        const updated = await this._attachAuthoritativeRoles(this._normalizeUserShape(await this.userRepo.update(id, data)));
         await this._signAvatarUrl(updated);
         return Result.ok(updated);
     }
 
     async search(query, limit = 20) {
-        const users = await this.userRepo.searchByUsername(query, limit);
-        const safeUsers = (users || []).map((user) => {
+        const rawQuery = String(query || '').trim();
+        if (!rawQuery) return Result.ok([]);
+
+        const numericQuery = this._normalizeNumericQuery(rawQuery);
+        const queries = [...new Set([rawQuery, numericQuery].filter(Boolean))];
+        const collectedUsers = [];
+        const seenUserIds = new Set();
+
+        for (const term of queries) {
+            const partial = await this.userRepo.searchByUsername(term, limit);
+            for (const user of partial || []) {
+                if (!user?.id || seenUserIds.has(user.id)) continue;
+                seenUserIds.add(user.id);
+                collectedUsers.push(user);
+                if (collectedUsers.length >= limit) break;
+            }
+            if (collectedUsers.length >= limit) break;
+        }
+
+        const safeUsers = collectedUsers.map((user) => {
             const { password, ...rest } = user;
-            return rest;
+            return this._normalizeUserShape(rest);
         });
         const safe = await this._attachAuthoritativeRolesToMany(safeUsers);
         await Promise.all((safe || []).map((user) => this._signAvatarUrl(user)));
@@ -147,13 +190,13 @@ export class UserDomainService {
         const user = await this.userRepo.findByEmail(email);
         if (!user) return Result.fail(new NotFoundError('Usuario (email)', email));
         const { password, ...unsafeSafe } = user;
-        const safe = await this._attachAuthoritativeRoles(unsafeSafe);
+        const safe = await this._attachAuthoritativeRoles(this._normalizeUserShape(unsafeSafe));
         await this._signAvatarUrl(safe);
         return Result.ok(safe);
     }
 
     async getByIds(ids) {
-        const users = await this._attachAuthoritativeRolesToMany(await this.userRepo.findByIds(ids));
+        const users = await this._attachAuthoritativeRolesToMany(this._normalizeUsersShape(await this.userRepo.findByIds(ids)));
         if (Array.isArray(users)) {
             await Promise.all(users.map(u => this._signAvatarUrl(u)));
         }
@@ -304,7 +347,7 @@ export class UserDomainService {
         const users = await this.userRepo.findAll({ limit, offset });
         const safeUsers = (users || []).map(u => {
             const { password, ...rest } = u;
-            return rest;
+            return this._normalizeUserShape(rest);
         });
         const safe = await this._attachAuthoritativeRolesToMany(safeUsers);
         for (const u of safe) await this._signAvatarUrl(u);

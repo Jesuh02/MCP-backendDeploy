@@ -4,6 +4,28 @@
 export class SupabaseUserRepository {
     constructor(client) { this.client = client; }
 
+    _attachPersonaAliases(userData) {
+        if (!userData) return null;
+        const persona = userData.persona ?? userData.personas ?? null;
+        const personaId = userData.personaId ?? userData.persona_id ?? persona?.id ?? null;
+        return {
+            ...userData,
+            persona,
+            personas: persona,
+            personaId,
+        };
+    }
+
+    async _fetchPersonasByIds(personaIds = []) {
+        const uniqueIds = [...new Set((personaIds || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+        if (uniqueIds.length === 0) return new Map();
+
+        const { data, error } = await this.client.from('personas').select('*').in('id', uniqueIds);
+        if (error || !Array.isArray(data)) return new Map();
+
+        return new Map(data.map((persona) => [Number(persona.id), persona]));
+    }
+
     /** Map DB row (contrasena) to domain model (password) */
     _mapUser(data) {
         if (!data) return null;
@@ -11,7 +33,7 @@ export class SupabaseUserRepository {
         delete mapped.contrasena;
         // Expose is_active also as isActive for frontend clients
         if (mapped.is_active !== undefined) mapped.isActive = mapped.is_active;
-        return mapped;
+        return this._attachPersonaAliases(mapped);
     }
 
     async findById(id) {
@@ -94,9 +116,25 @@ export class SupabaseUserRepository {
             .select('*, personas!fk_usuarios_persona(*)')
             .order('id', { ascending: true })
             .range(offset, offset + limit - 1);
-        if (error) throw new Error(`Error listando usuarios: ${error.message}`);
-        if (!data) return [];
-        const mapped = data.map(u => this._mapUser(u));
+        let rows = data || [];
+
+        if (error) {
+            console.warn(`[UserRepo] findAll error (with join): ${error.message}, trying without join`);
+            const { data: fallbackRows, error: fallbackError } = await this.client
+                .from('usuarios')
+                .select('*')
+                .order('id', { ascending: true })
+                .range(offset, offset + limit - 1);
+            if (fallbackError) throw new Error(`Error listando usuarios: ${fallbackError.message}`);
+
+            const personaMap = await this._fetchPersonasByIds((fallbackRows || []).map((user) => user.persona_id));
+            rows = (fallbackRows || []).map((user) => ({
+                ...user,
+                personas: personaMap.get(Number(user.persona_id)) ?? null,
+            }));
+        }
+
+        const mapped = rows.map((u) => this._mapUser(u));
         return Promise.all(mapped.map(u => this._enrichWithRoles(u)));
     }
 
@@ -122,17 +160,20 @@ export class SupabaseUserRepository {
     }
 
     async searchByUsername(query, limit = 20) {
-        const baseSelect = 'id, username, email, avatar, personas!fk_usuarios_persona(nombres, apellidos, identificacion)';
-        const innerSelect = 'id, username, email, avatar, personas!inner(nombres, apellidos, identificacion)';
+        const normalizedQuery = String(query || '').trim();
+        const digitsOnly = normalizedQuery.replace(/\D/g, '');
+        const baseSelect = 'id, username, email, avatar, personas!fk_usuarios_persona(id, nombres, apellidos, identificacion, cedula)';
+        const innerSelect = 'id, username, email, avatar, personas!inner(id, nombres, apellidos, identificacion, cedula)';
         const searches = [
-            this.client.from('usuarios').select(baseSelect).ilike('username', `%${query}%`).limit(limit),
-            this.client.from('usuarios').select(innerSelect).ilike('personas.nombres', `%${query}%`).limit(limit),
-            this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${query}%`).limit(limit),
+            this.client.from('usuarios').select(baseSelect).ilike('username', `%${normalizedQuery}%`).limit(limit),
+            this.client.from('usuarios').select(innerSelect).ilike('personas.nombres', `%${normalizedQuery}%`).limit(limit),
+            this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${normalizedQuery}%`).limit(limit),
         ];
         // If query looks numeric, also search by identificacion
-        if (/^\d+$/.test(query.trim())) {
+        if (digitsOnly) {
             searches.push(
-                this.client.from('usuarios').select(innerSelect).eq('personas.identificacion', Number(query.trim())).limit(limit)
+                this.client.from('usuarios').select(innerSelect).eq('personas.identificacion', digitsOnly).limit(limit),
+                this.client.from('usuarios').select(innerSelect).eq('personas.cedula', digitsOnly).limit(limit)
             );
         }
         const [byUsername, byNombres, byApellidos, ...rest] = await Promise.all(searches);
@@ -149,8 +190,11 @@ export class SupabaseUserRepository {
                     username: u.username,
                     email: u.email,
                     avatar: u.avatar,
+                    persona: u.personas ?? null,
+                    personas: u.personas ?? null,
+                    personaId: u.personas?.id ?? null,
                     fullName: u.personas ? `${u.personas.nombres || ''} ${u.personas.apellidos || ''}`.trim() : null,
-                    identificacion: u.personas?.identificacion ?? null,
+                    identificacion: u.personas?.identificacion ?? u.personas?.cedula ?? null,
                     roles: []
                 });
             }
