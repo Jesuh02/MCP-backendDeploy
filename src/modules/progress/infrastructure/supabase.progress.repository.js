@@ -221,6 +221,19 @@ export class SupabaseProgressRepository {
         return data.map(p => p.curso_id);
     }
 
+    async findApprovedEnrollmentCourseIds(userId) {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .select('course_id')
+            .eq('user_id', userId)
+            .eq('status', 'approved')
+            .order('requested_at', { ascending: false });
+        if (error || !data) return [];
+        return data
+            .map((row) => Number(row.course_id))
+            .filter((courseId) => Number.isInteger(courseId) && courseId > 0);
+    }
+
     async isEnrolled(userId, courseId) {
         const { count, error } = await this.client
             .from('progreso_estudiante')

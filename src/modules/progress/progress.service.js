@@ -260,9 +260,10 @@ export class ProgressDomainService {
         const certificates = await this.progressRepo.findCertificatesByUser(userId);
         if (!certificates?.length || !this.courseRepo) return Result.ok(certificates);
 
-        // Exclude certificates for courses where the user is creator or collaborator
+        // Only certificates with status 'Ganado' and not creator/collaborator
         const filtered = [];
         for (const cert of certificates) {
+            if (!this._isProgressWon(cert)) continue;
             const blocked = await this._isCreatorOrCollaborator(userId, cert.courseId);
             if (!blocked) filtered.push(cert);
         }
@@ -271,7 +272,8 @@ export class ProgressDomainService {
 
     async getCreatorCertificates(creatorUserId) {
         const rows = await this.progressRepo.findWonProgressByCreatorCourses(creatorUserId);
-        return Result.ok(rows);
+        const filtered = (rows || []).filter(r => this._isProgressWon(r));
+        return Result.ok(filtered);
     }
 
     async bulkIssueCertificatesForCreator(creatorUserId) {
@@ -285,7 +287,8 @@ export class ProgressDomainService {
 
     async getAllWonCertificates() {
         const rows = await this.progressRepo.findAllWonProgress();
-        return Result.ok(rows);
+        const filtered = (rows || []).filter(r => this._isProgressWon(r));
+        return Result.ok(filtered);
     }
 
     async bulkIssueCertificatesGlobal() {
