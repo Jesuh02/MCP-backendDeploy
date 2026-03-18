@@ -30,9 +30,12 @@ export class TaskDomainService {
         this.courseService = courseService || null;
         this.progressService = progressService || null;
         this.userService = userService || null;
-        this.cacheTtlMs = 30000;
+        this.cacheTtlMs = 60000;
+        this.taskCache = new Map();
         this.topicCache = new Map();
         this.subjectCache = new Map();
+        this.tasksByCourseCache = new Map();
+        this.tasksBySubjectCache = new Map();
         this.tasksByTopicCache = new Map();
     }
 
@@ -43,6 +46,11 @@ export class TaskDomainService {
         const value = await loader();
         cache.set(key, { value, expiresAt: now + this.cacheTtlMs });
         return value;
+    }
+
+    async _getTask(taskId) {
+        if (!taskId) return null;
+        return this._remember(this.taskCache, taskId, () => this.taskRepo.findById(taskId));
     }
 
     async _getTopic(topicId) {
@@ -60,12 +68,27 @@ export class TaskDomainService {
         return this._remember(this.tasksByTopicCache, topicId, () => this.taskRepo.findByTopic(topicId));
     }
 
-    _invalidateTopic(topicId, subjectId) {
+    async _getTasksByCourse(courseId) {
+        if (!courseId) return [];
+        return this._remember(this.tasksByCourseCache, courseId, () => this.taskRepo.findByCourse(courseId));
+    }
+
+    async _getTasksBySubject(subjectId) {
+        if (!subjectId) return [];
+        return this._remember(this.tasksBySubjectCache, subjectId, () => this.taskRepo.findBySubject(subjectId));
+    }
+
+    _invalidateTaskCaches({ taskId, topicId, subjectId, courseId } = {}) {
+        if (taskId) this.taskCache.delete(taskId);
         if (topicId) {
             this.topicCache.delete(topicId);
             this.tasksByTopicCache.delete(topicId);
         }
-        if (subjectId) this.subjectCache.delete(subjectId);
+        if (subjectId) {
+            this.subjectCache.delete(subjectId);
+            this.tasksBySubjectCache.delete(subjectId);
+        }
+        if (courseId) this.tasksByCourseCache.delete(courseId);
     }
 
     async _getCourseIdFromTopic(topic) {
@@ -113,7 +136,7 @@ export class TaskDomainService {
 
     /** Obtiene una tarea por ID. */
     async getById(id) {
-        const task = await this.taskRepo.findById(id);
+        const task = await this._getTask(id);
         if (!task) return Result.fail(new NotFoundError('Tarea', id));
         return Result.ok(task);
     }
@@ -129,12 +152,12 @@ export class TaskDomainService {
 
     /** Obtiene todas las tareas de un curso (via topics). */
     async getByCourse(courseId) {
-        const tasks = this._dedupeTasks(await this.taskRepo.findByCourse(courseId));
+        const tasks = this._dedupeTasks(await this._getTasksByCourse(courseId));
         return Result.ok(tasks);
     }
 
     async getBySubject(subjectId) {
-        const tasks = this._dedupeTasks(await this.taskRepo.findBySubject(subjectId));
+        const tasks = this._dedupeTasks(await this._getTasksBySubject(subjectId));
         return Result.ok(tasks);
     }
 
@@ -174,7 +197,7 @@ export class TaskDomainService {
         }
 
         const created = await this.taskRepo.create(data);
-        this._invalidateTopic(data.topicId, subjectId);
+        this._invalidateTaskCaches({ taskId: created?.id, topicId: data.topicId, subjectId, courseId });
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
             await this.progressService.recalculateForCourse(courseId);
@@ -355,7 +378,7 @@ export class TaskDomainService {
 
     /** Actualiza una tarea existente. */
     async update(id, data, requesterId) {
-        const task = await this.taskRepo.findById(id);
+        const task = await this._getTask(id);
         if (!task) return Result.fail(new NotFoundError('Tarea', id));
 
         const permissionTopicId = task.topicId || task.topic_id;
@@ -393,9 +416,9 @@ export class TaskDomainService {
         }
 
         const updated = await this.taskRepo.update(id, data);
-        this._invalidateTopic(originalTopicId, originalSubjectId);
+        this._invalidateTaskCaches({ taskId: id, topicId: originalTopicId, subjectId: originalSubjectId, courseId: originalCourseId });
         if (nextTopicId !== originalTopicId) {
-            this._invalidateTopic(nextTopicId, nextSubjectId);
+            this._invalidateTaskCaches({ taskId: id, topicId: nextTopicId, subjectId: nextSubjectId, courseId: nextCourseId });
         }
 
         if (this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
@@ -410,7 +433,7 @@ export class TaskDomainService {
 
     /** Elimina una tarea por ID. */
     async delete(id, requesterId) {
-        const task = await this.taskRepo.findById(id);
+        const task = await this._getTask(id);
         if (!task) return Result.fail(new NotFoundError('Tarea', id));
 
         const topicId = task.topicId || task.topic_id;
@@ -439,7 +462,7 @@ export class TaskDomainService {
         }
 
         await this.taskRepo.delete(id);
-        this._invalidateTopic(topicId, subjectId);
+        this._invalidateTaskCaches({ taskId: id, topicId, subjectId, courseId });
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
             await this.progressService.recalculateForCourse(courseId);

@@ -312,16 +312,36 @@ export class SupabaseProgressRepository {
         if (error || !data?.length) return [];
 
         const courseIds = data.map(r => r.course_id).filter(Boolean);
-        let coursesById = new Map();
+
+        // Validate: only return certificates that have a matching 'Ganado' progress record
+        let validCourseIds = new Set();
         if (courseIds.length > 0) {
+            const { data: progressRows } = await this.client
+                .from('progreso_estudiante')
+                .select('curso_id')
+                .eq('usuario_estudiante', userId)
+                .in('curso_id', courseIds)
+                .is('materia_id', null)
+                .eq('estado', 'Ganado');
+            for (const row of progressRows || []) {
+                validCourseIds.add(row.curso_id);
+            }
+        }
+
+        const validData = data.filter(r => validCourseIds.has(r.course_id));
+        if (validData.length === 0) return [];
+
+        const validIds = validData.map(r => r.course_id);
+        let coursesById = new Map();
+        if (validIds.length > 0) {
             const { data: courses } = await this.client
                 .from('courses')
                 .select('id, title, thumbnail_uri')
-                .in('id', courseIds);
+                .in('id', validIds);
             coursesById = new Map((courses || []).map(c => [c.id, c]));
         }
 
-        return data.map(row => {
+        return validData.map(row => {
             const course = coursesById.get(row.course_id) || {};
             return {
                 courseId:           row.course_id,

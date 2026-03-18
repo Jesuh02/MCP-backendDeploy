@@ -7,9 +7,10 @@ export class TopicDomainService {
         this.subjectRepo = subjectRepository;
         this.courseRepo = courseRepository;
         this.collaboratorRepo = collaboratorRepository || null;
-        this.cacheTtlMs = 30000;
+        this.cacheTtlMs = 60000;
         this.subjectCache = new Map();
         this.topicCache = new Map();
+        this.topicsByCourseCache = new Map();
         this.topicsBySubjectCache = new Map();
     }
 
@@ -43,12 +44,18 @@ export class TopicDomainService {
         return this._remember(this.topicsBySubjectCache, subjectId, () => this.topicRepo.findBySubject(subjectId));
     }
 
-    _invalidateTopic(topicId, subjectId) {
+    async _getTopicsByCourse(courseId) {
+        if (!courseId) return [];
+        return this._remember(this.topicsByCourseCache, courseId, () => this.topicRepo.findByCourse(courseId));
+    }
+
+    _invalidateTopic(topicId, subjectId, courseId) {
         if (topicId) this.topicCache.delete(topicId);
         if (subjectId) {
             this.subjectCache.delete(subjectId);
             this.topicsBySubjectCache.delete(subjectId);
         }
+        if (courseId) this.topicsByCourseCache.delete(courseId);
     }
 
     async _canManageSubject(requesterId, subject) {
@@ -75,7 +82,7 @@ export class TopicDomainService {
     }
 
     async getByCourse(courseId) {
-        const topics = await this.topicRepo.findByCourse(courseId);
+        const topics = await this._getTopicsByCourse(courseId);
         return Result.ok(topics);
     }
 
@@ -118,34 +125,34 @@ export class TopicDomainService {
         }
 
         const created = await this.topicRepo.create(data);
-        this._invalidateTopic(created?.id, data.subjectId);
+        this._invalidateTopic(created?.id, data.subjectId, subject.course_id);
         return Result.ok(created);
     }
 
     async update(id, data, requesterId) {
         const topic = await this._getTopic(id);
         if (!topic) return Result.fail(new NotFoundError('Tema', id));
+        const subject = await this._getSubjectByTopic(topic);
         if (requesterId) {
-            const subject = await this._getSubjectByTopic(topic);
             const canManage = await this._canManageSubject(requesterId, subject);
             if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para editar este tema'));
             data.updatedBy = requesterId;
         }
         const updated = await this.topicRepo.update(id, data);
-        this._invalidateTopic(id, topic.materia_id || topic.subject_id || topic.subjectId);
+        this._invalidateTopic(id, topic.materia_id || topic.subject_id || topic.subjectId, subject?.course_id);
         return Result.ok(updated);
     }
 
     async delete(id, requesterId) {
         const topic = await this._getTopic(id);
         if (!topic) return Result.fail(new NotFoundError('Tema', id));
+        const subject = await this._getSubjectByTopic(topic);
         if (requesterId) {
-            const subject = await this._getSubjectByTopic(topic);
             const canManage = await this._canManageSubject(requesterId, subject);
             if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para eliminar este tema'));
         }
         await this.topicRepo.delete(id);
-        this._invalidateTopic(id, topic.materia_id || topic.subject_id || topic.subjectId);
+        this._invalidateTopic(id, topic.materia_id || topic.subject_id || topic.subjectId, subject?.course_id);
         return Result.ok({ message: 'Tema eliminado' });
     }
 
@@ -167,13 +174,13 @@ export class TopicDomainService {
     async deleteTopicOnly(id, requesterId) {
         const topic = await this._getTopic(id);
         if (!topic) return Result.fail(new NotFoundError('Tema', id));
+        const subject = await this._getSubjectByTopic(topic);
         if (requesterId) {
-            const subject = await this._getSubjectByTopic(topic);
             const canManage = await this._canManageSubject(requesterId, subject);
             if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para eliminar este tema'));
         }
         await this.topicRepo.deleteTopicOnly(id);
-        this._invalidateTopic(id, topic.materia_id || topic.subject_id || topic.subjectId);
+        this._invalidateTopic(id, topic.materia_id || topic.subject_id || topic.subjectId, subject?.course_id);
         return Result.ok({ message: 'Tema eliminado (tareas conservadas)' });
     }
 }

@@ -6,8 +6,9 @@ export class SubjectDomainService {
         this.subjectRepo = subjectRepository;
         this.courseRepo = courseRepository;
         this.collaboratorRepo = collaboratorRepository || null;
-        this.cacheTtlMs = 30000;
+        this.cacheTtlMs = 60000;
         this.courseCache = new Map();
+        this.subjectCache = new Map();
         this.subjectsByCourseCache = new Map();
     }
 
@@ -39,9 +40,19 @@ export class SubjectDomainService {
         this.subjectsByCourseCache.delete(courseId);
     }
 
+    _invalidateSubject(subjectId, courseId) {
+        if (subjectId) this.subjectCache.delete(subjectId);
+        this._invalidateCourse(courseId);
+    }
+
     async _getCourse(courseId) {
         if (!courseId) return null;
         return this._remember(this.courseCache, courseId, () => this.courseRepo.findById(courseId));
+    }
+
+    async _getSubject(subjectId) {
+        if (!subjectId) return null;
+        return this._remember(this.subjectCache, subjectId, () => this.subjectRepo.findById(subjectId));
     }
 
     async _getSubjectsByCourse(courseId) {
@@ -79,7 +90,7 @@ export class SubjectDomainService {
     }
 
     async getById(id) {
-        const subject = await this.subjectRepo.findById(id);
+        const subject = await this._getSubject(id);
         if (!subject) return Result.fail(new NotFoundError('Materia', id));
         return Result.ok(subject);
     }
@@ -93,12 +104,12 @@ export class SubjectDomainService {
             data.createdBy = requesterId;
         }
         const created = await this.subjectRepo.create(data);
-        this._invalidateCourse(data.courseId);
+        this._invalidateSubject(created?.id, data.courseId);
         return Result.ok(created);
     }
 
     async update(id, data, requesterId) {
-        const subject = await this.subjectRepo.findById(id);
+        const subject = await this._getSubject(id);
         if (!subject) return Result.fail(new NotFoundError('Materia', id));
         if (requesterId) {
             const canManage = await this._canManageSubject(requesterId, subject);
@@ -108,12 +119,12 @@ export class SubjectDomainService {
             data.updatedBy = requesterId;
         }
         const updated = await this.subjectRepo.update(id, data);
-        this._invalidateCourse(subject.course_id);
+        this._invalidateSubject(id, subject.course_id);
         return Result.ok(updated);
     }
 
     async delete(id, requesterId) {
-        const subject = await this.subjectRepo.findById(id);
+        const subject = await this._getSubject(id);
         if (!subject) return Result.fail(new NotFoundError('Materia', id));
         if (requesterId) {
             const canManage = await this._canManageSubject(requesterId, subject);
@@ -122,7 +133,7 @@ export class SubjectDomainService {
             }
         }
         await this.subjectRepo.delete(id);
-        this._invalidateCourse(subject.course_id);
+        this._invalidateSubject(id, subject.course_id);
         return Result.ok({ message: 'Materia eliminada' });
     }
 }
