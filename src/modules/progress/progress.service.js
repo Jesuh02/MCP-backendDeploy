@@ -230,7 +230,15 @@ export class ProgressDomainService {
 
     async getMyCertificates(userId) {
         const certificates = await this.progressRepo.findCertificatesByUser(userId);
-        return Result.ok(certificates);
+        if (!certificates?.length || !this.courseRepo) return Result.ok(certificates);
+
+        // Exclude certificates for courses where the user is creator or collaborator
+        const filtered = [];
+        for (const cert of certificates) {
+            const blocked = await this._isCreatorOrCollaborator(userId, cert.courseId);
+            if (!blocked) filtered.push(cert);
+        }
+        return Result.ok(filtered);
     }
 
     async getCreatorCertificates(creatorUserId) {
@@ -349,6 +357,10 @@ export class ProgressDomainService {
     }
 
     async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null, subjectIdFallback = null) {
+        // Skip recalculation for creators/collaborators — they are not students
+        const blocked = await this._isCreatorOrCollaborator(userId, courseId);
+        if (blocked) return { userId, courseId, completedTasks: 0, totalTasks: 0, averageGrade: 0, progressPercentage: 0, status: 'Excluido' };
+
         const totalTasks = totalTasksFromCaller ?? await this.taskRepo.countByCourse(courseId);
         const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId);
         const completedTasks = submittedTaskIds.length;

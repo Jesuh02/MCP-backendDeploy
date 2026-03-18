@@ -21,6 +21,7 @@ export class CourseController {
         const result = await this.courseService.list(pg);
         if (result.isFail()) return next(result.getError());
         const { courses, total } = result.getValue();
+        res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
         res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
     };
 
@@ -72,8 +73,7 @@ export class CourseController {
         const pg = parsePagination(req.query);
         const result = await this.courseService.search(req.query.q || '', pg);
         if (result.isFail()) return next(result.getError());
-        const { courses, total } = result.getValue();
-        res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
+        const { courses, total } = result.getValue();        res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');        res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
     };
 
     create = async(req, res, next) => {
@@ -109,6 +109,7 @@ export class CourseController {
         const result = await this.courseService.findFreeCourses(pg);
         if (result.isFail()) return next(result.getError());
         const { courses, total } = result.getValue();
+        res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
         res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
     };
 
@@ -118,6 +119,7 @@ export class CourseController {
         const result = await this.courseService.findPremiumCourses(pg);
         if (result.isFail()) return next(result.getError());
         const { courses, total } = result.getValue();
+        res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
         res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
     };
 
