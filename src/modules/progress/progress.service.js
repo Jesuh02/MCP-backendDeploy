@@ -11,6 +11,7 @@ export class ProgressDomainService {
         this.subjectRepo = subjectRepository || null;
         this.collaboratorRepo = collaboratorRepository || null;
         this._notificationService = null;
+        this._courseRefreshJobs = new Map();
     }
 
     setNotificationService(notificationService) {
@@ -18,29 +19,51 @@ export class ProgressDomainService {
     }
 
     async getByUserAndCourse(userId, courseId) {
-        let progress;
-        if (this.taskRepo && this.submissionRepo) {
+        const [storedProgress, gradedTasks, storedSubjectProgress] = await Promise.all([
+            this.progressRepo.findByUserAndCourse(userId, courseId),
+            this._buildGradedTasksWithSubject(userId, courseId),
+            this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId),
+        ]);
+
+        let progress = storedProgress;
+        let subjectProgress = storedSubjectProgress;
+
+        if (!progress && this.taskRepo && this.submissionRepo) {
             progress = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
+            subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
         } else {
-            progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
-            if (!progress) progress = { userId, courseId, completedTasks: 0, totalTasks: 0, progressPercentage: 0, averageGrade: 0, status: 'Perdido' };
+            progress ||= this._buildEmptyCourseProgress(userId, courseId);
+            if (progress && this.taskRepo && this.submissionRepo) {
+                this._scheduleUserCourseRefresh(userId, courseId);
+            }
         }
-        const gradedTasks = await this._buildGradedTasksWithSubject(userId, courseId);
-        const subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
+
         return Result.ok({ ...progress, gradedTasks, subjectProgress });
     }
 
     async getSubjectProgress(userId, courseId) {
-        if (this.taskRepo && this.submissionRepo && this.subjectRepo) {
-            await this._recalculateSubjectsForUserCourse(userId, courseId);
+        let subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
+
+        if ((!subjectProgress?.length) && this.taskRepo && this.submissionRepo && this.subjectRepo) {
+            await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
+            subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
+        } else if (subjectProgress?.length && this.taskRepo && this.submissionRepo && this.subjectRepo) {
+            this._scheduleUserCourseRefresh(userId, courseId);
         }
-        const subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
-        return Result.ok(subjectProgress);
+
+        return Result.ok(subjectProgress || []);
     }
 
     async getByUserAndSubject(userId, subjectId) {
-        const progress = await this.progressRepo.findByUserAndSubject(userId, subjectId);
-        if (!progress) return Result.ok({ userId, subjectId, completedTasks: 0, totalTasks: 0, progressPercentage: 0, averageGrade: 0, status: 'Perdido' });
+        let progress = await this.progressRepo.findByUserAndSubject(userId, subjectId);
+        if (!progress && this.taskRepo && this.submissionRepo && this.subjectRepo) {
+            const courseId = await this._resolveCourseFromSubjectId(subjectId);
+            if (courseId) {
+                await this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subjectId);
+                progress = await this.progressRepo.findByUserAndSubject(userId, subjectId);
+            }
+        }
+        if (!progress) return Result.ok(this._buildEmptySubjectProgress(userId, subjectId));
         return Result.ok(progress);
     }
 
@@ -285,6 +308,25 @@ export class ProgressDomainService {
 
     async getAllByCourse(courseId) {
         const progress = await this.progressRepo.findByCourse(courseId);
+        // Enrich with usernames and avatars from user repository
+        if (progress?.length && this.userRepo && typeof this.userRepo.findByIds === 'function') {
+            const userIds = [...new Set(progress.map(p => p.userId).filter(id => id))];
+            if (userIds.length > 0) {
+                try {
+                    const users = await this.userRepo.findByIds(userIds);
+                    const usersById = new Map((users || []).map(u => [Number(u.id), u]));
+                    for (const p of progress) {
+                        const user = usersById.get(Number(p.userId));
+                        if (user) {
+                            p.username = user.username || null;
+                            p.avatar = user.avatar || null;
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[ProgressService] Error enriching getAllByCourse with usernames:', err.message);
+                }
+            }
+        }
         return Result.ok(progress);
     }
 
@@ -359,6 +401,51 @@ export class ProgressDomainService {
                 grade: sub.grade,
             };
         });
+    }
+
+    _buildEmptyCourseProgress(userId, courseId, overrides = {}) {
+        return {
+            userId,
+            courseId,
+            completedTasks: 0,
+            totalTasks: 0,
+            progressPercentage: 0,
+            averageGrade: 0,
+            status: 'Perdido',
+            ...overrides,
+        };
+    }
+
+    _buildEmptySubjectProgress(userId, subjectId, overrides = {}) {
+        return {
+            userId,
+            subjectId,
+            completedTasks: 0,
+            totalTasks: 0,
+            progressPercentage: 0,
+            averageGrade: 0,
+            status: 'Perdido',
+            ...overrides,
+        };
+    }
+
+    _scheduleUserCourseRefresh(userId, courseId) {
+        if (!this.taskRepo || !this.submissionRepo) return;
+
+        const refreshKey = `${userId}:${courseId}`;
+        if (this._courseRefreshJobs.has(refreshKey)) return;
+
+        const refreshJob = (async () => {
+            try {
+                await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
+            } catch (err) {
+                console.error(`[ProgressService] Error refreshing progress for user ${userId} in course ${courseId}:`, err?.message || err);
+            } finally {
+                this._courseRefreshJobs.delete(refreshKey);
+            }
+        })();
+
+        this._courseRefreshJobs.set(refreshKey, refreshJob);
     }
 
     async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null, subjectIdFallback = null) {

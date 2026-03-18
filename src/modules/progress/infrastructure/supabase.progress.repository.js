@@ -646,7 +646,7 @@ export class SupabaseProgressRepository {
                 .map(u => Number(u.persona_id)).filter(id => Number.isInteger(id) && id > 0))];
             if (personaIds.length > 0) {
                 const { data: personas } = await this.client
-                    .from('personas').select('id, nombres, apellidos').in('id', personaIds);
+                    .from('personas').select('id, nombres, apellidos, identificacion').in('id', personaIds);
                 personasById = new Map((personas || []).map(p => [Number(p.id), p]));
             }
         }
@@ -664,6 +664,7 @@ export class SupabaseProgressRepository {
                 username:   user?.username || null,
                 avatar:     user?.avatar || null,
                 fullName:   persona ? `${persona.nombres || ''} ${persona.apellidos || ''}`.trim() || null : null,
+                identificacion: persona?.identificacion ?? null,
                 courseName: course?.title || null,
             });
         });
