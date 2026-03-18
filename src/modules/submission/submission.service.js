@@ -27,24 +27,36 @@ export class SubmissionDomainService {
     async getByTask(taskId, pagination) {
         const subs = await this.subRepo.findByTask(taskId, pagination);
         await this._signFileUrls(subs);
-        // Enrich submissions with studentUsername and studentAvatar
-        if (subs?.length && this.userService) {
-            const studentIds = [...new Set(subs.map(s => s.student_id).filter(id => id))];
-            if (studentIds.length > 0) {
-                try {
-                    const usersResult = await this.userService.getByIds(studentIds);
-                    if (usersResult.isOk()) {
-                        const usersById = new Map((usersResult.getValue() || []).map(u => [Number(u.id), u]));
-                        for (const s of subs) {
-                            const user = usersById.get(Number(s.student_id));
-                            if (user) {
-                                s.studentUsername = user.username || null;
-                                s.studentAvatar = user.avatar || null;
+        // Enrich submissions with camelCase aliases, studentUsername and studentAvatar
+        if (subs?.length) {
+            for (const s of subs) {
+                // camelCase aliases for snake_case fields
+                s.studentId = s.student_id;
+                s.taskId = s.task_id;
+                s.submissionDate = s.submission_date;
+                s.fileUri = s.file_uri;
+                s.fileName = s.file_name;
+                s.gradedBy = s.graded_by;
+                s.gradedAt = s.graded_at;
+            }
+            if (this.userService) {
+                const studentIds = [...new Set(subs.map(s => s.student_id).filter(id => id))];
+                if (studentIds.length > 0) {
+                    try {
+                        const usersResult = await this.userService.getByIds(studentIds);
+                        if (usersResult.isOk()) {
+                            const usersById = new Map((usersResult.getValue() || []).map(u => [Number(u.id), u]));
+                            for (const s of subs) {
+                                const user = usersById.get(Number(s.student_id));
+                                if (user) {
+                                    s.studentUsername = user.username || null;
+                                    s.studentAvatar = user.avatar || null;
+                                }
                             }
                         }
+                    } catch (err) {
+                        console.warn('[SubmissionService] Error enriching task submissions with usernames:', err.message);
                     }
-                } catch (err) {
-                    console.warn('[SubmissionService] Error enriching task submissions with usernames:', err.message);
                 }
             }
         }
@@ -341,24 +353,38 @@ export class SubmissionDomainService {
     async getByCourse(courseId, pagination, options = {}) {
         const subs = await this.subRepo.findByCourse(courseId, { ...pagination, ungradedOnly: options.ungradedOnly });
         await this._signFileUrls(subs);
-        // Enrich submissions with studentUsername and studentAvatar
-        if (subs?.length && this.userService) {
-            const studentIds = [...new Set(subs.map(s => s.student_id).filter(id => id))];
-            if (studentIds.length > 0) {
-                try {
-                    const usersResult = await this.userService.getByIds(studentIds);
-                    if (usersResult.isOk()) {
-                        const usersById = new Map((usersResult.getValue() || []).map(u => [Number(u.id), u]));
-                        for (const s of subs) {
-                            const user = usersById.get(Number(s.student_id));
-                            if (user) {
-                                s.studentUsername = user.username || null;
-                                s.studentAvatar = user.avatar || null;
+        // Enrich submissions with camelCase aliases, taskName, studentUsername and studentAvatar
+        if (subs?.length) {
+            for (const s of subs) {
+                // camelCase aliases for snake_case fields
+                s.studentId = s.student_id;
+                s.taskId = s.task_id;
+                s.submissionDate = s.submission_date;
+                s.fileUri = s.file_uri;
+                s.fileName = s.file_name;
+                s.gradedBy = s.graded_by;
+                s.gradedAt = s.graded_at;
+                // Extract taskName from joined tasks object (findByCourse does a JOIN)
+                s.taskName = s.tasks?.title || null;
+            }
+            if (this.userService) {
+                const studentIds = [...new Set(subs.map(s => s.student_id).filter(id => id))];
+                if (studentIds.length > 0) {
+                    try {
+                        const usersResult = await this.userService.getByIds(studentIds);
+                        if (usersResult.isOk()) {
+                            const usersById = new Map((usersResult.getValue() || []).map(u => [Number(u.id), u]));
+                            for (const s of subs) {
+                                const user = usersById.get(Number(s.student_id));
+                                if (user) {
+                                    s.studentUsername = user.username || null;
+                                    s.studentAvatar = user.avatar || null;
+                                }
                             }
                         }
+                    } catch (err) {
+                        console.warn('[SubmissionService] Error enriching submissions with usernames:', err.message);
                     }
-                } catch (err) {
-                    console.warn('[SubmissionService] Error enriching submissions with usernames:', err.message);
                 }
             }
         }
