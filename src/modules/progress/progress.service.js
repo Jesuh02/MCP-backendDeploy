@@ -290,35 +290,63 @@ export class ProgressDomainService {
 
     /**
      * Recalculate progress for all enrolled students in a course.
-     * Fetches total tasks, completed submissions, and average grades,
-     * then upserts each student's progress record.
+     * Optimized: pre-computes task IDs and subjects ONCE, then processes users
+     * in parallel batches to minimize redundant DB queries.
      */
     async recalculateForCourse(courseId) {
         if (!this.taskRepo || !this.submissionRepo) {
             return Result.fail(new Error('Task/Submission repositories not available'));
         }
 
-        const totalTasks = await this.taskRepo.countByCourse(courseId);
+        // ── Pre-compute course structure ONCE ──
+        const courseTaskIds = await this.submissionRepo._getTaskIdsByCourse(courseId);
+        const totalTasks = courseTaskIds.length;
 
-        const candidateUserIds = await this._resolveCandidateUserIdsForCourse(courseId);
+        const subjects = (this.subjectRepo && typeof this.subjectRepo.findByCourse === 'function')
+            ? await this.subjectRepo.findByCourse(courseId, { activeOnly: false })
+            : [];
+
+        // Pre-compute taskIds per subject ONCE
+        const taskIdsBySubject = new Map();
+        if (subjects.length > 0 && typeof this.submissionRepo._getTaskIdsBySubject === 'function') {
+            await Promise.all(subjects.map(async (subject) => {
+                const subjectTaskIds = await this.submissionRepo._getTaskIdsBySubject(subject.id);
+                taskIdsBySubject.set(subject.id, subjectTaskIds);
+            }));
+        }
+
+        // Pre-resolve course creator to skip in batch
+        let creatorUserId = null;
+        if (this.courseRepo) {
+            const course = await this.courseRepo.findById(courseId);
+            if (course) creatorUserId = Number(course.creator_user_id);
+        }
+
+        const candidateUserIds = await this._resolveCandidateUserIdsForCourse(courseId, courseTaskIds);
         if (!candidateUserIds || candidateUserIds.length === 0) {
             return Result.ok({ recalculated: 0, totalTasks });
         }
 
+        // ── Process users in parallel batches (concurrency = 5) ──
+        const CONCURRENCY = 5;
         let recalculated = 0;
-        for (const userId of candidateUserIds) {
-            try {
-                await this._recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasks);
-                recalculated++;
-            } catch (err) {
-                console.error(`[ProgressService] Error recalculating for user ${userId}:`, err.message);
+        for (let i = 0; i < candidateUserIds.length; i += CONCURRENCY) {
+            const batch = candidateUserIds.slice(i, i + CONCURRENCY);
+            const results = await Promise.allSettled(
+                batch.map(userId => this._recalculateAndUpsertUserCourseProgress(
+                    userId, courseId, totalTasks, null, { courseTaskIds, subjects, taskIdsBySubject, creatorUserId }
+                ))
+            );
+            for (const r of results) {
+                if (r.status === 'fulfilled') recalculated++;
+                else console.error(`[ProgressService] Error recalculating:`, r.reason?.message);
             }
         }
 
         return Result.ok({ recalculated, totalTasks });
     }
 
-    async _resolveCandidateUserIdsForCourse(courseId) {
+    async _resolveCandidateUserIdsForCourse(courseId, precomputedTaskIds = null) {
         const ids = new Set();
 
         const existingProgress = await this.progressRepo.findByCourse(courseId);
@@ -328,7 +356,7 @@ export class ProgressDomainService {
         }
 
         if (typeof this.submissionRepo.getStudentIdsByCourse === 'function') {
-            const fromSubmissions = await this.submissionRepo.getStudentIdsByCourse(courseId);
+            const fromSubmissions = await this.submissionRepo.getStudentIdsByCourse(courseId, precomputedTaskIds);
             for (const userId of fromSubmissions || []) {
                 const parsed = Number(userId);
                 if (Number.isInteger(parsed) && parsed > 0) ids.add(parsed);
@@ -361,16 +389,24 @@ export class ProgressDomainService {
         });
     }
 
-    async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null, subjectIdFallback = null) {
+    async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null, subjectIdFallback = null, cache = null) {
         // Skip recalculation for creators/collaborators — they are not students
+        if (cache?.creatorUserId && Number(cache.creatorUserId) === Number(userId)) {
+            return { userId, courseId, completedTasks: 0, totalTasks: 0, averageGrade: 0, progressPercentage: 0, status: 'Excluido' };
+        }
         const blocked = await this._isCreatorOrCollaborator(userId, courseId);
         if (blocked) return { userId, courseId, completedTasks: 0, totalTasks: 0, averageGrade: 0, progressPercentage: 0, status: 'Excluido' };
 
-        const totalTasks = totalTasksFromCaller ?? await this.taskRepo.countByCourse(courseId);
-        const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId);
+        const courseTaskIds = cache?.courseTaskIds ?? null;
+        const totalTasks = totalTasksFromCaller ?? (courseTaskIds ? courseTaskIds.length : await this.taskRepo.countByCourse(courseId));
+
+        // Use precomputed taskIds to skip redundant subjects→topics→tasks queries
+        const [submittedTaskIds, graded] = await Promise.all([
+            this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId, courseTaskIds),
+            this.submissionRepo.getGradedByUserAndCourse(userId, courseId, courseTaskIds),
+        ]);
         const completedTasks = submittedTaskIds.length;
 
-        const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
         const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
         const averageGradeRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
         const averageGrade = Math.round(averageGradeRaw * 100) / 100;
@@ -391,7 +427,7 @@ export class ProgressDomainService {
             status,
         });
 
-        await this._recalculateSubjectsForUserCourse(userId, courseId);
+        await this._recalculateSubjectsForUserCourse(userId, courseId, cache);
 
         return persisted || {
             userId,
@@ -404,28 +440,35 @@ export class ProgressDomainService {
         };
     }
 
-    async _recalculateSubjectsForUserCourse(userId, courseId) {
+    async _recalculateSubjectsForUserCourse(userId, courseId, cache = null) {
         if (!this.subjectRepo || !this.taskRepo || !this.submissionRepo) return;
-        const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
+
+        const subjects = cache?.subjects ?? await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
         if (!subjects?.length) return;
 
-        for (const subject of subjects) {
+        const taskIdsBySubject = cache?.taskIdsBySubject ?? null;
+
+        await Promise.all(subjects.map(async (subject) => {
             try {
-                await this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id);
+                const precomputedTaskIds = taskIdsBySubject ? taskIdsBySubject.get(subject.id) : null;
+                await this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id, precomputedTaskIds);
             } catch (err) {
                 console.error(`[ProgressService] Error recalculating subject ${subject.id} for user ${userId}:`, err.message);
             }
-        }
+        }));
     }
 
-    async _recalculateAndUpsertUserSubjectProgress(userId, courseId, subjectId) {
-        const totalTasks = await this.taskRepo.countBySubject(subjectId);
+    async _recalculateAndUpsertUserSubjectProgress(userId, courseId, subjectId, precomputedTaskIds = null) {
+        const taskIds = precomputedTaskIds ?? null;
+        const totalTasks = taskIds ? taskIds.length : await this.taskRepo.countBySubject(subjectId);
         if (totalTasks === 0) return null;
 
-        const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndSubject(userId, subjectId);
+        const [submittedTaskIds, graded] = await Promise.all([
+            this.submissionRepo.getTaskIdsByUserAndSubject(userId, subjectId, taskIds),
+            this.submissionRepo.getGradedByUserAndSubject(userId, subjectId, taskIds),
+        ]);
         const completedTasks = submittedTaskIds.length;
 
-        const graded = await this.submissionRepo.getGradedByUserAndSubject(userId, subjectId);
         const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
         const averageGradeRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
         const averageGrade = Math.round(averageGradeRaw * 100) / 100;

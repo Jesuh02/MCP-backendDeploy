@@ -259,6 +259,12 @@ export function createContainer() {
         taskRepository: taskRepo,
     });
     const subscriptionService = new SubscriptionDomainService({ subscriptionRepository: subscriptionRepo, userRepository: userRepo, notificationService });
+
+    // Inject notificationService into services that need it (avoids circular constructor deps)
+    collaboratorService.setNotificationService(notificationService);
+    userService.setNotificationService(notificationService);
+    progressService.setNotificationService(notificationService);
+
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
