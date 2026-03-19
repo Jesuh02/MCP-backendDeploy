@@ -1,16 +1,19 @@
 export class SupabaseProgressRepository {
     constructor(client) { this.client = client; }
 
+    static COURSE_PROGRESS_TABLE = 'progreso_curso';
+    static SUBJECT_PROGRESS_TABLE = 'progreso_materia';
+
     // ═══════════════════════════════════════════════════════════════
     //  HELPERS PRIVADOS
     // ═══════════════════════════════════════════════════════════════
 
     _courseProgressTable() {
-        return 'progreso_curso';
+        return SupabaseProgressRepository.COURSE_PROGRESS_TABLE;
     }
 
     _subjectProgressTable() {
-        return 'progreso_materia';
+        return SupabaseProgressRepository.SUBJECT_PROGRESS_TABLE;
     }
 
     _isSubjectLevel(subjectId) {
@@ -372,7 +375,7 @@ export class SupabaseProgressRepository {
      */
     async updateCertificate(userId, courseId, data) {
         const { data: progressRow, error: progError } = await this.client
-            .from(this._courseProgressTable())
+            .from(SupabaseProgressRepository.COURSE_PROGRESS_TABLE)
             .select('*')
             .eq('usuario_estudiante', userId)
             .eq('curso_id', courseId)
@@ -407,7 +410,7 @@ export class SupabaseProgressRepository {
         const userIds   = [...new Set(pairs.map(p => p.userId))];
 
         const { data: wonRows, error: wonError } = await this.client
-            .from(this._courseProgressTable())
+            .from(SupabaseProgressRepository.COURSE_PROGRESS_TABLE)
             .select('usuario_estudiante, curso_id')
             .in('curso_id', courseIds)
             .in('usuario_estudiante', userIds)
