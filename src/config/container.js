@@ -270,7 +270,7 @@ export function createContainer() {
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
     const fileContextService = new FileContextDomainService({ fileContextRepository: fileContextRepo });
-    const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo });
+    const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo, llmPort: llmAdapter });
     const reinforcementResultService = new ReinforcementResultService({ reinforcementResultRepository: reinforcementResultRepo });
 
     const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
@@ -350,6 +350,9 @@ export function createContainer() {
         ragService: ragServiceInstance,
         mcpService: mcpServiceLegacy,
     });
+
+    // Inject learningContextService into reinforcementService (avoids circular constructor deps)
+    reinforcementService.setLearningContextService(learningContextService);
 
     // Nivel 3: WhatsApp (depende de MCP, LLM, repos)
     const whatsAppDomainService = safeInit('WhatsAppDomainService', () => new WhatsAppDomainService({

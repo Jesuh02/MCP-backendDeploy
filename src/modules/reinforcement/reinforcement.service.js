@@ -11,15 +11,24 @@ import { MCPService } from '../ai/mcp-legacy.service.js';
 import { RAGService } from '../ai/rag-legacy.service.js';
 import { SupabaseService } from '../../shared/database/SupabaseService.js';
 import { R2StorageAdapter } from '../storage/infrastructure/r2.storage.adapter.js';
+import { QuestionCacheService } from './question-cache.service.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch (_) { pdfParse = null; }
 
 export class ReinforcementDomainService {
-    constructor({ reinforcementRepository }) {
+    constructor({ reinforcementRepository, llmPort = null, learningContextService = null }) {
         this.reinforcementRepo = reinforcementRepository;
+        this.llmPort = llmPort;
+        this.learningContextService = learningContextService;
         this.REQUIRED_QUESTION_COUNT = 10;
+        this.questionCache = QuestionCacheService.getInstance();
+    }
+
+    /** Setter for late injection (avoids circular constructor deps) */
+    setLearningContextService(svc) {
+        this.learningContextService = svc;
     }
 
     logQuestionBatch(label, questions, context = {}) {
@@ -333,6 +342,269 @@ export class ReinforcementDomainService {
         } catch (error) {
             console.error('[ReinforcementDomainService] getRagContent error:', error.message);
             return Result.ok({ content: '', chunks: 0, files: [] });
+        }
+    }
+
+    /**
+     * Get cached questions if available (instant response).
+     */
+    async getCachedQuestions(userId, courseId, topicId, taskId, difficulty) {
+        const cached = this.questionCache.get(userId, courseId, topicId, taskId, difficulty);
+        if (cached && cached.length > 0) {
+            console.log(`⚡ [ReinforcementService] Cache HIT: ${cached.length} questions for user=${userId}, course=${courseId}, topic=${topicId}, task=${taskId}, diff=${difficulty}`);
+            return Result.ok({
+                questions: cached,
+                count: cached.length,
+                source: 'cache',
+                generating: false,
+            });
+        }
+        const isGenerating = this.questionCache.isGenerating(userId, courseId, topicId, taskId, difficulty);
+        console.log(`💨 [ReinforcementService] Cache MISS for user=${userId}, course=${courseId}, topic=${topicId}, task=${taskId}. generating=${isGenerating}`);
+        return Result.ok({
+            questions: [],
+            count: 0,
+            source: 'none',
+            generating: isGenerating,
+        });
+    }
+
+    /**
+     * Prefetch: start generating questions in background and cache them.
+     * Returns immediately (fire-and-forget). The client polls /cached-questions.
+     */
+    async prefetchQuestions(userId, courseId, topicId, taskId, difficulty) {
+        if (!this.llmPort || !this.learningContextService) {
+            console.warn('[ReinforcementService] prefetch skipped: llmPort or learningContextService not available');
+            return Result.ok({ status: 'skipped', reason: 'dependencies_unavailable' });
+        }
+
+        // Already cached or generating?
+        const existing = this.questionCache.get(userId, courseId, topicId, taskId, difficulty);
+        if (existing && existing.length > 0) {
+            return Result.ok({ status: 'already_cached', count: existing.length });
+        }
+        if (this.questionCache.isGenerating(userId, courseId, topicId, taskId, difficulty)) {
+            return Result.ok({ status: 'already_generating' });
+        }
+
+        // Fire-and-forget background generation
+        this._generateAndCache(userId, courseId, topicId, taskId, difficulty).catch(err => {
+            console.error('[ReinforcementService] Background prefetch error:', err.message);
+        });
+
+        return Result.ok({ status: 'started' });
+    }
+
+    /**
+     * Generate questions server-side in a single call:
+     * 1. Fetch learning context
+     * 2. Build prompt & call LLM
+     * 3. Return questions immediately
+     * 4. Save with embeddings in background (non-blocking)
+     */
+    async generateQuestions(userId, courseId, topicId, taskId, difficulty, targetCount = 10) {
+        // 1. Check cache first
+        const cached = this.questionCache.get(userId, courseId, topicId, taskId, difficulty);
+        if (cached && cached.length > 0) {
+            console.log(`⚡ [ReinforcementService] generateQuestions: serving ${cached.length} from cache`);
+            // Consume cache (one-time use), then trigger background save
+            this.questionCache.delete(userId, courseId, topicId, taskId, difficulty);
+            this._backgroundSave(userId, courseId, topicId, taskId, cached).catch(() => {});
+            return Result.ok({ questions: cached, count: cached.length, source: 'cache' });
+        }
+
+        if (!this.llmPort || !this.learningContextService) {
+            return Result.fail('LLM or LearningContextService not available for server-side generation');
+        }
+
+        try {
+            const questions = await this._generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, targetCount);
+            if (!questions || questions.length === 0) {
+                return Result.ok({ questions: [], count: 0, source: 'llm', message: 'LLM returned no valid questions' });
+            }
+
+            // Return immediately, save in background
+            this._backgroundSave(userId, courseId, topicId, taskId, questions).catch(() => {});
+            return Result.ok({ questions, count: questions.length, source: 'llm' });
+        } catch (error) {
+            console.error('[ReinforcementService] generateQuestions error:', error.message);
+            return Result.fail(error.message || 'Question generation failed');
+        }
+    }
+
+    /**
+     * @private Generate questions and store in cache.
+     */
+    async _generateAndCache(userId, courseId, topicId, taskId, difficulty) {
+        this.questionCache.markGenerating(userId, courseId, topicId, taskId, difficulty);
+        try {
+            const questions = await this._generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, this.REQUIRED_QUESTION_COUNT);
+            if (questions && questions.length > 0) {
+                this.questionCache.set(userId, courseId, topicId, taskId, difficulty, questions);
+                console.log(`✅ [ReinforcementService] Prefetch complete: ${questions.length} questions cached`);
+            }
+        } finally {
+            this.questionCache.clearGenerating(userId, courseId, topicId, taskId, difficulty);
+        }
+    }
+
+    /**
+     * @private Core question generation logic (context + LLM call).
+     */
+    async _generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, targetCount) {
+        const startMs = Date.now();
+
+        // Step 1: Get learning context (parallel DB queries + RAG)
+        const contextResult = await this.learningContextService.buildLearningContext({
+            courseId, topicId, taskId, userId,
+            query: null,
+            retrievalMode: 'hybrid',
+        });
+
+        if (contextResult.isFail()) {
+            throw new Error('Failed to build learning context: ' + contextResult.getError());
+        }
+
+        const ctx = contextResult.getValue();
+        const topicName = ctx.topic?.name || '';
+        const taskName = ctx.task?.title || '';
+        const ragContent = ctx.ragContent || '';
+        const existingQuestions = (ctx.existingQuestions || []).map(q => q.question || '');
+
+        console.log(`📚 [ReinforcementService] Context built in ${Date.now() - startMs}ms: topic='${topicName}', task='${taskName}', ragChunks=${ctx.ragChunks || 0}, existingQ=${existingQuestions.length}`);
+
+        // Step 2: Build prompt
+        const contextBlock = this._buildContextBlock(topicName, ctx.topic?.description, taskName, ctx.task?.description, ragContent, ctx.ragFiles || []);
+        const existingBlock = existingQuestions.length > 0
+            ? `\nPREGUNTAS YA EXISTENTES (NO REPETIR):\n${existingQuestions.slice(-50).map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
+            : '';
+
+        const diffLabel = (difficulty || 'HARD').toUpperCase();
+        const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount);
+        const userPrompt = `${contextBlock}\n${existingBlock}\n\nGenera EXACTAMENTE ${targetCount} preguntas de opción múltiple en formato JSON array. Tu ÚNICA salida debe ser el JSON array.`;
+
+        // Step 3: Call LLM
+        const llmStartMs = Date.now();
+        const llmResponse = await this.llmPort.chat(systemPrompt, userPrompt, {
+            temperature: 0.4,
+            maxTokens: 8000,
+        });
+        console.log(`🤖 [ReinforcementService] LLM responded in ${Date.now() - llmStartMs}ms`);
+
+        // Step 4: Parse JSON
+        const content = llmResponse?.content || '';
+        const questions = this._parseQuestionsJson(content);
+
+        if (questions.length > 0) {
+            // Local dedup against existing
+            const deduped = this._localDedup(questions, existingQuestions);
+            console.log(`✅ [ReinforcementService] Generated ${questions.length} questions, ${deduped.length} after local dedup (total ${Date.now() - startMs}ms)`);
+            return deduped.slice(0, targetCount);
+        }
+
+        return questions;
+    }
+
+    /** @private Build the context text block for the prompt */
+    _buildContextBlock(topicName, topicDesc, taskName, taskDesc, ragContent, ragFiles) {
+        let block = '';
+        if (topicName) {
+            block += `TEMA: ${topicName}\n`;
+            if (topicDesc) block += `Descripción: ${topicDesc}\n`;
+        }
+        if (taskName) {
+            block += `TAREA: ${taskName}\n`;
+            if (taskDesc) block += `Descripción: ${taskDesc}\n`;
+        }
+        if (ragContent) {
+            block += `\n═══ MATERIAL DE REFERENCIA VERIFICADO ═══\n${ragContent}\n═══════════════════════════════════════\n`;
+            if (ragFiles.length > 0) block += `Archivos fuente: ${ragFiles.join(', ')}\n`;
+        }
+        return block;
+    }
+
+    /** @private Build system prompt based on difficulty */
+    _buildSystemPrompt(difficulty, targetCount) {
+        const groundingRule = `REGLA: Basa las preguntas EXCLUSIVAMENTE en el material proporcionado. NO inventes información.`;
+
+        const difficultyInstructions = {
+            EASY: `Genera preguntas de NIVEL INTRODUCTORIO (comprensión). El estudiante debe ENTENDER conceptos, no memorizar datos. Usa "¿Por qué?", "¿Para qué?", "¿Qué pasaría si...?"`,
+            INTERMEDIATE: `Genera preguntas de NIVEL INTERMEDIO (análisis). Plantea escenarios prácticos. El estudiante debe ANALIZAR y DECIDIR. Usa causa-efecto, comparaciones y aplicación.`,
+            HARD: `Genera preguntas de NIVEL MÁXIMO (evaluación). Presenta escenarios complejos. El estudiante debe EVALUAR consecuencias e implicaciones. Opciones sutilmente plausibles. Taxonomía de Bloom: Aplicar, Analizar, Evaluar.`,
+            FREE: `Genera preguntas variadas que cubran TODO el contenido del documento. Mezcla niveles: comprensión, análisis y aplicación.`,
+        };
+
+        return `Eres un profesor experto generando ${targetCount} preguntas de opción múltiple.
+${difficultyInstructions[difficulty] || difficultyInstructions.HARD}
+${groundingRule}
+PROHIBIDO preguntas de memorización pura. El estudiante debe PENSAR, no recordar datos.
+Cada pregunta: 4 opciones, 1 correcta. Varía correctIndex (0-3).
+La explicación debe justificar la correcta y refutar cada incorrecta.
+FORMATO: JSON array. Campos: question, options (array de 4), correctIndex (0-3), explanation.`;
+    }
+
+    /** @private Parse questions from LLM JSON output */
+    _parseQuestionsJson(content) {
+        try {
+            const start = content.indexOf('[');
+            const end = content.lastIndexOf(']');
+            if (start === -1 || end === -1 || start >= end) return [];
+
+            const jsonStr = content.substring(start, end + 1);
+            const parsed = JSON.parse(jsonStr);
+
+            if (!Array.isArray(parsed)) return [];
+
+            return parsed.filter(q =>
+                q && typeof q.question === 'string' && q.question.length >= 8 &&
+                Array.isArray(q.options) && q.options.length >= 4 &&
+                typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < q.options.length
+            ).map(q => ({
+                question: q.question.trim(),
+                options: q.options.map(o => String(o).trim()),
+                correctIndex: q.correctIndex,
+                explanation: (q.explanation || '').trim() || `La respuesta correcta es: "${q.options[q.correctIndex]}"`,
+            }));
+        } catch (e) {
+            console.warn('[ReinforcementService] JSON parse error:', e.message);
+            return [];
+        }
+    }
+
+    /** @private Fast local dedup using normalized text comparison */
+    _localDedup(newQuestions, existingTexts) {
+        const normalize = (text) => text.toLowerCase().replace(/[^a-záéíóúñü0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+        const existingNorm = new Set(existingTexts.map(normalize));
+
+        return newQuestions.filter(q => {
+            const norm = normalize(q.question);
+            if (existingNorm.has(norm)) return false;
+            // Jaccard similarity check
+            const words = new Set(norm.split(' '));
+            for (const existing of existingNorm) {
+                const existingWords = new Set(existing.split(' '));
+                const intersection = [...words].filter(w => existingWords.has(w)).length;
+                const union = new Set([...words, ...existingWords]).size;
+                if (union > 0 && intersection / union > 0.8) return false;
+            }
+            existingNorm.add(norm); // Avoid in-batch duplicates
+            return true;
+        });
+    }
+
+    /** @private Save questions with embeddings in background (non-blocking) */
+    async _backgroundSave(userId, courseId, topicId, taskId, questions) {
+        try {
+            const mcpService = new MCPService();
+            await mcpService.saveReinforcementHistory(
+                userId, courseId, questions,
+                topicId || null, taskId || null
+            );
+            console.log(`💾 [ReinforcementService] Background save complete: ${questions.length} questions`);
+        } catch (e) {
+            console.error('[ReinforcementService] Background save error:', e.message);
+            // Non-blocking, just log
         }
     }
 
