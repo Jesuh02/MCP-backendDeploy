@@ -245,15 +245,21 @@ export class ProgressDomainService {
     }
 
     async issueCertificate(userId, courseId) {
-        const progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
-        if (!progress) return Result.fail(new NotFoundError('Progreso', `${userId}-${courseId}`));
-        if (!this._isProgressWon(progress)) {
-            return Result.fail(new ForbiddenError('Solo se pueden emitir certificados para progreso con estado Ganado'));
+        try {
+            const updated = await this.progressRepo.updateCertificate(userId, courseId, {
+                certificateIssuedAt: new Date().toISOString(),
+            });
+            return Result.ok(updated);
+        } catch (error) {
+            const message = String(error?.message || error || '');
+            if (message.includes('no tiene progreso registrado')) {
+                return Result.fail(new NotFoundError('Progreso', `${userId}-${courseId}`));
+            }
+            if (message.includes('no ha ganado el curso') || message.includes('estado actual')) {
+                return Result.fail(new ForbiddenError('Solo se pueden emitir certificados para progreso con estado Ganado'));
+            }
+            throw error;
         }
-        const updated = await this.progressRepo.updateCertificate(userId, courseId, {
-            certificateIssuedAt: new Date().toISOString(),
-        });
-        return Result.ok(updated);
     }
 
     async getMyCertificates(userId) {
