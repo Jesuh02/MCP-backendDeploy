@@ -3,6 +3,7 @@ export class SupabaseProgressRepository {
 
     static COURSE_PROGRESS_TABLE = 'progreso_curso';
     static SUBJECT_PROGRESS_TABLE = 'progreso_materia';
+    static CERTIFICATE_WEB_BASE_URL = process.env.CERTIFICATE_WEB_BASE_URL || 'https://v0-eo-jesuh02s-projects.vercel.app';
 
     // ═══════════════════════════════════════════════════════════════
     //  HELPERS PRIVADOS
@@ -48,6 +49,69 @@ export class SupabaseProgressRepository {
             map.set(`${c.user_id}-${c.course_id}`, c);
         }
         return map;
+    }
+
+    _formatCertificateDate(dateLike) {
+        const date = dateLike ? new Date(dateLike) : new Date();
+        if (Number.isNaN(date.getTime())) return null;
+        const day = String(date.getUTCDate()).padStart(2, '0');
+        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+        const year = String(date.getUTCFullYear());
+        return `${day}/${month}/${year}`;
+    }
+
+    _buildSyntheticCertificateUrl({
+        studentName,
+        courseName,
+        grade,
+        tasksCompleted,
+        totalTasks,
+        progressPercentage,
+        instructorName,
+        instructorUsername,
+        userId,
+        courseId,
+        verificationCode,
+        issuedAt,
+    }) {
+        const safeStudentName = String(studentName || `Usuario ${userId}`).trim();
+        const safeCourseName = String(courseName || `Curso ${courseId}`).trim();
+        const safeInstructorUsername = String(instructorUsername || 'coursev').trim().replace(/^@+/, '');
+        const safeInstructorName = String(instructorName || safeInstructorUsername || 'CourseV').trim();
+        const safeGrade = Number.isFinite(Number(grade)) ? Number(grade) : 0;
+        const safeTasksCompleted = Number.isFinite(Number(tasksCompleted)) ? Number(tasksCompleted) : 0;
+        const safeTotalTasks = Number.isFinite(Number(totalTasks)) ? Number(totalTasks) : 0;
+        const safeProgress = Number.isFinite(Number(progressPercentage)) ? Number(progressPercentage) : 0;
+        const certId = String(verificationCode || `CERT-${courseId}-${userId}`).trim();
+        const date = this._formatCertificateDate(issuedAt) || this._formatCertificateDate(new Date().toISOString());
+
+        const params = new URLSearchParams({
+            studentName: safeStudentName,
+            courseName: safeCourseName,
+            grade: safeGrade.toFixed(1),
+            tasksCompleted: String(safeTasksCompleted),
+            totalTasks: String(safeTotalTasks),
+            progress: String(Math.round(safeProgress)),
+            instructorName: safeInstructorName,
+            instructorUsername: safeInstructorUsername,
+            userId: String(userId),
+            courseId: String(courseId),
+            certId,
+            date: date || '',
+        });
+
+        return `${SupabaseProgressRepository.CERTIFICATE_WEB_BASE_URL}?${params.toString()}`;
+    }
+
+    _resolveCertificateAccessUrl(cert, fallbackData = null) {
+        const storedPath = String(cert?.storage_path || '').trim();
+        if (storedPath) return storedPath;
+        if (!cert?.issued_at || !fallbackData) return null;
+        return this._buildSyntheticCertificateUrl({
+            ...fallbackData,
+            verificationCode: cert?.verification_code || fallbackData?.verificationCode || null,
+            issuedAt: cert?.issued_at,
+        });
     }
 
     /** Mapea una fila de progreso al objeto de dominio. */
@@ -348,18 +412,51 @@ export class SupabaseProgressRepository {
         if (validIds.length > 0) {
             const { data: courses } = await this.client
                 .from('courses')
-                .select('id, title, thumbnail_uri')
+                .select('id, title, thumbnail_uri, creator_user_id')
                 .in('id', validIds);
             coursesById = new Map((courses || []).map(c => [c.id, c]));
         }
 
+        let studentUsername = null;
+        const { data: studentUser } = await this.client
+            .from('usuarios')
+            .select('id, username')
+            .eq('id', userId)
+            .maybeSingle();
+        studentUsername = studentUser?.username || null;
+
+        const creatorIds = [...new Set(validIds
+            .map(courseId => coursesById.get(courseId)?.creator_user_id)
+            .filter(Boolean))];
+        let creatorsById = new Map();
+        if (creatorIds.length > 0) {
+            const { data: creators } = await this.client
+                .from('usuarios')
+                .select('id, username')
+                .in('id', creatorIds);
+            creatorsById = new Map((creators || []).map(c => [c.id, c]));
+        }
+
         return validData.map(row => {
             const course = coursesById.get(row.course_id) || {};
+            const creator = creatorsById.get(course.creator_user_id) || {};
             return {
                 courseId:           row.course_id,
                 courseName:         course.title || null,
                 courseThumbnail:    course.thumbnail_uri || null,
-                certificateUrl:     row.storage_path,
+                certificateUrl:     this._resolveCertificateAccessUrl(row, {
+                    studentName: studentUsername,
+                    courseName: course.title,
+                    grade: null,
+                    tasksCompleted: 0,
+                    totalTasks: 0,
+                    progressPercentage: 100,
+                    instructorName: creator.username,
+                    instructorUsername: creator.username,
+                    userId,
+                    courseId: row.course_id,
+                    verificationCode: row.verification_code,
+                }),
                 certificateIssuedAt: row.issued_at,
                 verificationCode:   row.verification_code,
                 status:             'Ganado',
@@ -531,7 +628,7 @@ export class SupabaseProgressRepository {
 
     async findWonProgressByCreatorCourses(creatorUserId) {
         const { data: creatorCourses, error: coursesError } = await this.client
-            .from('courses').select('id, title, thumbnail_uri').eq('creator_user_id', creatorUserId);
+            .from('courses').select('id, title, thumbnail_uri, creator_user_id').eq('creator_user_id', creatorUserId);
         if (coursesError || !creatorCourses?.length) return [];
 
         const courseIds = creatorCourses.map(c => c.id);
@@ -554,6 +651,12 @@ export class SupabaseProgressRepository {
             usersById = new Map((users || []).map(u => [u.id, u]));
         }
 
+        const { data: creatorUser } = await this.client
+            .from('usuarios')
+            .select('id, username')
+            .eq('id', creatorUserId)
+            .maybeSingle();
+
         return rows.map(row => {
             const course = coursesById.get(row.curso_id) || {};
             const user   = usersById.get(row.usuario_estudiante) || {};
@@ -565,7 +668,19 @@ export class SupabaseProgressRepository {
                 courseId:           row.curso_id,
                 courseName:         course.title || null,
                 courseThumbnail:    course.thumbnail_uri || null,
-                certificateUrl:     cert?.storage_path || null,
+                certificateUrl:     this._resolveCertificateAccessUrl(cert, {
+                    studentName: user.username,
+                    courseName: course.title,
+                    grade: row.promedio ?? row.calificacion_ponderada ?? null,
+                    tasksCompleted: row.tareas_completadas || 0,
+                    totalTasks: row.tareas_totales || 0,
+                    progressPercentage: row.porcentaje_progreso || 0,
+                    instructorName: creatorUser?.username,
+                    instructorUsername: creatorUser?.username,
+                    userId: row.usuario_estudiante,
+                    courseId: row.curso_id,
+                    verificationCode: cert?.verification_code || null,
+                }),
                 certificateIssuedAt: cert?.issued_at || null,
                 status:             row.estado,
                 averageGrade:       row.promedio ?? row.calificacion_ponderada ?? null,
@@ -590,7 +705,7 @@ export class SupabaseProgressRepository {
         let coursesById = new Map();
         if (courseIds.length > 0) {
             const { data: courses } = await this.client
-                .from('courses').select('id, title, thumbnail_uri').in('id', courseIds);
+                .from('courses').select('id, title, thumbnail_uri, creator_user_id').in('id', courseIds);
             coursesById = new Map((courses || []).map(c => [c.id, c]));
         }
         let usersById = new Map();
@@ -600,10 +715,23 @@ export class SupabaseProgressRepository {
             usersById = new Map((users || []).map(u => [u.id, u]));
         }
 
+        const creatorIds = [...new Set((Array.from(coursesById.values()) || [])
+            .map(course => course?.creator_user_id)
+            .filter(Boolean))];
+        let creatorsById = new Map();
+        if (creatorIds.length > 0) {
+            const { data: creators } = await this.client
+                .from('usuarios')
+                .select('id, username')
+                .in('id', creatorIds);
+            creatorsById = new Map((creators || []).map(creator => [creator.id, creator]));
+        }
+
         return rows.map(row => {
             const course = coursesById.get(row.curso_id) || {};
             const user   = usersById.get(row.usuario_estudiante) || {};
             const cert   = certsMap.get(`${row.usuario_estudiante}-${row.curso_id}`);
+            const creator = creatorsById.get(course.creator_user_id) || {};
             return {
                 userId:             row.usuario_estudiante,
                 username:           user.username || null,
@@ -611,7 +739,19 @@ export class SupabaseProgressRepository {
                 courseId:           row.curso_id,
                 courseName:         course.title || null,
                 courseThumbnail:    course.thumbnail_uri || null,
-                certificateUrl:     cert?.storage_path || null,
+                certificateUrl:     this._resolveCertificateAccessUrl(cert, {
+                    studentName: user.username,
+                    courseName: course.title,
+                    grade: row.promedio ?? row.calificacion_ponderada ?? null,
+                    tasksCompleted: row.tareas_completadas || 0,
+                    totalTasks: row.tareas_totales || 0,
+                    progressPercentage: row.porcentaje_progreso || 0,
+                    instructorName: creator.username,
+                    instructorUsername: creator.username,
+                    userId: row.usuario_estudiante,
+                    courseId: row.curso_id,
+                    verificationCode: cert?.verification_code || null,
+                }),
                 certificateIssuedAt: cert?.issued_at || null,
                 status:             row.estado,
                 averageGrade:       row.promedio ?? row.calificacion_ponderada ?? null,
