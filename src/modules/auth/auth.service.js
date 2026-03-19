@@ -97,7 +97,9 @@ export class AuthService {
     }
 
     _generateTokens(user) {
-        const payload = { userId: user.id, username: user.username, roles: (user.roles || []).map(r => r.id || r.rol_id) };
+        // Asegurar que roles sean IDs numéricos para comparación correcta en requireRoles
+        const roleIds = (user.roles || []).map(r => Number(r.id || r.rol_id)).filter(id => Number.isInteger(id) && id > 0);
+        const payload = { userId: user.id, username: user.username, roles: roleIds };
         return {
             accessToken: this.jwt.signAccessToken(payload),
             refreshToken: this.jwt.signRefreshToken(payload),
