@@ -322,7 +322,66 @@ export class ProgressController {
             if (!userId || isNaN(userId) || userId <= 0 || !courseId || isNaN(courseId) || courseId <= 0) {
                 return res.status(400).json({ success: false, error: 'userId and courseId must be positive integers' });
             }
-            const result = await this.progressService.revokeEnrollment(userId, courseId);
+            const reason = req.body?.reason || null;
+            const result = await this.progressService.revokeEnrollment(userId, courseId, reason);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    blockSubjectAccess = async(req, res, next) => {
+        try {
+            const { userId, courseId, subjectId, reason } = req.body || {};
+            const uid = parseInt(userId);
+            const cid = parseInt(courseId);
+            const sid = parseInt(subjectId);
+            if (!uid || !cid || !sid || isNaN(uid) || isNaN(cid) || isNaN(sid)) {
+                return res.status(400).json({ success: false, error: 'userId, courseId and subjectId are required' });
+            }
+            if (!reason || !String(reason).trim()) {
+                return res.status(400).json({ success: false, error: 'reason is required' });
+            }
+            const blockedBy = req.user?.userId || null;
+            const result = await this.progressService.blockSubjectAccess(uid, cid, sid, reason, blockedBy);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    unblockSubjectAccess = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const subjectId = parseInt(req.params.subjectId);
+            if (!userId || !subjectId || isNaN(userId) || isNaN(subjectId)) {
+                return res.status(400).json({ success: false, error: 'userId and subjectId must be positive integers' });
+            }
+            const result = await this.progressService.unblockSubjectAccess(userId, subjectId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    checkSubjectAccessBlock = async(req, res, next) => {
+        try {
+            const subjectId = parseInt(req.params.subjectId);
+            if (!subjectId || isNaN(subjectId)) {
+                return res.status(400).json({ success: false, error: 'subjectId must be a positive integer' });
+            }
+            const userId = req.user?.userId;
+            const result = await this.progressService.checkSubjectAccessBlock(userId, subjectId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getSubjectAccessBlocks = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            if (!courseId || isNaN(courseId)) {
+                return res.status(400).json({ success: false, error: 'courseId must be a positive integer' });
+            }
+            const userId = req.user?.userId;
+            const result = await this.progressService.getSubjectAccessBlocks(userId, courseId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

@@ -707,11 +707,94 @@ export class ProgressDomainService {
     /**
      * Admin: revoke a user's enrollment (remove course access).
      */
-    async revokeEnrollment(userId, courseId) {
+    async revokeEnrollment(userId, courseId, reason = null) {
         const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!existing) return Result.fail(new NotFoundError('Matrícula', `${userId}/${courseId}`));
-        await this.progressRepo.deleteEnrollment(userId, courseId);
-        return Result.ok({ message: 'Acceso al curso revocado' });
+        await this.progressRepo.deleteEnrollment(userId, courseId, reason);
+
+        // Notify the student about revocation
+        if (this._notificationService && reason) {
+            try {
+                let courseName = 'un curso';
+                if (this.courseRepo) {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                }
+                await this._notificationService.send(userId, {
+                    title: 'Se te quitó el acceso',
+                    message: `Tu acceso a "${courseName}" fue revocado. Motivo: ${reason}`,
+                    type: 'enrollment_revoked',
+                    relatedId: courseId,
+                    metadata: { courseId, courseName, reason },
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending revoke notification:', err?.message);
+            }
+        }
+
+        return Result.ok({ message: 'Acceso al curso revocado', reason });
+    }
+
+    // ─── Subject Access Blocks ────────────────────────────────────
+
+    /**
+     * Admin: block a user from accessing a specific subject.
+     */
+    async blockSubjectAccess(userId, courseId, subjectId, reason, blockedBy = null) {
+        if (!reason || !String(reason).trim()) {
+            return Result.fail(new ForbiddenError('Debe proporcionar una razón para bloquear el acceso'));
+        }
+        const block = await this.progressRepo.blockSubjectAccess(userId, courseId, subjectId, reason.trim(), blockedBy);
+
+        // Notify the student
+        if (this._notificationService) {
+            try {
+                let subjectName = 'una materia';
+                if (this.subjectRepo) {
+                    const subject = await this.subjectRepo.findById(subjectId);
+                    if (subject?.name) subjectName = subject.name;
+                }
+                await this._notificationService.send(userId, {
+                    title: 'Se te quitó el permiso',
+                    message: `Tu acceso a la materia "${subjectName}" fue revocado. Motivo: ${reason}`,
+                    type: 'subject_access_blocked',
+                    relatedId: subjectId,
+                    metadata: { subjectId, subjectName, reason, courseId },
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending subject block notification:', err?.message);
+            }
+        }
+
+        return Result.ok(block);
+    }
+
+    /**
+     * Admin: unblock a user's access to a specific subject.
+     */
+    async unblockSubjectAccess(userId, subjectId) {
+        await this.progressRepo.unblockSubjectAccess(userId, subjectId);
+        return Result.ok({ message: 'Acceso a la materia restaurado' });
+    }
+
+    /**
+     * Check if a user is blocked from a specific subject.
+     */
+    async checkSubjectAccessBlock(userId, subjectId) {
+        const block = await this.progressRepo.findSubjectAccessBlock(userId, subjectId);
+        return Result.ok({
+            blocked: !!block,
+            reason: block?.reason || null,
+            blockedAt: block?.blocked_at || null,
+        });
+    }
+
+    /**
+     * Get all subject access blocks for a user in a course.
+     */
+    async getSubjectAccessBlocks(userId, courseId) {
+        const blocks = await this.progressRepo.findSubjectAccessBlocksByUserAndCourse(userId, courseId);
+        return Result.ok(blocks || []);
     }
 
     /**
