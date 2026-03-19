@@ -775,14 +775,91 @@ export class SupabaseProgressRepository {
         });
     }
 
-    async deleteEnrollment(userId, courseId) {
+    async deleteEnrollment(userId, courseId, reason = null, revokedBy = null) {
+        if (reason) {
+            await this.client
+                .from('pre_enrollments')
+                .update({
+                    status: 'revoked',
+                    revoke_reason: reason,
+                    reviewed_at: new Date().toISOString(),
+                    ...(revokedBy ? { reviewed_by: revokedBy } : {}),
+                })
+                .eq('user_id', userId)
+                .eq('course_id', courseId);
+        } else {
+            const { error } = await this.client
+                .from('pre_enrollments')
+                .delete()
+                .eq('user_id', userId)
+                .eq('course_id', courseId);
+            if (error) throw new Error(error.message);
+        }
+        return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  SUBJECT ACCESS BLOCKS (bloqueo de acceso por materia)
+    // ═══════════════════════════════════════════════════════════════
+
+    async blockSubjectAccess(userId, courseId, subjectId, reason, blockedBy = null) {
+        const { data, error } = await this.client
+            .from('subject_access_blocks')
+            .upsert({
+                user_id: userId,
+                course_id: courseId,
+                subject_id: subjectId,
+                reason,
+                blocked_at: new Date().toISOString(),
+                ...(blockedBy ? { blocked_by: blockedBy } : {}),
+            }, { onConflict: 'user_id,subject_id' })
+            .select()
+            .single();
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
+    async unblockSubjectAccess(userId, subjectId) {
         const { error } = await this.client
-            .from('pre_enrollments')
+            .from('subject_access_blocks')
             .delete()
             .eq('user_id', userId)
-            .eq('course_id', courseId);
+            .eq('subject_id', subjectId);
         if (error) throw new Error(error.message);
         return true;
+    }
+
+    async findSubjectAccessBlock(userId, subjectId) {
+        const { data, error } = await this.client
+            .from('subject_access_blocks')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('subject_id', subjectId)
+            .maybeSingle();
+        if (error || !data) return null;
+        return data;
+    }
+
+    async findSubjectAccessBlocksByUserAndCourse(userId, courseId) {
+        const { data, error } = await this.client
+            .from('subject_access_blocks')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('course_id', courseId);
+        if (error || !data) return [];
+        return data;
+    }
+
+    async findRevokedEnrollment(userId, courseId) {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .eq('status', 'revoked')
+            .maybeSingle();
+        if (error || !data) return null;
+        return this._mapPreEnrollmentRecord(data, { revokeReason: data.revoke_reason });
     }
 
     _mapPreEnrollmentRecord(record, extras = {}) {
