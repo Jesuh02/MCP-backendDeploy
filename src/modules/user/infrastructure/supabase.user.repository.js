@@ -160,29 +160,49 @@ export class SupabaseUserRepository {
     }
 
     async searchByUsername(query, limit = 20) {
-        const normalizedQuery = String(query || '').trim();
+        const normalizedQuery = String(query || '').trim().toLowerCase();
         const digitsOnly = normalizedQuery.replace(/\D/g, '');
         const baseSelect = 'id, username, email, avatar, personas!fk_usuarios_persona(id, nombres, apellidos, identificacion, cedula)';
         const innerSelect = 'id, username, email, avatar, personas!inner(id, nombres, apellidos, identificacion, cedula)';
+
+        // Always search by username, nombres, apellidos
         const searches = [
-            this.client.from('usuarios').select(baseSelect).ilike('username', `%${normalizedQuery}%`).limit(limit),
-            this.client.from('usuarios').select(innerSelect).ilike('personas.nombres', `%${normalizedQuery}%`).limit(limit),
-            this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${normalizedQuery}%`).limit(limit),
+            this.client.from('usuarios').select(baseSelect).ilike('username', `%${normalizedQuery}%`).limit(limit * 2),
+            this.client.from('usuarios').select(innerSelect).ilike('personas.nombres', `%${normalizedQuery}%`).limit(limit * 2),
+            this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${normalizedQuery}%`).limit(limit * 2),
         ];
-        // If query looks numeric, also search by identificacion
+
+        // If query contains digits, also get more users and filter by cedula/identificacion in JS
         if (digitsOnly) {
+            // Get a broader set of users with personas to filter by cedula in JS
             searches.push(
-                this.client.from('usuarios').select(innerSelect).eq('personas.identificacion', digitsOnly).limit(limit),
-                this.client.from('usuarios').select(innerSelect).eq('personas.cedula', digitsOnly).limit(limit)
+                this.client.from('usuarios').select(baseSelect).not('personas', 'is', null).limit(limit * 3)
             );
         }
         const [byUsername, byNombres, byApellidos, ...rest] = await Promise.all(searches);
         const seen = new Set();
         const userIds = [];
         const userMap = new Map();
+
+        // Helper function to check if a user matches the query
+        const matchesQuery = (u) => {
+            if (!digitsOnly) return true; // If no digits in query, all from text search are valid
+            // Check if cedula/identificacion contains the digits
+            const cedula = String(u.personas?.cedula ?? '');
+            const identificacion = String(u.personas?.identificacion ?? '');
+            const username = (u.username || '').toLowerCase();
+            const fullName = `${u.personas?.nombres || ''} ${u.personas?.apellidos || ''}`.toLowerCase();
+            // Match if username/names contain the query OR if cedula/identificacion contains the digits
+            return username.includes(normalizedQuery) ||
+                   fullName.includes(normalizedQuery) ||
+                   cedula.includes(digitsOnly) ||
+                   identificacion.includes(digitsOnly);
+        };
+
         for (const { data } of [byUsername, byNombres, byApellidos, ...rest]) {
             for (const u of data || []) {
                 if (seen.has(u.id)) continue;
+                if (!matchesQuery(u)) continue; // Filter by cedula/identificacion if needed
                 seen.add(u.id);
                 userIds.push(u.id);
                 userMap.set(u.id, {
@@ -197,7 +217,9 @@ export class SupabaseUserRepository {
                     identificacion: u.personas?.identificacion ?? u.personas?.cedula ?? null,
                     roles: []
                 });
+                if (userMap.size >= limit) break;
             }
+            if (userMap.size >= limit) break;
         }
         // Fetch roles for all found users
         if (userIds.length > 0) {
