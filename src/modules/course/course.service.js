@@ -311,10 +311,11 @@ export class CourseDomainService {
         return Result.ok(course);
     }
 
-    async list(pagination) {
+    async list(pagination, requesterRoles = []) {
+        const activeOnly = this._shouldRestrictInactiveAccess(requesterRoles);
         const [courses, total] = await Promise.all([
-            this.courseRepo.findAll(pagination),
-            this.courseRepo.count({ excludeCreatorId: pagination.excludeCreatorId }),
+            this.courseRepo.findAll({ ...pagination, activeOnly }),
+            this.courseRepo.count({ excludeCreatorId: pagination.excludeCreatorId, activeOnly }),
         ]);
         (courses || []).forEach((course) => this._normalizeCourseShape(course));
         await this._signUrls(courses);
@@ -457,10 +458,11 @@ export class CourseDomainService {
         return Result.ok({ courses, total });
     }
 
-    async search(query, pagination) {
+    async search(query, pagination, requesterRoles = []) {
+        const activeOnly = this._shouldRestrictInactiveAccess(requesterRoles);
         const [courses, total] = await Promise.all([
-            this.courseRepo.search(query, pagination),
-            this.courseRepo.count({ search: query })
+            this.courseRepo.search(query, { ...pagination, activeOnly }),
+            this.courseRepo.count({ search: query, activeOnly })
         ]);
         (courses || []).forEach((course) => this._normalizeCourseShape(course));
         await this._signUrls(courses);
@@ -568,46 +570,65 @@ export class CourseDomainService {
         return Result.ok(courses);
     }
 
-    async findFreeCourses(pagination) {
+    async findFreeCourses(pagination, requesterRoles = []) {
+        const activeOnly = this._shouldRestrictInactiveAccess(requesterRoles);
         const [courses, total] = await Promise.all([
-            this.courseRepo.findFree(pagination),
-            this.courseRepo.count({ isFree: true, excludeCreatorId: pagination.excludeCreatorId })
+            this.courseRepo.findFree({ ...pagination, activeOnly }),
+            this.courseRepo.count({ isFree: true, excludeCreatorId: pagination.excludeCreatorId, activeOnly })
         ]);
         await this._signUrls(courses);
         await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
-    async findPremiumCourses(pagination) {
+    async findPremiumCourses(pagination, requesterRoles = []) {
+        const activeOnly = this._shouldRestrictInactiveAccess(requesterRoles);
         const [courses, total] = await Promise.all([
-            this.courseRepo.findPremium(pagination),
-            this.courseRepo.count({ isFree: false, excludeCreatorId: pagination.excludeCreatorId })
+            this.courseRepo.findPremium({ ...pagination, activeOnly }),
+            this.courseRepo.count({ isFree: false, excludeCreatorId: pagination.excludeCreatorId, activeOnly })
         ]);
         await this._signUrls(courses);
         await this._enrichWithCreatorUsername(courses);
         return Result.ok({ courses, total });
     }
 
-    async findPurchasedCourses(userId, pagination) {
+    async findPurchasedCourses(userId, pagination, requesterRoles = []) {
         if (!this.transactionRepo) {
-            // Fallback or empty if repo not available (though it should be)
             console.warn('TransactionRepository not injected in CourseDomainService');
             return Result.ok({ courses: [], total: 0 });
         }
 
-        // Parallel fetch: IDs for the page, and total count
-        const [courseIds, total] = await Promise.all([
-            this.transactionRepo.findPurchasedCourseIdsPaginated(userId, pagination),
+        const restrictInactive = this._shouldRestrictInactiveAccess(requesterRoles);
+
+        // Fetch all purchased IDs to filter by active state
+        const [allCourseIds, rawTotal] = await Promise.all([
+            this.transactionRepo.findPurchasedCourseIdsPaginated(userId, { offset: 0, limit: 10000 }),
             this.transactionRepo.countPurchased(userId)
         ]);
 
-        if (courseIds.length === 0) return Result.ok({ courses: [], total });
+        if (allCourseIds.length === 0) return Result.ok({ courses: [], total: 0 });
 
-        // Fetch courses for the page IDs
-        const courses = await this.courseRepo.findByIds(courseIds);
+        let filteredIds = allCourseIds;
+        if (restrictInactive) {
+            const allCourses = await this.courseRepo.findByIds(allCourseIds);
+            const courseById = new Map((allCourses || []).map(c => [Number(c.id), c]));
+            filteredIds = allCourseIds.filter(id => {
+                const course = courseById.get(Number(id));
+                if (!course) return false;
+                this._normalizeCourseShape(course);
+                return this.isCourseActive(course);
+            });
+        }
 
-        // Retrieve order because findByIds might not preserve it
-        const sortedCourses = courseIds
+        const total = filteredIds.length;
+        const offset = Number(pagination?.offset) || 0;
+        const limit = Number(pagination?.limit) || 20;
+        const pageIds = filteredIds.slice(offset, offset + limit);
+
+        if (pageIds.length === 0) return Result.ok({ courses: [], total });
+
+        const courses = await this.courseRepo.findByIds(pageIds);
+        const sortedCourses = pageIds
             .map(id => courses.find(c => c.id === id))
             .filter(c => c);
 
@@ -616,26 +637,39 @@ export class CourseDomainService {
         return Result.ok({ courses: sortedCourses, total });
     }
 
-    async findEnrolledCourses(userId, pagination) {
+    async findEnrolledCourses(userId, pagination, requesterRoles = []) {
         if (!this.progressRepo) {
             console.warn('ProgressRepository not injected in CourseDomainService');
             return Result.ok({ courses: [], total: 0 });
         }
 
+        const restrictInactive = this._shouldRestrictInactiveAccess(requesterRoles);
         const accessibleCourseIds = await this._resolveAccessibleCourseIdsForEnrolledView(userId);
-        const total = accessibleCourseIds.length;
 
+        if (accessibleCourseIds.length === 0) return Result.ok({ courses: [], total: 0 });
+
+        // Fetch all accessible courses first to apply active filter
+        const allCourses = await this.courseRepo.findByIds(accessibleCourseIds);
+        const courseById = new Map((allCourses || []).map(c => [Number(c.id), c]));
+
+        let orderedIds = accessibleCourseIds.filter(id => courseById.has(id));
+        if (restrictInactive) {
+            orderedIds = orderedIds.filter(id => {
+                const course = courseById.get(id);
+                this._normalizeCourseShape(course);
+                return this.isCourseActive(course);
+            });
+        }
+
+        const total = orderedIds.length;
         const offset = Number(pagination?.offset) || 0;
         const limit = Number(pagination?.limit) || 20;
-        const courseIds = accessibleCourseIds.slice(offset, offset + limit);
+        const courseIds = orderedIds.slice(offset, offset + limit);
 
         if (courseIds.length === 0) return Result.ok({ courses: [], total });
 
-        const courses = await this.courseRepo.findByIds(courseIds);
-
-        // Preserve order
         const sortedCourses = courseIds
-            .map(id => courses.find(c => c.id === id))
+            .map(id => courseById.get(id))
             .filter(c => c);
 
         await this._signUrls(sortedCourses);
@@ -643,7 +677,7 @@ export class CourseDomainService {
         return Result.ok({ courses: sortedCourses, total });
     }
 
-    async findPopularCourses(pagination) {
+    async findPopularCourses(pagination, requesterRoles = []) {
         if (!this.progressRepo || typeof this.progressRepo.findCourseEnrollmentRanking !== 'function') {
             console.warn('ProgressRepository no soporta ranking de cursos populares');
             return Result.ok({ courses: [], total: 0 });
@@ -652,6 +686,7 @@ export class CourseDomainService {
         const offset = Number(pagination?.offset) || 0;
         const limit = Number(pagination?.limit) || 20;
         const excludeCreatorId = pagination?.excludeCreatorId ? Number(pagination.excludeCreatorId) : null;
+        const restrictInactive = this._shouldRestrictInactiveAccess(requesterRoles);
 
         const ranking = await this.progressRepo.findCourseEnrollmentRanking();
         if (!ranking || ranking.length === 0) return Result.ok({ courses: [], total: 0 });
@@ -665,6 +700,9 @@ export class CourseDomainService {
         let filteredIds = rankedCourseIds.filter((id) => courseById.has(id));
         if (excludeCreatorId && Number.isInteger(excludeCreatorId) && excludeCreatorId > 0) {
             filteredIds = filteredIds.filter((id) => Number(courseById.get(id)?.creator_user_id) !== excludeCreatorId);
+        }
+        if (restrictInactive) {
+            filteredIds = filteredIds.filter((id) => this.isCourseActive(courseById.get(id)));
         }
 
         const total = filteredIds.length;

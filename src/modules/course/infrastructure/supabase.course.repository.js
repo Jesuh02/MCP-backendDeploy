@@ -27,9 +27,10 @@ export class SupabaseCourseRepository {
         return data || null;
     }
 
-    async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc', excludeCreatorId = null } = {}) {
+    async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc', excludeCreatorId = null, activeOnly = false } = {}) {
         let query = this.client.from('courses').select('*');
         if (excludeCreatorId) query = query.neq('creator_user_id', excludeCreatorId);
+        if (activeOnly) query = query.eq('is_active', true);
 
         const { data, error } = await query.order(sortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
@@ -45,30 +46,34 @@ export class SupabaseCourseRepository {
         return data || [];
     }
 
-    async findFree({ offset = 0, limit = 20, excludeCreatorId = null } = {}) {
+    async findFree({ offset = 0, limit = 20, excludeCreatorId = null, activeOnly = false } = {}) {
         let query = this.client.from('courses').select('*').eq('is_premium', false);
         if (excludeCreatorId) query = query.neq('creator_user_id', excludeCreatorId);
+        if (activeOnly) query = query.eq('is_active', true);
 
         const { data, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }
 
-    async findPremium({ offset = 0, limit = 20, excludeCreatorId = null } = {}) {
+    async findPremium({ offset = 0, limit = 20, excludeCreatorId = null, activeOnly = false } = {}) {
         let query = this.client.from('courses').select('*').eq('is_premium', true);
         if (excludeCreatorId) query = query.neq('creator_user_id', excludeCreatorId);
+        if (activeOnly) query = query.eq('is_active', true);
 
         const { data, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }
 
-    async search(query, { offset = 0, limit = 20 } = {}) {
+    async search(query, { offset = 0, limit = 20, activeOnly = false } = {}) {
         const rawQuery = (query || '').trim();
         if (!rawQuery) return [];
         const safeQuery = this._escapeOrIlikeValue(rawQuery);
         const filter = `title.ilike."%${safeQuery}%",description.ilike."%${safeQuery}%"`;
-        const { data, error } = await this.client.from('courses').select('*').or(filter).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        let q = this.client.from('courses').select('*').or(filter);
+        if (activeOnly) q = q.eq('is_active', true);
+        const { data, error } = await q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }
@@ -162,6 +167,7 @@ export class SupabaseCourseRepository {
 
     async count(filters = {}) {
         let query = this.client.from('courses').select('id', { count: 'exact', head: true });
+        if (filters.activeOnly) query = query.eq('is_active', true);
         if (filters.creatorUserId) query = query.eq('creator_user_id', filters.creatorUserId);
         if (filters.excludeCreatorId) query = query.neq('creator_user_id', filters.excludeCreatorId);
         if (filters.creatorUsername) {
