@@ -426,6 +426,9 @@ export function createContainer() {
         jwtAdapter,
         supabaseService: supabase, // For diagnostics endpoint
 
+        // Repositories (exposed for middleware)
+        courseRepository: courseRepo,
+
         // Controladores (para montar rutas)
         authController,
         userController,
