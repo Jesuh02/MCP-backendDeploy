@@ -714,6 +714,77 @@ export class SupabaseProgressRepository {
         return this._mapPreEnrollmentRecord(data);
     }
 
+    async findApprovedEnrollments() {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .select('user_id, course_id, status, requested_at, reviewed_at')
+            .eq('status', 'approved')
+            .order('course_id', { ascending: true });
+        if (error || !data) return [];
+
+        const userIds   = [...new Set(data.map(r => Number(r.user_id)).filter(id => Number.isInteger(id) && id > 0))];
+        const courseIds = [...new Set(data.map(r => Number(r.course_id)).filter(id => Number.isInteger(id) && id > 0))];
+
+        let usersById    = new Map();
+        let personasById = new Map();
+        let coursesById  = new Map();
+        let subjectsByCourse = new Map();
+
+        if (userIds.length > 0) {
+            const { data: users } = await this.client
+                .from('usuarios').select('id, username, avatar, persona_id').in('id', userIds);
+            usersById = new Map((users || []).map(u => [Number(u.id), u]));
+
+            const personaIds = [...new Set((users || [])
+                .map(u => Number(u.persona_id)).filter(id => Number.isInteger(id) && id > 0))];
+            if (personaIds.length > 0) {
+                const { data: personas } = await this.client
+                    .from('personas').select('id, nombres, apellidos, identificacion').in('id', personaIds);
+                personasById = new Map((personas || []).map(p => [Number(p.id), p]));
+            }
+        }
+        if (courseIds.length > 0) {
+            const { data: courses } = await this.client
+                .from('courses').select('id, title').in('id', courseIds);
+            coursesById = new Map((courses || []).map(c => [Number(c.id), c]));
+
+            const { data: subjects } = await this.client
+                .from('subjects').select('id, name, course_id').in('course_id', courseIds);
+            for (const s of (subjects || [])) {
+                const cid = Number(s.course_id);
+                if (!subjectsByCourse.has(cid)) subjectsByCourse.set(cid, []);
+                subjectsByCourse.get(cid).push({ id: s.id, name: s.name });
+            }
+        }
+
+        return data.map(row => {
+            const user    = usersById.get(Number(row.user_id)) || null;
+            const persona = user?.persona_id ? personasById.get(Number(user.persona_id)) || null : null;
+            const course  = coursesById.get(Number(row.course_id)) || null;
+            const cid     = Number(row.course_id);
+            return {
+                ...this._mapPreEnrollmentRecord(row, {
+                    username:       user?.username || null,
+                    avatar:         user?.avatar || null,
+                    fullName:       persona ? `${persona.nombres || ''} ${persona.apellidos || ''}`.trim() || null : null,
+                    identificacion: persona?.identificacion ?? null,
+                    courseName:     course?.title || null,
+                }),
+                subjects: subjectsByCourse.get(cid) || [],
+            };
+        });
+    }
+
+    async deleteEnrollment(userId, courseId) {
+        const { error } = await this.client
+            .from('pre_enrollments')
+            .delete()
+            .eq('user_id', userId)
+            .eq('course_id', courseId);
+        if (error) throw new Error(error.message);
+        return true;
+    }
+
     _mapPreEnrollmentRecord(record, extras = {}) {
         if (!record) return null;
         const status = record.enrollmentStatus || record.enrollment_status || record.status || null;

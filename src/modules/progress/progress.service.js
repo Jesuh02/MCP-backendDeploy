@@ -697,6 +697,24 @@ export class ProgressDomainService {
     }
 
     /**
+     * Admin: get all approved enrollments (users with active access) grouped by course.
+     */
+    async getApprovedEnrollments() {
+        const rows = await this.progressRepo.findApprovedEnrollments();
+        return Result.ok(rows || []);
+    }
+
+    /**
+     * Admin: revoke a user's enrollment (remove course access).
+     */
+    async revokeEnrollment(userId, courseId) {
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+        if (!existing) return Result.fail(new NotFoundError('Matrícula', `${userId}/${courseId}`));
+        await this.progressRepo.deleteEnrollment(userId, courseId);
+        return Result.ok({ message: 'Acceso al curso revocado' });
+    }
+
+    /**
      * Check if student has an approved enrollment in a course.
      */
     async isEnrolledAndApproved(userId, courseId) {

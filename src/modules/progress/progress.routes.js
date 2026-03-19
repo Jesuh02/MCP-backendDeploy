@@ -27,8 +27,10 @@ export function progressRoutes({ progressController, requireRoles }) {
 
     // Admin: enrollment management (Matrícula tab)
     router.get('/admin/pending-enrollments', requireRoles(3), progressController.getPendingEnrollments);
+    router.get('/admin/approved-enrollments', requireRoles(3), progressController.getApprovedEnrollments);
     router.post('/admin/enrollments/:userId/:courseId/approve', requireRoles(3), progressController.approveEnrollment);
     router.post('/admin/enrollments/:userId/:courseId/reject', requireRoles(3), progressController.rejectEnrollment);
+    router.delete('/admin/enrollments/:userId/:courseId', requireRoles(3), progressController.revokeEnrollment);
 
     // Student: request enrollment
     router.post('/course/:courseId/request-enrollment', progressController.requestEnrollment);

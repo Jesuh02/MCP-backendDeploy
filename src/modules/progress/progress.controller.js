@@ -306,5 +306,26 @@ export class ProgressController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    getApprovedEnrollments = async(req, res, next) => {
+        try {
+            const result = await this.progressService.getApprovedEnrollments();
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    revokeEnrollment = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const courseId = parseInt(req.params.courseId);
+            if (!userId || isNaN(userId) || userId <= 0 || !courseId || isNaN(courseId) || courseId <= 0) {
+                return res.status(400).json({ success: false, error: 'userId and courseId must be positive integers' });
+            }
+            const result = await this.progressService.revokeEnrollment(userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ProgressController;
