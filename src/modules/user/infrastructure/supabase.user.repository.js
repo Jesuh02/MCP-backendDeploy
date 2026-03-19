@@ -254,6 +254,15 @@ export class SupabaseUserRepository {
         await this.client.from('user_fcm_tokens').delete().in('token', tokens);
     }
 
+    async findUserIdsByRoleId(roleId) {
+        const { data, error } = await this.client
+            .from('usuarios_roles')
+            .select('usuario_id')
+            .eq('rol_id', roleId);
+        if (error || !data) return [];
+        return data.map(r => r.usuario_id);
+    }
+
     // Helper to enrich user data with roles
     async _enrichWithRoles(userData) {
         const roles = await this.getUserRoles(userData.id);

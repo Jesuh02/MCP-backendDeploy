@@ -262,6 +262,7 @@ export function createContainer() {
 
     // Inject notificationService into services that need it (avoids circular constructor deps)
     collaboratorService.setNotificationService(notificationService);
+    collaboratorService.setUserService(userService);
     userService.setNotificationService(notificationService);
     progressService.setNotificationService(notificationService);
 

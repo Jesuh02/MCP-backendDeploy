@@ -630,6 +630,12 @@ export class ProgressDomainService {
         }
 
         const pending = await this.progressRepo.upsertPreEnrollment(userId, courseId, 'pending');
+
+        // Notify all role 3 (admin) users about the new enrollment request
+        this._notifyAdminsAboutEnrollmentRequest(userId, courseId, course.title).catch(err =>
+            console.warn('[ProgressService] Error notifying admins about enrollment request:', err?.message)
+        );
+
         return Result.ok({ ...pending, message: 'Solicitud de matrícula enviada' });
     }
 
@@ -701,6 +707,66 @@ export class ProgressDomainService {
     _getEnrollmentStatusValue(record) {
         const status = record?.enrollmentStatus ?? record?.enrollment_status ?? record?.status ?? null;
         return typeof status === 'string' ? status.trim().toLowerCase() : null;
+    }
+
+    async _notifyAdminsAboutEnrollmentRequest(studentUserId, courseId, courseTitle) {
+        if (!this._notificationService || !this.userRepo) return;
+
+        // Get all admin user IDs (role 3)
+        let adminUserIds = [];
+        if (typeof this.userRepo.findUserIdsByRoleId === 'function') {
+            adminUserIds = await this.userRepo.findUserIdsByRoleId(3);
+        }
+        if (!adminUserIds || adminUserIds.length === 0) return;
+
+        // Get student info
+        let studentName = 'Un estudiante';
+        let studentAvatar = null;
+        try {
+            const student = await this.userRepo.findById(studentUserId);
+            if (student) {
+                studentName = student.username || studentName;
+                studentAvatar = student.avatar || null;
+            }
+        } catch { /* ignore */ }
+
+        const courseName = courseTitle || 'un curso';
+
+        // Send push/in-app notification to all admins
+        await this._notificationService.sendBulk(adminUserIds, {
+            title: 'Nueva solicitud de matrícula',
+            message: `${studentName} ha solicitado matricularse en "${courseName}".`,
+            type: 'enrollment_request',
+            relatedId: courseId,
+            senderUsername: studentName,
+            senderAvatarUrl: studentAvatar,
+            metadata: { courseId, courseName, studentUserId },
+            actorUserId: studentUserId,
+        });
+
+        // Send email to each admin
+        try {
+            const { generateEnrollmentRequestEmailHTML } = await import('../../templates/emailTemplates.js');
+            for (const adminId of adminUserIds) {
+                if (Number(adminId) === Number(studentUserId)) continue;
+                try {
+                    let adminName = 'Administrador';
+                    const admin = await this.userRepo.findById(adminId);
+                    if (admin) adminName = admin.username || adminName;
+
+                    const html = generateEnrollmentRequestEmailHTML(adminName, studentName, courseName, studentAvatar);
+                    await this._notificationService.sendEmail(adminId, {
+                        subject: `📋 Nueva solicitud de matrícula: ${studentName} → "${courseName}"`,
+                        html,
+                        text: `${studentName} ha solicitado matricularse en el curso "${courseName}". Revisa la solicitud en el panel de administración.`,
+                    });
+                } catch (emailErr) {
+                    console.warn(`[ProgressService] Error sending enrollment email to admin ${adminId}:`, emailErr?.message);
+                }
+            }
+        } catch (err) {
+            console.warn('[ProgressService] Error loading email template:', err?.message);
+        }
     }
 }
 export default ProgressDomainService;
