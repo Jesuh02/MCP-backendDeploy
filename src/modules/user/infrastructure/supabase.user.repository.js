@@ -91,11 +91,17 @@ export class SupabaseUserRepository {
         // 1. Create persona first if provided
         let personaId = userData.personaId || null;
         if (userData.persona && !personaId) {
+            const cedula = userData.persona.cedula ?? userData.persona.identificacion ?? null;
+            const cedulaDigits = cedula ? String(cedula).replace(/\D/g, '').trim() : null;
             const { data: p, error: pe } = await this.client.from('personas').insert({
-                nombres: userData.persona.nombre || userData.persona.nombres || '',
-                apellidos: userData.persona.apellido || userData.persona.apellidos || '',
-                identificacion: userData.persona.identificacion || '',
+                nombres: userData.persona.nombres || userData.persona.nombre || '',
+                apellidos: userData.persona.apellidos || userData.persona.apellido || '',
+                identificacion: cedulaDigits ? parseInt(cedulaDigits, 10) : null,
+                identificacion_original: cedulaDigits || null,
                 telefono: userData.persona.telefono || '',
+                genero: userData.persona.genero || null,
+                fecha_nacimiento: userData.persona.fecha_nacimiento || null,
+                ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
             }).select().single();
             if (pe) throw new Error(`Error creando persona: ${pe.message}`);
             personaId = p.id;

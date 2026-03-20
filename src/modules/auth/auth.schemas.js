@@ -19,10 +19,16 @@ export const registerSchema = Joi.object({
     }),
     personaId: Joi.number().integer().positive().optional(),
     persona: Joi.object({
-        nombre: Joi.string().required(),
-        apellido: Joi.string().allow(''),
-        identificacion: Joi.string().allow(''),
-        telefono: Joi.string().allow(''),
+        nombre: Joi.string().allow('').optional(),
+        nombres: Joi.string().allow('').optional(),
+        apellido: Joi.string().allow('').optional(),
+        apellidos: Joi.string().allow('').optional(),
+        cedula: Joi.string().allow('', null).optional(),
+        identificacion: Joi.string().allow('', null).optional(),
+        genero: Joi.string().allow('', null).optional(),
+        telefono: Joi.string().allow('').optional(),
+        fecha_nacimiento: Joi.string().allow('', null).optional(),
+        institucion_id: Joi.number().integer().positive().allow(null).optional(),
     }).optional(),
 });
 
