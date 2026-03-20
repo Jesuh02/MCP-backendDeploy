@@ -100,7 +100,6 @@ export class SupabaseUserRepository {
                 identificacion_original: cedulaDigits || null,
                 telefono: userData.persona.telefono || '',
                 direccion: '',
-                genero: userData.persona.genero || null,
                 fecha_nacimiento: userData.persona.fecha_nacimiento || null,
                 ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
             }).select().single();
