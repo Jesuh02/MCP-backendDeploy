@@ -15,7 +15,13 @@ export class AuthService {
         if (existingEmail) return Result.fail(new ConflictError('Email', email));
 
         const hashedPassword = await this.jwt.hashPassword(password);
-        const user = await this.userRepo.create({ username, email, password: hashedPassword, persona, personaId });
+        let user;
+        try {
+            user = await this.userRepo.create({ username, email, password: hashedPassword, persona, personaId });
+        } catch (dbErr) {
+            console.error('[AuthService] register DB error:', dbErr.message);
+            return Result.fail(new ValidationError(dbErr.message));
+        }
 
         const tokens = this._generateTokens(user);
         return Result.ok({ user: this._safeUser(user), ...tokens });

@@ -99,11 +99,15 @@ export class SupabaseUserRepository {
                 identificacion: cedulaDigits ? parseInt(cedulaDigits, 10) : null,
                 identificacion_original: cedulaDigits || null,
                 telefono: userData.persona.telefono || '',
+                direccion: '',
                 genero: userData.persona.genero || null,
                 fecha_nacimiento: userData.persona.fecha_nacimiento || null,
                 ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
             }).select().single();
-            if (pe) throw new Error(`Error creando persona: ${pe.message}`);
+            if (pe) {
+                console.error('[UserRepo] Error creando persona:', pe.message, pe.details, pe.hint);
+                throw new Error(`Error creando persona: ${pe.message}`);
+            }
             personaId = p.id;
         }
         // 2. Create usuario
