@@ -93,21 +93,38 @@ export class SupabaseUserRepository {
         if (userData.persona && !personaId) {
             const cedula = userData.persona.cedula ?? userData.persona.identificacion ?? null;
             const cedulaDigits = cedula ? String(cedula).replace(/\D/g, '').trim() : null;
-            const { data: p, error: pe } = await this.client.from('personas').insert({
-                nombres: userData.persona.nombres || userData.persona.nombre || '',
-                apellidos: userData.persona.apellidos || userData.persona.apellido || '',
-                identificacion: cedulaDigits ? parseInt(cedulaDigits, 10) : null,
-                identificacion_original: cedulaDigits || null,
-                telefono: userData.persona.telefono || '',
-                direccion: '',
-                fecha_nacimiento: userData.persona.fecha_nacimiento || null,
-                ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
-            }).select().single();
-            if (pe) {
-                console.error('[UserRepo] Error creando persona:', pe.message, pe.details, pe.hint);
-                throw new Error(`Error creando persona: ${pe.message}`);
+            const numericId = cedulaDigits ? parseInt(cedulaDigits, 10) : null;
+
+            // If cedula provided, check if a persona with that cedula already exists (e.g. from a previous partial attempt)
+            if (numericId) {
+                const { data: existing } = await this.client
+                    .from('personas')
+                    .select('id')
+                    .eq('identificacion', numericId)
+                    .maybeSingle();
+                if (existing) {
+                    console.log(`[UserRepo] Reusing existing persona id=${existing.id} for cedula ${cedulaDigits}`);
+                    personaId = existing.id;
+                }
             }
-            personaId = p.id;
+
+            if (!personaId) {
+                const { data: p, error: pe } = await this.client.from('personas').insert({
+                    nombres: userData.persona.nombres || userData.persona.nombre || '',
+                    apellidos: userData.persona.apellidos || userData.persona.apellido || '',
+                    identificacion: numericId,
+                    identificacion_original: cedulaDigits || null,
+                    telefono: userData.persona.telefono || '',
+                    direccion: '',
+                    fecha_nacimiento: userData.persona.fecha_nacimiento || null,
+                    ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
+                }).select().single();
+                if (pe) {
+                    console.error('[UserRepo] Error creando persona:', pe.message, pe.details, pe.hint);
+                    throw new Error(`Error creando persona: ${pe.message}`);
+                }
+                personaId = p.id;
+            }
         }
         // 2. Create usuario
         const { data, error } = await this.client.from('usuarios').insert({
