@@ -116,6 +116,37 @@ export class SupabaseCourseRepository {
     }
 
     async delete(id) {
+        // 1. Progress records
+        await this.client.from('progreso_materia').delete().eq('curso_id', id);
+        await this.client.from('progreso_curso').delete().eq('curso_id', id);
+
+        // 2. Collaborators
+        await this.client.from('collaborators').delete().eq('course_id', id);
+
+        // 3. Videos
+        await this.client.from('videos').delete().eq('course_id', id);
+
+        // 4. Cascade through subjects → topics → tasks/content_items
+        const { data: subjects } = await this.client.from('subjects').select('id').eq('course_id', id);
+        if (subjects && subjects.length > 0) {
+            const subjectIds = subjects.map(s => s.id);
+            const { data: topics } = await this.client.from('topics').select('id').in('materia_id', subjectIds);
+            if (topics && topics.length > 0) {
+                const topicIds = topics.map(t => t.id);
+                const { data: tasks } = await this.client.from('tasks').select('id').in('topic_id', topicIds);
+                if (tasks && tasks.length > 0) {
+                    const taskIds = tasks.map(t => t.id);
+                    await this.client.from('task_submissions').delete().in('task_id', taskIds);
+                    await this.client.from('content_items').delete().in('task_id', taskIds);
+                    await this.client.from('tasks').delete().in('topic_id', topicIds);
+                }
+                await this.client.from('content_items').delete().in('topic_id', topicIds);
+                await this.client.from('topics').delete().in('materia_id', subjectIds);
+            }
+            await this.client.from('subjects').delete().eq('course_id', id);
+        }
+
+        // 5. Finally delete the course
         const { error } = await this.client.from('courses').delete().eq('id', id);
         if (error) throw new Error(`Error eliminando curso: ${error.message}`);
         return true;
