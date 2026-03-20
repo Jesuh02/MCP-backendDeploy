@@ -376,6 +376,116 @@ export class SupabaseProgressRepository {
         return this._mapToDomain(data);
     }
 
+    /**
+     * Admin: devuelve TODO el progreso por materia, enriquecido con info del usuario,
+     * persona (identificacion), nombre del curso y nombre de la materia.
+     * Si se pasa `creatorUserId`, filtra solo los cursos de ese creador.
+     */
+    async findAllSubjectProgressForAdmin(creatorUserId = null) {
+        // 1. Base query
+        let query = this.client
+            .from(this._subjectProgressTable())
+            .select('usuario_estudiante, curso_id, materia_id, tareas_completadas, tareas_totales, promedio, calificacion_ponderada, porcentaje_progreso, ultima_calculada_en')
+            .order('curso_id')
+            .order('materia_id')
+            .order('usuario_estudiante');
+
+        const { data: rows, error } = await query;
+        if (error || !rows?.length) return [];
+
+        // 2. Si hay filtro por creador, obtener sus cursos
+        let allowedCourseIds = null;
+        if (creatorUserId) {
+            const { data: creatorCourses } = await this.client
+                .from('courses')
+                .select('id')
+                .eq('creator_user_id', creatorUserId);
+            allowedCourseIds = new Set((creatorCourses || []).map(c => Number(c.id)));
+            if (allowedCourseIds.size === 0) return [];
+        }
+
+        const filtered = allowedCourseIds
+            ? rows.filter(r => allowedCourseIds.has(Number(r.curso_id)))
+            : rows;
+        if (!filtered.length) return [];
+
+        // 3. Cargar dimensiones en paralelo
+        const courseIds   = [...new Set(filtered.map(r => r.curso_id))];
+        const subjectIds  = [...new Set(filtered.map(r => r.materia_id).filter(Boolean))];
+        const userIds     = [...new Set(filtered.map(r => r.usuario_estudiante))];
+
+        const [coursesRes, subjectsRes, usersRes, personasRes] = await Promise.all([
+            courseIds.length
+                ? this.client.from('courses').select('id, title').in('id', courseIds)
+                : Promise.resolve({ data: [] }),
+            subjectIds.length
+                ? this.client.from('subjects').select('id, name').in('id', subjectIds)
+                : Promise.resolve({ data: [] }),
+            userIds.length
+                ? this.client.from('usuarios').select('id, username, avatar').in('id', userIds)
+                : Promise.resolve({ data: [] }),
+            userIds.length
+                ? this.client
+                    .from('personas')
+                    .select('id, nombres, apellidos, identificacion, identificacion_original')
+                    .in('id',
+                        // personas.id == usuario.persona_id — join via usuarios
+                        await this.client
+                            .from('usuarios')
+                            .select('persona_id')
+                            .in('id', userIds)
+                            .then(({ data: u }) => (u || []).map(x => x.persona_id).filter(Boolean))
+                    )
+                : Promise.resolve({ data: [] }),
+        ]);
+
+        const coursesById  = new Map((coursesRes.data  || []).map(c => [Number(c.id), c]));
+        const subjectsById = new Map((subjectsRes.data || []).map(s => [Number(s.id), s]));
+        const usersById    = new Map((usersRes.data    || []).map(u => [Number(u.id), u]));
+
+        // Build persona lookup keyed by usuario.id after fetching persona_id mapping
+        const { data: userPersonaRows } = await this.client
+            .from('usuarios')
+            .select('id, persona_id')
+            .in('id', userIds);
+        const personaIdByUserId = new Map((userPersonaRows || []).map(u => [Number(u.id), Number(u.persona_id)]));
+        const personasById = new Map((personasRes.data || []).map(p => [Number(p.id), p]));
+
+        return filtered.map(r => {
+            const userId    = Number(r.usuario_estudiante);
+            const courseId  = Number(r.curso_id);
+            const subjectId = r.materia_id ? Number(r.materia_id) : null;
+
+            const user    = usersById.get(userId)    || {};
+            const course  = coursesById.get(courseId)  || {};
+            const subject = subjectId ? subjectsById.get(subjectId) || {} : {};
+
+            const personaId = personaIdByUserId.get(userId);
+            const persona   = personaId ? (personasById.get(personaId) || {}) : {};
+
+            const grade = r.promedio ?? r.calificacion_ponderada ?? null;
+            const pct   = Number(r.porcentaje_progreso) || 0;
+
+            return {
+                userId,
+                username:        user.username     || `Usuario ${userId}`,
+                avatar:          user.avatar        || null,
+                nombres:         persona.nombres    || null,
+                apellidos:       persona.apellidos  || null,
+                identificacion:  persona.identificacion?.toString() || persona.identificacion_original || null,
+                courseId,
+                courseName:      course.title       || `Curso ${courseId}`,
+                subjectId,
+                subjectName:     subject.name       || (subjectId ? `Materia ${subjectId}` : 'Sin materia'),
+                completedTasks:  Number(r.tareas_completadas) || 0,
+                totalTasks:      Number(r.tareas_totales)     || 0,
+                averageGrade:    grade !== null ? Number(grade) : null,
+                progressPercentage: pct,
+                lastActivityAt:  r.ultima_calculada_en || null,
+            };
+        });
+    }
+
     // ═══════════════════════════════════════════════════════════════
     //  CERTIFICADOS  (tabla: certificates)
     // ═══════════════════════════════════════════════════════════════

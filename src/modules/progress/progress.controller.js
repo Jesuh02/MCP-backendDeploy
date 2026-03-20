@@ -235,6 +235,16 @@ export class ProgressController {
         } catch (err) { next(err); }
     };
 
+    getAllSubjectProgress = async(req, res, next) => {
+        try {
+            // Admins (rol 3) can see all; teachers (rol 2) see only their own courses
+            const requesterUserId = req.user?.userId || null;
+            const result = await this.progressService.getAllSubjectProgressForAdmin(requesterUserId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     bulkIssueCertificatesAll = async(req, res, next) => {
         try {
             const result = await this.progressService.bulkIssueCertificatesGlobal();

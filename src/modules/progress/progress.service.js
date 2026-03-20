@@ -72,6 +72,17 @@ export class ProgressDomainService {
         return Result.ok(refreshed);
     }
 
+    /**
+     * Admin: devuelve el progreso por materia de TODOS los estudiantes
+     * en los cursos gestionados por `requesterUserId`.
+     * Admins globales (rol 3) pasan null para ver todo.
+     */
+    async getAllSubjectProgressForAdmin(requesterUserId = null) {
+        const creatorId = requesterUserId ? Number(requesterUserId) : null;
+        const items = await this.progressRepo.findAllSubjectProgressForAdmin(creatorId);
+        return Result.ok(items);
+    }
+
     async getByUser(userId, options = {}) {
         const progress = await this.progressRepo.findByUser(userId, options);
         return Result.ok(progress);
