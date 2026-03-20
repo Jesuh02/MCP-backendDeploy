@@ -17,6 +17,14 @@ export class SubmissionDomainService {
         this.collaboratorService = collaboratorService || null;
     }
 
+    _extractEnrollmentUserIds(enrollments = []) {
+        return [...new Set(
+            (enrollments || [])
+                .map(enrollment => Number(enrollment?.userId ?? enrollment?.usuarioEstudiante ?? enrollment?.user_id))
+                .filter(userId => Number.isInteger(userId) && userId > 0)
+        )];
+    }
+
     async getById(id) {
         const sub = await this.subRepo.findById(id);
         if (!sub) return Result.fail(new NotFoundError('Entrega', id));
@@ -157,22 +165,45 @@ export class SubmissionDomainService {
         if (courseCreatorId && courseCreatorId !== data.userId) recipientIds.add(Number(courseCreatorId));
         if (subjectCreatorId && subjectCreatorId !== data.userId) recipientIds.add(Number(subjectCreatorId));
 
+        if (this.progressService && typeof this.progressService.getAllByCourse === 'function') {
+            const progressResult = await this.progressService.getAllByCourse(courseId);
+            if (progressResult.isOk()) {
+                const enrolledUserIds = this._extractEnrollmentUserIds(progressResult.getValue() || []);
+                for (const enrolledUserId of enrolledUserIds) {
+                    if (enrolledUserId !== Number(data.userId)) recipientIds.add(enrolledUserId);
+                }
+            }
+        }
+
+        const resolvedRecipientIds = [...recipientIds];
+        if (resolvedRecipientIds.length === 0) return;
+
+        const title = `Nueva entrega: ${task.title}`;
+        const message = `${data.username} ha enviado una entrega para la tarea '${task.title}'`;
+        const metadata = JSON.stringify({ taskId: data.taskId, courseId, type: 'task_submission' });
+        const html = generateGenericEmailHTML(title, message, 'task_submission', data.username);
+
         const notifPayload = {
-            title: `Nueva entrega: ${task.title}`,
-            message: `${data.username} ha enviado una entrega para la tarea '${task.title}'`,
+            title,
+            message,
             type: 'task_submission',
             relatedId: data.taskId,
             senderUsername: data.username,
             senderAvatarUrl,
             thumbnailUrl: thumbnailUrl || senderAvatarUrl,
-            metadata: JSON.stringify({ taskId: data.taskId, courseId, type: 'task_submission' }),
+            metadata,
             actorUserId: data.userId
         };
 
-        for (const recipientId of recipientIds) {
-            await this.notificationService.sendNotification({ ...notifPayload, userId: recipientId });
-            await this._sendSubmissionEmail(recipientId, task.title, data.username);
-        }
+        await Promise.all([
+            this.notificationService.sendBulk(resolvedRecipientIds, notifPayload),
+            this.notificationService.sendEmailBulk(resolvedRecipientIds, {
+                subject: title,
+                html,
+                text: message,
+                actorUserId: data.userId
+            })
+        ]);
     }
 
     async _resolveSubjectCreator(topicId) {
@@ -183,18 +214,6 @@ export class SubmissionDomainService {
         if (subjectResult.isFail()) return null;
         const subject = subjectResult.getValue();
         return subject.created_by || subject.createdBy || null;
-    }
-
-    async _sendSubmissionEmail(recipientId, taskTitle, studentUsername) {
-        if (!this.notificationService || !this.userService) return;
-        const title = `Nueva entrega: ${taskTitle}`;
-        const message = `${studentUsername} ha enviado una entrega para la tarea '${taskTitle}'`;
-        const html = generateGenericEmailHTML(title, message, 'task_submission', studentUsername);
-        await this.notificationService.sendEmail(recipientId, {
-            subject: title,
-            html,
-            text: message
-        }).catch(() => {});
     }
 
     /**

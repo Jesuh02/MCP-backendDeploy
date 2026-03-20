@@ -17,6 +17,10 @@ export class NotificationDomainService {
         this.taskReminderTimers = new Map();
     }
 
+    _isEmailAvailable() {
+        return Boolean(this.email && typeof this.email.sendEmail === 'function' && (!this.email.isAvailable || this.email.isAvailable()));
+    }
+
     _normalizeUserId(value) {
         const userId = Number(value);
         return Number.isInteger(userId) && userId > 0 ? userId : null;
@@ -262,10 +266,36 @@ export class NotificationDomainService {
     }
 
     async sendEmail(userId, { subject, html, text }) {
+        if (!this._isEmailAvailable()) return Result.fail(new Error('Servicio de email no disponible'));
         const user = await this.userRepo.findById(userId);
         if (!user?.email) return Result.fail(new Error('Usuario sin email'));
         const sent = await this.email.sendEmail({ to: user.email, subject, html, text });
         return Result.ok({ sent });
+    }
+
+    async sendEmailBulk(userIds, { subject, html, text, actorUserId, senderUserId, creatorUserId, excludeUserIds } = {}) {
+        if (!this._isEmailAvailable()) return Result.fail(new Error('Servicio de email no disponible'));
+
+        const excludedUserIds = this._resolveExcludedUserIds({ actorUserId, senderUserId, creatorUserId, excludeUserIds });
+        const filteredUserIds = [...new Set((userIds || [])
+            .map(userId => this._normalizeUserId(userId))
+            .filter(userId => userId && !excludedUserIds.has(userId)))];
+
+        if (filteredUserIds.length === 0) return Result.ok([]);
+
+        const users = await this._resolveUsersWithValidEmail(filteredUserIds);
+        const results = [];
+
+        for (const user of users) {
+            try {
+                const sent = await this.email.sendEmail({ to: user.email, subject, html, text });
+                results.push({ userId: user.userId, success: Boolean(sent?.success ?? sent) });
+            } catch (error) {
+                results.push({ userId: user.userId, success: false, error: error.message });
+            }
+        }
+
+        return Result.ok(results);
     }
 
     _buildReminderKey(taskId, userId) {
@@ -317,7 +347,7 @@ export class NotificationDomainService {
     }
 
     async _sendTaskReminderEmail({ userId, taskTitle, courseTitle, dueDate }) {
-        if (!this.email || !this.email.isAvailable || !this.email.isAvailable()) return;
+        if (!this._isEmailAvailable()) return;
 
         const resolvedUsers = await this._resolveUsersWithValidEmail([userId]);
         const user = resolvedUsers[0];

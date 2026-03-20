@@ -196,11 +196,21 @@ export class SupabaseUserRepository {
                 const numericId = parseInt(digitsOnly, 10);
                 const orParts = [`identificacion_original.ilike.%${digitsOnly}%`];
                 if (!isNaN(numericId) && numericId > 0) orParts.push(`identificacion.eq.${numericId}`);
+                // Fetch full persona rows (not just id) so we can attach them manually
+                // and avoid relying on the FK-hint join, which can fail silently.
                 const { data: matchedPersonas } = await this.client
-                    .from('personas').select('id').or(orParts.join(',')).limit(safeLimit);
+                    .from('personas').select('*').or(orParts.join(',')).limit(safeLimit);
                 if (!matchedPersonas?.length) return { data: [] };
+                const personaById = new Map(matchedPersonas.map(p => [p.id, p]));
                 const personaIds = matchedPersonas.map(p => p.id);
-                return this.client.from('usuarios').select(baseSelect).in('persona_id', personaIds).limit(safeLimit);
+                const { data: usersRaw } = await this.client
+                    .from('usuarios')
+                    .select('id, username, email, avatar, persona_id')
+                    .in('persona_id', personaIds)
+                    .limit(safeLimit);
+                if (!usersRaw?.length) return { data: [] };
+                // Attach persona manually — no FK-hint needed
+                return { data: usersRaw.map(u => ({ ...u, personas: personaById.get(u.persona_id) ?? null })) };
             })()
             : Promise.resolve({ data: [] });
 
