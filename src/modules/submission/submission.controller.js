@@ -42,7 +42,7 @@ export class SubmissionController extends BaseController {
     grade = async(req, res, next) => {
         const { error, value } = gradeSubmissionSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
-        this.store(req, res, next, () => this.subService.grade(parseInt(req.params.id), value, req.user.userId));
+        this.store(req, res, next, () => this.subService.grade(parseInt(req.params.id), value, req.user.userId, req.user.roles));
     };
 
     delete = async(req, res, next) => {

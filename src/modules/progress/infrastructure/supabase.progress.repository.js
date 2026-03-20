@@ -490,6 +490,16 @@ export class SupabaseProgressRepository {
         if (data.certificateIssuedAt) payload.issued_at    = data.certificateIssuedAt;
         if (data.certificateUrl)      payload.storage_path = data.certificateUrl;
 
+        // Preserve existing verification_code on re-issue; generate a new one on first issue
+        const { data: existingCert } = await this.client
+            .from('certificates')
+            .select('verification_code')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .maybeSingle();
+        payload.verification_code = existingCert?.verification_code
+            || `CERT-${userId}-${courseId}-${Date.now().toString(36).toUpperCase()}`;
+
         const { data: cert, error } = await this.client
             .from('certificates')
             .upsert(payload, { onConflict: 'user_id,course_id' })

@@ -174,7 +174,7 @@ export class ProgressController {
     issueCertificate = async(req, res, next) => {
         try {
             const courseId = parseInt(req.params.courseId);
-            const userId = req.body.userId || req.user.userId;
+            const userId = parseInt(req.body.userId || req.user.userId);
             const result = await this.progressService.issueCertificate(userId, courseId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });

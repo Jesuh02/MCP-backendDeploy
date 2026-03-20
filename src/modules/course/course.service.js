@@ -303,7 +303,17 @@ export class CourseDomainService {
         this._normalizeCourseShape(course);
 
         if (this._shouldRestrictInactiveAccess(requester?.roles) && !this.isCourseActive(course)) {
-            return Result.fail(new ForbiddenError('El curso está inactivo y no esta disponible para este rol'));
+            // Allow users with an approved enrollment to access the course even when inactive
+            let hasApprovedEnrollment = false;
+            if (requester?.userId && this.progressRepo) {
+                try {
+                    const preEnrollment = await this.progressRepo.findPreEnrollment(requester.userId, courseId);
+                    hasApprovedEnrollment = preEnrollment?.status === 'approved';
+                } catch { /* ignore — treat as no enrollment */ }
+            }
+            if (!hasApprovedEnrollment) {
+                return Result.fail(new ForbiddenError('El curso está inactivo y no esta disponible para este rol'));
+            }
         }
 
         await this._signUrls(course);
