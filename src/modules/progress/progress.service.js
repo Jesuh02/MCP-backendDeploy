@@ -267,12 +267,11 @@ export class ProgressDomainService {
         if (!certificates?.length || !this.courseRepo) return Result.ok(certificates);
 
         // Only certificates with status 'Ganado' and not creator/collaborator
-        const filtered = [];
-        for (const cert of certificates) {
-            if (!this._isProgressWon(cert)) continue;
-            const blocked = await this._isCreatorOrCollaborator(userId, cert.courseId);
-            if (!blocked) filtered.push(cert);
-        }
+        const wonCerts = certificates.filter(cert => this._isProgressWon(cert));
+        const blockedChecks = await Promise.all(
+            wonCerts.map(cert => this._isCreatorOrCollaborator(userId, cert.courseId))
+        );
+        const filtered = wonCerts.filter((_, i) => !blockedChecks[i]);
         return Result.ok(filtered);
     }
 
@@ -356,13 +355,17 @@ export class ProgressDomainService {
             return Result.ok({ recalculated: 0, totalTasks });
         }
 
+        // Parallelize in batches of 5 to avoid overwhelming the DB
+        const BATCH_SIZE = 5;
         let recalculated = 0;
-        for (const userId of candidateUserIds) {
-            try {
-                await this._recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasks);
-                recalculated++;
-            } catch (err) {
-                console.error(`[ProgressService] Error recalculating for user ${userId}:`, err.message);
+        for (let i = 0; i < candidateUserIds.length; i += BATCH_SIZE) {
+            const batch = candidateUserIds.slice(i, i + BATCH_SIZE);
+            const results = await Promise.allSettled(
+                batch.map(userId => this._recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasks))
+            );
+            for (const r of results) {
+                if (r.status === 'fulfilled') recalculated++;
+                else console.error(`[ProgressService] Error recalculating:`, r.reason?.message);
             }
         }
 
@@ -462,11 +465,14 @@ export class ProgressDomainService {
         const blocked = await this._isCreatorOrCollaborator(userId, courseId);
         if (blocked) return { userId, courseId, completedTasks: 0, totalTasks: 0, averageGrade: 0, progressPercentage: 0, status: 'Excluido' };
 
-        const totalTasks = totalTasksFromCaller ?? await this.taskRepo.countByCourse(courseId);
-        const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId);
+        // Fetch totalTasks, submittedTaskIds and graded in parallel
+        const [totalTasks, submittedTaskIds, graded] = await Promise.all([
+            totalTasksFromCaller != null ? totalTasksFromCaller : this.taskRepo.countByCourse(courseId),
+            this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId),
+            this.submissionRepo.getGradedByUserAndCourse(userId, courseId),
+        ]);
         const completedTasks = submittedTaskIds.length;
 
-        const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
         const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
         const averageGradeRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
         const averageGrade = Math.round(averageGradeRaw * 100) / 100;
@@ -505,11 +511,12 @@ export class ProgressDomainService {
         const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
         if (!subjects?.length) return;
 
-        for (const subject of subjects) {
-            try {
-                await this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id);
-            } catch (err) {
-                console.error(`[ProgressService] Error recalculating subject ${subject.id} for user ${userId}:`, err.message);
+        const results = await Promise.allSettled(
+            subjects.map(subject => this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id))
+        );
+        for (const r of results) {
+            if (r.status === 'rejected') {
+                console.error(`[ProgressService] Error recalculating subject for user ${userId}:`, r.reason?.message);
             }
         }
     }
@@ -669,6 +676,24 @@ export class ProgressDomainService {
                     relatedId: courseId,
                     metadata: { courseId, courseName },
                 });
+
+                // Send confirmation email to the student
+                try {
+                    let studentName = 'Estudiante';
+                    if (this.userRepo) {
+                        const student = await this.userRepo.findById(userId);
+                        if (student?.username) studentName = student.username;
+                    }
+                    const { generateEnrollmentApprovedEmailHTML } = await import('../../templates/emailTemplates.js');
+                    const html = generateEnrollmentApprovedEmailHTML(studentName, courseName);
+                    await this._notificationService.sendEmail(userId, {
+                        subject: `✅ ¡Tu matrícula en "${courseName}" ha sido aprobada!`,
+                        html,
+                        text: `¡Felicitaciones ${studentName}! Tu solicitud de matrícula en el curso "${courseName}" ha sido aprobada. Ya puedes acceder al contenido del curso en CourseV.`,
+                    });
+                } catch (emailErr) {
+                    console.warn('[ProgressService] Error sending enrollment approved email:', emailErr?.message);
+                }
             } catch (err) {
                 console.error('[ProgressService] Error sending enrollment notification:', err?.message);
             }

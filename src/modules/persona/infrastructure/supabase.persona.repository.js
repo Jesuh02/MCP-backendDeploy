@@ -24,10 +24,12 @@ export class SupabasePersonaRepository {
     async findByIdentificacion(identificacion) {
         const normalized = normalizeCedulaValue(identificacion);
         if (!normalized) return null;
+        const numericId = parseInt(normalized, 10);
+        if (isNaN(numericId) || numericId <= 0) return null;
         const { data, error } = await this.client
             .from('personas')
             .select('*')
-            .or(`identificacion.eq.${normalized},cedula.eq.${normalized}`)
+            .or(`identificacion.eq.${numericId},identificacion_original.eq.${normalized}`)
             .maybeSingle();
         if (error || !data) return null;
         return data;
@@ -44,8 +46,8 @@ export class SupabasePersonaRepository {
         const payload = {
             nombres: personaData.nombres,
             apellidos: personaData.apellidos || '',
-            cedula,
-            identificacion: cedula,
+            identificacion: cedula ? parseInt(cedula, 10) : null,
+            identificacion_original: cedula || null,
             telefono: personaData.telefono || '',
             direccion: personaData.direccion || '',
             fecha_nacimiento: personaData.fecha_nacimiento || null,
@@ -63,8 +65,8 @@ export class SupabasePersonaRepository {
         if (personaData.apellidos !== undefined) payload.apellidos = personaData.apellidos;
         if (personaData.cedula !== undefined || personaData.identificacion !== undefined) {
             const cedula = resolveCedula(personaData);
-            payload.cedula = cedula;
-            payload.identificacion = cedula;
+            payload.identificacion = cedula ? parseInt(cedula, 10) : null;
+            payload.identificacion_original = cedula || null;
         }
         if (personaData.telefono !== undefined) payload.telefono = personaData.telefono;
         if (personaData.direccion !== undefined) payload.direccion = personaData.direccion;

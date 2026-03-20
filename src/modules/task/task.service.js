@@ -200,7 +200,10 @@ export class TaskDomainService {
         this._invalidateTaskCaches({ taskId: created?.id, topicId: data.topicId, subjectId, courseId });
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
-            await this.progressService.recalculateForCourse(courseId);
+            // Fire-and-forget: don't block the response
+            this.progressService.recalculateForCourse(courseId).catch(err =>
+                console.error('[TaskDomainService] Error recalculating progress after create:', err.message)
+            );
         }
 
         return Result.ok(created);
@@ -423,9 +426,10 @@ export class TaskDomainService {
 
         if (this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
             const affectedCourseIds = [...new Set([originalCourseId, nextCourseId].filter(Boolean))];
-            for (const courseId of affectedCourseIds) {
-                await this.progressService.recalculateForCourse(courseId);
-            }
+            // Fire-and-forget: don't block the response
+            Promise.allSettled(
+                affectedCourseIds.map(cid => this.progressService.recalculateForCourse(cid))
+            ).catch(err => console.error('[TaskDomainService] Error recalculating progress after update:', err.message));
         }
 
         return Result.ok(updated);
@@ -465,7 +469,10 @@ export class TaskDomainService {
         this._invalidateTaskCaches({ taskId: id, topicId, subjectId, courseId });
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
-            await this.progressService.recalculateForCourse(courseId);
+            // Fire-and-forget: don't block the response
+            this.progressService.recalculateForCourse(courseId).catch(err =>
+                console.error('[TaskDomainService] Error recalculating progress after delete:', err.message)
+            );
         }
 
         return Result.ok({ message: 'Tarea eliminada' });
