@@ -186,6 +186,11 @@ export class UserDomainService {
         return Result.ok({ message: 'Token registrado' });
     }
 
+    async removeFCMToken(userId, token) {
+        await this.userRepo.removeFCMToken(userId, token);
+        return Result.ok({ message: 'Token eliminado' });
+    }
+
     async getByEmail(email) {
         const user = await this.userRepo.findByEmail(email);
         if (!user) return Result.fail(new NotFoundError('Usuario (email)', email));
