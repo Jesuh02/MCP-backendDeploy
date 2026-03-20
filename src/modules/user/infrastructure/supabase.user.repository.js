@@ -179,38 +179,33 @@ export class SupabaseUserRepository {
         const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
         const textSearchLimit = Math.max(safeLimit * 2, 40);
         const baseSelect = 'id, username, email, avatar, persona_id, personas!fk_usuarios_persona(*)';
-        const innerSelect = 'id, username, email, avatar, persona_id, personas!inner(*)';
 
-        // Always search by username, nombres, apellidos
-        const searches = [
+        // Text-based searches (username, email, nombres, apellidos)
+        const textSearches = [
             this.client.from('usuarios').select(baseSelect).ilike('username', `%${normalizedQuery}%`).limit(textSearchLimit),
             this.client.from('usuarios').select(baseSelect).ilike('email', `%${normalizedQuery}%`).limit(textSearchLimit),
-            this.client.from('usuarios').select(innerSelect).ilike('personas.nombres', `%${normalizedQuery}%`).limit(textSearchLimit),
-            this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${normalizedQuery}%`).limit(textSearchLimit),
+            this.client.from('usuarios').select(baseSelect).ilike('personas.nombres', `%${normalizedQuery}%`).limit(textSearchLimit),
+            this.client.from('usuarios').select(baseSelect).ilike('personas.apellidos', `%${normalizedQuery}%`).limit(textSearchLimit),
         ];
 
-        // If the query contains digits, search directly by identification fields
-        if (digitsOnly) {
-            // Search by identificacion_original (text column - supports partial ILIKE)
-            searches.push(
-                this.client.from('usuarios')
-                    .select(innerSelect)
-                    .ilike('personas.identificacion_original', `%${digitsOnly}%`)
-                    .limit(safeLimit)
-            );
-            // Search by identificacion (bigint - exact numeric match)
-            const numericId = parseInt(digitsOnly, 10);
-            if (!isNaN(numericId) && numericId > 0) {
-                searches.push(
-                    this.client.from('usuarios')
-                        .select(innerSelect)
-                        .eq('personas.identificacion', numericId)
-                        .limit(safeLimit)
-                );
-            }
-        }
+        // If the query contains digits, search directly in personas table then join users.
+        // This avoids unreliable embedded-resource filter syntax (personas.identificacion=eq.X)
+        // which can fail silently when PostgREST FK resolution is ambiguous.
+        const identificationPromise = digitsOnly
+            ? (async () => {
+                const numericId = parseInt(digitsOnly, 10);
+                const orParts = [`identificacion_original.ilike.%${digitsOnly}%`];
+                if (!isNaN(numericId) && numericId > 0) orParts.push(`identificacion.eq.${numericId}`);
+                const { data: matchedPersonas } = await this.client
+                    .from('personas').select('id').or(orParts.join(',')).limit(safeLimit);
+                if (!matchedPersonas?.length) return { data: [] };
+                const personaIds = matchedPersonas.map(p => p.id);
+                return this.client.from('usuarios').select(baseSelect).in('persona_id', personaIds).limit(safeLimit);
+            })()
+            : Promise.resolve({ data: [] });
 
-        const searchResults = await Promise.all(searches);
+        const [textResults, identResult] = await Promise.all([Promise.all(textSearches), identificationPromise]);
+        const searchResults = [...textResults, identResult];
         const seen = new Set();
         const userIds = [];
         const userMap = new Map();
