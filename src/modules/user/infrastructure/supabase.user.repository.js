@@ -14,7 +14,13 @@ export class SupabaseUserRepository {
 
     _extractPersonaDocument(persona) {
         if (!persona) return '';
-        const rawValue = persona.cedula ?? persona.identificacion_original ?? persona.identificacion ?? '';
+        // Prefer the numeric identificacion (bigint) — most reliable for digit-based matching.
+        // identificacion_original can be a non-numeric token like "jesus_duplicate_5",
+        // whose extracted digits ("5") would never match the real cedula "1006617028".
+        if (persona.identificacion && persona.identificacion !== 0) {
+            return String(persona.identificacion);
+        }
+        const rawValue = persona.cedula ?? persona.identificacion_original ?? '';
         return String(rawValue || '').trim();
     }
 
