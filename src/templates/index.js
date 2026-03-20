@@ -12,7 +12,8 @@ export {
     generateChatResponseEmailHTML,
     generateTaskReminderEmailHTML,
     generateCollaboratorAddedEmailHTML,
-    generateEnrollmentRequestEmailHTML
+    generateEnrollmentRequestEmailHTML,
+    generateEnrollmentApprovedEmailHTML
 } from './emailTemplates.js';
 
 export default {
@@ -24,7 +25,8 @@ export default {
     generateChatResponseEmailHTML: () => import('./emailTemplates.js').then(m => m.generateChatResponseEmailHTML),
     generateTaskReminderEmailHTML: () => import('./emailTemplates.js').then(m => m.generateTaskReminderEmailHTML),
     generateCollaboratorAddedEmailHTML: () => import('./emailTemplates.js').then(m => m.generateCollaboratorAddedEmailHTML),
-    generateEnrollmentRequestEmailHTML: () => import('./emailTemplates.js').then(m => m.generateEnrollmentRequestEmailHTML)
+    generateEnrollmentRequestEmailHTML: () => import('./emailTemplates.js').then(m => m.generateEnrollmentRequestEmailHTML),
+    generateEnrollmentApprovedEmailHTML: () => import('./emailTemplates.js').then(m => m.generateEnrollmentApprovedEmailHTML)
 };
 
 

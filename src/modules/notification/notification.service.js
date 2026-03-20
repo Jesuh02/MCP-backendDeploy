@@ -174,7 +174,8 @@ export class NotificationDomainService {
 
     _isCourseRelatedType(type) {
         const t = String(type || '').toLowerCase();
-        return t === 'new_course' || t === 'new_task' || t === 'task_submission' || t === 'task_graded';
+        return t === 'new_course' || t === 'new_task' || t === 'task_submission' || t === 'task_graded' ||
+               t === 'enrollment_approved' || t === 'collaborator_added' || t === 'enrollment_request';
     }
 
     _getCourseIdFromMetadata(metadata) {
@@ -219,7 +220,8 @@ export class NotificationDomainService {
         const normalizedType = String(type || '').toLowerCase();
         let courseId = this._getCourseIdFromMetadata(metadata);
 
-        if (!courseId && normalizedType === 'new_course') {
+        const typesWithCourseAsRelatedId = ['new_course', 'enrollment_approved', 'collaborator_added', 'enrollment_request'];
+        if (!courseId && typesWithCourseAsRelatedId.includes(normalizedType)) {
             const id = Number(relatedId);
             if (Number.isInteger(id) && id > 0) courseId = id;
         }
