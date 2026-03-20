@@ -126,23 +126,50 @@ export class SupabaseCourseRepository {
         // 3. Videos
         await this.client.from('videos').delete().eq('course_id', id);
 
-        // 4. Cascade through subjects → topics → tasks/content_items
+        // 4. Cascade through subjects → topics → tasks/content_items/rag_documents/question_sessions
         const { data: subjects } = await this.client.from('subjects').select('id').eq('course_id', id);
         if (subjects && subjects.length > 0) {
             const subjectIds = subjects.map(s => s.id);
-            const { data: topics } = await this.client.from('topics').select('id').in('materia_id', subjectIds);
+
+            // Topics linked by materia_id OR subject_id
+            const orFilter = subjectIds.map(sid => `materia_id.eq.${sid},subject_id.eq.${sid}`).join(',');
+            const { data: topics } = await this.client.from('topics').select('id').or(orFilter);
+
             if (topics && topics.length > 0) {
                 const topicIds = topics.map(t => t.id);
+
+                // RAG docs for topics
+                await this.client.from('rag_documents').delete().in('topic_id', topicIds);
+
                 const { data: tasks } = await this.client.from('tasks').select('id').in('topic_id', topicIds);
                 if (tasks && tasks.length > 0) {
                     const taskIds = tasks.map(t => t.id);
+
+                    // RAG docs for tasks
+                    await this.client.from('rag_documents').delete().in('task_id', taskIds);
+
+                    // Content items under tasks → rag docs → delete
+                    const { data: taskItems } = await this.client.from('content_items').select('id').in('task_id', taskIds);
+                    if (taskItems && taskItems.length > 0) {
+                        await this.client.from('rag_documents').delete().in('content_item_id', taskItems.map(i => i.id));
+                        await this.client.from('content_items').delete().in('task_id', taskIds);
+                    }
+
                     await this.client.from('task_submissions').delete().in('task_id', taskIds);
-                    await this.client.from('content_items').delete().in('task_id', taskIds);
+                    await this.client.from('question_sessions').delete().in('task_id', taskIds);
                     await this.client.from('tasks').delete().in('topic_id', topicIds);
                 }
-                await this.client.from('content_items').delete().in('topic_id', topicIds);
-                await this.client.from('topics').delete().in('materia_id', subjectIds);
+
+                // Content items directly on topics (no task)
+                const { data: topicItems } = await this.client.from('content_items').select('id').in('topic_id', topicIds);
+                if (topicItems && topicItems.length > 0) {
+                    await this.client.from('rag_documents').delete().in('content_item_id', topicItems.map(i => i.id));
+                    await this.client.from('content_items').delete().in('topic_id', topicIds);
+                }
+
+                await this.client.from('topics').delete().in('id', topicIds);
             }
+
             await this.client.from('subjects').delete().eq('course_id', id);
         }
 
