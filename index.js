@@ -10,6 +10,7 @@
 import './src/config/env.js';
 
 import { createApp, startServer } from './src/config/server.js';
+import { runStartupMigrations } from './src/shared/database/migrationRunner.js';
 
 // ═══════════════════════════════════════════════════════════
 // DIAGNÓSTICO DE ARRANQUE
@@ -34,6 +35,9 @@ console.log('══════════════════════�
 
 const { app, container } = createApp();
 const server = startServer(app, PORT);
+
+// Ejecutar migraciones DDL en background (no bloquea el arranque)
+runStartupMigrations().catch(() => {/* errores ya logueados en migrationRunner */});
 
 // ═══════════════════════════════════════════════════════════
 // GRACEFUL SHUTDOWN — Compatible con Railway/Docker

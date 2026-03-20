@@ -615,7 +615,22 @@ export class SupabaseProgressRepository {
             .upsert(payload, { onConflict: 'user_id,course_id' })
             .select()
             .single();
-        if (error) throw new Error(error.message);
+        if (error) {
+            // El trigger fn_check_certificate_ganado puede estar apuntando a la tabla
+            // renombrada 'progreso_estudiante' (ahora es 'progreso_curso').
+            // El backend ya validó estado='Ganado' arriba, así que este error es del trigger.
+            // Solución permanente: configura DATABASE_URL en Railway para que el startup
+            // migration lo corrija automáticamente, o ejecuta manualmente en Supabase:
+            //   scripts/fix_trigger_certificates_progreso_curso.sql
+            const triggerError = error.message?.includes('progreso_estudiante');
+            if (triggerError) {
+                throw new Error(
+                    'El trigger de la BD está desactualizado (referencia a tabla renombrada). ' +
+                    'Configura DATABASE_URL en Railway o ejecuta scripts/fix_trigger_certificates_progreso_curso.sql en Supabase.'
+                );
+            }
+            throw new Error(error.message);
+        }
 
         return this._mapToDomain(progressRow, cert);
     }
