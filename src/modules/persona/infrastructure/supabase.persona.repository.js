@@ -84,6 +84,36 @@ export class SupabasePersonaRepository {
         return true;
     }
 
+    async searchByIdentificacion(query, limit = 20) {
+        const digits = String(query || '').replace(/\D/g, '').trim();
+        if (!digits) return [];
+        const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+
+        const searches = [
+            // Partial match on text column
+            this.client.from('personas').select('*').ilike('identificacion_original', `%${digits}%`).limit(safeLimit),
+        ];
+        // Exact match on bigint column
+        const numericId = parseInt(digits, 10);
+        if (!isNaN(numericId) && numericId > 0) {
+            searches.push(this.client.from('personas').select('*').eq('identificacion', numericId).limit(safeLimit));
+        }
+
+        const results = await Promise.all(searches);
+        const seen = new Set();
+        const personas = [];
+        for (const { data } of results) {
+            for (const p of data || []) {
+                if (seen.has(p.id)) continue;
+                seen.add(p.id);
+                personas.push(p);
+                if (personas.length >= safeLimit) break;
+            }
+            if (personas.length >= safeLimit) break;
+        }
+        return personas;
+    }
+
     async count() {
         const { count, error } = await this.client.from('personas').select('id', { count: 'exact', head: true });
         return error ? 0 : count;

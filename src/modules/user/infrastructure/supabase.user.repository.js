@@ -305,6 +305,12 @@ export class SupabaseUserRepository {
         await this.client.from('user_fcm_tokens').delete().in('token', tokens);
     }
 
+    async removeFCMToken(userId, token) {
+        const normalizedToken = (token || '').trim();
+        if (!normalizedToken) return;
+        await this.client.from('user_fcm_tokens').delete().eq('user_id', userId).eq('token', normalizedToken);
+    }
+
     async findUserIdsByRoleId(roleId) {
         const { data, error } = await this.client
             .from('usuarios_roles')
