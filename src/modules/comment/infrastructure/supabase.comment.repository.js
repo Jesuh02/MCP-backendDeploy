@@ -2,13 +2,13 @@ export class SupabaseCommentRepository {
     constructor(client) { this.client = client; }
 
     async findById(id) {
-        const { data, error } = await this.client.from('video_comments').select('*').eq('id', id).single();
+        const { data, error } = await this.client.from('video_comments').select('*, usuarios!usuario_id(username)').eq('id', id).single();
         if (error || !data) return null;
         return this._mapToDomain(data);
     }
 
     async findByVideo(videoId, { offset = 0, limit = 50 } = {}) {
-        const { data, error } = await this.client.from('video_comments').select('*').eq('video_id', videoId).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        const { data, error } = await this.client.from('video_comments').select('*, usuarios!usuario_id(username)').eq('video_id', videoId).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return (data || []).map(row => this._mapToDomain(row));
     }
@@ -23,7 +23,7 @@ export class SupabaseCommentRepository {
         };
         // NOTE: 'username' column does not exist in video_comments table, so we don't insert it.
         
-        const { data, error } = await this.client.from('video_comments').insert(payload).select().single();
+        const { data, error } = await this.client.from('video_comments').insert(payload).select('*, usuarios!usuario_id(username)').single();
         if (error) throw new Error(error.message);
         return this._mapToDomain(data);
     }
@@ -32,7 +32,7 @@ export class SupabaseCommentRepository {
         const payload = {};
         if (updateData.content !== undefined) payload.comment = updateData.content; // Map content -> comment
         payload.updated_at = new Date().toISOString();
-        const { data, error } = await this.client.from('video_comments').update(payload).eq('id', id).select().single();
+        const { data, error } = await this.client.from('video_comments').update(payload).eq('id', id).select('*, usuarios!usuario_id(username)').single();
         if (error) throw new Error(error.message);
         return this._mapToDomain(data);
     }
@@ -51,7 +51,7 @@ export class SupabaseCommentRepository {
             likeCount: row.like_count || 0,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
-            username: row.username || null,
+            username: row.usuarios?.username || row.username || null,
             // snake_case aliases (for Android client @SerializedName compatibility)
             video_id: row.video_id,
             usuario_id: row.usuario_id,
