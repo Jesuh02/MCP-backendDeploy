@@ -258,7 +258,8 @@ export class ProgressDomainService {
             if (message.includes('no ha ganado el curso') || message.includes('estado actual')) {
                 return Result.fail(new ForbiddenError('Solo se pueden emitir certificados para progreso con estado Ganado'));
             }
-            throw error;
+            // Any other DB / constraint error — wrap instead of rethrowing to avoid 500
+            return Result.fail(new ForbiddenError(`No se pudo emitir el certificado: ${message}`));
         }
     }
 

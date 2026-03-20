@@ -256,15 +256,21 @@ export class SubmissionDomainService {
         return this.topicService.resolveCourseId(topicId);
     }
 
-    async grade(id, { grade, feedback }, graderId) {
+    async grade(id, { grade, feedback }, graderId, requesterRoles = []) {
         const sub = await this.subRepo.findById(id);
         if (!sub) return Result.fail(new NotFoundError('Entrega', id));
 
         if (graderId && this.collaboratorService) {
-            const courseId = await this._resolveCourseIdFromSubmission(sub);
-            if (courseId) {
-                const hasAccess = await this.collaboratorService.isCreatorOrCollaborator(graderId, courseId);
-                if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para calificar en este curso'));
+            const normalizedRoles = (requesterRoles || [])
+                .map(r => Number(r?.id ?? r))
+                .filter(r => Number.isInteger(r) && r > 0);
+            const isAdmin = normalizedRoles.includes(3);
+            if (!isAdmin) {
+                const courseId = await this._resolveCourseIdFromSubmission(sub);
+                if (courseId) {
+                    const hasAccess = await this.collaboratorService.isCreatorOrCollaborator(graderId, courseId);
+                    if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para calificar en este curso'));
+                }
             }
         }
 
