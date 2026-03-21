@@ -18,6 +18,7 @@ export class MCPDomainService {
             submissionRepository,
             notificationService,
             llmPort,
+            supabaseService,
         }) {
             this.userRepo = userRepository;
             this.courseRepo = courseRepository;
@@ -25,6 +26,7 @@ export class MCPDomainService {
             this.submissionRepo = submissionRepository;
             this.notificationService = notificationService;
             this.llm = llmPort;
+            this.supabase = supabaseService || null;
         }
         /**
          * Obtiene el schema de la base de datos.
@@ -32,18 +34,12 @@ export class MCPDomainService {
          */
     async getDatabaseSchema() {
         try {
-            // Return a structured schema description based on known entities
-            const schema = {
-                tables: [
-                    'users', 'courses', 'videos', 'topics', 'tasks',
-                    'content_items', 'task_submissions', 'subscriptions',
-                    'student_progress', 'likes', 'video_comments',
-                    'notifications', 'transactions', 'personas', 'roles',
-                    'user_roles', 'file_contexts', 'reinforcement_history',
-                    'fcm_tokens', 'rag_documents', 'rag_chunks',
-                ],
-            };
-            return Result.ok(schema);
+            if (this.supabase && typeof this.supabase.getDatabaseSchema === 'function') {
+                const ddl = await this.supabase.getDatabaseSchema();
+                return Result.ok(ddl);
+            }
+            // Fallback: ejecutar directamente la consulta information_schema
+            return Result.fail(new ValidationError('supabaseService no disponible para obtener el esquema'));
         } catch (err) {
             return Result.fail(new ValidationError(`Schema fetch falló: ${err.message}`));
         }
