@@ -1,6 +1,7 @@
 import { createSubjectSchema, updateSubjectSchema } from './subject.schemas.js';
 import { ValidationError } from '../../shared/errors/index.js';
 import { parsePagination, buildPaginatedResponse } from '../../shared/pagination.js';
+import { getIO } from '../../config/socketServer.js';
 
 export class SubjectController {
     constructor({ subjectService }) {
@@ -41,7 +42,10 @@ export class SubjectController {
             if (error) return next(ValidationError.fromJoi(error));
             const result = await this.subjectService.create(value, req.user?.userId);
             if (result.isFail()) return next(result.getError());
-            res.status(201).json({ success: true, data: result.getValue() });
+            const subject = result.getValue();
+            const courseId = subject.course_id ?? value.courseId;
+            if (courseId) getIO()?.to(`course:${courseId}`).emit('subject:created', subject);
+            res.status(201).json({ success: true, data: subject });
         } catch (err) { next(err); }
     };
 
@@ -51,14 +55,19 @@ export class SubjectController {
             if (error) return next(ValidationError.fromJoi(error));
             const result = await this.subjectService.update(parseInt(req.params.id), value, req.user?.userId);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const subject = result.getValue();
+            if (subject?.course_id) getIO()?.to(`course:${subject.course_id}`).emit('subject:updated', subject);
+            res.json({ success: true, data: subject });
         } catch (err) { next(err); }
     };
 
     delete = async (req, res, next) => {
         try {
-            const result = await this.subjectService.delete(parseInt(req.params.id), req.user?.userId);
+            const subjectId = parseInt(req.params.id);
+            const result = await this.subjectService.delete(subjectId, req.user?.userId);
             if (result.isFail()) return next(result.getError());
+            const { courseId } = result.getValue();
+            if (courseId) getIO()?.to(`course:${courseId}`).emit('subject:deleted', { id: subjectId, courseId });
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };

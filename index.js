@@ -11,6 +11,7 @@ import './src/config/env.js';
 
 import { createApp, startServer } from './src/config/server.js';
 import { runStartupMigrations } from './src/shared/database/migrationRunner.js';
+import { initSocketServer } from './src/config/socketServer.js';
 
 // ═══════════════════════════════════════════════════════════
 // DIAGNÓSTICO DE ARRANQUE
@@ -35,6 +36,7 @@ console.log('══════════════════════�
 
 const { app, container } = createApp();
 const server = startServer(app, PORT);
+initSocketServer(server);
 
 // Ejecutar migraciones DDL en background (no bloquea el arranque)
 runStartupMigrations().catch(() => {/* errores ya logueados en migrationRunner */});

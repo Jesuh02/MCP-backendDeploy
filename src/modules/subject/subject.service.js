@@ -134,7 +134,7 @@ export class SubjectDomainService {
         }
         await this.subjectRepo.delete(id);
         this._invalidateSubject(id, subject.course_id);
-        return Result.ok({ message: 'Materia eliminada' });
+        return Result.ok({ message: 'Materia eliminada', courseId: subject.course_id });
     }
 }
 export default SubjectDomainService;
