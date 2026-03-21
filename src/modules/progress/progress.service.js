@@ -835,6 +835,15 @@ export class ProgressDomainService {
     }
 
     /**
+     * Admin: get all active subject access blocks across all users.
+     * Returns array of { userId, courseId, subjectId } for pre-populating UI state.
+     */
+    async getAllSubjectAccessBlocks() {
+        const blocks = await this.progressRepo.findAllSubjectAccessBlocks();
+        return Result.ok(blocks || []);
+    }
+
+    /**
      * Check if student has an approved enrollment in a course.
      */
     async isEnrolledAndApproved(userId, courseId) {
