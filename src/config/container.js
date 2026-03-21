@@ -335,6 +335,7 @@ export function createContainer() {
         submissionRepository: submissionRepo,
         notificationService,
         llmPort: llmAdapter,
+        supabaseService: supabase,
     });
 
     // MCPService legacy (singleton interno) — se inyecta en ExcelDomainService
