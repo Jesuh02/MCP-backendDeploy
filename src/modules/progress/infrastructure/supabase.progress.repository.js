@@ -1081,15 +1081,20 @@ export class SupabaseProgressRepository {
     // ═══════════════════════════════════════════════════════════════
 
     async blockSubjectAccess(userId, courseId, subjectId, reason, blockedBy = null) {
+        const now = new Date().toISOString();
+        // course_id omitted: it is a transitive dependency (subject_id → subjects.course_id)
         const { data, error } = await this.client
             .from('subject_access_blocks')
             .upsert({
                 user_id: userId,
-                course_id: courseId,
                 subject_id: subjectId,
                 reason,
-                blocked_at: new Date().toISOString(),
-                ...(blockedBy ? { blocked_by: blockedBy } : {}),
+                is_active: true,
+                blocked_at: now,
+                updated_at: now,
+                unblocked_at: null,
+                unblocked_by: null,
+                ...(blockedBy ? { blocked_by: blockedBy, updated_by: blockedBy } : {}),
             }, { onConflict: 'user_id,subject_id' })
             .select()
             .single();
@@ -1097,10 +1102,17 @@ export class SupabaseProgressRepository {
         return data;
     }
 
-    async unblockSubjectAccess(userId, subjectId) {
+    async unblockSubjectAccess(userId, subjectId, unblockedBy = null) {
+        const now = new Date().toISOString();
+        // Soft-delete: mark as inactive and record unblock audit fields
         const { error } = await this.client
             .from('subject_access_blocks')
-            .delete()
+            .update({
+                is_active: false,
+                unblocked_at: now,
+                updated_at: now,
+                ...(unblockedBy ? { unblocked_by: unblockedBy, updated_by: unblockedBy } : {}),
+            })
             .eq('user_id', userId)
             .eq('subject_id', subjectId);
         if (error) throw new Error(error.message);
@@ -1113,17 +1125,20 @@ export class SupabaseProgressRepository {
             .select('*')
             .eq('user_id', userId)
             .eq('subject_id', subjectId)
+            .eq('is_active', true)
             .maybeSingle();
         if (error || !data) return null;
         return data;
     }
 
     async findSubjectAccessBlocksByUserAndCourse(userId, courseId) {
+        // Query the compatibility view which exposes course_id via JOIN with subjects
         const { data, error } = await this.client
-            .from('subject_access_blocks')
+            .from('v_subject_access_blocks')
             .select('*')
             .eq('user_id', userId)
-            .eq('course_id', courseId);
+            .eq('course_id', courseId)
+            .eq('is_active', true);
         if (error || !data) return [];
         return data;
     }
