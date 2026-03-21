@@ -296,13 +296,14 @@ export class ProgressDomainService {
     async bulkIssueCertificatesForCreator(creatorUserId) {
         const rows = await this.progressRepo.findWonProgressByCreatorCourses(creatorUserId);
         const won = rows.filter(r => this._isProgressWon(r));
-        // Include: certs not yet issued AND already-issued certs missing a URL (repair)
-        const pending = won.filter(r => !r.certificateIssuedAt || !r.certificateUrl);
+        // Include: certs not yet issued AND already-issued certs missing a stored URL (repair)
+        // Uses certificateStoredUrl (raw DB value) so computed URLs don't mask missing storage_path
+        const pending = won.filter(r => !r.certificateIssuedAt || !r.certificateStoredUrl);
         if (pending.length === 0) return Result.ok({ issued: 0 });
         const pairs = pending.map(r => ({
             userId:              r.userId,
             courseId:            r.courseId,
-            certificateUrl:      r.certificateUrl || null,
+            certificateUrl:      r.certificateStoredUrl || null,
             certificateIssuedAt: r.certificateIssuedAt || null,
         }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);
@@ -318,13 +319,14 @@ export class ProgressDomainService {
     async bulkIssueCertificatesGlobal() {
         const rows = await this.progressRepo.findAllWonProgress();
         const won = rows.filter(r => this._isProgressWon(r));
-        // Include: certs not yet issued AND already-issued certs missing a URL (repair)
-        const pending = won.filter(r => !r.certificateIssuedAt || !r.certificateUrl);
+        // Include: certs not yet issued AND already-issued certs missing a stored URL (repair)
+        // Uses certificateStoredUrl (raw DB value) so computed URLs don't mask missing storage_path
+        const pending = won.filter(r => !r.certificateIssuedAt || !r.certificateStoredUrl);
         if (pending.length === 0) return Result.ok({ issued: 0 });
         const pairs = pending.map(r => ({
             userId:              r.userId,
             courseId:            r.courseId,
-            certificateUrl:      r.certificateUrl || null,
+            certificateUrl:      r.certificateStoredUrl || null,
             certificateIssuedAt: r.certificateIssuedAt || null,
         }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);

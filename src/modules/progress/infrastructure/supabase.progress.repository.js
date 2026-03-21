@@ -685,9 +685,10 @@ export class SupabaseProgressRepository {
         const courseIds = [...new Set(pairs.map(p => p.courseId))];
         const userIds   = [...new Set(pairs.map(p => p.userId))];
 
+        // ── 1. Verify 'Ganado' status and fetch progress data for URL building ──
         const { data: wonRows, error: wonError } = await this.client
             .from(SupabaseProgressRepository.COURSE_PROGRESS_TABLE)
-            .select('usuario_estudiante, curso_id')
+            .select('usuario_estudiante, curso_id, promedio, calificacion_ponderada, tareas_completadas, tareas_totales, porcentaje_progreso')
             .in('curso_id', courseIds)
             .in('usuario_estudiante', userIds)
             .eq('estado', 'Ganado');
@@ -695,20 +696,82 @@ export class SupabaseProgressRepository {
         if (wonError) throw new Error(wonError.message);
 
         const wonSet = new Set((wonRows || []).map(r => `${r.usuario_estudiante}-${r.curso_id}`));
+        const progressByKey = new Map((wonRows || []).map(r => [`${r.usuario_estudiante}-${r.curso_id}`, r]));
         const eligiblePairs = pairs.filter(({ userId, courseId }) => wonSet.has(`${userId}-${courseId}`));
 
         if (!eligiblePairs.length) return [];
 
+        // ── 2. Batch-fetch supporting data for URL generation ──
+        const [existingCertsMap, usersById, coursesRaw] = await Promise.all([
+            this._fetchCertificatesMap(courseIds, userIds),
+            (async () => {
+                const { data: users } = await this.client
+                    .from('usuarios').select('id, username').in('id', userIds);
+                return new Map((users || []).map(u => [u.id, u]));
+            })(),
+            (async () => {
+                const { data: courses } = await this.client
+                    .from('courses').select('id, title, creator_user_id').in('id', courseIds);
+                return courses || [];
+            })(),
+        ]);
+
+        const coursesById = new Map(coursesRaw.map(c => [c.id, c]));
+        const creatorIds = [...new Set(coursesRaw.map(c => c.creator_user_id).filter(Boolean))];
+        let creatorsById = new Map();
+        if (creatorIds.length > 0) {
+            const { data: creators } = await this.client
+                .from('usuarios').select('id, username').in('id', creatorIds);
+            creatorsById = new Map((creators || []).map(u => [u.id, u]));
+        }
+
+        // ── 3. Upsert each eligible certificate with generated URL ──
         const now = new Date().toISOString();
         const results = [];
         for (const { userId, courseId, certificateUrl, certificateIssuedAt } of eligiblePairs) {
+            const key          = `${userId}-${courseId}`;
+            const existingCert = existingCertsMap.get(key);
+            const progressRow  = progressByKey.get(key) || {};
+            const user         = usersById.get(userId)    || {};
+            const course       = coursesById.get(courseId) || {};
+            const creator      = creatorsById.get(course.creator_user_id) || {};
+
+            // Preserve existing verification_code or generate a new one
+            const verificationCode = existingCert?.verification_code
+                || `CERT-${userId}-${courseId}-${Date.now().toString(36).toUpperCase()}`;
+
+            const issuedAt = certificateIssuedAt || existingCert?.issued_at || now;
+
+            // Build URL: use passed certificateUrl, then existing stored path, then generate fresh
+            let storagePath = certificateUrl || existingCert?.storage_path || null;
+            if (!storagePath) {
+                storagePath = this._buildSyntheticCertificateUrl({
+                    studentName:        user.username || null,
+                    courseName:         course.title  || null,
+                    grade:              progressRow.promedio ?? progressRow.calificacion_ponderada ?? null,
+                    tasksCompleted:     progressRow.tareas_completadas  || 0,
+                    totalTasks:         progressRow.tareas_totales      || 0,
+                    progressPercentage: progressRow.porcentaje_progreso || 0,
+                    instructorName:     creator.username || null,
+                    instructorUsername: creator.username || null,
+                    userId,
+                    courseId,
+                    verificationCode,
+                    issuedAt,
+                });
+            }
+
             const upsertData = {
-                user_id:   userId,
-                course_id: courseId,
-                // Preserve original issued_at when repairing an already-issued cert
-                issued_at: certificateIssuedAt || now,
+                user_id:           userId,
+                course_id:         courseId,
+                issued_at:         issuedAt,
+                verification_code: verificationCode,
+                status:            'valid',
+                issued_to_name:    user.username  || null,
+                course_name:       course.title   || null,
             };
-            if (certificateUrl) upsertData.storage_path = certificateUrl;
+            if (storagePath) upsertData.storage_path = storagePath;
+
             const { data, error } = await this.client
                 .from('certificates')
                 .upsert(
@@ -868,6 +931,7 @@ export class SupabaseProgressRepository {
                     courseId: row.curso_id,
                     verificationCode: cert?.verification_code || null,
                 }),
+                certificateStoredUrl: cert?.storage_path || null,
                 certificateIssuedAt: cert?.issued_at || null,
                 status:             row.estado,
                 averageGrade:       row.promedio ?? row.calificacion_ponderada ?? null,
@@ -939,6 +1003,7 @@ export class SupabaseProgressRepository {
                     courseId: row.curso_id,
                     verificationCode: cert?.verification_code || null,
                 }),
+                certificateStoredUrl: cert?.storage_path || null,
                 certificateIssuedAt: cert?.issued_at || null,
                 status:             row.estado,
                 averageGrade:       row.promedio ?? row.calificacion_ponderada ?? null,
