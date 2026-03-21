@@ -1,9 +1,25 @@
 export class SupabaseProgressRepository {
     constructor(client) { this.client = client; }
 
+    static COURSE_PROGRESS_TABLE = 'progreso_curso';
+    static SUBJECT_PROGRESS_TABLE = 'progreso_materia';
+    static CERTIFICATE_WEB_BASE_URL = process.env.CERTIFICATE_WEB_BASE_URL || 'https://v0-eo-jesuh02s-projects.vercel.app';
+
     // ═══════════════════════════════════════════════════════════════
     //  HELPERS PRIVADOS
     // ═══════════════════════════════════════════════════════════════
+
+    _courseProgressTable() {
+        return SupabaseProgressRepository.COURSE_PROGRESS_TABLE;
+    }
+
+    _subjectProgressTable() {
+        return SupabaseProgressRepository.SUBJECT_PROGRESS_TABLE;
+    }
+
+    _isSubjectLevel(subjectId) {
+        return Number(subjectId) > 0;
+    }
 
     /** Busca el certificado de un (user, course). Retorna null si no existe. */
     async _findCertificate(userId, courseId) {
@@ -35,22 +51,82 @@ export class SupabaseProgressRepository {
         return map;
     }
 
-    /**
-     * Mapea una fila de `progreso_estudiante` al objeto de dominio.
-     * cert es una fila de `certificates` (opcional, solo para nivel-curso).
-     */
+    _formatCertificateDate(dateLike) {
+        const date = dateLike ? new Date(dateLike) : new Date();
+        if (Number.isNaN(date.getTime())) return null;
+        const day = String(date.getUTCDate()).padStart(2, '0');
+        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+        const year = String(date.getUTCFullYear());
+        return `${day}/${month}/${year}`;
+    }
+
+    _buildSyntheticCertificateUrl({
+        studentName,
+        courseName,
+        grade,
+        tasksCompleted,
+        totalTasks,
+        progressPercentage,
+        instructorName,
+        instructorUsername,
+        userId,
+        courseId,
+        verificationCode,
+        issuedAt,
+    }) {
+        const safeStudentName = String(studentName || `Usuario ${userId}`).trim();
+        const safeCourseName = String(courseName || `Curso ${courseId}`).trim();
+        const safeInstructorUsername = String(instructorUsername || 'coursev').trim().replace(/^@+/, '');
+        const safeInstructorName = String(instructorName || safeInstructorUsername || 'CourseV').trim();
+        const safeGrade = Number.isFinite(Number(grade)) ? Number(grade) : 0;
+        const safeTasksCompleted = Number.isFinite(Number(tasksCompleted)) ? Number(tasksCompleted) : 0;
+        const safeTotalTasks = Number.isFinite(Number(totalTasks)) ? Number(totalTasks) : 0;
+        const safeProgress = Number.isFinite(Number(progressPercentage)) ? Number(progressPercentage) : 0;
+        const certId = String(verificationCode || `CERT-${courseId}-${userId}`).trim();
+        const date = this._formatCertificateDate(issuedAt) || this._formatCertificateDate(new Date().toISOString());
+
+        const params = new URLSearchParams({
+            studentName: safeStudentName,
+            courseName: safeCourseName,
+            grade: safeGrade.toFixed(1),
+            tasksCompleted: String(safeTasksCompleted),
+            totalTasks: String(safeTotalTasks),
+            progress: String(Math.round(safeProgress)),
+            instructorName: safeInstructorName,
+            instructorUsername: safeInstructorUsername,
+            userId: String(userId),
+            courseId: String(courseId),
+            certId,
+            date: date || '',
+        });
+
+        return `${SupabaseProgressRepository.CERTIFICATE_WEB_BASE_URL}?${params.toString()}`;
+    }
+
+    _resolveCertificateAccessUrl(cert, fallbackData = null) {
+        const storedPath = String(cert?.storage_path || '').trim();
+        if (storedPath) return storedPath;
+        if (!cert?.issued_at || !fallbackData) return null;
+        return this._buildSyntheticCertificateUrl({
+            ...fallbackData,
+            verificationCode: cert?.verification_code || fallbackData?.verificationCode || null,
+            issuedAt: cert?.issued_at,
+        });
+    }
+
+    /** Mapea una fila de progreso al objeto de dominio. */
     _mapToDomain(row, cert = null) {
         if (!row) return null;
         return {
             userId: row.usuario_estudiante,
             courseId: row.curso_id,
-            subjectId: row.materia_id ?? null,   // null = nivel-curso
+            subjectId: row.materia_id ?? null,
             completedTasks: row.tareas_completadas,
             totalTasks: row.tareas_totales,
             averageGrade: row.promedio ?? row.calificacion_ponderada ?? null,
             progressPercentage: row.porcentaje_progreso,
             status: row.estado,
-            enrollment_status: 'activo',
+            enrollment_status: row.enrollment_status ?? 'activo',
             lastActivityAt: row.ultima_calculada_en,
             certificateIssuedAt: cert?.issued_at || null,
             certificateUrl: cert?.storage_path || null,
@@ -58,16 +134,15 @@ export class SupabaseProgressRepository {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    //  PROGRESO DEL CURSO  (materia_id IS NULL)
+    //  PROGRESO DEL CURSO
     // ═══════════════════════════════════════════════════════════════
 
     async findByUserAndCourse(userId, courseId) {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('*')
             .eq('usuario_estudiante', userId)
             .eq('curso_id', courseId)
-            .is('materia_id', null)
             .single();
         if (error || !data) return null;
         const cert = await this._findCertificate(userId, courseId);
@@ -76,10 +151,9 @@ export class SupabaseProgressRepository {
 
     async findByUser(userId) {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('*')
             .eq('usuario_estudiante', userId)
-            .is('materia_id', null)
             .order('ultima_calculada_en', { ascending: false });
         if (error || !data?.length) return [];
         const courseIds = data.map(r => r.curso_id);
@@ -89,10 +163,9 @@ export class SupabaseProgressRepository {
 
     async findByCourse(courseId) {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('*')
-            .eq('curso_id', courseId)
-            .is('materia_id', null);
+            .eq('curso_id', courseId);
         if (error || !data?.length) return [];
         const userIds = data.map(r => r.usuario_estudiante);
         const certsMap = await this._fetchCertificatesMap([courseId], userIds);
@@ -102,10 +175,9 @@ export class SupabaseProgressRepository {
     async findByCourseIds(courseIds = []) {
         if (!Array.isArray(courseIds) || courseIds.length === 0) return [];
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('*')
-            .in('curso_id', courseIds)
-            .is('materia_id', null);
+            .in('curso_id', courseIds);
         if (error || !data?.length) return [];
         const certsMap = await this._fetchCertificatesMap(courseIds);
         return data.map(r => this._mapToDomain(r, certsMap.get(`${r.usuario_estudiante}-${r.curso_id}`)));
@@ -113,9 +185,8 @@ export class SupabaseProgressRepository {
 
     async findCourseEnrollmentRanking() {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('curso_id, usuario_estudiante')
-            .is('materia_id', null)
             .not('curso_id', 'is', null)
             .not('usuario_estudiante', 'is', null);
         if (error || !data) return [];
@@ -142,26 +213,30 @@ export class SupabaseProgressRepository {
         if (!progressData.courseId) throw new Error('courseId is required for progress upsert');
         if (!progressData.userId) throw new Error('userId is required for progress upsert');
 
-        const isSubjectLevel = progressData.subjectId && Number(progressData.subjectId) > 0;
+        const isSubjectLevel = this._isSubjectLevel(progressData.subjectId);
         const averageGrade = progressData.averageGrade ?? 0;
+        const tableName = isSubjectLevel ? this._subjectProgressTable() : this._courseProgressTable();
 
         const payload = {
             usuario_estudiante:  progressData.userId,
             curso_id:            progressData.courseId,
-            materia_id:          isSubjectLevel ? Number(progressData.subjectId) : null,
             tareas_completadas:  progressData.completedTasks  || 0,
             tareas_totales:      progressData.totalTasks       || 0,
             promedio:            averageGrade,
             calificacion_ponderada: averageGrade,
             porcentaje_progreso: progressData.progressPercentage || 0,
-            // estado es GENERATED ALWAYS en la BD — no incluir en el payload
             ultima_calculada_en: new Date().toISOString(),
+            ...(isSubjectLevel ? { materia_id: Number(progressData.subjectId) } : {}),
+            ...(!isSubjectLevel && progressData.enrollment_status ? { enrollment_status: progressData.enrollment_status } : {}),
         };
 
-        // uq_progreso_unique es NULLS NOT DISTINCT → funciona con materia_id=null
         const { data, error } = await this.client
-            .from('progreso_estudiante')
-            .upsert(payload, { onConflict: 'usuario_estudiante,curso_id,materia_id' })
+            .from(tableName)
+            .upsert(payload, {
+                onConflict: isSubjectLevel
+                    ? 'usuario_estudiante,curso_id,materia_id'
+                    : 'usuario_estudiante,curso_id',
+            })
             .select()
             .single();
         if (error) throw new Error(error.message);
@@ -173,16 +248,13 @@ export class SupabaseProgressRepository {
     }
 
     async delete(userId, courseId, subjectId = null) {
+        const isSubjectLevel = this._isSubjectLevel(subjectId);
         let query = this.client
-            .from('progreso_estudiante')
+            .from(isSubjectLevel ? this._subjectProgressTable() : this._courseProgressTable())
             .delete()
             .eq('usuario_estudiante', userId)
             .eq('curso_id', courseId);
-        if (subjectId && Number(subjectId) > 0) {
-            query = query.eq('materia_id', subjectId);
-        } else {
-            query = query.is('materia_id', null);
-        }
+        if (isSubjectLevel) query = query.eq('materia_id', Number(subjectId));
         const { error } = await query;
         if (error) throw new Error(error.message);
         return true;
@@ -190,10 +262,9 @@ export class SupabaseProgressRepository {
 
     async getLeaderboard(courseId, limit = 10) {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('*')
             .eq('curso_id', courseId)
-            .is('materia_id', null)
             .order('porcentaje_progreso', { ascending: false })
             .limit(limit);
         if (error || !data?.length) return [];
@@ -204,19 +275,17 @@ export class SupabaseProgressRepository {
 
     async countByCourse(courseId) {
         const { count, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('id', { count: 'exact', head: true })
-            .eq('curso_id', courseId)
-            .is('materia_id', null);
+            .eq('curso_id', courseId);
         return error ? 0 : count;
     }
 
     async findEnrolledCourseIds(userId) {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('curso_id')
-            .eq('usuario_estudiante', userId)
-            .is('materia_id', null);
+            .eq('usuario_estudiante', userId);
         if (error || !data) return [];
         return data.map(p => p.curso_id);
     }
@@ -236,29 +305,26 @@ export class SupabaseProgressRepository {
 
     async isEnrolled(userId, courseId) {
         const { count, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('id', { count: 'exact', head: true })
             .eq('usuario_estudiante', userId)
-            .eq('curso_id', courseId)
-            .is('materia_id', null);
+            .eq('curso_id', courseId);
         return !error && count > 0;
     }
 
     async countEnrolled(userId) {
         const { count, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('id', { count: 'exact', head: true })
-            .eq('usuario_estudiante', userId)
-            .is('materia_id', null);
+            .eq('usuario_estudiante', userId);
         return error ? 0 : count;
     }
 
     async findEnrolledCourseIdsPaginated(userId, { offset = 0, limit = 20 } = {}) {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('curso_id')
             .eq('usuario_estudiante', userId)
-            .is('materia_id', null)
             .order('ultima_calculada_en', { ascending: false })
             .range(offset, offset + limit - 1);
         if (error) return [];
@@ -268,10 +334,9 @@ export class SupabaseProgressRepository {
     async findWonProgressByCourseIds(courseIds) {
         if (!Array.isArray(courseIds) || courseIds.length === 0) return [];
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('usuario_estudiante, curso_id, promedio, calificacion_ponderada')
             .in('curso_id', courseIds)
-            .is('materia_id', null)
             .eq('estado', 'Ganado')
             .not('usuario_estudiante', 'is', null);
         if (error) {
@@ -286,16 +351,15 @@ export class SupabaseProgressRepository {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    //  PROGRESO POR MATERIA  (materia_id IS NOT NULL)
+    //  PROGRESO POR MATERIA
     // ═══════════════════════════════════════════════════════════════
 
     async findSubjectProgressByUserAndCourse(userId, courseId) {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._subjectProgressTable())
             .select('*')
             .eq('usuario_estudiante', userId)
             .eq('curso_id', courseId)
-            .not('materia_id', 'is', null)
             .order('materia_id');
         if (error || !data) return [];
         return data.map(r => this._mapToDomain(r));
@@ -303,13 +367,123 @@ export class SupabaseProgressRepository {
 
     async findByUserAndSubject(userId, subjectId) {
         const { data, error } = await this.client
-            .from('progreso_estudiante')
+            .from(this._subjectProgressTable())
             .select('*')
             .eq('usuario_estudiante', userId)
             .eq('materia_id', subjectId)
             .single();
         if (error || !data) return null;
         return this._mapToDomain(data);
+    }
+
+    /**
+     * Admin: devuelve TODO el progreso por materia, enriquecido con info del usuario,
+     * persona (identificacion), nombre del curso y nombre de la materia.
+     * Si se pasa `creatorUserId`, filtra solo los cursos de ese creador.
+     */
+    async findAllSubjectProgressForAdmin(creatorUserId = null) {
+        // 1. Base query
+        let query = this.client
+            .from(this._subjectProgressTable())
+            .select('usuario_estudiante, curso_id, materia_id, tareas_completadas, tareas_totales, promedio, calificacion_ponderada, porcentaje_progreso, ultima_calculada_en')
+            .order('curso_id')
+            .order('materia_id')
+            .order('usuario_estudiante');
+
+        const { data: rows, error } = await query;
+        if (error || !rows?.length) return [];
+
+        // 2. Si hay filtro por creador, obtener sus cursos
+        let allowedCourseIds = null;
+        if (creatorUserId) {
+            const { data: creatorCourses } = await this.client
+                .from('courses')
+                .select('id')
+                .eq('creator_user_id', creatorUserId);
+            allowedCourseIds = new Set((creatorCourses || []).map(c => Number(c.id)));
+            if (allowedCourseIds.size === 0) return [];
+        }
+
+        const filtered = allowedCourseIds
+            ? rows.filter(r => allowedCourseIds.has(Number(r.curso_id)))
+            : rows;
+        if (!filtered.length) return [];
+
+        // 3. Cargar dimensiones en paralelo
+        const courseIds   = [...new Set(filtered.map(r => r.curso_id))];
+        const subjectIds  = [...new Set(filtered.map(r => r.materia_id).filter(Boolean))];
+        const userIds     = [...new Set(filtered.map(r => r.usuario_estudiante))];
+
+        const [coursesRes, subjectsRes, usersRes, personasRes] = await Promise.all([
+            courseIds.length
+                ? this.client.from('courses').select('id, title').in('id', courseIds)
+                : Promise.resolve({ data: [] }),
+            subjectIds.length
+                ? this.client.from('subjects').select('id, name').in('id', subjectIds)
+                : Promise.resolve({ data: [] }),
+            userIds.length
+                ? this.client.from('usuarios').select('id, username, avatar').in('id', userIds)
+                : Promise.resolve({ data: [] }),
+            userIds.length
+                ? this.client
+                    .from('personas')
+                    .select('id, nombres, apellidos, identificacion, identificacion_original')
+                    .in('id',
+                        // personas.id == usuario.persona_id — join via usuarios
+                        await this.client
+                            .from('usuarios')
+                            .select('persona_id')
+                            .in('id', userIds)
+                            .then(({ data: u }) => (u || []).map(x => x.persona_id).filter(Boolean))
+                    )
+                : Promise.resolve({ data: [] }),
+        ]);
+
+        const coursesById  = new Map((coursesRes.data  || []).map(c => [Number(c.id), c]));
+        const subjectsById = new Map((subjectsRes.data || []).map(s => [Number(s.id), s]));
+        const usersById    = new Map((usersRes.data    || []).map(u => [Number(u.id), u]));
+
+        // Build persona lookup keyed by usuario.id after fetching persona_id mapping
+        const { data: userPersonaRows } = await this.client
+            .from('usuarios')
+            .select('id, persona_id')
+            .in('id', userIds);
+        const personaIdByUserId = new Map((userPersonaRows || []).map(u => [Number(u.id), Number(u.persona_id)]));
+        const personasById = new Map((personasRes.data || []).map(p => [Number(p.id), p]));
+
+        return filtered.map(r => {
+            const userId    = Number(r.usuario_estudiante);
+            const courseId  = Number(r.curso_id);
+            const subjectId = r.materia_id ? Number(r.materia_id) : null;
+
+            const user    = usersById.get(userId)    || {};
+            const course  = coursesById.get(courseId)  || {};
+            const subject = subjectId ? subjectsById.get(subjectId) || {} : {};
+
+            const personaId = personaIdByUserId.get(userId);
+            const persona   = personaId ? (personasById.get(personaId) || {}) : {};
+
+            const grade = r.promedio ?? r.calificacion_ponderada ?? null;
+            const pct   = Number(r.porcentaje_progreso) || 0;
+
+            return {
+                userId,
+                username:        user.username     || `Usuario ${userId}`,
+                avatar:          user.avatar        || null,
+                nombres:         persona.nombres    || null,
+                apellidos:       persona.apellidos  || null,
+                identificacion:  persona.identificacion?.toString() || persona.identificacion_original || null,
+                courseId,
+                courseName:      course.title       || `Curso ${courseId}`,
+                subjectId,
+                subjectName:     subject.name       || (subjectId ? `Materia ${subjectId}` : 'Sin materia'),
+                completedTasks:  Number(r.tareas_completadas) || 0,
+                totalTasks:      Number(r.tareas_totales)     || 0,
+                averageGrade:    grade !== null ? Number(grade) : null,
+                progressPercentage: pct,
+                lastActivityAt:  r.ultima_calculada_en || null,
+            };
+        });
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -330,11 +504,10 @@ export class SupabaseProgressRepository {
         let validCourseIds = new Set();
         if (courseIds.length > 0) {
             const { data: progressRows } = await this.client
-                .from('progreso_estudiante')
+                .from(this._courseProgressTable())
                 .select('curso_id')
                 .eq('usuario_estudiante', userId)
                 .in('curso_id', courseIds)
-                .is('materia_id', null)
                 .eq('estado', 'Ganado');
             for (const row of progressRows || []) {
                 validCourseIds.add(row.curso_id);
@@ -349,18 +522,51 @@ export class SupabaseProgressRepository {
         if (validIds.length > 0) {
             const { data: courses } = await this.client
                 .from('courses')
-                .select('id, title, thumbnail_uri')
+                .select('id, title, thumbnail_uri, creator_user_id')
                 .in('id', validIds);
             coursesById = new Map((courses || []).map(c => [c.id, c]));
         }
 
+        let studentUsername = null;
+        const { data: studentUser } = await this.client
+            .from('usuarios')
+            .select('id, username')
+            .eq('id', userId)
+            .maybeSingle();
+        studentUsername = studentUser?.username || null;
+
+        const creatorIds = [...new Set(validIds
+            .map(courseId => coursesById.get(courseId)?.creator_user_id)
+            .filter(Boolean))];
+        let creatorsById = new Map();
+        if (creatorIds.length > 0) {
+            const { data: creators } = await this.client
+                .from('usuarios')
+                .select('id, username')
+                .in('id', creatorIds);
+            creatorsById = new Map((creators || []).map(c => [c.id, c]));
+        }
+
         return validData.map(row => {
             const course = coursesById.get(row.course_id) || {};
+            const creator = creatorsById.get(course.creator_user_id) || {};
             return {
                 courseId:           row.course_id,
                 courseName:         course.title || null,
                 courseThumbnail:    course.thumbnail_uri || null,
-                certificateUrl:     row.storage_path,
+                certificateUrl:     this._resolveCertificateAccessUrl(row, {
+                    studentName: studentUsername,
+                    courseName: course.title,
+                    grade: null,
+                    tasksCompleted: 0,
+                    totalTasks: 0,
+                    progressPercentage: 100,
+                    instructorName: creator.username,
+                    instructorUsername: creator.username,
+                    userId,
+                    courseId: row.course_id,
+                    verificationCode: row.verification_code,
+                }),
                 certificateIssuedAt: row.issued_at,
                 verificationCode:   row.verification_code,
                 status:             'Ganado',
@@ -375,49 +581,71 @@ export class SupabaseProgressRepository {
      * Retorna el progreso del curso con la info del certificado adjunta.
      */
     async updateCertificate(userId, courseId, data) {
-        // Verificar que el estudiante haya ganado el curso antes de emitir
-        const { data: prog, error: progError } = await this.client
-            .from('progreso_estudiante')
+        const { data: progressRow, error: progError } = await this.client
+            .from(SupabaseProgressRepository.COURSE_PROGRESS_TABLE)
             .select('*')
             .eq('usuario_estudiante', userId)
             .eq('curso_id', courseId)
-            .is('materia_id', null)
-            .single();
+            .maybeSingle();
 
-        if (progError || !prog) {
+        if (progError || !progressRow) {
             throw new Error(`El estudiante ${userId} no tiene progreso registrado para el curso ${courseId}`);
         }
-        if (prog.estado !== 'Ganado') {
-            throw new Error(`No se puede emitir el certificado: el estudiante ${userId} no ha ganado el curso ${courseId} (estado actual: ${prog.estado})`);
+
+        if (String(progressRow?.estado || '').trim().toLowerCase() !== 'ganado') {
+            throw new Error(`No se puede emitir el certificado: el estudiante ${userId} no ha ganado el curso ${courseId} (estado actual: ${progressRow?.estado || 'desconocido'})`);
         }
 
         const payload = { user_id: userId, course_id: courseId };
         if (data.certificateIssuedAt) payload.issued_at    = data.certificateIssuedAt;
         if (data.certificateUrl)      payload.storage_path = data.certificateUrl;
 
+        // Preserve existing verification_code on re-issue; generate a new one on first issue
+        const { data: existingCert } = await this.client
+            .from('certificates')
+            .select('verification_code')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .maybeSingle();
+        payload.verification_code = existingCert?.verification_code
+            || `CERT-${userId}-${courseId}-${Date.now().toString(36).toUpperCase()}`;
+
         const { data: cert, error } = await this.client
             .from('certificates')
             .upsert(payload, { onConflict: 'user_id,course_id' })
             .select()
             .single();
-        if (error) throw new Error(error.message);
+        if (error) {
+            // El trigger fn_check_certificate_ganado puede estar apuntando a la tabla
+            // renombrada 'progreso_estudiante' (ahora es 'progreso_curso').
+            // El backend ya validó estado='Ganado' arriba, así que este error es del trigger.
+            // Solución permanente: configura DATABASE_URL en Railway para que el startup
+            // migration lo corrija automáticamente, o ejecuta manualmente en Supabase:
+            //   scripts/fix_trigger_certificates_progreso_curso.sql
+            const triggerError = error.message?.includes('progreso_estudiante');
+            if (triggerError) {
+                throw new Error(
+                    'El trigger de la BD está desactualizado (referencia a tabla renombrada). ' +
+                    'Configura DATABASE_URL en Railway o ejecuta scripts/fix_trigger_certificates_progreso_curso.sql en Supabase.'
+                );
+            }
+            throw new Error(error.message);
+        }
 
-        return this._mapToDomain(prog, cert);
+        return this._mapToDomain(progressRow, cert);
     }
 
     async bulkIssueCertificates(pairs) {
         if (!pairs?.length) return [];
 
-        // Filtrar solo los pares donde el progreso del curso es 'Ganado'
         const courseIds = [...new Set(pairs.map(p => p.courseId))];
         const userIds   = [...new Set(pairs.map(p => p.userId))];
 
         const { data: wonRows, error: wonError } = await this.client
-            .from('progreso_estudiante')
+            .from(SupabaseProgressRepository.COURSE_PROGRESS_TABLE)
             .select('usuario_estudiante, curso_id')
             .in('curso_id', courseIds)
             .in('usuario_estudiante', userIds)
-            .is('materia_id', null)
             .eq('estado', 'Ganado');
 
         if (wonError) throw new Error(wonError.message);
@@ -458,10 +686,9 @@ export class SupabaseProgressRepository {
 
         const courseIds = creatorCourses.map(c => c.id);
         const { data: progressRows, error: progressError } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('usuario_estudiante, promedio, calificacion_ponderada')
             .in('curso_id', courseIds)
-            .is('materia_id', null)
             .eq('estado', 'Ganado')
             .not('usuario_estudiante', 'is', null);
         if (progressError || !progressRows?.length) return [];
@@ -525,10 +752,9 @@ export class SupabaseProgressRepository {
 
         const courseIds = creatorCourses.map(c => c.id);
         const { data: progressRows, error: progressError } = await this.client
-            .from('progreso_estudiante')
+            .from(this._courseProgressTable())
             .select('creado_en, ultima_calculada_en')
-            .in('curso_id', courseIds)
-            .is('materia_id', null);
+            .in('curso_id', courseIds);
         if (progressError || !progressRows)
             return this._buildEmptyCreatorEnrollmentAnalytics(safeWeeklyDays, safeMonthlyMonths);
 
@@ -537,17 +763,16 @@ export class SupabaseProgressRepository {
 
     async findWonProgressByCreatorCourses(creatorUserId) {
         const { data: creatorCourses, error: coursesError } = await this.client
-            .from('courses').select('id, title, thumbnail_uri').eq('creator_user_id', creatorUserId);
+            .from('courses').select('id, title, thumbnail_uri, creator_user_id').eq('creator_user_id', creatorUserId);
         if (coursesError || !creatorCourses?.length) return [];
 
         const courseIds = creatorCourses.map(c => c.id);
         const coursesById = new Map(creatorCourses.map(c => [c.id, c]));
 
         const { data: rows, error } = await this.client
-            .from('progreso_estudiante')
-            .select('usuario_estudiante, curso_id, estado, promedio, calificacion_ponderada, tareas_completadas, tareas_totales, porcentaje_progreso')
+            .from(this._courseProgressTable())
+            .select('usuario_estudiante, curso_id, estado, promedio, calificacion_ponderada, tareas_completadas, tareas_totales, porcentaje_progreso, ultima_calculada_en, creado_en')
             .in('curso_id', courseIds)
-            .is('materia_id', null)
             .eq('estado', 'Ganado');
         if (error || !rows?.length) return [];
 
@@ -561,6 +786,12 @@ export class SupabaseProgressRepository {
             usersById = new Map((users || []).map(u => [u.id, u]));
         }
 
+        const { data: creatorUser } = await this.client
+            .from('usuarios')
+            .select('id, username')
+            .eq('id', creatorUserId)
+            .maybeSingle();
+
         return rows.map(row => {
             const course = coursesById.get(row.curso_id) || {};
             const user   = usersById.get(row.usuario_estudiante) || {};
@@ -572,7 +803,19 @@ export class SupabaseProgressRepository {
                 courseId:           row.curso_id,
                 courseName:         course.title || null,
                 courseThumbnail:    course.thumbnail_uri || null,
-                certificateUrl:     cert?.storage_path || null,
+                certificateUrl:     this._resolveCertificateAccessUrl(cert, {
+                    studentName: user.username,
+                    courseName: course.title,
+                    grade: row.promedio ?? row.calificacion_ponderada ?? null,
+                    tasksCompleted: row.tareas_completadas || 0,
+                    totalTasks: row.tareas_totales || 0,
+                    progressPercentage: row.porcentaje_progreso || 0,
+                    instructorName: creatorUser?.username,
+                    instructorUsername: creatorUser?.username,
+                    userId: row.usuario_estudiante,
+                    courseId: row.curso_id,
+                    verificationCode: cert?.verification_code || null,
+                }),
                 certificateIssuedAt: cert?.issued_at || null,
                 status:             row.estado,
                 averageGrade:       row.promedio ?? row.calificacion_ponderada ?? null,
@@ -585,9 +828,8 @@ export class SupabaseProgressRepository {
 
     async findAllWonProgress() {
         const { data: rows, error } = await this.client
-            .from('progreso_estudiante')
-            .select('usuario_estudiante, curso_id, estado, promedio, calificacion_ponderada, tareas_completadas, tareas_totales, porcentaje_progreso')
-            .is('materia_id', null)
+            .from(this._courseProgressTable())
+            .select('usuario_estudiante, curso_id, estado, promedio, calificacion_ponderada, tareas_completadas, tareas_totales, porcentaje_progreso, ultima_calculada_en, creado_en')
             .eq('estado', 'Ganado');
         if (error || !rows?.length) return [];
 
@@ -598,7 +840,7 @@ export class SupabaseProgressRepository {
         let coursesById = new Map();
         if (courseIds.length > 0) {
             const { data: courses } = await this.client
-                .from('courses').select('id, title, thumbnail_uri').in('id', courseIds);
+                .from('courses').select('id, title, thumbnail_uri, creator_user_id').in('id', courseIds);
             coursesById = new Map((courses || []).map(c => [c.id, c]));
         }
         let usersById = new Map();
@@ -608,10 +850,23 @@ export class SupabaseProgressRepository {
             usersById = new Map((users || []).map(u => [u.id, u]));
         }
 
+        const creatorIds = [...new Set((Array.from(coursesById.values()) || [])
+            .map(course => course?.creator_user_id)
+            .filter(Boolean))];
+        let creatorsById = new Map();
+        if (creatorIds.length > 0) {
+            const { data: creators } = await this.client
+                .from('usuarios')
+                .select('id, username')
+                .in('id', creatorIds);
+            creatorsById = new Map((creators || []).map(creator => [creator.id, creator]));
+        }
+
         return rows.map(row => {
             const course = coursesById.get(row.curso_id) || {};
             const user   = usersById.get(row.usuario_estudiante) || {};
             const cert   = certsMap.get(`${row.usuario_estudiante}-${row.curso_id}`);
+            const creator = creatorsById.get(course.creator_user_id) || {};
             return {
                 userId:             row.usuario_estudiante,
                 username:           user.username || null,
@@ -619,7 +874,19 @@ export class SupabaseProgressRepository {
                 courseId:           row.curso_id,
                 courseName:         course.title || null,
                 courseThumbnail:    course.thumbnail_uri || null,
-                certificateUrl:     cert?.storage_path || null,
+                certificateUrl:     this._resolveCertificateAccessUrl(cert, {
+                    studentName: user.username,
+                    courseName: course.title,
+                    grade: row.promedio ?? row.calificacion_ponderada ?? null,
+                    tasksCompleted: row.tareas_completadas || 0,
+                    totalTasks: row.tareas_totales || 0,
+                    progressPercentage: row.porcentaje_progreso || 0,
+                    instructorName: creator.username,
+                    instructorUsername: creator.username,
+                    userId: row.usuario_estudiante,
+                    courseId: row.curso_id,
+                    verificationCode: cert?.verification_code || null,
+                }),
                 certificateIssuedAt: cert?.issued_at || null,
                 status:             row.estado,
                 averageGrade:       row.promedio ?? row.calificacion_ponderada ?? null,
@@ -723,6 +990,201 @@ export class SupabaseProgressRepository {
             .single();
         if (error) throw new Error(error.message);
         return this._mapPreEnrollmentRecord(data);
+    }
+
+    async findApprovedEnrollments() {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .select('user_id, course_id, status, requested_at, reviewed_at')
+            .eq('status', 'approved')
+            .order('course_id', { ascending: true });
+        if (error || !data) return [];
+
+        const userIds   = [...new Set(data.map(r => Number(r.user_id)).filter(id => Number.isInteger(id) && id > 0))];
+        const courseIds = [...new Set(data.map(r => Number(r.course_id)).filter(id => Number.isInteger(id) && id > 0))];
+
+        let usersById    = new Map();
+        let personasById = new Map();
+        let coursesById  = new Map();
+        let subjectsByCourse = new Map();
+
+        if (userIds.length > 0) {
+            const { data: users } = await this.client
+                .from('usuarios').select('id, username, avatar, persona_id').in('id', userIds);
+            usersById = new Map((users || []).map(u => [Number(u.id), u]));
+
+            const personaIds = [...new Set((users || [])
+                .map(u => Number(u.persona_id)).filter(id => Number.isInteger(id) && id > 0))];
+            if (personaIds.length > 0) {
+                const { data: personas } = await this.client
+                    .from('personas').select('id, nombres, apellidos, identificacion').in('id', personaIds);
+                personasById = new Map((personas || []).map(p => [Number(p.id), p]));
+            }
+        }
+        if (courseIds.length > 0) {
+            const { data: courses } = await this.client
+                .from('courses').select('id, title').in('id', courseIds);
+            coursesById = new Map((courses || []).map(c => [Number(c.id), c]));
+
+            const { data: subjects } = await this.client
+                .from('subjects').select('id, name, course_id').in('course_id', courseIds);
+            for (const s of (subjects || [])) {
+                const cid = Number(s.course_id);
+                if (!subjectsByCourse.has(cid)) subjectsByCourse.set(cid, []);
+                subjectsByCourse.get(cid).push({ id: s.id, name: s.name });
+            }
+        }
+
+        // Fetch all active subject access blocks for the enrolled users
+        // Key: "userId-courseId" → Set of blocked subjectIds
+        const blockedByUserCourse = new Map();
+        if (userIds.length > 0) {
+            const { data: blocks } = await this.client
+                .from('v_subject_access_blocks')
+                .select('user_id, course_id, subject_id')
+                .in('user_id', userIds)
+                .eq('is_active', true);
+            for (const b of (blocks || [])) {
+                const key = `${Number(b.user_id)}-${Number(b.course_id)}`;
+                if (!blockedByUserCourse.has(key)) blockedByUserCourse.set(key, new Set());
+                blockedByUserCourse.get(key).add(Number(b.subject_id));
+            }
+        }
+
+        return data.map(row => {
+            const user    = usersById.get(Number(row.user_id)) || null;
+            const persona = user?.persona_id ? personasById.get(Number(user.persona_id)) || null : null;
+            const course  = coursesById.get(Number(row.course_id)) || null;
+            const uid     = Number(row.user_id);
+            const cid     = Number(row.course_id);
+            const blockedSet = blockedByUserCourse.get(`${uid}-${cid}`) || new Set();
+            return {
+                ...this._mapPreEnrollmentRecord(row, {
+                    username:       user?.username || null,
+                    avatar:         user?.avatar || null,
+                    fullName:       persona ? `${persona.nombres || ''} ${persona.apellidos || ''}`.trim() || null : null,
+                    identificacion: persona?.identificacion ?? null,
+                    courseName:     course?.title || null,
+                }),
+                subjects: subjectsByCourse.get(cid) || [],
+                blockedSubjectIds: [...blockedSet],
+            };
+        });
+    }
+
+    async deleteEnrollment(userId, courseId, reason = null, revokedBy = null) {
+        if (reason) {
+            await this.client
+                .from('pre_enrollments')
+                .update({
+                    status: 'revoked',
+                    revoke_reason: reason,
+                    reviewed_at: new Date().toISOString(),
+                    ...(revokedBy ? { reviewed_by: revokedBy } : {}),
+                })
+                .eq('user_id', userId)
+                .eq('course_id', courseId);
+        } else {
+            const { error } = await this.client
+                .from('pre_enrollments')
+                .delete()
+                .eq('user_id', userId)
+                .eq('course_id', courseId);
+            if (error) throw new Error(error.message);
+        }
+        return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  SUBJECT ACCESS BLOCKS (bloqueo de acceso por materia)
+    // ═══════════════════════════════════════════════════════════════
+
+    async blockSubjectAccess(userId, courseId, subjectId, reason, blockedBy = null) {
+        const now = new Date().toISOString();
+        // course_id omitted: it is a transitive dependency (subject_id → subjects.course_id)
+        const { data, error } = await this.client
+            .from('subject_access_blocks')
+            .upsert({
+                user_id: userId,
+                subject_id: subjectId,
+                reason,
+                is_active: true,
+                blocked_at: now,
+                updated_at: now,
+                unblocked_at: null,
+                unblocked_by: null,
+                ...(blockedBy ? { blocked_by: blockedBy, updated_by: blockedBy } : {}),
+            }, { onConflict: 'user_id,subject_id' })
+            .select()
+            .single();
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
+    async unblockSubjectAccess(userId, subjectId, unblockedBy = null) {
+        const now = new Date().toISOString();
+        // Soft-delete: mark as inactive and record unblock audit fields
+        const { error } = await this.client
+            .from('subject_access_blocks')
+            .update({
+                is_active: false,
+                unblocked_at: now,
+                updated_at: now,
+                ...(unblockedBy ? { unblocked_by: unblockedBy, updated_by: unblockedBy } : {}),
+            })
+            .eq('user_id', userId)
+            .eq('subject_id', subjectId);
+        if (error) throw new Error(error.message);
+        return true;
+    }
+
+    async findSubjectAccessBlock(userId, subjectId) {
+        const { data, error } = await this.client
+            .from('subject_access_blocks')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('subject_id', subjectId)
+            .eq('is_active', true)
+            .maybeSingle();
+        if (error || !data) return null;
+        return data;
+    }
+
+    async findSubjectAccessBlocksByUserAndCourse(userId, courseId) {
+        // Query the compatibility view which exposes course_id via JOIN with subjects
+        const { data, error } = await this.client
+            .from('v_subject_access_blocks')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .eq('is_active', true);
+        if (error || !data) return [];
+        return data;
+    }
+
+    async findAllSubjectAccessBlocks() {
+        const { data, error } = await this.client
+            .from('v_subject_access_blocks')
+            .select('user_id, course_id, subject_id')
+            .eq('is_active', true);
+        if (error || !data) return [];
+        return data.map(b => ({
+            userId: Number(b.user_id),
+            courseId: Number(b.course_id),
+            subjectId: Number(b.subject_id),
+        }));
+    }
+
+    async findRevokedEnrollment(userId, courseId) {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('course_id', courseId)
+            .eq('status', 'revoked')
+            .maybeSingle();
+        if (error || !data) return null;
+        return this._mapPreEnrollmentRecord(data, { revokeReason: data.revoke_reason });
     }
 
     _mapPreEnrollmentRecord(record, extras = {}) {

@@ -1,5 +1,6 @@
 import { Result } from '../../shared/Result.js';
 import { ForbiddenError, NotFoundError } from '../../shared/errors/index.js';
+import { generateGenericEmailHTML } from '../../templates/emailTemplates.js';
 
 /**
  * TaskDomainService — Servicio de dominio (casos de uso) para Tareas.
@@ -200,7 +201,10 @@ export class TaskDomainService {
         this._invalidateTaskCaches({ taskId: created?.id, topicId: data.topicId, subjectId, courseId });
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
-            await this.progressService.recalculateForCourse(courseId);
+            // Fire-and-forget: don't block the response
+            this.progressService.recalculateForCourse(courseId).catch(err =>
+                console.error('[TaskDomainService] Error recalculating progress after create:', err.message)
+            );
         }
 
         return Result.ok(created);
@@ -286,29 +290,38 @@ export class TaskDomainService {
         const cleanTaskTitle = String(task ?.title || 'Nueva actividad').trim();
         const cleanCourseTitle = String(course ?.title || 'Curso').trim();
 
-        const promises = enrolledUserIds.map(userId => {
-            if (Number.isInteger(currentUserId) && currentUserId > 0 && userId === currentUserId) return Promise.resolve();
-            return this.notificationService.sendNotification({
-                userId,
-                title: `Nueva tarea: ${cleanTaskTitle}`,
-                message: `${senderUsername} publico una tarea en ${cleanCourseTitle}`,
+        const title = `Nueva tarea: ${cleanTaskTitle}`;
+        const message = `${senderUsername} publico una tarea en ${cleanCourseTitle}`;
+        const thumbnailUrl = course.thumbnail_uri || course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl;
+        const metadata = JSON.stringify({
+            taskId: task.id,
+            courseId,
+            taskTitle: cleanTaskTitle,
+            courseTitle: cleanCourseTitle,
+            style: 'minimal',
+            type: 'new_task'
+        });
+        const html = generateGenericEmailHTML(title, message, 'new_task', senderUsername);
+
+        await Promise.all([
+            this.notificationService.sendBulk(enrolledUserIds, {
+                title,
+                message,
                 type: 'new_task',
                 relatedId: task.id,
                 senderUsername,
                 senderAvatarUrl,
-                thumbnailUrl: course.thumbnail_uri || course.thumbnail_url || course.thumbnailUri || course.thumbnailUrl,
-                metadata: JSON.stringify({
-                    taskId: task.id,
-                    courseId,
-                    taskTitle: cleanTaskTitle,
-                    courseTitle: cleanCourseTitle,
-                    style: 'minimal',
-                    type: 'new_task'
-                }),
+                thumbnailUrl,
+                metadata,
                 actorUserId: currentUserId
-            });
-        });
-        await Promise.all(promises);
+            }),
+            this.notificationService.sendEmailBulk(enrolledUserIds, {
+                subject: title,
+                html,
+                text: message,
+                actorUserId: currentUserId
+            })
+        ]);
     }
 
     _extractEnrollmentUserIds(enrollments = []) {
@@ -423,9 +436,10 @@ export class TaskDomainService {
 
         if (this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
             const affectedCourseIds = [...new Set([originalCourseId, nextCourseId].filter(Boolean))];
-            for (const courseId of affectedCourseIds) {
-                await this.progressService.recalculateForCourse(courseId);
-            }
+            // Fire-and-forget: don't block the response
+            Promise.allSettled(
+                affectedCourseIds.map(cid => this.progressService.recalculateForCourse(cid))
+            ).catch(err => console.error('[TaskDomainService] Error recalculating progress after update:', err.message));
         }
 
         return Result.ok(updated);
@@ -465,7 +479,10 @@ export class TaskDomainService {
         this._invalidateTaskCaches({ taskId: id, topicId, subjectId, courseId });
 
         if (courseId && this.progressService && typeof this.progressService.recalculateForCourse === 'function') {
-            await this.progressService.recalculateForCourse(courseId);
+            // Fire-and-forget: don't block the response
+            this.progressService.recalculateForCourse(courseId).catch(err =>
+                console.error('[TaskDomainService] Error recalculating progress after delete:', err.message)
+            );
         }
 
         return Result.ok({ message: 'Tarea eliminada' });

@@ -122,8 +122,9 @@ export function requireRoles(...requiredRoles) {
             return next(new UnauthorizedError('Autenticación requerida'));
         }
 
-        const userRoles = req.user.roles || [];
-        const hasRole = requiredRoles.some((r) => userRoles.includes(r));
+        const userRoles = (req.user.roles || []).map(Number).filter(r => Number.isInteger(r) && r > 0);
+        const requiredNumeric = requiredRoles.map(Number).filter(r => Number.isInteger(r) && r > 0);
+        const hasRole = requiredNumeric.some((r) => userRoles.includes(r));
 
         if (!hasRole) {
             const err = new UnauthorizedError('No tienes permisos para esta acción');

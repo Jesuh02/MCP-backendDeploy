@@ -973,6 +973,217 @@ export function generateAccountStatusEmailHTML(username = 'Usuario', isActive = 
     `;
 }
 
+/**
+ * Plantilla: Notificación de colaborador añadido
+ * @param {string} userName - Nombre del usuario añadido
+ * @param {string} courseName - Nombre del curso
+ * @param {string} addedByUsername - Quien lo añadió
+ * @returns {string} HTML del email
+ */
+export function generateCollaboratorAddedEmailHTML(userName, courseName, addedByUsername) {
+    const safeUserName = escapeHtml(userName || 'Usuario');
+    const safeCourseName = escapeHtml(courseName || 'un curso');
+    const safeAddedBy = escapeHtml(addedByUsername || 'El administrador');
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>${getEmailBaseStyles()}</style>
+</head>
+<body>
+    <div class="container">
+        <div class="header" style="background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);">
+            <div class="header-icon">🤝</div>
+            <h1>¡Nuevo rol de colaborador!</h1>
+            <p>Has sido invitado a colaborar en un curso</p>
+        </div>
+        
+        <div class="content">
+            <p class="greeting">¡Hola <strong>${safeUserName}</strong>! 👋</p>
+            
+            <p class="message">Has sido añadido como <strong>colaborador</strong> en un curso. Ahora puedes gestionar contenido, tareas y calificaciones del curso.</p>
+            
+            <div class="card" style="border-left-color: #8b5cf6;">
+                <p class="card-title">📚 Curso</p>
+                <p class="card-value">${safeCourseName}</p>
+            </div>
+            
+            <div class="card" style="border-left-color: #6366f1;">
+                <p class="card-title">👤 Añadido por</p>
+                <p class="card-value">${safeAddedBy}</p>
+            </div>
+            
+            <div class="feedback-section">
+                <p class="feedback-title">¿Qué puedes hacer como colaborador?</p>
+                <p class="feedback-text">
+                    ✅ Gestionar temas y contenido del curso<br>
+                    ✅ Crear y calificar tareas<br>
+                    ✅ Subir videos y recursos<br>
+                    ✅ Ver el progreso de los estudiantes
+                </p>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <div style="text-align: center;">
+                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);">Ir al curso en CourseV</a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2026 YisusCompany. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
+/**
+ * Plantilla: Notificación de solicitud de matrícula
+ * @param {string} adminName - Nombre del admin
+ * @param {string} studentName - Nombre del estudiante que solicita
+ * @param {string} courseName - Nombre del curso
+ * @param {string} studentAvatar - URL del avatar del estudiante (opcional)
+ * @returns {string} HTML del email
+ */
+export function generateEnrollmentRequestEmailHTML(adminName, studentName, courseName, studentAvatar) {
+    const safeAdminName = escapeHtml(adminName || 'Administrador');
+    const safeStudentName = escapeHtml(studentName || 'Un estudiante');
+    const safeCourseName = escapeHtml(courseName || 'un curso');
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>${getEmailBaseStyles()}</style>
+</head>
+<body>
+    <div class="container">
+        <div class="header" style="background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);">
+            <div class="header-icon">📋</div>
+            <h1>Nueva solicitud de matrícula</h1>
+            <p>Un estudiante quiere unirse a un curso</p>
+        </div>
+        
+        <div class="content">
+            <p class="greeting">Hola <strong>${safeAdminName}</strong>,</p>
+            
+            <p class="message">Se ha recibido una nueva solicitud de matrícula que requiere tu aprobación.</p>
+            
+            <div class="card" style="border-left-color: #0ea5e9;">
+                <p class="card-title">👤 Estudiante</p>
+                <p class="card-value">${safeStudentName}</p>
+            </div>
+            
+            <div class="card" style="border-left-color: #0284c7;">
+                <p class="card-title">📚 Curso solicitado</p>
+                <p class="card-value">${safeCourseName}</p>
+            </div>
+            
+            <div class="feedback-section">
+                <p class="feedback-title">Acción requerida</p>
+                <p class="feedback-text">
+                    Revisa la solicitud y decide si aprobar o rechazar el acceso del estudiante al curso. Puedes gestionar todas las solicitudes desde el panel de administración.
+                </p>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <div style="text-align: center;">
+                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);">Gestionar solicitudes</a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2026 YisusCompany. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
+/**
+ * Plantilla: Notificación al estudiante de matrícula aprobada
+ * @param {string} studentName - Nombre del estudiante
+ * @param {string} courseName - Nombre del curso aprobado
+ * @returns {string} HTML del email
+ */
+export function generateEnrollmentApprovedEmailHTML(studentName, courseName) {
+    const safeStudentName = escapeHtml(studentName || 'Estudiante');
+    const safeCourseName = escapeHtml(courseName || 'un curso');
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>${getEmailBaseStyles()}</style>
+</head>
+<body>
+    <div class="container">
+        <div class="header" style="background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);">
+            <div class="header-icon">🎉</div>
+            <h1>¡Matrícula aprobada!</h1>
+            <p>Ya puedes acceder al curso</p>
+        </div>
+
+        <div class="content">
+            <p class="greeting">¡Hola <strong>${safeStudentName}</strong>! 👋</p>
+
+            <p class="message">
+                Tu solicitud de matrícula ha sido revisada y <strong>aprobada</strong> por el administrador.
+                ¡Ya tienes acceso completo al contenido del curso!
+            </p>
+
+            <div class="card" style="border-left-color: #22c55e;">
+                <p class="card-title">📚 Curso aprobado</p>
+                <p class="card-value">${safeCourseName}</p>
+            </div>
+
+            <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center;">
+                <p style="margin: 0; color: #166534; font-size: 15px; font-weight: 500;">
+                    ✅ Acceso completo habilitado<br>
+                    <span style="font-weight: 400; font-size: 14px; color: #15803d;">Puedes comenzar a estudiar ahora mismo</span>
+                </p>
+            </div>
+
+            <div class="feedback-section">
+                <p class="feedback-title">¿Qué puedes hacer ahora?</p>
+                <p class="feedback-text">
+                    ✅ Acceder a todos los temas y videos del curso<br>
+                    ✅ Realizar y entregar tareas<br>
+                    ✅ Ver tu progreso de aprendizaje<br>
+                    ✅ Obtener certificado al finalizar
+                </p>
+            </div>
+
+            <div class="divider"></div>
+
+            <div style="text-align: center;">
+                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);">Ir al curso en CourseV</a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2026 YisusCompany. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
 export default {
     getEmailBaseStyles,
     generateGradeEmailHTML,
@@ -981,7 +1192,10 @@ export default {
     generateGenericEmailHTML,
     generateChatResponseEmailHTML,
     generateTaskReminderEmailHTML,
-    generateAccountStatusEmailHTML
+    generateAccountStatusEmailHTML,
+    generateCollaboratorAddedEmailHTML,
+    generateEnrollmentRequestEmailHTML,
+    generateEnrollmentApprovedEmailHTML
 };
 
 

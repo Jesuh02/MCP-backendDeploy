@@ -26,6 +26,11 @@ export class PersonaDomainService {
         return Result.ok(personas);
     }
 
+    async search(query, limit = 20) {
+        const personas = await this.personaRepo.searchByIdentificacion(query, limit);
+        return Result.ok(personas);
+    }
+
     async create(data) {
         const identificacion = data.identificacion ?? data.cedula;
         if (identificacion) {

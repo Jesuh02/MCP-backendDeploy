@@ -74,6 +74,12 @@ export class UserController extends BaseController {
         this.store(req, res, next, () => this.userService.registerFCMToken(req.user.userId, tokenToRegister, value.deviceType));
     };
 
+    removeFCMToken = async(req, res, next) => {
+        const token = req.query.fcmToken || req.query.token || req.body?.fcmToken || req.body?.token;
+        if (!token) return next(new ValidationError('token requerido'));
+        this.store(req, res, next, () => this.userService.removeFCMToken(req.user.userId, token));
+    };
+
     assignRole = async(req, res, next) => {
         const { error, value } = assignRoleSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));

@@ -15,6 +15,7 @@ export function userRoutes({ userController, requireRoles }) {
     router.get('/by-username/:username', userController.getByUsername);
     router.get('/:id', userController.getById);
     router.post('/fcm-token', userController.registerFCMToken);
+    router.delete('/fcm-token', userController.removeFCMToken);
     router.post('/:id/role', requireRoles(3), userController.assignRole); // Admin only
 
     // Admin — user activation management

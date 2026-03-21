@@ -4,6 +4,26 @@
 export class SupabaseUserRepository {
     constructor(client) { this.client = client; }
 
+    _normalizeSearchText(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    _normalizeDigits(value) {
+        return String(value || '').replace(/\D/g, '').trim();
+    }
+
+    _extractPersonaDocument(persona) {
+        if (!persona) return '';
+        // Prefer the numeric identificacion (bigint) — most reliable for digit-based matching.
+        // identificacion_original can be a non-numeric token like "jesus_duplicate_5",
+        // whose extracted digits ("5") would never match the real cedula "1006617028".
+        if (persona.identificacion && persona.identificacion !== 0) {
+            return String(persona.identificacion);
+        }
+        const rawValue = persona.cedula ?? persona.identificacion_original ?? '';
+        return String(rawValue || '').trim();
+    }
+
     _attachPersonaAliases(userData) {
         if (!userData) return null;
         const persona = userData.persona ?? userData.personas ?? null;
@@ -77,14 +97,40 @@ export class SupabaseUserRepository {
         // 1. Create persona first if provided
         let personaId = userData.personaId || null;
         if (userData.persona && !personaId) {
-            const { data: p, error: pe } = await this.client.from('personas').insert({
-                nombres: userData.persona.nombre || userData.persona.nombres || '',
-                apellidos: userData.persona.apellido || userData.persona.apellidos || '',
-                identificacion: userData.persona.identificacion || '',
-                telefono: userData.persona.telefono || '',
-            }).select().single();
-            if (pe) throw new Error(`Error creando persona: ${pe.message}`);
-            personaId = p.id;
+            const cedula = userData.persona.cedula ?? userData.persona.identificacion ?? null;
+            const cedulaDigits = cedula ? String(cedula).replace(/\D/g, '').trim() : null;
+            const numericId = cedulaDigits ? parseInt(cedulaDigits, 10) : null;
+
+            // If cedula provided, check if a persona with that cedula already exists (e.g. from a previous partial attempt)
+            if (numericId) {
+                const { data: existing } = await this.client
+                    .from('personas')
+                    .select('id')
+                    .eq('identificacion', numericId)
+                    .maybeSingle();
+                if (existing) {
+                    console.log(`[UserRepo] Reusing existing persona id=${existing.id} for cedula ${cedulaDigits}`);
+                    personaId = existing.id;
+                }
+            }
+
+            if (!personaId) {
+                const { data: p, error: pe } = await this.client.from('personas').insert({
+                    nombres: userData.persona.nombres || userData.persona.nombre || '',
+                    apellidos: userData.persona.apellidos || userData.persona.apellido || '',
+                    identificacion: numericId,
+                    identificacion_original: cedulaDigits || null,
+                    telefono: userData.persona.telefono || '',
+                    direccion: '',
+                    fecha_nacimiento: userData.persona.fecha_nacimiento || null,
+                    ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
+                }).select().single();
+                if (pe) {
+                    console.error('[UserRepo] Error creando persona:', pe.message, pe.details, pe.hint);
+                    throw new Error(`Error creando persona: ${pe.message}`);
+                }
+                personaId = p.id;
+            }
         }
         // 2. Create usuario
         const { data, error } = await this.client.from('usuarios').insert({
@@ -160,29 +206,69 @@ export class SupabaseUserRepository {
     }
 
     async searchByUsername(query, limit = 20) {
-        const normalizedQuery = String(query || '').trim();
-        const digitsOnly = normalizedQuery.replace(/\D/g, '');
-        const baseSelect = 'id, username, email, avatar, personas!fk_usuarios_persona(id, nombres, apellidos, identificacion, cedula)';
-        const innerSelect = 'id, username, email, avatar, personas!inner(id, nombres, apellidos, identificacion, cedula)';
-        const searches = [
-            this.client.from('usuarios').select(baseSelect).ilike('username', `%${normalizedQuery}%`).limit(limit),
-            this.client.from('usuarios').select(innerSelect).ilike('personas.nombres', `%${normalizedQuery}%`).limit(limit),
-            this.client.from('usuarios').select(innerSelect).ilike('personas.apellidos', `%${normalizedQuery}%`).limit(limit),
+        const normalizedQuery = this._normalizeSearchText(query);
+        const digitsOnly = this._normalizeDigits(query);
+        const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+        const textSearchLimit = Math.max(safeLimit * 2, 40);
+        const baseSelect = 'id, username, email, avatar, persona_id, personas!fk_usuarios_persona(*)';
+
+        // Text-based searches (username, email, nombres, apellidos)
+        const textSearches = [
+            this.client.from('usuarios').select(baseSelect).ilike('username', `%${normalizedQuery}%`).limit(textSearchLimit),
+            this.client.from('usuarios').select(baseSelect).ilike('email', `%${normalizedQuery}%`).limit(textSearchLimit),
+            this.client.from('usuarios').select(baseSelect).ilike('personas.nombres', `%${normalizedQuery}%`).limit(textSearchLimit),
+            this.client.from('usuarios').select(baseSelect).ilike('personas.apellidos', `%${normalizedQuery}%`).limit(textSearchLimit),
         ];
-        // If query looks numeric, also search by identificacion
-        if (digitsOnly) {
-            searches.push(
-                this.client.from('usuarios').select(innerSelect).eq('personas.identificacion', digitsOnly).limit(limit),
-                this.client.from('usuarios').select(innerSelect).eq('personas.cedula', digitsOnly).limit(limit)
-            );
-        }
-        const [byUsername, byNombres, byApellidos, ...rest] = await Promise.all(searches);
+
+        // If the query contains digits, search directly in personas table then join users.
+        // This avoids unreliable embedded-resource filter syntax (personas.identificacion=eq.X)
+        // which can fail silently when PostgREST FK resolution is ambiguous.
+        const identificationPromise = digitsOnly
+            ? (async () => {
+                const numericId = parseInt(digitsOnly, 10);
+                const orParts = [`identificacion_original.ilike.%${digitsOnly}%`];
+                if (!isNaN(numericId) && numericId > 0) orParts.push(`identificacion.eq.${numericId}`);
+                // Fetch full persona rows (not just id) so we can attach them manually
+                // and avoid relying on the FK-hint join, which can fail silently.
+                const { data: matchedPersonas } = await this.client
+                    .from('personas').select('*').or(orParts.join(',')).limit(safeLimit);
+                if (!matchedPersonas?.length) return { data: [] };
+                const personaById = new Map(matchedPersonas.map(p => [p.id, p]));
+                const personaIds = matchedPersonas.map(p => p.id);
+                const { data: usersRaw } = await this.client
+                    .from('usuarios')
+                    .select('id, username, email, avatar, persona_id')
+                    .in('persona_id', personaIds)
+                    .limit(safeLimit);
+                if (!usersRaw?.length) return { data: [] };
+                // Attach persona manually — no FK-hint needed
+                return { data: usersRaw.map(u => ({ ...u, personas: personaById.get(u.persona_id) ?? null })) };
+            })()
+            : Promise.resolve({ data: [] });
+
+        const [textResults, identResult] = await Promise.all([Promise.all(textSearches), identificationPromise]);
+        const searchResults = [...textResults, identResult];
         const seen = new Set();
         const userIds = [];
         const userMap = new Map();
-        for (const { data } of [byUsername, byNombres, byApellidos, ...rest]) {
+
+        const matchesQuery = (u) => {
+            const persona = u.personas ?? u.persona ?? null;
+            const username = this._normalizeSearchText(u.username);
+            const email = this._normalizeSearchText(u.email);
+            const fullName = this._normalizeSearchText(`${persona?.nombres || ''} ${persona?.apellidos || ''}`);
+            const documentDigits = this._normalizeDigits(this._extractPersonaDocument(persona));
+            const textMatches = [username, email, fullName].some((value) => value.includes(normalizedQuery));
+
+            if (!digitsOnly) return textMatches;
+            return textMatches || (documentDigits.length > 0 && documentDigits.includes(digitsOnly));
+        };
+
+        for (const { data } of searchResults) {
             for (const u of data || []) {
                 if (seen.has(u.id)) continue;
+                if (!matchesQuery(u)) continue;
+                const persona = u.personas ?? u.persona ?? null;
                 seen.add(u.id);
                 userIds.push(u.id);
                 userMap.set(u.id, {
@@ -190,14 +276,16 @@ export class SupabaseUserRepository {
                     username: u.username,
                     email: u.email,
                     avatar: u.avatar,
-                    persona: u.personas ?? null,
-                    personas: u.personas ?? null,
-                    personaId: u.personas?.id ?? null,
-                    fullName: u.personas ? `${u.personas.nombres || ''} ${u.personas.apellidos || ''}`.trim() : null,
-                    identificacion: u.personas?.identificacion ?? u.personas?.cedula ?? null,
+                    persona,
+                    personas: persona,
+                    personaId: u.persona_id ?? persona?.id ?? null,
+                    fullName: persona ? `${persona.nombres || ''} ${persona.apellidos || ''}`.trim() : null,
+                    identificacion: persona?.identificacion ?? persona?.cedula ?? persona?.identificacion_original ?? null,
                     roles: []
                 });
+                if (userMap.size >= safeLimit) break;
             }
+            if (userMap.size >= safeLimit) break;
         }
         // Fetch roles for all found users
         if (userIds.length > 0) {
@@ -214,7 +302,7 @@ export class SupabaseUserRepository {
                 }
             }
         }
-        return Array.from(userMap.values()).slice(0, limit);
+        return Array.from(userMap.values()).slice(0, safeLimit);
     }
 
     async findByIds(ids) {
@@ -252,6 +340,21 @@ export class SupabaseUserRepository {
     async removeInvalidFCMTokens(tokens) {
         if (!tokens || tokens.length === 0) return;
         await this.client.from('user_fcm_tokens').delete().in('token', tokens);
+    }
+
+    async removeFCMToken(userId, token) {
+        const normalizedToken = (token || '').trim();
+        if (!normalizedToken) return;
+        await this.client.from('user_fcm_tokens').delete().eq('user_id', userId).eq('token', normalizedToken);
+    }
+
+    async findUserIdsByRoleId(roleId) {
+        const { data, error } = await this.client
+            .from('usuarios_roles')
+            .select('usuario_id')
+            .eq('rol_id', roleId);
+        if (error || !data) return [];
+        return data.map(r => r.usuario_id);
     }
 
     // Helper to enrich user data with roles

@@ -34,10 +34,12 @@ import { excelRoutes } from '../../modules/excel/excel.routes.js';
 import { publicRoutes } from '../../modules/health/public.routes.js';
 import { institucionRoutes } from '../../modules/institucion/institucion.routes.js';
 import { whatsappRoutes } from '../../modules/whatsapp/whatsapp.routes.js';
+import { createCourseActiveGuard } from '../../shared/middleware/courseActiveGuard.js';
 
 export function createRouter(deps) {
     const router = Router();
-    const { authMiddleware, requireRoles } = deps;
+    const { authMiddleware, requireRoles, courseRepository } = deps;
+    const courseActiveGuard = createCourseActiveGuard(courseRepository);
 
     router.use('/auth', authRoutes(deps));
     router.use('/', healthRoutes(deps));
@@ -65,6 +67,17 @@ export function createRouter(deps) {
     router.use('/users', userRoutes({...deps, requireRoles }));
     router.use('/courses', courseRoutes(deps));
     router.use('/videos', videoRoutes(deps));
+
+    // Apply courseActiveGuard to content modules that access course data by :courseId
+    // Roles 1,2 are blocked from inactive courses; role 3 bypasses
+    router.use('/subjects/course/:courseId', courseActiveGuard);
+    router.use('/topics/course/:courseId', courseActiveGuard);
+    router.use('/tasks/course/:courseId', courseActiveGuard);
+    router.use('/content-items/course/:courseId', courseActiveGuard);
+    router.use('/submissions/course/:courseId', courseActiveGuard);
+    router.use('/progress/course/:courseId', courseActiveGuard);
+    router.use('/progress/leaderboard/:courseId', courseActiveGuard);
+
     router.use('/topics', topicRoutes(deps));
     router.use('/subjects', subjectRoutes(deps));
     router.use('/tasks', taskRoutes(deps));
