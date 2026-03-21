@@ -58,7 +58,9 @@ export class StorageDomainService {
             return Result.ok(stream);
         } catch (err) {
             if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
-                return Result.fail(new NotFoundError('Archivo no encontrado'));
+                const notFound = new NotFoundError('Archivo');
+                notFound.silent = true; // Suppress warn logging for missing static files
+                return Result.fail(notFound);
             }
             throw err;
         }
@@ -70,4 +72,3 @@ export class StorageDomainService {
 }
 
 export default StorageDomainService;
-

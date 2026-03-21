@@ -50,7 +50,7 @@ export function publicRoutes({ videoService, courseService, storageService }) {
         }
     });
 
-    router.get('/files/*', async (req, res, next) => {
+    router.get('/files/*', async(req, res, next) => {
         try {
             const key = req.params[0];
             if (!key || key.length < 2) {
@@ -62,7 +62,14 @@ export function publicRoutes({ videoService, courseService, storageService }) {
             }
 
             const result = await storageService.streamFile(key);
-            if (result.isFail()) return next(result.getError());
+            if (result.isFail()) {
+                const err = result.getError();
+                // Respond directly for 404s — avoids spamming the warn logger for missing files
+                if (err.statusCode === 404) {
+                    return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Archivo no encontrado' } });
+                }
+                return next(err);
+            }
 
             const { body, contentType, contentLength } = result.getValue();
 
@@ -82,5 +89,3 @@ export function publicRoutes({ videoService, courseService, storageService }) {
 }
 
 export default publicRoutes;
-
-
