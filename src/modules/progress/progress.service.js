@@ -72,6 +72,17 @@ export class ProgressDomainService {
         return Result.ok(refreshed);
     }
 
+    /**
+     * Admin: devuelve el progreso por materia de TODOS los estudiantes
+     * en los cursos gestionados por `requesterUserId`.
+     * Admins globales (rol 3) pasan null para ver todo.
+     */
+    async getAllSubjectProgressForAdmin(requesterUserId = null) {
+        const creatorId = requesterUserId ? Number(requesterUserId) : null;
+        const items = await this.progressRepo.findAllSubjectProgressForAdmin(creatorId);
+        return Result.ok(items);
+    }
+
     async getByUser(userId, options = {}) {
         const progress = await this.progressRepo.findByUser(userId, options);
         return Result.ok(progress);
@@ -245,15 +256,22 @@ export class ProgressDomainService {
     }
 
     async issueCertificate(userId, courseId) {
-        const progress = await this.progressRepo.findByUserAndCourse(userId, courseId);
-        if (!progress) return Result.fail(new NotFoundError('Progreso', `${userId}-${courseId}`));
-        if (!this._isProgressWon(progress)) {
-            return Result.fail(new ForbiddenError('Solo se pueden emitir certificados para progreso con estado Ganado'));
+        try {
+            const updated = await this.progressRepo.updateCertificate(userId, courseId, {
+                certificateIssuedAt: new Date().toISOString(),
+            });
+            return Result.ok(updated);
+        } catch (error) {
+            const message = String(error?.message || error || '');
+            if (message.includes('no tiene progreso registrado')) {
+                return Result.fail(new NotFoundError('Progreso', `${userId}-${courseId}`));
+            }
+            if (message.includes('no ha ganado el curso') || message.includes('estado actual')) {
+                return Result.fail(new ForbiddenError('Solo se pueden emitir certificados para progreso con estado Ganado'));
+            }
+            // Any other DB / constraint error — wrap instead of rethrowing to avoid 500
+            return Result.fail(new ForbiddenError(`No se pudo emitir el certificado: ${message}`));
         }
-        const updated = await this.progressRepo.updateCertificate(userId, courseId, {
-            certificateIssuedAt: new Date().toISOString(),
-        });
-        return Result.ok(updated);
     }
 
     async getMyCertificates(userId) {
@@ -261,12 +279,11 @@ export class ProgressDomainService {
         if (!certificates?.length || !this.courseRepo) return Result.ok(certificates);
 
         // Only certificates with status 'Ganado' and not creator/collaborator
-        const filtered = [];
-        for (const cert of certificates) {
-            if (!this._isProgressWon(cert)) continue;
-            const blocked = await this._isCreatorOrCollaborator(userId, cert.courseId);
-            if (!blocked) filtered.push(cert);
-        }
+        const wonCerts = certificates.filter(cert => this._isProgressWon(cert));
+        const blockedChecks = await Promise.all(
+            wonCerts.map(cert => this._isCreatorOrCollaborator(userId, cert.courseId))
+        );
+        const filtered = wonCerts.filter((_, i) => !blockedChecks[i]);
         return Result.ok(filtered);
     }
 
@@ -350,13 +367,17 @@ export class ProgressDomainService {
             return Result.ok({ recalculated: 0, totalTasks });
         }
 
+        // Parallelize in batches of 5 to avoid overwhelming the DB
+        const BATCH_SIZE = 5;
         let recalculated = 0;
-        for (const userId of candidateUserIds) {
-            try {
-                await this._recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasks);
-                recalculated++;
-            } catch (err) {
-                console.error(`[ProgressService] Error recalculating for user ${userId}:`, err.message);
+        for (let i = 0; i < candidateUserIds.length; i += BATCH_SIZE) {
+            const batch = candidateUserIds.slice(i, i + BATCH_SIZE);
+            const results = await Promise.allSettled(
+                batch.map(userId => this._recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasks))
+            );
+            for (const r of results) {
+                if (r.status === 'fulfilled') recalculated++;
+                else console.error(`[ProgressService] Error recalculating:`, r.reason?.message);
             }
         }
 
@@ -456,11 +477,14 @@ export class ProgressDomainService {
         const blocked = await this._isCreatorOrCollaborator(userId, courseId);
         if (blocked) return { userId, courseId, completedTasks: 0, totalTasks: 0, averageGrade: 0, progressPercentage: 0, status: 'Excluido' };
 
-        const totalTasks = totalTasksFromCaller ?? await this.taskRepo.countByCourse(courseId);
-        const submittedTaskIds = await this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId);
+        // Fetch totalTasks, submittedTaskIds and graded in parallel
+        const [totalTasks, submittedTaskIds, graded] = await Promise.all([
+            totalTasksFromCaller != null ? totalTasksFromCaller : this.taskRepo.countByCourse(courseId),
+            this.submissionRepo.getTaskIdsByUserAndCourse(userId, courseId),
+            this.submissionRepo.getGradedByUserAndCourse(userId, courseId),
+        ]);
         const completedTasks = submittedTaskIds.length;
 
-        const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
         const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
         const averageGradeRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
         const averageGrade = Math.round(averageGradeRaw * 100) / 100;
@@ -499,11 +523,12 @@ export class ProgressDomainService {
         const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
         if (!subjects?.length) return;
 
-        for (const subject of subjects) {
-            try {
-                await this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id);
-            } catch (err) {
-                console.error(`[ProgressService] Error recalculating subject ${subject.id} for user ${userId}:`, err.message);
+        const results = await Promise.allSettled(
+            subjects.map(subject => this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id))
+        );
+        for (const r of results) {
+            if (r.status === 'rejected') {
+                console.error(`[ProgressService] Error recalculating subject for user ${userId}:`, r.reason?.message);
             }
         }
     }
@@ -630,6 +655,12 @@ export class ProgressDomainService {
         }
 
         const pending = await this.progressRepo.upsertPreEnrollment(userId, courseId, 'pending');
+
+        // Notify all role 3 (admin) users about the new enrollment request
+        this._notifyAdminsAboutEnrollmentRequest(userId, courseId, course.title).catch(err =>
+            console.warn('[ProgressService] Error notifying admins about enrollment request:', err?.message)
+        );
+
         return Result.ok({ ...pending, message: 'Solicitud de matrícula enviada' });
     }
 
@@ -657,6 +688,24 @@ export class ProgressDomainService {
                     relatedId: courseId,
                     metadata: { courseId, courseName },
                 });
+
+                // Send confirmation email to the student
+                try {
+                    let studentName = 'Estudiante';
+                    if (this.userRepo) {
+                        const student = await this.userRepo.findById(userId);
+                        if (student?.username) studentName = student.username;
+                    }
+                    const { generateEnrollmentApprovedEmailHTML } = await import('../../templates/emailTemplates.js');
+                    const html = generateEnrollmentApprovedEmailHTML(studentName, courseName);
+                    await this._notificationService.sendEmail(userId, {
+                        subject: `✅ ¡Tu matrícula en "${courseName}" ha sido aprobada!`,
+                        html,
+                        text: `¡Felicitaciones ${studentName}! Tu solicitud de matrícula en el curso "${courseName}" ha sido aprobada. Ya puedes acceder al contenido del curso en CourseV.`,
+                    });
+                } catch (emailErr) {
+                    console.warn('[ProgressService] Error sending enrollment approved email:', emailErr?.message);
+                }
             } catch (err) {
                 console.error('[ProgressService] Error sending enrollment notification:', err?.message);
             }
@@ -685,6 +734,116 @@ export class ProgressDomainService {
     }
 
     /**
+     * Admin: get all approved enrollments (users with active access) grouped by course.
+     */
+    async getApprovedEnrollments() {
+        const rows = await this.progressRepo.findApprovedEnrollments();
+        return Result.ok(rows || []);
+    }
+
+    /**
+     * Admin: revoke a user's enrollment (remove course access).
+     */
+    async revokeEnrollment(userId, courseId, reason = null) {
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+        if (!existing) return Result.fail(new NotFoundError('Matrícula', `${userId}/${courseId}`));
+        await this.progressRepo.deleteEnrollment(userId, courseId, reason);
+
+        // Notify the student about revocation
+        if (this._notificationService && reason) {
+            try {
+                let courseName = 'un curso';
+                if (this.courseRepo) {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                }
+                await this._notificationService.send(userId, {
+                    title: 'Se te quitó el acceso',
+                    message: `Tu acceso a "${courseName}" fue revocado. Motivo: ${reason}`,
+                    type: 'enrollment_revoked',
+                    relatedId: courseId,
+                    metadata: { courseId, courseName, reason },
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending revoke notification:', err?.message);
+            }
+        }
+
+        return Result.ok({ message: 'Acceso al curso revocado', reason });
+    }
+
+    // ─── Subject Access Blocks ────────────────────────────────────
+
+    /**
+     * Admin: block a user from accessing a specific subject.
+     */
+    async blockSubjectAccess(userId, courseId, subjectId, reason, blockedBy = null) {
+        if (!reason || !String(reason).trim()) {
+            return Result.fail(new ForbiddenError('Debe proporcionar una razón para bloquear el acceso'));
+        }
+        const block = await this.progressRepo.blockSubjectAccess(userId, courseId, subjectId, reason.trim(), blockedBy);
+
+        // Notify the student
+        if (this._notificationService) {
+            try {
+                let subjectName = 'una materia';
+                if (this.subjectRepo) {
+                    const subject = await this.subjectRepo.findById(subjectId);
+                    if (subject?.name) subjectName = subject.name;
+                }
+                await this._notificationService.send(userId, {
+                    title: 'Se te quitó el permiso',
+                    message: `Tu acceso a la materia "${subjectName}" fue revocado. Motivo: ${reason}`,
+                    type: 'subject_access_blocked',
+                    relatedId: subjectId,
+                    metadata: { subjectId, subjectName, reason, courseId },
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending subject block notification:', err?.message);
+            }
+        }
+
+        return Result.ok(block);
+    }
+
+    /**
+     * Admin: unblock a user's access to a specific subject.
+     */
+    async unblockSubjectAccess(userId, subjectId) {
+        await this.progressRepo.unblockSubjectAccess(userId, subjectId);
+        return Result.ok({ message: 'Acceso a la materia restaurado' });
+    }
+
+    /**
+     * Check if a user is blocked from a specific subject.
+     */
+    async checkSubjectAccessBlock(userId, subjectId) {
+        const block = await this.progressRepo.findSubjectAccessBlock(userId, subjectId);
+        return Result.ok({
+            blocked: !!block,
+            reason: block?.reason || null,
+            blockedAt: block?.blocked_at || null,
+        });
+    }
+
+    /**
+     * Get all subject access blocks for a user in a course.
+     */
+    async getSubjectAccessBlocks(userId, courseId) {
+        const blocks = await this.progressRepo.findSubjectAccessBlocksByUserAndCourse(userId, courseId);
+        return Result.ok(blocks || []);
+    }
+
+    /**
+     * Admin: get all active subject access blocks across all users.
+     * Returns array of { userId, courseId, subjectId } for pre-populating UI state.
+     */
+    async getAllSubjectAccessBlocks() {
+        const blocks = await this.progressRepo.findAllSubjectAccessBlocks();
+        return Result.ok(blocks || []);
+    }
+
+    /**
      * Check if student has an approved enrollment in a course.
      */
     async isEnrolledAndApproved(userId, courseId) {
@@ -701,6 +860,66 @@ export class ProgressDomainService {
     _getEnrollmentStatusValue(record) {
         const status = record?.enrollmentStatus ?? record?.enrollment_status ?? record?.status ?? null;
         return typeof status === 'string' ? status.trim().toLowerCase() : null;
+    }
+
+    async _notifyAdminsAboutEnrollmentRequest(studentUserId, courseId, courseTitle) {
+        if (!this._notificationService || !this.userRepo) return;
+
+        // Get all admin user IDs (role 3)
+        let adminUserIds = [];
+        if (typeof this.userRepo.findUserIdsByRoleId === 'function') {
+            adminUserIds = await this.userRepo.findUserIdsByRoleId(3);
+        }
+        if (!adminUserIds || adminUserIds.length === 0) return;
+
+        // Get student info
+        let studentName = 'Un estudiante';
+        let studentAvatar = null;
+        try {
+            const student = await this.userRepo.findById(studentUserId);
+            if (student) {
+                studentName = student.username || studentName;
+                studentAvatar = student.avatar || null;
+            }
+        } catch { /* ignore */ }
+
+        const courseName = courseTitle || 'un curso';
+
+        // Send push/in-app notification to all admins
+        await this._notificationService.sendBulk(adminUserIds, {
+            title: 'Nueva solicitud de matrícula',
+            message: `${studentName} ha solicitado matricularse en "${courseName}".`,
+            type: 'enrollment_request',
+            relatedId: courseId,
+            senderUsername: studentName,
+            senderAvatarUrl: studentAvatar,
+            metadata: { courseId, courseName, studentUserId },
+            actorUserId: studentUserId,
+        });
+
+        // Send email to each admin
+        try {
+            const { generateEnrollmentRequestEmailHTML } = await import('../../templates/emailTemplates.js');
+            for (const adminId of adminUserIds) {
+                if (Number(adminId) === Number(studentUserId)) continue;
+                try {
+                    let adminName = 'Administrador';
+                    const admin = await this.userRepo.findById(adminId);
+                    if (admin) adminName = admin.username || adminName;
+
+                    const html = generateEnrollmentRequestEmailHTML(adminName, studentName, courseName, studentAvatar);
+                    await this._notificationService.sendEmail(adminId, {
+                        subject: `📋 Nueva solicitud de matrícula: ${studentName} → "${courseName}"`,
+                        html,
+                        text: `${studentName} ha solicitado matricularse en el curso "${courseName}". Revisa la solicitud en el panel de administración.`,
+                    });
+                } catch (emailErr) {
+                    console.warn(`[ProgressService] Error sending enrollment email to admin ${adminId}:`, emailErr?.message);
+                }
+            }
+        } catch (err) {
+            console.warn('[ProgressService] Error loading email template:', err?.message);
+        }
     }
 }
 export default ProgressDomainService;

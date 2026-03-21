@@ -156,7 +156,7 @@ app.post('/tools/list', async(req, res) => {
 - Use ORDER BY and LIMIT for top/bottom results
 
 **AVAILABLE TABLES:**
-usuarios, personas, courses, videos, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos, progreso_estudiante`,
+usuarios, personas, courses, videos, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos, progreso_curso, progreso_materia`,
                     inputSchema: {
                         type: 'object',
                         properties: {

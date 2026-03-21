@@ -15,7 +15,13 @@ export class AuthService {
         if (existingEmail) return Result.fail(new ConflictError('Email', email));
 
         const hashedPassword = await this.jwt.hashPassword(password);
-        const user = await this.userRepo.create({ username, email, password: hashedPassword, persona, personaId });
+        let user;
+        try {
+            user = await this.userRepo.create({ username, email, password: hashedPassword, persona, personaId });
+        } catch (dbErr) {
+            console.error('[AuthService] register DB error:', dbErr.message);
+            return Result.fail(new ValidationError(dbErr.message));
+        }
 
         const tokens = this._generateTokens(user);
         return Result.ok({ user: this._safeUser(user), ...tokens });
@@ -97,7 +103,9 @@ export class AuthService {
     }
 
     _generateTokens(user) {
-        const payload = { userId: user.id, username: user.username, roles: (user.roles || []).map(r => r.id || r.rol_id) };
+        // Asegurar que roles sean IDs numéricos para comparación correcta en requireRoles
+        const roleIds = (user.roles || []).map(r => Number(r.id || r.rol_id)).filter(id => Number.isInteger(id) && id > 0);
+        const payload = { userId: user.id, username: user.username, roles: roleIds };
         return {
             accessToken: this.jwt.signAccessToken(payload),
             refreshToken: this.jwt.signRefreshToken(payload),

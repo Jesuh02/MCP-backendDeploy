@@ -18,7 +18,7 @@ export class CourseController {
     list = async(req, res, next) => {
         const pg = parsePagination(req.query);
         if (req.query.excludeUserId) pg.excludeCreatorId = parseInt(req.query.excludeUserId);
-        const result = await this.courseService.list(pg);
+        const result = await this.courseService.list(pg, req.user?.roles || []);
         if (result.isFail()) return next(result.getError());
         const { courses, total } = result.getValue();
         res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
@@ -71,7 +71,7 @@ export class CourseController {
     };
     search = async(req, res, next) => {
         const pg = parsePagination(req.query);
-        const result = await this.courseService.search(req.query.q || '', pg);
+        const result = await this.courseService.search(req.query.q || '', pg, req.user?.roles || []);
         if (result.isFail()) return next(result.getError());
         const { courses, total } = result.getValue();        res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');        res.json({ success: true, ...buildPaginatedResponse(courses, total, pg.page, pg.pageSize) });
     };
@@ -106,7 +106,7 @@ export class CourseController {
     getFreeCourses = async(req, res, next) => {
         const pg = parsePagination(req.query);
         if (req.query.excludeUserId) pg.excludeCreatorId = parseInt(req.query.excludeUserId);
-        const result = await this.courseService.findFreeCourses(pg);
+        const result = await this.courseService.findFreeCourses(pg, req.user?.roles || []);
         if (result.isFail()) return next(result.getError());
         const { courses, total } = result.getValue();
         res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
@@ -116,7 +116,7 @@ export class CourseController {
     getPremiumCourses = async(req, res, next) => {
         const pg = parsePagination(req.query);
         if (req.query.excludeUserId) pg.excludeCreatorId = parseInt(req.query.excludeUserId);
-        const result = await this.courseService.findPremiumCourses(pg);
+        const result = await this.courseService.findPremiumCourses(pg, req.user?.roles || []);
         if (result.isFail()) return next(result.getError());
         const { courses, total } = result.getValue();
         res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
@@ -127,7 +127,7 @@ export class CourseController {
         const pg = parsePagination(req.query);
         if (req.query.excludeUserId) pg.excludeCreatorId = parseInt(req.query.excludeUserId);
 
-        const result = await this.courseService.findPopularCourses(pg);
+        const result = await this.courseService.findPopularCourses(pg, req.user?.roles || []);
         if (result.isFail()) return next(result.getError());
 
         const { courses, total } = result.getValue();
@@ -139,7 +139,7 @@ export class CourseController {
         if (!userId) return res.status(400).json({ success: false, error: 'User ID required' });
 
         const pg = parsePagination(req.query);
-        const result = await this.courseService.findPurchasedCourses(userId, pg);
+        const result = await this.courseService.findPurchasedCourses(userId, pg, req.user?.roles || []);
         if (result.isFail()) return next(result.getError());
 
         const { courses, total } = result.getValue();
@@ -151,7 +151,7 @@ export class CourseController {
         if (!userId) return res.status(400).json({ success: false, error: 'User ID required' });
 
         const pg = parsePagination(req.query);
-        const result = await this.courseService.findEnrolledCourses(userId, pg);
+        const result = await this.courseService.findEnrolledCourses(userId, pg, req.user?.roles || []);
         if (result.isFail()) return next(result.getError());
 
         const { courses, total } = result.getValue();

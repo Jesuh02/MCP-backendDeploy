@@ -38,7 +38,7 @@ export class SupabaseNotificationRepository {
 
         const notifications = data || [];
         const videoTypes = new Set(['video_like', 'video_comment', 'comment_like', 'comment_reply', 'comment', 'like']);
-        const courseTypes = new Set(['new_course', 'new_task', 'task_submission', 'task_graded']);
+        const courseTypes = new Set(['new_course', 'new_task', 'task_submission', 'task_graded', 'enrollment_approved', 'collaborator_added', 'enrollment_request']);
 
         const videoIds = new Set();
         const courseIds = new Set();
@@ -59,7 +59,8 @@ export class SupabaseNotificationRepository {
 
             if (hasThumbnail || !courseTypes.has(notifType)) continue;
 
-            if (notifType === 'new_course') {
+            const directCourseTypes = new Set(['new_course', 'enrollment_approved', 'collaborator_added', 'enrollment_request']);
+            if (directCourseTypes.has(notifType)) {
                 const relatedCourseId = Number(notif.related_id);
                 if (Number.isFinite(relatedCourseId) && relatedCourseId > 0) {
                     courseIds.add(relatedCourseId);
@@ -164,7 +165,8 @@ export class SupabaseNotificationRepository {
             if (!courseTypes.has(notifType)) return notif;
 
             let courseId = this._extractCourseIdFromMetadata(notif.metadata);
-            if (!courseId && notifType === 'new_course') {
+            const directCourseTypes = new Set(['new_course', 'enrollment_approved', 'collaborator_added', 'enrollment_request']);
+            if (!courseId && directCourseTypes.has(notifType)) {
                 const relatedCourseId = Number(notif.related_id);
                 if (Number.isFinite(relatedCourseId) && relatedCourseId > 0) {
                     courseId = relatedCourseId;

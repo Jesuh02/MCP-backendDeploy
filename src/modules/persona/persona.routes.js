@@ -4,6 +4,7 @@ export function personaRoutes({ personaController }) {
     const router = Router();
 
     router.get('/', personaController.list);
+    router.get('/search', personaController.search);
     router.get('/by-identificacion/:identificacion', personaController.getByIdentificacion);
     router.get('/:id', personaController.getById);
     router.post('/', personaController.create);

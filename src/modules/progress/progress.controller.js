@@ -174,7 +174,7 @@ export class ProgressController {
     issueCertificate = async(req, res, next) => {
         try {
             const courseId = parseInt(req.params.courseId);
-            const userId = req.body.userId || req.user.userId;
+            const userId = parseInt(req.body.userId || req.user.userId);
             const result = await this.progressService.issueCertificate(userId, courseId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
@@ -230,6 +230,16 @@ export class ProgressController {
     getAllCertificates = async(req, res, next) => {
         try {
             const result = await this.progressService.getAllWonCertificates();
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getAllSubjectProgress = async(req, res, next) => {
+        try {
+            // Admins (rol 3) can see all; teachers (rol 2) see only their own courses
+            const requesterUserId = req.user?.userId || null;
+            const result = await this.progressService.getAllSubjectProgressForAdmin(requesterUserId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -302,6 +312,94 @@ export class ProgressController {
                 return res.status(400).json({ success: false, error: 'userId and courseId must be positive integers' });
             }
             const result = await this.progressService.rejectEnrollment(userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getApprovedEnrollments = async(req, res, next) => {
+        try {
+            const result = await this.progressService.getApprovedEnrollments();
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    revokeEnrollment = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const courseId = parseInt(req.params.courseId);
+            if (!userId || isNaN(userId) || userId <= 0 || !courseId || isNaN(courseId) || courseId <= 0) {
+                return res.status(400).json({ success: false, error: 'userId and courseId must be positive integers' });
+            }
+            const reason = req.body?.reason || null;
+            const result = await this.progressService.revokeEnrollment(userId, courseId, reason);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    blockSubjectAccess = async(req, res, next) => {
+        try {
+            const { userId, courseId, subjectId, reason } = req.body || {};
+            const uid = parseInt(userId);
+            const cid = parseInt(courseId);
+            const sid = parseInt(subjectId);
+            if (!uid || !cid || !sid || isNaN(uid) || isNaN(cid) || isNaN(sid)) {
+                return res.status(400).json({ success: false, error: 'userId, courseId and subjectId are required' });
+            }
+            if (!reason || !String(reason).trim()) {
+                return res.status(400).json({ success: false, error: 'reason is required' });
+            }
+            const blockedBy = req.user?.userId || null;
+            const result = await this.progressService.blockSubjectAccess(uid, cid, sid, reason, blockedBy);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    unblockSubjectAccess = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const subjectId = parseInt(req.params.subjectId);
+            if (!userId || !subjectId || isNaN(userId) || isNaN(subjectId)) {
+                return res.status(400).json({ success: false, error: 'userId and subjectId must be positive integers' });
+            }
+            const result = await this.progressService.unblockSubjectAccess(userId, subjectId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    checkSubjectAccessBlock = async(req, res, next) => {
+        try {
+            const subjectId = parseInt(req.params.subjectId);
+            if (!subjectId || isNaN(subjectId)) {
+                return res.status(400).json({ success: false, error: 'subjectId must be a positive integer' });
+            }
+            const userId = req.user?.userId;
+            const result = await this.progressService.checkSubjectAccessBlock(userId, subjectId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getSubjectAccessBlocks = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.params.courseId);
+            if (!courseId || isNaN(courseId)) {
+                return res.status(400).json({ success: false, error: 'courseId must be a positive integer' });
+            }
+            const userId = req.user?.userId;
+            const result = await this.progressService.getSubjectAccessBlocks(userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getAllSubjectAccessBlocks = async(req, res, next) => {
+        try {
+            const result = await this.progressService.getAllSubjectAccessBlocks();
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

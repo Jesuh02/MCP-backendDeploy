@@ -972,7 +972,8 @@ CREATE TABLE public.videos (
             // Delete related records first to ensure referential integrity
 
             // 1. Delete student progress
-            await this.client.from('progreso_estudiante').delete().eq('curso_id', courseId);
+            await this.client.from('progreso_materia').delete().eq('curso_id', courseId);
+            await this.client.from('progreso_curso').delete().eq('curso_id', courseId);
 
             // 2. Delete videos associated with this course
             await this.client.from('videos').delete().eq('course_id', courseId);

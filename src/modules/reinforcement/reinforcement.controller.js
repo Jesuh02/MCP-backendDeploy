@@ -77,6 +77,81 @@ export class ReinforcementController {
         this.learningContextService = learningContextService;
     }
 
+    /**
+     * GET /cached-questions?courseId=X&topicId=Y&taskId=Z&difficulty=HARD
+     * Returns cached pre-generated questions (instant, <100ms).
+     * Returns { questions: [], generating: true/false } if cache miss.
+     */
+    getCachedQuestions = async(req, res, next) => {
+        try {
+            const _parseId = (v) => { const n = parseInt(v); return isNaN(n) ? null : n; };
+            const userId = req.user?.userId || req.user?.id;
+            const courseId = _parseId(req.query.courseId || req.query.course_id);
+            const topicId = _parseId(req.query.topicId || req.query.topic_id);
+            const taskId = _parseId(req.query.taskId || req.query.task_id);
+            const difficulty = req.query.difficulty || 'HARD';
+
+            if (!userId) return next(new ValidationError('Authentication required'));
+            if (!courseId) return next(new ValidationError('courseId is required'));
+
+            const result = await this.reinforcementService.getCachedQuestions(userId, courseId, topicId, taskId, difficulty);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * POST /prefetch — Fire-and-forget: start background question generation.
+     * Client should call this as soon as the reinforcement screen loads.
+     * Then poll GET /cached-questions to check if ready.
+     */
+    prefetch = async(req, res, next) => {
+        try {
+            const userId = req.user?.userId || req.user?.id || parseInt(req.body.userId || req.body.user_id);
+            const courseId = parseInt(req.body.courseId || req.body.course_id);
+            const topicId = req.body.topicId || req.body.topic_id ? parseInt(req.body.topicId || req.body.topic_id) : null;
+            const taskId = req.body.taskId || req.body.task_id ? parseInt(req.body.taskId || req.body.task_id) : null;
+            const difficulty = req.body.difficulty || 'HARD';
+
+            if (!userId) return next(new ValidationError('userId is required'));
+            if (!courseId) return next(new ValidationError('courseId is required'));
+
+            const result = await this.reinforcementService.prefetchQuestions(userId, courseId, topicId, taskId, difficulty);
+            if (result.isFail()) return next(result.getError());
+            res.status(202).json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * POST /generate-questions — Unified server-side generation:
+     *   1. Fetches learning context internally
+     *   2. Calls LLM to generate questions
+     *   3. Returns questions immediately
+     *   4. Saves with embeddings in background (non-blocking)
+     *
+     * This replaces the 3-step client flow:
+     *   GET /learning-context → POST /procesar-prompt → POST /save-questions
+     */
+    generateQuestions = async(req, res, next) => {
+        try {
+            const userId = req.user?.userId || req.user?.id || parseInt(req.body.userId || req.body.user_id);
+            const courseId = parseInt(req.body.courseId || req.body.course_id);
+            const topicId = req.body.topicId || req.body.topic_id ? parseInt(req.body.topicId || req.body.topic_id) : null;
+            const taskId = req.body.taskId || req.body.task_id ? parseInt(req.body.taskId || req.body.task_id) : null;
+            const difficulty = req.body.difficulty || 'HARD';
+            const targetCount = parseInt(req.body.targetCount) || 10;
+
+            if (!userId) return next(new ValidationError('userId is required'));
+            if (!courseId) return next(new ValidationError('courseId is required'));
+
+            console.log(`🚀 [ReinforcementController] generateQuestions: userId=${userId}, courseId=${courseId}, topicId=${topicId}, taskId=${taskId}, difficulty=${difficulty}, target=${targetCount}`);
+
+            const result = await this.reinforcementService.generateQuestions(userId, courseId, topicId, taskId, difficulty, targetCount);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     saveSession = async(req, res, next) => {
         try {
             const { error, value } = saveSessionSchema.validate(req.body);

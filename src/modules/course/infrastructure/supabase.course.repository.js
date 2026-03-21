@@ -27,9 +27,10 @@ export class SupabaseCourseRepository {
         return data || null;
     }
 
-    async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc', excludeCreatorId = null } = {}) {
+    async findAll({ offset = 0, limit = 20, sortBy = 'created_at', sortOrder = 'desc', excludeCreatorId = null, activeOnly = false } = {}) {
         let query = this.client.from('courses').select('*');
         if (excludeCreatorId) query = query.neq('creator_user_id', excludeCreatorId);
+        if (activeOnly) query = query.eq('is_active', true);
 
         const { data, error } = await query.order(sortBy, { ascending: sortOrder === 'asc' }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
@@ -45,30 +46,34 @@ export class SupabaseCourseRepository {
         return data || [];
     }
 
-    async findFree({ offset = 0, limit = 20, excludeCreatorId = null } = {}) {
+    async findFree({ offset = 0, limit = 20, excludeCreatorId = null, activeOnly = false } = {}) {
         let query = this.client.from('courses').select('*').eq('is_premium', false);
         if (excludeCreatorId) query = query.neq('creator_user_id', excludeCreatorId);
+        if (activeOnly) query = query.eq('is_active', true);
 
         const { data, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }
 
-    async findPremium({ offset = 0, limit = 20, excludeCreatorId = null } = {}) {
+    async findPremium({ offset = 0, limit = 20, excludeCreatorId = null, activeOnly = false } = {}) {
         let query = this.client.from('courses').select('*').eq('is_premium', true);
         if (excludeCreatorId) query = query.neq('creator_user_id', excludeCreatorId);
+        if (activeOnly) query = query.eq('is_active', true);
 
         const { data, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }
 
-    async search(query, { offset = 0, limit = 20 } = {}) {
+    async search(query, { offset = 0, limit = 20, activeOnly = false } = {}) {
         const rawQuery = (query || '').trim();
         if (!rawQuery) return [];
         const safeQuery = this._escapeOrIlikeValue(rawQuery);
         const filter = `title.ilike."%${safeQuery}%",description.ilike."%${safeQuery}%"`;
-        const { data, error } = await this.client.from('courses').select('*').or(filter).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+        let q = this.client.from('courses').select('*').or(filter);
+        if (activeOnly) q = q.eq('is_active', true);
+        const { data, error } = await q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return data || [];
     }
@@ -111,6 +116,64 @@ export class SupabaseCourseRepository {
     }
 
     async delete(id) {
+        // 1. Progress records
+        await this.client.from('progreso_materia').delete().eq('curso_id', id);
+        await this.client.from('progreso_curso').delete().eq('curso_id', id);
+
+        // 2. Collaborators
+        await this.client.from('collaborators').delete().eq('course_id', id);
+
+        // 3. Videos
+        await this.client.from('videos').delete().eq('course_id', id);
+
+        // 4. Cascade through subjects → topics → tasks/content_items/rag_documents/question_sessions
+        const { data: subjects } = await this.client.from('subjects').select('id').eq('course_id', id);
+        if (subjects && subjects.length > 0) {
+            const subjectIds = subjects.map(s => s.id);
+
+            // Topics linked by materia_id OR subject_id
+            const orFilter = subjectIds.map(sid => `materia_id.eq.${sid},subject_id.eq.${sid}`).join(',');
+            const { data: topics } = await this.client.from('topics').select('id').or(orFilter);
+
+            if (topics && topics.length > 0) {
+                const topicIds = topics.map(t => t.id);
+
+                // RAG docs for topics
+                await this.client.from('rag_documents').delete().in('topic_id', topicIds);
+
+                const { data: tasks } = await this.client.from('tasks').select('id').in('topic_id', topicIds);
+                if (tasks && tasks.length > 0) {
+                    const taskIds = tasks.map(t => t.id);
+
+                    // RAG docs for tasks
+                    await this.client.from('rag_documents').delete().in('task_id', taskIds);
+
+                    // Content items under tasks → rag docs → delete
+                    const { data: taskItems } = await this.client.from('content_items').select('id').in('task_id', taskIds);
+                    if (taskItems && taskItems.length > 0) {
+                        await this.client.from('rag_documents').delete().in('content_item_id', taskItems.map(i => i.id));
+                        await this.client.from('content_items').delete().in('task_id', taskIds);
+                    }
+
+                    await this.client.from('task_submissions').delete().in('task_id', taskIds);
+                    await this.client.from('question_sessions').delete().in('task_id', taskIds);
+                    await this.client.from('tasks').delete().in('topic_id', topicIds);
+                }
+
+                // Content items directly on topics (no task)
+                const { data: topicItems } = await this.client.from('content_items').select('id').in('topic_id', topicIds);
+                if (topicItems && topicItems.length > 0) {
+                    await this.client.from('rag_documents').delete().in('content_item_id', topicItems.map(i => i.id));
+                    await this.client.from('content_items').delete().in('topic_id', topicIds);
+                }
+
+                await this.client.from('topics').delete().in('id', topicIds);
+            }
+
+            await this.client.from('subjects').delete().eq('course_id', id);
+        }
+
+        // 5. Finally delete the course
         const { error } = await this.client.from('courses').delete().eq('id', id);
         if (error) throw new Error(`Error eliminando curso: ${error.message}`);
         return true;
@@ -162,6 +225,7 @@ export class SupabaseCourseRepository {
 
     async count(filters = {}) {
         let query = this.client.from('courses').select('id', { count: 'exact', head: true });
+        if (filters.activeOnly) query = query.eq('is_active', true);
         if (filters.creatorUserId) query = query.eq('creator_user_id', filters.creatorUserId);
         if (filters.excludeCreatorId) query = query.neq('creator_user_id', filters.excludeCreatorId);
         if (filters.creatorUsername) {
