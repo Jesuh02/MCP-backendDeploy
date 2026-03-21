@@ -22,7 +22,7 @@ export class SubjectController {
         try {
             const result = await this.subjectService.getByCourse(parseInt(req.params.courseId), req.user?.userId);
             if (result.isFail()) return next(result.getError());
-            res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
+            res.set('Cache-Control', 'no-store');
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };

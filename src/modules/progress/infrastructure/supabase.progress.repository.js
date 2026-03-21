@@ -114,6 +114,41 @@ export class SupabaseProgressRepository {
         });
     }
 
+    /**
+     * Fetches user/course/creator data from DB and builds the synthetic certificate URL.
+     * Used when issuing a certificate without a pre-built URL.
+     */
+    async _buildCertificateUrlFromDb(userId, courseId, progressRow, verificationCode, issuedAt) {
+        try {
+            const [{ data: studentUser }, { data: courseRow }] = await Promise.all([
+                this.client.from('usuarios').select('username').eq('id', userId).maybeSingle(),
+                this.client.from('courses').select('title, creator_user_id').eq('id', courseId).maybeSingle(),
+            ]);
+            let instructorUsername = null;
+            if (courseRow?.creator_user_id) {
+                const { data: creator } = await this.client
+                    .from('usuarios').select('username').eq('id', courseRow.creator_user_id).maybeSingle();
+                instructorUsername = creator?.username || null;
+            }
+            return this._buildSyntheticCertificateUrl({
+                studentName:        studentUser?.username || null,
+                courseName:         courseRow?.title || null,
+                grade:              progressRow?.promedio ?? progressRow?.calificacion_ponderada ?? null,
+                tasksCompleted:     progressRow?.tareas_completadas ?? 0,
+                totalTasks:         progressRow?.tareas_totales ?? 0,
+                progressPercentage: progressRow?.porcentaje_progreso ?? 0,
+                instructorName:     instructorUsername,
+                instructorUsername,
+                userId,
+                courseId,
+                verificationCode,
+                issuedAt,
+            });
+        } catch {
+            return null;
+        }
+    }
+
     /** Mapea una fila de progreso al objeto de dominio. */
     _mapToDomain(row, cert = null) {
         if (!row) return null;
@@ -603,12 +638,21 @@ export class SupabaseProgressRepository {
         // Preserve existing verification_code on re-issue; generate a new one on first issue
         const { data: existingCert } = await this.client
             .from('certificates')
-            .select('verification_code')
+            .select('verification_code, storage_path')
             .eq('user_id', userId)
             .eq('course_id', courseId)
             .maybeSingle();
         payload.verification_code = existingCert?.verification_code
             || `CERT-${userId}-${courseId}-${Date.now().toString(36).toUpperCase()}`;
+
+        // Generate and persist the synthetic URL if no storage_path is set yet
+        if (!payload.storage_path && !existingCert?.storage_path) {
+            const syntheticUrl = await this._buildCertificateUrlFromDb(
+                userId, courseId, progressRow, payload.verification_code,
+                payload.issued_at || new Date().toISOString()
+            );
+            if (syntheticUrl) payload.storage_path = syntheticUrl;
+        }
 
         const { data: cert, error } = await this.client
             .from('certificates')
@@ -657,12 +701,20 @@ export class SupabaseProgressRepository {
 
         const now = new Date().toISOString();
         const results = [];
-        for (const { userId, courseId } of eligiblePairs) {
+        for (const { userId, courseId, certificateUrl, certificateIssuedAt } of eligiblePairs) {
+            const upsertData = {
+                user_id:   userId,
+                course_id: courseId,
+                // Preserve original issued_at when repairing an already-issued cert
+                issued_at: certificateIssuedAt || now,
+            };
+            if (certificateUrl) upsertData.storage_path = certificateUrl;
             const { data, error } = await this.client
                 .from('certificates')
                 .upsert(
-                    { user_id: userId, course_id: courseId, issued_at: now },
-                    { onConflict: 'user_id,course_id', ignoreDuplicates: true }
+                    upsertData,
+                    // ignoreDuplicates:false → allows updating storage_path on existing rows
+                    { onConflict: 'user_id,course_id', ignoreDuplicates: false }
                 )
                 .select()
                 .maybeSingle();

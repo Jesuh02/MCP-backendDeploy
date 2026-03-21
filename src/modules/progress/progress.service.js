@@ -295,9 +295,16 @@ export class ProgressDomainService {
 
     async bulkIssueCertificatesForCreator(creatorUserId) {
         const rows = await this.progressRepo.findWonProgressByCreatorCourses(creatorUserId);
-        const pending = rows.filter(r => this._isProgressWon(r) && !r.certificateIssuedAt);
+        const won = rows.filter(r => this._isProgressWon(r));
+        // Include: certs not yet issued AND already-issued certs missing a URL (repair)
+        const pending = won.filter(r => !r.certificateIssuedAt || !r.certificateUrl);
         if (pending.length === 0) return Result.ok({ issued: 0 });
-        const pairs = pending.map(r => ({ userId: r.userId, courseId: r.courseId }));
+        const pairs = pending.map(r => ({
+            userId:              r.userId,
+            courseId:            r.courseId,
+            certificateUrl:      r.certificateUrl || null,
+            certificateIssuedAt: r.certificateIssuedAt || null,
+        }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);
         return Result.ok({ issued: issued.length });
     }
@@ -310,9 +317,16 @@ export class ProgressDomainService {
 
     async bulkIssueCertificatesGlobal() {
         const rows = await this.progressRepo.findAllWonProgress();
-        const pending = rows.filter(r => this._isProgressWon(r) && !r.certificateIssuedAt);
+        const won = rows.filter(r => this._isProgressWon(r));
+        // Include: certs not yet issued AND already-issued certs missing a URL (repair)
+        const pending = won.filter(r => !r.certificateIssuedAt || !r.certificateUrl);
         if (pending.length === 0) return Result.ok({ issued: 0 });
-        const pairs = pending.map(r => ({ userId: r.userId, courseId: r.courseId }));
+        const pairs = pending.map(r => ({
+            userId:              r.userId,
+            courseId:            r.courseId,
+            certificateUrl:      r.certificateUrl || null,
+            certificateIssuedAt: r.certificateIssuedAt || null,
+        }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);
         return Result.ok({ issued: issued.length });
     }
