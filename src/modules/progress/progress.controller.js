@@ -396,5 +396,13 @@ export class ProgressController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    getAllSubjectAccessBlocks = async(req, res, next) => {
+        try {
+            const result = await this.progressService.getAllSubjectAccessBlocks();
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ProgressController;

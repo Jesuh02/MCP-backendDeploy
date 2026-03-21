@@ -1035,11 +1035,29 @@ export class SupabaseProgressRepository {
             }
         }
 
+        // Fetch all active subject access blocks for the enrolled users
+        // Key: "userId-courseId" → Set of blocked subjectIds
+        const blockedByUserCourse = new Map();
+        if (userIds.length > 0) {
+            const { data: blocks } = await this.client
+                .from('v_subject_access_blocks')
+                .select('user_id, course_id, subject_id')
+                .in('user_id', userIds)
+                .eq('is_active', true);
+            for (const b of (blocks || [])) {
+                const key = `${Number(b.user_id)}-${Number(b.course_id)}`;
+                if (!blockedByUserCourse.has(key)) blockedByUserCourse.set(key, new Set());
+                blockedByUserCourse.get(key).add(Number(b.subject_id));
+            }
+        }
+
         return data.map(row => {
             const user    = usersById.get(Number(row.user_id)) || null;
             const persona = user?.persona_id ? personasById.get(Number(user.persona_id)) || null : null;
             const course  = coursesById.get(Number(row.course_id)) || null;
+            const uid     = Number(row.user_id);
             const cid     = Number(row.course_id);
+            const blockedSet = blockedByUserCourse.get(`${uid}-${cid}`) || new Set();
             return {
                 ...this._mapPreEnrollmentRecord(row, {
                     username:       user?.username || null,
@@ -1049,6 +1067,7 @@ export class SupabaseProgressRepository {
                     courseName:     course?.title || null,
                 }),
                 subjects: subjectsByCourse.get(cid) || [],
+                blockedSubjectIds: [...blockedSet],
             };
         });
     }
@@ -1141,6 +1160,19 @@ export class SupabaseProgressRepository {
             .eq('is_active', true);
         if (error || !data) return [];
         return data;
+    }
+
+    async findAllSubjectAccessBlocks() {
+        const { data, error } = await this.client
+            .from('v_subject_access_blocks')
+            .select('user_id, course_id, subject_id')
+            .eq('is_active', true);
+        if (error || !data) return [];
+        return data.map(b => ({
+            userId: Number(b.user_id),
+            courseId: Number(b.course_id),
+            subjectId: Number(b.subject_id),
+        }));
     }
 
     async findRevokedEnrollment(userId, courseId) {

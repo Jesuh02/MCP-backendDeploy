@@ -35,6 +35,7 @@ export function progressRoutes({ progressController, requireRoles }) {
     router.post('/admin/enrollments/:userId/:courseId/revoke', requireRoles(3), progressController.revokeEnrollment);
 
     // Admin: subject access blocks
+    router.get('/admin/subject-access-blocks', requireRoles(3), progressController.getAllSubjectAccessBlocks);
     router.post('/admin/subject-access-block', requireRoles(3), progressController.blockSubjectAccess);
     router.delete('/admin/subject-access-block/:userId/:subjectId', requireRoles(3), progressController.unblockSubjectAccess);
 
