@@ -141,8 +141,8 @@ export class CircuitBreakerOpenError extends Error {
  * @returns {object} — Proxy con circuit breaker en cada método.
  */
 export function withCircuitBreaker(adapter, options = {}) {
-    const name = options.name || adapter.constructor ? .name || 'Adapter';
-    const cb = new CircuitBreaker(async() => {}, {...options, name });
+    const name = options.name || adapter?.constructor?.name || 'Adapter';
+    const cb = new CircuitBreaker(async() => {}, { ...options, name });
 
     return new Proxy(adapter, {
         get(target, prop) {

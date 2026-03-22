@@ -2,7 +2,7 @@ import { Result } from '../../shared/Result.js';
 import { generateTaskReminderEmailHTML } from '../../templates/index.js';
 
 const TASK_REMINDER_OFFSET_MS = 5 * 60 * 60 * 1000;
-const MAX_TIMEOUT_MS = 2_147_483_647;
+const MAX_TIMEOUT_MS = 2147483647;
 
 export class NotificationDomainService {
     constructor({ notificationRepository, userRepository, pushNotificationPort, emailPort, userService, courseRepository, topicRepository, taskRepository }) {

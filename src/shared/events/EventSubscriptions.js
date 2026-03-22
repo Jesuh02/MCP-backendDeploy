@@ -49,7 +49,7 @@ export function registerEventSubscriptions(deps) {
     // ── TaskGraded → Notificar al estudiante ──
     eventBus.subscribe('TaskGraded', async(event) => {
         const { submission, grade, feedback, gradedBy } = event.payload;
-        if (notificationService && submission ? .userId) {
+        if (notificationService && submission?.userId) {
             await notificationService.send(submission.userId, {
                 title: 'Tarea calificada',
                 message: `Tu tarea fue calificada con ${grade}`,
@@ -81,7 +81,7 @@ export function registerEventSubscriptions(deps) {
                 message: `Se subió un nuevo video al curso #${courseId}`,
                 type: 'new_video',
                 relatedId: courseId,
-                metadata: { videoId: video ? .id, courseId, uploadedBy },
+                metadata: { videoId: video?.id, courseId, uploadedBy },
             }).catch(err =>
                 console.warn('[EventSubscription:VideoUploaded] Notification failed:', err.message)
             );
