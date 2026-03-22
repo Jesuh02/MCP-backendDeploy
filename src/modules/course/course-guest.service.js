@@ -85,6 +85,23 @@ export class CourseGuestService {
                 const row = await this.progressRepo.upsertPreEnrollment(
                     userId, courseId, 'approved', Number(requesterId)
                 );
+
+                // Also upsert a progreso_curso record so isEnrolled() returns true
+                // and the course appears as enrolled in ExploreFragment / ExploreView
+                try {
+                    await this.progressRepo.upsert({
+                        userId,
+                        courseId,
+                        completedTasks: 0,
+                        totalTasks: 0,
+                        averageGrade: 0,
+                        progressPercentage: 0,
+                        enrollment_status: 'activo',
+                    });
+                } catch (progressErr) {
+                    console.warn(`[CourseGuestService] Could not create progreso_curso for userId=${userId}:`, progressErr?.message);
+                }
+
                 results.push({ userId, success: true, row });
 
                 // Send in-app notification + email (non-blocking)
@@ -116,6 +133,14 @@ export class CourseGuestService {
         if (!existing) return Result.fail(new NotFoundError('Invitación', `${guestUserId}/${courseId}`));
 
         await this.progressRepo.deleteEnrollment(guestUserId, courseId, 'Invitación revocada');
+
+        // Also remove the progreso_curso record so the course no longer shows as enrolled
+        try {
+            await this.progressRepo.delete(guestUserId, courseId);
+        } catch (err) {
+            console.warn(`[CourseGuestService] Could not remove progreso_curso for userId=${guestUserId}:`, err?.message);
+        }
+
         return Result.ok({ message: 'Invitado eliminado del curso' });
     }
 
