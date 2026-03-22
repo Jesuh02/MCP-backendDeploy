@@ -17,7 +17,7 @@ export class CachedRepository {
      * @param {number} [options.ttlMs=300000] — TTL del cache en ms (default: 5 min).
      * @param {string} [options.prefix='repo'] — Prefijo para keys del cache.
      */
-    constructor(repo, cache, { ttlMs = 300 _000, prefix = 'repo' } = {}) {
+    constructor(repo, cache, { ttlMs = 300000, prefix = 'repo' } = {}) {
         this._repo = repo;
         this._cache = cache;
         this._ttlMs = ttlMs;

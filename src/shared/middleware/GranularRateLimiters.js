@@ -16,14 +16,14 @@ import { logger } from '../logging/Logger.js';
  */
 function userKeyGenerator(namespace) {
     return (req) => {
-        const userId = req.user ? .userId;
+        const userId = req.user?.userId;
         return userId ? `${namespace}:user:${userId}` : `${namespace}:ip:${req.ip}`;
     };
 }
 
 function createHandler(limitName, windowMs, max) {
     return (req, res) => {
-        const key = req.user ? .userId ? `user:${req.user.userId}` : `ip:${req.ip}`;
+        const key = (req.user && req.user.userId) ? `user:${req.user.userId}` : `ip:${req.ip}`;
         logger.warn(`[RateLimit:${limitName}] exceeded for ${key}, Path: ${req.path}`);
         res.status(429).json({
             error: 'Too Many Requests',
