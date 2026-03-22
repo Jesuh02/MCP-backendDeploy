@@ -118,6 +118,64 @@ export class SupabasePersonaRepository {
         const { count, error } = await this.client.from('personas').select('id', { count: 'exact', head: true });
         return error ? 0 : count;
     }
+
+    /**
+     * Returns persona names for a list of user IDs.
+     * Joins usuarios.persona_id → personas to get nombres + apellidos.
+     * Returns [{ userId, nombres, apellidos, fullName }]
+     */
+    async findByUserIds(userIds) {
+        if (!userIds?.length) return [];
+        const safeIds = [...new Set(userIds.map(Number).filter(n => Number.isFinite(n) && n > 0))];
+        if (!safeIds.length) return [];
+
+        const { data: users, error: userErr } = await this.client
+            .from('usuarios')
+            .select('id, persona_id')
+            .in('id', safeIds);
+        if (userErr || !users?.length) return [];
+
+        const personaIdToUserId = new Map();
+        const personaIds = [];
+        for (const u of users) {
+            if (u.persona_id) {
+                personaIdToUserId.set(Number(u.persona_id), Number(u.id));
+                personaIds.push(Number(u.persona_id));
+            }
+        }
+        if (!personaIds.length) return [];
+
+        const { data: personas, error: personaErr } = await this.client
+            .from('personas')
+            .select('id, nombres, apellidos')
+            .in('id', personaIds);
+        if (personaErr || !personas?.length) return [];
+
+        return personas
+            .map(p => ({
+                userId:    personaIdToUserId.get(Number(p.id)),
+                nombres:   p.nombres   || '',
+                apellidos: p.apellidos || '',
+                fullName:  [p.nombres, p.apellidos].filter(Boolean).join(' ').trim(),
+            }))
+            .filter(r => r.userId != null);
+    }
+
+    /**
+     * Search personas by nombres or apellidos (case-insensitive partial match).
+     */
+    async searchByName(query, limit = 20) {
+        const q = String(query || '').trim();
+        if (!q) return [];
+        const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+        const { data, error } = await this.client
+            .from('personas')
+            .select('*')
+            .or(`nombres.ilike.%${q}%,apellidos.ilike.%${q}%`)
+            .limit(safeLimit);
+        if (error || !data?.length) return [];
+        return data;
+    }
 }
 export default SupabasePersonaRepository;
 

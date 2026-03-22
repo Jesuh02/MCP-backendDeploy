@@ -62,6 +62,17 @@ export class PersonaController {
         } catch (err) { next(err); }
     };
 
+    byUserIds = async(req, res, next) => {
+        try {
+            const raw = String(req.query.userIds || '').split(',');
+            const userIds = raw.map(Number).filter(n => Number.isFinite(n) && n > 0);
+            if (!userIds.length) return res.json({ success: true, data: [] });
+            const result = await this.personaService.getByUserIds(userIds);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getById = async(req, res, next) => {
         try {
             const result = await this.personaService.getById(parseInt(req.params.id));

@@ -5,6 +5,7 @@ export function personaRoutes({ personaController }) {
 
     router.get('/', personaController.list);
     router.get('/search', personaController.search);
+    router.get('/by-user-ids', personaController.byUserIds);
     router.get('/by-identificacion/:identificacion', personaController.getByIdentificacion);
     router.get('/:id', personaController.getById);
     router.post('/', personaController.create);
