@@ -27,8 +27,23 @@ export class PersonaDomainService {
     }
 
     async search(query, limit = 20) {
-        const personas = await this.personaRepo.searchByIdentificacion(query, limit);
+        const q = String(query || '').trim();
+        // If query contains letters, search by name; otherwise search by identificacion
+        const hasLetters = /[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ]/.test(q);
+        const personas = hasLetters
+            ? await this.personaRepo.searchByName(q, limit)
+            : await this.personaRepo.searchByIdentificacion(q, limit);
         return Result.ok(personas);
+    }
+
+    async searchByName(query, limit = 20) {
+        const personas = await this.personaRepo.searchByName(query, limit);
+        return Result.ok(personas);
+    }
+
+    async getByUserIds(userIds) {
+        const results = await this.personaRepo.findByUserIds(userIds);
+        return Result.ok(results);
     }
 
     async create(data) {
