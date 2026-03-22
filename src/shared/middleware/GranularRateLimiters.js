@@ -38,12 +38,12 @@ function createHandler(limitName, windowMs, max) {
  * Protege: /llm/chat, /rag, /reinforcement
  */
 export const aiRateLimiter = rateLimit({
-    windowMs: 60 _000,
+    windowMs: 60000,
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: userKeyGenerator('ai'),
-    handler: createHandler('AI', 60 _000, 10),
+    handler: createHandler('AI', 60000, 10),
 });
 
 /**
@@ -51,12 +51,12 @@ export const aiRateLimiter = rateLimit({
  * Protege: /tts/synthesize
  */
 export const ttsRateLimiter = rateLimit({
-    windowMs: 60 _000,
+    windowMs: 60000,
     max: 5,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: userKeyGenerator('tts'),
-    handler: createHandler('TTS', 60 _000, 5),
+    handler: createHandler('TTS', 60000, 5),
 });
 
 /**
@@ -64,12 +64,12 @@ export const ttsRateLimiter = rateLimit({
  * Protege: /video-processing/analyze, /video-processing/process
  */
 export const videoProcessingRateLimiter = rateLimit({
-    windowMs: 60 _000,
+    windowMs: 60000,
     max: 3,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: userKeyGenerator('video-proc'),
-    handler: createHandler('VideoProcessing', 60 _000, 3),
+    handler: createHandler('VideoProcessing', 60000, 3),
 });
 
 /**
@@ -77,24 +77,24 @@ export const videoProcessingRateLimiter = rateLimit({
  * Protege: /auth/login, /auth/register
  */
 export const authRateLimiter = rateLimit({
-    windowMs: 60 _000,
+    windowMs: 60000,
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => `auth:ip:${req.ip}`,
-    handler: createHandler('Auth', 60 _000, 10),
+    handler: createHandler('Auth', 60000, 10),
 });
 
 /**
  * Payment endpoints — 5 req/min por usuario
  */
 export const paymentRateLimiter = rateLimit({
-    windowMs: 60 _000,
+    windowMs: 60000,
     max: 5,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: userKeyGenerator('payment'),
-    handler: createHandler('Payment', 60 _000, 5),
+    handler: createHandler('Payment', 60000, 5),
 });
 
 export default {
