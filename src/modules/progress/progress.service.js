@@ -136,11 +136,29 @@ export class ProgressDomainService {
 
     async isEnrolled(userId, courseId) {
         const enrolled = await this.progressRepo.isEnrolled(userId, courseId);
-        return Result.ok({ isEnrolled: enrolled });
+        if (enrolled) return Result.ok({ isEnrolled: true });
+
+        // Also treat an approved pre_enrollment (guest invitation) as enrolled
+        // so that invited users appear as inscribed in ExploreFragment / ExploreView
+        try {
+            const approvedCourseIds = await this.progressRepo.findApprovedEnrollmentCourseIds(userId);
+            const isGuest = approvedCourseIds.includes(Number(courseId));
+            if (isGuest) return Result.ok({ isEnrolled: true });
+        } catch { /* ignore */ }
+
+        return Result.ok({ isEnrolled: false });
     }
 
     async getEnrolledCourseIds(userId) {
         const ids = await this.progressRepo.findEnrolledCourseIds(userId);
+
+        // Also include courses the user was invited to (approved pre_enrollment = guest access)
+        try {
+            const guestIds = await this.progressRepo.findApprovedEnrollmentCourseIds(userId);
+            const merged = [...new Set([...ids, ...guestIds])];
+            return Result.ok(merged);
+        } catch { /* ignore, return what we have */ }
+
         return Result.ok(ids);
     }
 
