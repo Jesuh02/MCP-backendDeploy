@@ -1184,6 +1184,77 @@ export function generateEnrollmentApprovedEmailHTML(studentName, courseName) {
     `;
 }
 
+export function generateCourseInvitationEmailHTML(guestName, inviterName, courseName, courseThumbnail) {
+    const safeGuestName = escapeHtml(guestName || 'Usuario');
+    const safeInviterName = escapeHtml(inviterName || 'Un instructor');
+    const safeCourseName = escapeHtml(courseName || 'un curso');
+    const safeThumbnail = courseThumbnail ? escapeHtml(courseThumbnail) : '';
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>${getEmailBaseStyles()}</style>
+</head>
+<body>
+    <div class="container">
+        <div class="header" style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);">
+            <div class="header-icon">🎓</div>
+            <h1>¡Te han invitado a un curso!</h1>
+            <p>Tienes acceso inmediato</p>
+        </div>
+
+        <div class="content">
+            <p class="greeting">¡Hola <strong>${safeGuestName}</strong>! 👋</p>
+
+            <p class="message">
+                <strong>${safeInviterName}</strong> te ha invitado como participante al siguiente curso en <strong>CourseV</strong>.
+                Ya tienes acceso completo al contenido, ¡sin necesidad de prematricularte!
+            </p>
+
+            ${safeThumbnail ? `<div style="text-align:center;margin:16px 0;"><img src="${safeThumbnail}" alt="Portada del curso" style="max-width:100%;border-radius:12px;max-height:200px;object-fit:cover;"/></div>` : ''}
+
+            <div class="card" style="border-left-color: #6366f1;">
+                <p class="card-title">📚 Curso al que fuiste invitado</p>
+                <p class="card-value">${safeCourseName}</p>
+            </div>
+
+            <div style="background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center;">
+                <p style="margin: 0; color: #3730a3; font-size: 15px; font-weight: 500;">
+                    ✅ Acceso habilitado inmediatamente<br>
+                    <span style="font-weight: 400; font-size: 14px; color: #4338ca;">Abre la app CourseV y busca el curso en tu lista</span>
+                </p>
+            </div>
+
+            <div class="feedback-section">
+                <p class="feedback-title">¿Qué puedes hacer ahora?</p>
+                <p class="feedback-text">
+                    ✅ Acceder a todos los temas y videos del curso<br>
+                    ✅ Realizar y entregar tareas<br>
+                    ✅ Ver tu progreso de aprendizaje<br>
+                    ✅ Obtener certificado al finalizar
+                </p>
+            </div>
+
+            <div class="divider"></div>
+
+            <div style="text-align: center;">
+                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);">Ir al curso en CourseV</a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Este email fue enviado por <span class="brand">CourseV</span></p>
+            <p style="margin-top: 8px;">© 2026 YisusCompany. Todos los derechos reservados.</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+}
+
 export default {
     getEmailBaseStyles,
     generateGradeEmailHTML,
@@ -1195,7 +1266,8 @@ export default {
     generateAccountStatusEmailHTML,
     generateCollaboratorAddedEmailHTML,
     generateEnrollmentRequestEmailHTML,
-    generateEnrollmentApprovedEmailHTML
+    generateEnrollmentApprovedEmailHTML,
+    generateCourseInvitationEmailHTML,
 };
 
 

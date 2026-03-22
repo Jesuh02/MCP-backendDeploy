@@ -179,7 +179,8 @@ export class NotificationDomainService {
     _isCourseRelatedType(type) {
         const t = String(type || '').toLowerCase();
         return t === 'new_course' || t === 'new_task' || t === 'task_submission' || t === 'task_graded' ||
-               t === 'enrollment_approved' || t === 'collaborator_added' || t === 'enrollment_request';
+               t === 'enrollment_approved' || t === 'collaborator_added' || t === 'enrollment_request' ||
+               t === 'course_invitation';
     }
 
     _getCourseIdFromMetadata(metadata) {
@@ -224,7 +225,7 @@ export class NotificationDomainService {
         const normalizedType = String(type || '').toLowerCase();
         let courseId = this._getCourseIdFromMetadata(metadata);
 
-        const typesWithCourseAsRelatedId = ['new_course', 'enrollment_approved', 'collaborator_added', 'enrollment_request'];
+        const typesWithCourseAsRelatedId = ['new_course', 'enrollment_approved', 'collaborator_added', 'enrollment_request', 'course_invitation'];
         if (!courseId && typesWithCourseAsRelatedId.includes(normalizedType)) {
             const id = Number(relatedId);
             if (Number.isInteger(id) && id > 0) courseId = id;

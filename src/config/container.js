@@ -1,5 +1,11 @@
 import { JWTAdapter } from '../modules/auth/infrastructure/jwt.adapter.js';
 import { SupabaseService } from '../shared/database/SupabaseService.js';
+import { eventBus } from '../shared/events/EventBus.js';
+import { registerEventSubscriptions } from '../shared/events/EventSubscriptions.js';
+import { CachedRepository } from '../shared/database/CachedRepository.js';
+import { withCircuitBreaker } from '../shared/infrastructure/CircuitBreaker.js';
+import { SupabaseOutboxRepository } from '../shared/outbox/SupabaseOutboxRepository.js';
+import { OutboxProcessor } from '../shared/outbox/OutboxProcessor.js';
 
 import { R2StorageAdapter } from '../modules/storage/infrastructure/r2.storage.adapter.js';
 import { FCMAdapter } from '../modules/notification/infrastructure/fcm.adapter.js';
@@ -32,7 +38,10 @@ import { RolController } from '../modules/rol/rol.controller.js';
 import { CourseDomainService } from '../modules/course/course.service.js';
 import { CourseNotificationService } from '../modules/course/course-notification.service.js';
 import { SupabaseCourseRepository } from '../modules/course/infrastructure/supabase.course.repository.js';
+import { SupabaseCourseReadRepository } from '../modules/course/infrastructure/supabase.course.read-repository.js';
 import { CourseController } from '../modules/course/course.controller.js';
+import { CourseGuestService } from '../modules/course/course-guest.service.js';
+import { CourseGuestController } from '../modules/course/course-guest.controller.js';
 
 import { TopicDomainService } from '../modules/topic/topic.service.js';
 import { SupabaseTopicRepository } from '../modules/topic/infrastructure/supabase.topic.repository.js';
@@ -182,14 +191,19 @@ export function createContainer() {
     const fcmAdapter = safeInit('FCMAdapter', () => new FCMAdapter());
     const emailAdapter = safeInit('EmailAdapter', () => new EmailAdapter());
     const emailQueueService = new EmailQueueService(); // Instancia singleton
-    const paymentGateway = safeInit('WompiAdapter', () => new WompiAdapter());
+    const rawPaymentGateway = safeInit('WompiAdapter', () => new WompiAdapter());
 
-    const ttsAdapter = safeInit('OpenAITTSAdapter', () => new OpenAITTSAdapter());
+    const rawTtsAdapter = safeInit('OpenAITTSAdapter', () => new OpenAITTSAdapter());
     const videoProcessingAdapter = safeInit('FFmpegVideoAdapter', () => new FFmpegVideoAdapter());
-    const llmAdapter = safeInit('LLMAdapter', () => new LLMAdapter());
+    const rawLlmAdapter = safeInit('LLMAdapter', () => new LLMAdapter());
     const ragAdapter = safeInit('RAGAdapter', () => new RAGAdapter());
     const githubAdapter = safeInit('GitHubAdapter', () => new GitHubAdapter());
     const cacheAdapter = safeInit('CacheAdapter', () => new CacheAdapter());
+
+    // Circuit Breaker: proteger adaptadores externos contra fallos/lentitud
+    const llmAdapter = rawLlmAdapter ? withCircuitBreaker(rawLlmAdapter, { name: 'LLM', threshold: 3, timeout: 30_000 }) : null;
+    const ttsAdapter = rawTtsAdapter ? withCircuitBreaker(rawTtsAdapter, { name: 'TTS', threshold: 3, timeout: 30_000 }) : null;
+    const paymentGateway = rawPaymentGateway ? withCircuitBreaker(rawPaymentGateway, { name: 'Wompi', threshold: 5, timeout: 60_000 }) : null;
 
     // WhatsApp adapter (non-critical — missing env vars will not crash)
     const whatsAppAdapter = safeInit('MetaWhatsAppAdapter', () => new MetaWhatsAppAdapter({
@@ -206,7 +220,11 @@ export function createContainer() {
     // ═══════════════════════════════════════════════════════════
 
     const userRepo = new SupabaseUserRepository(client);
-    const courseRepo = new SupabaseCourseRepository(client);
+    const rawCourseRepo = new SupabaseCourseRepository(client);
+    const courseRepo = cacheAdapter
+        ? new CachedRepository(rawCourseRepo, cacheAdapter, { ttlMs: 600_000, prefix: 'course' })
+        : rawCourseRepo;
+    const courseReadRepo = new SupabaseCourseReadRepository(client);
     const videoRepo = new SupabaseVideoRepository(client);
     const topicRepo = new SupabaseTopicRepository(client);
     const subjectRepo = new SupabaseSubjectRepository(client);
@@ -219,6 +237,7 @@ export function createContainer() {
     const commentRepo = new SupabaseCommentRepository(client);
     const notificationRepo = new SupabaseNotificationRepository(client);
     const transactionRepo = new SupabaseTransactionRepository(client);
+    const outboxRepo = new SupabaseOutboxRepository(client);
     const personaRepo = new SupabasePersonaRepository(client);
     const rolRepo = new SupabaseRolRepository(client);
     const fileContextRepo = new SupabaseFileContextRepository(client);
@@ -266,7 +285,7 @@ export function createContainer() {
     userService.setNotificationService(notificationService);
     progressService.setNotificationService(notificationService);
 
-    const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo });
+    const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo, outboxRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
     const fileContextService = new FileContextDomainService({ fileContextRepository: fileContextRepo });
@@ -380,6 +399,15 @@ export function createContainer() {
     const userController = new UserController({ userService, whatsAppService: whatsAppDomainService });
     const collaboratorController = new CollaboratorController({ collaboratorService });
     const courseController = new CourseController({ courseService });
+
+    const courseGuestService = new CourseGuestService({
+        progressRepository: progressRepo,
+        courseRepository: courseRepo,
+        userRepository: userRepo,
+        collaboratorRepository: collaboratorRepo,
+        notificationService,
+    });
+    const courseGuestController = new CourseGuestController({ courseGuestService });
     const videoController = new VideoController({ videoService });
     const topicController = new TopicController({ topicService });
     const subjectController = new SubjectController({ subjectService });
@@ -429,11 +457,13 @@ export function createContainer() {
 
         // Repositories (exposed for middleware)
         courseRepository: courseRepo,
+        courseReadRepository: courseReadRepo,
 
         // Controladores (para montar rutas)
         authController,
         userController,
         courseController,
+        courseGuestController,
         videoController,
         topicController,
         subjectController,
@@ -516,7 +546,28 @@ export function createContainer() {
         githubAdapter,
         cacheAdapter,
         whatsAppAdapter,
+
+        // EventBus
+        eventBus,
     };
+
+    // ═══════════════════════════════════════════════════════════
+    // 5. DOMAIN EVENT SUBSCRIPTIONS — Rompe ciclos de dependencia
+    // ═══════════════════════════════════════════════════════════
+    registerEventSubscriptions({
+        notificationService,
+        courseNotificationService,
+        progressService,
+        userService,
+    });
+
+    // 6. OUTBOX PROCESSOR — Entrega at-least-once de eventos persistidos
+    // ═══════════════════════════════════════════════════════════
+    const outboxProcessor = new OutboxProcessor({ outboxRepo, eventBus });
+    outboxProcessor.start();
+    result.outboxProcessor = outboxProcessor;
+
+    return result;
 }
 
 export default createContainer;

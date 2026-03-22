@@ -3,11 +3,12 @@ import { NotFoundError, ValidationError } from '../../shared/errors/index.js';
 import crypto from 'crypto';
 
 export class PaymentDomainService {
-    constructor({ transactionRepository, courseRepository, paymentGatewayPort, progressRepository }) {
+    constructor({ transactionRepository, courseRepository, paymentGatewayPort, progressRepository, outboxRepo }) {
         this.txRepo = transactionRepository;
         this.courseRepo = courseRepository;
         this.gateway = paymentGatewayPort;
         this.progressRepo = progressRepository || null;
+        this.outboxRepo = outboxRepo || null;
     }
 
     async initiate({ userId, courseId, redirectUrl }) {
@@ -310,9 +311,20 @@ export class PaymentDomainService {
             }
         }
 
-        // If APPROVED, grant course access
+        // If APPROVED, grant course access and persist outbox event
         if (dbStatus === 'APPROVED' && userId && courseId) {
             await this._grantCourseAccess(userId, courseId);
+            // Persist event in outbox for reliable async processing
+            if (this.outboxRepo) {
+                try {
+                    await this.outboxRepo.insert({
+                        eventType: 'PaymentConfirmed',
+                        payload: { userId, courseId, reference, wompiTransactionId },
+                    });
+                } catch (outboxErr) {
+                    console.error(`⚠️ Outbox insert failed (non-blocking): ${outboxErr.message}`);
+                }
+            }
             console.log(`🎉 Payment APPROVED. Access granted to User ${userId} for Course ${courseId}`);
         }
 

@@ -1,0 +1,106 @@
+/**
+ * Rate Limiters Granulares — Por usuario y endpoint.
+ *
+ * Complementa el rate limiter global con límites específicos para
+ * endpoints costosos (AI, TTS, video processing).
+ *
+ * Cada limiter usa `req.user.userId` como key para limitar por usuario autenticado.
+ * Si no hay usuario autenticado, cae al IP como fallback.
+ */
+import rateLimit from 'express-rate-limit';
+import { logger } from '../logging/Logger.js';
+
+/**
+ * Key generator que usa userId si está autenticado, IP si no.
+ * @param {string} namespace — Prefijo para separar buckets por endpoint.
+ */
+function userKeyGenerator(namespace) {
+    return (req) => {
+        const userId = req.user ? .userId;
+        return userId ? `${namespace}:user:${userId}` : `${namespace}:ip:${req.ip}`;
+    };
+}
+
+function createHandler(limitName, windowMs, max) {
+    return (req, res) => {
+        const key = req.user ? .userId ? `user:${req.user.userId}` : `ip:${req.ip}`;
+        logger.warn(`[RateLimit:${limitName}] exceeded for ${key}, Path: ${req.path}`);
+        res.status(429).json({
+            error: 'Too Many Requests',
+            message: `Has excedido el límite de ${max} peticiones en ${windowMs / 1000}s para ${limitName}.`,
+            retryAfter: Math.ceil(windowMs / 1000),
+        });
+    };
+}
+
+/**
+ * AI endpoints — 10 req/min por usuario
+ * Protege: /llm/chat, /rag, /reinforcement
+ */
+export const aiRateLimiter = rateLimit({
+    windowMs: 60 _000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: userKeyGenerator('ai'),
+    handler: createHandler('AI', 60 _000, 10),
+});
+
+/**
+ * TTS endpoints — 5 req/min por usuario
+ * Protege: /tts/synthesize
+ */
+export const ttsRateLimiter = rateLimit({
+    windowMs: 60 _000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: userKeyGenerator('tts'),
+    handler: createHandler('TTS', 60 _000, 5),
+});
+
+/**
+ * Video processing — 3 req/min por usuario
+ * Protege: /video-processing/analyze, /video-processing/process
+ */
+export const videoProcessingRateLimiter = rateLimit({
+    windowMs: 60 _000,
+    max: 3,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: userKeyGenerator('video-proc'),
+    handler: createHandler('VideoProcessing', 60 _000, 3),
+});
+
+/**
+ * Auth endpoints — 10 req/min por IP (brute force protection)
+ * Protege: /auth/login, /auth/register
+ */
+export const authRateLimiter = rateLimit({
+    windowMs: 60 _000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `auth:ip:${req.ip}`,
+    handler: createHandler('Auth', 60 _000, 10),
+});
+
+/**
+ * Payment endpoints — 5 req/min por usuario
+ */
+export const paymentRateLimiter = rateLimit({
+    windowMs: 60 _000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: userKeyGenerator('payment'),
+    handler: createHandler('Payment', 60 _000, 5),
+});
+
+export default {
+    aiRateLimiter,
+    ttsRateLimiter,
+    videoProcessingRateLimiter,
+    authRateLimiter,
+    paymentRateLimiter,
+};

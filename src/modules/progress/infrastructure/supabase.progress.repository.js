@@ -1094,19 +1094,63 @@ export class SupabaseProgressRepository {
         return this._mapPreEnrollmentRecord(data);
     }
 
-    async upsertPreEnrollment(userId, courseId, status = 'pending') {
+    async upsertPreEnrollment(userId, courseId, status = 'pending', reviewedBy = null) {
+        const now = new Date().toISOString();
+        const payload = {
+            user_id:      userId,
+            course_id:    courseId,
+            status,
+            requested_at: now,
+        };
+        if (status === 'approved') {
+            payload.reviewed_at = now;
+            if (reviewedBy) payload.reviewed_by = reviewedBy;
+        }
         const { data, error } = await this.client
             .from('pre_enrollments')
-            .upsert({
-                user_id:      userId,
-                course_id:    courseId,
-                status,
-                requested_at: new Date().toISOString(),
-            }, { onConflict: 'user_id,course_id' })
+            .upsert(payload, { onConflict: 'user_id,course_id' })
             .select()
             .single();
         if (error) throw new Error(error.message);
         return this._mapPreEnrollmentRecord(data);
+    }
+
+    /**
+     * Returns all approved pre-enrollments for a given course, enriched with
+     * basic user info (id, username, avatar).
+     */
+    async findApprovedPreEnrollments(courseId) {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .select('user_id, course_id, status, requested_at, reviewed_at, reviewed_by')
+            .eq('course_id', courseId)
+            .eq('status', 'approved')
+            .order('requested_at', { ascending: false });
+        if (error || !data?.length) return [];
+
+        const userIds = [...new Set(data.map(r => Number(r.user_id)).filter(id => Number.isInteger(id) && id > 0))];
+        let usersById = new Map();
+        if (userIds.length > 0) {
+            const { data: users } = await this.client
+                .from('usuarios')
+                .select('id, username, avatar')
+                .in('id', userIds);
+            usersById = new Map((users || []).map(u => [Number(u.id), u]));
+        }
+
+        return data.map(row => {
+            const user = usersById.get(Number(row.user_id));
+            return {
+                userId: Number(row.user_id),
+                courseId: Number(row.course_id),
+                status: row.status,
+                requestedAt: row.requested_at,
+                reviewedAt: row.reviewed_at,
+                reviewedBy: row.reviewed_by ? Number(row.reviewed_by) : null,
+                username: user?.username || null,
+                avatar: user?.avatar || null,
+            };
+        });
     }
 
     async findApprovedEnrollments() {
