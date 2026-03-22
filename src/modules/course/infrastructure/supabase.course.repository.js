@@ -120,10 +120,31 @@ export class SupabaseCourseRepository {
         await this.client.from('progreso_materia').delete().eq('curso_id', id);
         await this.client.from('progreso_curso').delete().eq('curso_id', id);
 
-        // 2. Collaborators
+        // 2. Pre-enrollments (pending enrollment requests)
+        await this.client.from('pre_enrollments').delete().eq('course_id', id);
+
+        // 3. Certificates issued for this course
+        await this.client.from('certificates').delete().eq('course_id', id);
+
+        // 4. Subject access blocks
+        await this.client.from('subject_access_blocks').delete().eq('course_id', id);
+
+        // 5. Reinforcement results
+        await this.client.from('reinforcement_results').delete().eq('course_id', id);
+
+        // 6. Questions history (direct course_id)
+        await this.client.from('questions_history').delete().eq('course_id', id);
+
+        // 7. RAG documents referencing this course directly
+        await this.client.from('rag_documents').delete().eq('course_id', id);
+
+        // 8. Transactions for this course
+        await this.client.from('transactions').delete().eq('course_id', id);
+
+        // 9. Collaborators
         await this.client.from('collaborators').delete().eq('course_id', id);
 
-        // 3. Videos
+        // 10. Videos
         await this.client.from('videos').delete().eq('course_id', id);
 
         // 4. Cascade through subjects → topics → tasks/content_items/rag_documents/question_sessions
@@ -173,7 +194,7 @@ export class SupabaseCourseRepository {
             await this.client.from('subjects').delete().eq('course_id', id);
         }
 
-        // 5. Finally delete the course
+        // 11. Finally delete the course
         const { error } = await this.client.from('courses').delete().eq('id', id);
         if (error) throw new Error(`Error eliminando curso: ${error.message}`);
         return true;
