@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler.js';
+import { validate } from '../../shared/middleware/validate.js';
+import { createCourseSchema, updateCourseSchema } from './course.schemas.js';
 
-export function courseRoutes({ courseController }) {
+export function courseRoutes({ courseController, courseGuestController }) {
     const router = Router();
 
     router.get('/', asyncHandler(courseController.list));
@@ -20,9 +22,16 @@ export function courseRoutes({ courseController }) {
     router.get('/manageable/:userId', asyncHandler(courseController.getManageableByUserId));
     router.get('/creator-id/:userId/with-submissions', asyncHandler(courseController.getCreatorCoursesWithSubmissions));
     router.get('/:id', asyncHandler(courseController.getById));
-    router.post('/', asyncHandler(courseController.create));
-    router.put('/:id', asyncHandler(courseController.update));
+    router.post('/', validate(createCourseSchema), asyncHandler(courseController.create));
+    router.put('/:id', validate(updateCourseSchema), asyncHandler(courseController.update));
     router.delete('/:id', asyncHandler(courseController.delete));
+
+    // ── Guest / Invitados ──────────────────────────────────────────────────────
+    if (courseGuestController) {
+        router.post('/:courseId/guests', asyncHandler(courseGuestController.invite));
+        router.get('/:courseId/guests', asyncHandler(courseGuestController.list));
+        router.delete('/:courseId/guests/:userId', asyncHandler(courseGuestController.remove));
+    }
 
     return router;
 }
