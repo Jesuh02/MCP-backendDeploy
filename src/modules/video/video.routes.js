@@ -1,13 +1,37 @@
 import { Router } from 'express';
 import multer from 'multer';
 
+function getFileExtension(filename = '') {
+    const raw = filename.split('.').pop();
+    return raw ? raw.toLowerCase() : '';
+}
+
+function isAllowedVideoFile(file) {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const extension = getFileExtension(file.originalname || '');
+    const allowedMimes = new Set([
+        'video/mp4',
+        'video/quicktime',
+        'video/x-msvideo',
+        'video/webm',
+        'video/x-matroska',
+        'video/3gpp',
+        'video/3gpp2',
+        'video/mpeg',
+        'application/mp4',
+        'application/octet-stream',
+    ]);
+    const allowedExtensions = new Set(['mp4', 'mov', 'avi', 'webm', 'mkv', '3gp', '3g2', 'mpeg', 'mpg', 'm4v']);
+
+    return mime.startsWith('video/') || allowedMimes.has(mime) || allowedExtensions.has(extension);
+}
+
 const videoUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
     fileFilter: (req, file, cb) => {
         if (file.fieldname === 'video') {
-            const allowed = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'video/x-matroska'];
-            cb(null, allowed.includes(file.mimetype));
+            cb(null, isAllowedVideoFile(file));
         } else if (file.fieldname === 'thumbnail') {
             const allowed = ['image/jpeg', 'image/png', 'image/webp'];
             cb(null, allowed.includes(file.mimetype));

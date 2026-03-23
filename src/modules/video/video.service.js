@@ -111,6 +111,46 @@ export class VideoDomainService {
         video.thumbnailUri = null;
     }
 
+    _toBoolean(value, fallback = false) {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+            if (['false', '0', 'no', 'off', ''].includes(normalized)) return false;
+        }
+        return fallback;
+    }
+
+    _toNullableNumber(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    _normalizeCreateInput(input = {}) {
+        const title = String(input.title || '').trim();
+        const description = input.description == null ? '' : String(input.description);
+        const videoUri = input.videoUri || input.videoUriString || input.video_uri_string || null;
+        const thumbnailUri = input.thumbnailUri || input.thumbnail_uri || null;
+        const courseId = this._toNullableNumber(input.courseId ?? input.course_id);
+        const userId = this._toNullableNumber(input.userId ?? input.user_id ?? input.remote_id);
+        const price = this._toNullableNumber(input.price);
+        const timestamp = this._toNullableNumber(input.timestamp) || Date.now();
+        const isPaid = this._toBoolean(input.isPaid ?? input.is_paid, false);
+
+        return {
+            title,
+            description,
+            videoUri,
+            thumbnailUri,
+            courseId,
+            userId,
+            price: isPaid ? price : null,
+            isPaid,
+            timestamp,
+        };
+    }
+
     async _removeCourseThumbnailFallback(videos) {
         if (!this.courseRepo) return videos;
 
@@ -244,7 +284,8 @@ export class VideoDomainService {
         if (!videoBuffer || !videoBuffer.length) {
             return Result.fail(new ValidationError('Video file is required'));
         }
-        if (!metadata || !metadata.title) {
+        const normalizedMetadata = this._normalizeCreateInput(metadata);
+        if (!normalizedMetadata.title) {
             return Result.fail(new ValidationError('Title is required'));
         }
         if (!this.storage || !this.storage.isAvailable()) {
@@ -253,31 +294,32 @@ export class VideoDomainService {
 
         try {
             // 1. Upload video to R2
-            const sanitizedTitle = (metadata.title || 'video').replace(/[^a-zA-Z0-9._-]/g, '_');
+            const sanitizedTitle = (normalizedMetadata.title || 'video').replace(/[^a-zA-Z0-9._-]/g, '_');
             const videoExt = path.extname(videoFilename || '.mp4') || '.mp4';
             const videoKey = `videos/${Date.now()}_${sanitizedTitle}${videoExt}`;
             await this.storage.uploadFile(videoBuffer, videoKey, videoMimeType || 'video/mp4');
 
             // 2. Upload thumbnail if provided
-            let thumbnailUrl = null;
+            let thumbnailKey = null;
             if (thumbnailBuffer && thumbnailBuffer.length > 0) {
                 const thumbExt = path.extname(thumbnailFilename || '.jpg') || '.jpg';
                 const thumbKey = `thumbnails/videos/thumb_${Date.now()}${thumbExt}`;
-                thumbnailUrl = await this.storage.uploadFile(thumbnailBuffer, thumbKey, thumbnailMimeType || 'image/jpeg');
+                await this.storage.uploadFile(thumbnailBuffer, thumbKey, thumbnailMimeType || 'image/jpeg');
+                thumbnailKey = thumbKey;
             }
 
             // 3. Create video record in the database
             const videoData = {
-                title: metadata.title,
-                description: metadata.description || '',
+                title: normalizedMetadata.title,
+                description: normalizedMetadata.description || '',
                 video_uri_string: videoKey, // Store the object key, not the full URL
-                thumbnail_uri: thumbnailUrl || null,
-                is_paid: metadata.isPaid || false,
-                price: metadata.price || null,
-                course_id: metadata.courseId || null,
+                thumbnail_uri: thumbnailKey || null,
+                is_paid: normalizedMetadata.isPaid,
+                price: normalizedMetadata.price,
+                course_id: normalizedMetadata.courseId,
                 user_id: userId,
                 remote_id: userId,
-                timestamp: metadata.timestamp || Date.now(),
+                timestamp: normalizedMetadata.timestamp,
             };
 
             const created = await this.videoRepo.create(videoData);
@@ -327,7 +369,11 @@ export class VideoDomainService {
     }
 
     async create(videoData) {
-        const created = await this.videoRepo.create(videoData);
+        const normalizedVideoData = this._normalizeCreateInput(videoData);
+        if (!normalizedVideoData.title) {
+            return Result.fail(new ValidationError('Title is required'));
+        }
+        const created = await this.videoRepo.create(normalizedVideoData);
         await this._removeCourseThumbnailFallback(created);
         return Result.ok(created);
     }
