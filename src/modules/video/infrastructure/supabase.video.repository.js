@@ -156,6 +156,9 @@ export class SupabaseVideoRepository {
             description: videoData.description || '',
             video_uri_string: videoData.videoUri || videoData.video_uri_string || null,
             thumbnail_uri: videoData.thumbnailUri || videoData.thumbnail_uri || null,
+            is_paid: videoData.isPaid ?? videoData.is_paid ?? false,
+            price: videoData.price ?? null,
+            timestamp: videoData.timestamp ?? Date.now(),
             remote_id: videoData.userId || videoData.user_id || videoData.remote_id || null,
             course_id: videoData.courseId || videoData.course_id || null,
         };
@@ -170,6 +173,8 @@ export class SupabaseVideoRepository {
         if (updateData.description !== undefined) payload.description = updateData.description;
         if (updateData.videoUri !== undefined) payload.video_uri_string = updateData.videoUri;
         if (updateData.thumbnailUri !== undefined) payload.thumbnail_uri = updateData.thumbnailUri;
+        if (updateData.isPaid !== undefined) payload.is_paid = updateData.isPaid;
+        if (updateData.price !== undefined) payload.price = updateData.price;
         if (updateData.userId !== undefined) payload.remote_id = updateData.userId;
         if (updateData.courseId !== undefined) payload.course_id = updateData.courseId;
         const { data, error } = await this.client.from('videos').update(payload).eq('id', id).select().single();

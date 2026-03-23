@@ -1,4 +1,4 @@
-import { createVideoSchema, updateVideoSchema } from './video.schemas.js';
+import { createVideoSchema, updateVideoSchema, uploadVideoMetadataSchema } from './video.schemas.js';
 import { ValidationError } from '../../shared/errors/index.js';
 import { parsePagination, buildPaginatedResponse } from '../../shared/pagination.js';
 
@@ -207,6 +207,9 @@ export class VideoController {
                 };
             }
 
+            const { error, value } = uploadVideoMetadataSchema.validate(metadata);
+            if (error) return next(ValidationError.fromJoi(error));
+
             const result = await this.videoService.uploadAndCreate({
                 videoBuffer: videoFile.buffer,
                 videoFilename: videoFile.originalname,
@@ -214,7 +217,7 @@ export class VideoController {
                 thumbnailBuffer: thumbnailFile?.buffer || null,
                 thumbnailFilename: thumbnailFile?.originalname || null,
                 thumbnailMimeType: thumbnailFile?.mimetype || null,
-                metadata,
+                metadata: value,
                 userId: req.user.userId,
             });
 
