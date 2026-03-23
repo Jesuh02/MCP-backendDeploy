@@ -297,11 +297,13 @@ export class VideoDomainService {
 
         try {
             // 1. Upload video to R2 — stream from disk when possible to avoid OOM.
+            //    Pass ContentLength so R2 does not receive an unbounded chunked PUT.
             const sanitizedTitle = (normalizedMetadata.title || 'video').replace(/[^a-zA-Z0-9._-]/g, '_');
             const videoExt = path.extname(videoFilename || '.mp4') || '.mp4';
             const videoKey = `videos/${Date.now()}_${sanitizedTitle}${videoExt}`;
             const videoContent = videoPath ? createReadStream(videoPath) : videoBuffer;
-            await this.storage.uploadFile(videoContent, videoKey, videoMimeType || 'video/mp4');
+            const videoLen = videoSize != null ? Number(videoSize) : undefined;
+            await this.storage.uploadFile(videoContent, videoKey, videoMimeType || 'video/mp4', videoLen);
 
             // 2. Upload thumbnail if provided — also stream from disk when available.
             let thumbnailKey = null;
@@ -310,7 +312,8 @@ export class VideoDomainService {
                 const thumbExt = path.extname(thumbnailFilename || '.jpg') || '.jpg';
                 const thumbKey = `thumbnails/videos/thumb_${Date.now()}${thumbExt}`;
                 const thumbContent = thumbnailPath ? createReadStream(thumbnailPath) : thumbnailBuffer;
-                await this.storage.uploadFile(thumbContent, thumbKey, thumbnailMimeType || 'image/jpeg');
+                const thumbLen = thumbnailSize != null ? Number(thumbnailSize) : undefined;
+                await this.storage.uploadFile(thumbContent, thumbKey, thumbnailMimeType || 'image/jpeg', thumbLen);
                 thumbnailKey = thumbKey;
             }
 
