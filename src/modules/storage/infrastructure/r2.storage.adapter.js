@@ -140,9 +140,15 @@ export class R2StorageAdapter {
         }
     }
 
-    async uploadFile(content, key, contentType = 'application/octet-stream') {
+    async uploadFile(content, key, contentType = 'application/octet-stream', contentLength = undefined) {
         if (!this.r2Client) throw new Error('R2 client not available');
-        const cmd = new PutObjectCommand({ Bucket: this.bucketName, Key: key, Body: content, ContentType: contentType });
+        const params = { Bucket: this.bucketName, Key: key, Body: content, ContentType: contentType };
+        // R2 (and most S3-compatible endpoints) require ContentLength for streaming
+        // bodies (Readable streams).  Without it the PUT uses chunked transfer
+        // encoding which Cloudflare R2 rejects → 400/502.  Always supply the size
+        // when available (multer diskStorage sets file.size automatically).
+        if (contentLength != null) params.ContentLength = contentLength;
+        const cmd = new PutObjectCommand(params);
         await this.r2Client.send(cmd);
         return this.getPublicUrl(key);
     }

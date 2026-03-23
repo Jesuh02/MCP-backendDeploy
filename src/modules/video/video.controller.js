@@ -1,6 +1,7 @@
 import { createVideoSchema, updateVideoSchema, uploadVideoMetadataSchema } from './video.schemas.js';
 import { ValidationError } from '../../shared/errors/index.js';
 import { parsePagination, buildPaginatedResponse } from '../../shared/pagination.js';
+import { unlink } from 'fs/promises';
 
 export class VideoController {
     constructor({ videoService }) {
@@ -191,7 +192,7 @@ export class VideoController {
 
         const cleanupTempFiles = async () => {
             for (const p of tempPaths) {
-                try { await import('fs/promises').then(m => m.unlink(p)); } catch { /* non-fatal */ }
+                try { await unlink(p); } catch { /* non-fatal */ }
             }
         };
 
