@@ -184,13 +184,21 @@ export class VideoController {
      * All storage operations happen server-side — the client never touches R2.
      */
     uploadAndCreate = async(req, res, next) => {
+        const videoFile = req.files?.video?.[0] || req.file;
+        const thumbnailFile = req.files?.thumbnail?.[0] || null;
+        // Collect temp file paths for cleanup regardless of success/failure
+        const tempPaths = [videoFile?.path, thumbnailFile?.path].filter(Boolean);
+
+        const cleanupTempFiles = async () => {
+            for (const p of tempPaths) {
+                try { await import('fs/promises').then(m => m.unlink(p)); } catch { /* non-fatal */ }
+            }
+        };
+
         try {
-            const videoFile = req.files?.video?.[0] || req.file;
             if (!videoFile) {
                 return res.status(400).json({ success: false, error: 'Video file is required (field name: video)' });
             }
-
-            const thumbnailFile = req.files?.thumbnail?.[0] || null;
 
             // Parse metadata from body (may come as JSON string or flat fields)
             let metadata;
@@ -208,22 +216,34 @@ export class VideoController {
             }
 
             const { error, value } = uploadVideoMetadataSchema.validate(metadata);
-            if (error) return next(ValidationError.fromJoi(error));
+            if (error) {
+                await cleanupTempFiles();
+                return next(ValidationError.fromJoi(error));
+            }
 
+            // Pass disk paths (not buffers) so the service can stream directly to R2
+            // without loading the full video into Node.js heap → prevents OOM / 502.
             const result = await this.videoService.uploadAndCreate({
-                videoBuffer: videoFile.buffer,
+                videoPath: videoFile.path,
+                videoSize: videoFile.size,
                 videoFilename: videoFile.originalname,
                 videoMimeType: videoFile.mimetype,
-                thumbnailBuffer: thumbnailFile?.buffer || null,
+                thumbnailPath: thumbnailFile?.path || null,
+                thumbnailSize: thumbnailFile?.size || null,
                 thumbnailFilename: thumbnailFile?.originalname || null,
                 thumbnailMimeType: thumbnailFile?.mimetype || null,
                 metadata: value,
                 userId: req.user.userId,
             });
 
+            await cleanupTempFiles();
+
             if (result.isFail()) return next(result.getError());
             res.status(201).json({ success: true, data: result.getValue() });
-        } catch (err) { next(err); }
+        } catch (err) {
+            await cleanupTempFiles();
+            next(err);
+        }
     };
 }
 export default VideoController;

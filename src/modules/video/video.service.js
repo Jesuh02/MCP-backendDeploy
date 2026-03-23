@@ -1,6 +1,7 @@
 import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/errors/index.js';
 import path from 'path';
+import { createReadStream } from 'fs';
 
 export class VideoDomainService {
     constructor({ videoRepository, fileStoragePort, courseRepository, notificationService, subscriptionService, userRepository }) {
@@ -280,8 +281,10 @@ export class VideoDomainService {
      * @param {number} params.userId - Authenticated user ID
      * @returns {Promise<Result>}
      */
-    async uploadAndCreate({ videoBuffer, videoFilename, videoMimeType, thumbnailBuffer, thumbnailFilename, thumbnailMimeType, metadata, userId }) {
-        if (!videoBuffer || !videoBuffer.length) {
+    async uploadAndCreate({ videoBuffer, videoPath, videoSize, videoFilename, videoMimeType, thumbnailBuffer, thumbnailPath, thumbnailSize, thumbnailFilename, thumbnailMimeType, metadata, userId }) {
+        // Accept either a disk path (diskStorage) or an in-memory buffer (legacy).
+        const hasVideo = videoPath || (videoBuffer && videoBuffer.length);
+        if (!hasVideo) {
             return Result.fail(new ValidationError('Video file is required'));
         }
         const normalizedMetadata = this._normalizeCreateInput(metadata);
@@ -293,18 +296,21 @@ export class VideoDomainService {
         }
 
         try {
-            // 1. Upload video to R2
+            // 1. Upload video to R2 — stream from disk when possible to avoid OOM.
             const sanitizedTitle = (normalizedMetadata.title || 'video').replace(/[^a-zA-Z0-9._-]/g, '_');
             const videoExt = path.extname(videoFilename || '.mp4') || '.mp4';
             const videoKey = `videos/${Date.now()}_${sanitizedTitle}${videoExt}`;
-            await this.storage.uploadFile(videoBuffer, videoKey, videoMimeType || 'video/mp4');
+            const videoContent = videoPath ? createReadStream(videoPath) : videoBuffer;
+            await this.storage.uploadFile(videoContent, videoKey, videoMimeType || 'video/mp4');
 
-            // 2. Upload thumbnail if provided
+            // 2. Upload thumbnail if provided — also stream from disk when available.
             let thumbnailKey = null;
-            if (thumbnailBuffer && thumbnailBuffer.length > 0) {
+            const hasThumbnail = thumbnailPath || (thumbnailBuffer && thumbnailBuffer.length > 0);
+            if (hasThumbnail) {
                 const thumbExt = path.extname(thumbnailFilename || '.jpg') || '.jpg';
                 const thumbKey = `thumbnails/videos/thumb_${Date.now()}${thumbExt}`;
-                await this.storage.uploadFile(thumbnailBuffer, thumbKey, thumbnailMimeType || 'image/jpeg');
+                const thumbContent = thumbnailPath ? createReadStream(thumbnailPath) : thumbnailBuffer;
+                await this.storage.uploadFile(thumbContent, thumbKey, thumbnailMimeType || 'image/jpeg');
                 thumbnailKey = thumbKey;
             }
 
