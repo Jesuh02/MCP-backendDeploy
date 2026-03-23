@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { tmpdir } from 'os';
+import { randomBytes } from 'crypto';
 
 function getFileExtension(filename = '') {
     const raw = filename.split('.').pop();
@@ -26,8 +28,17 @@ function isAllowedVideoFile(file) {
     return mime.startsWith('video/') || allowedMimes.has(mime) || allowedExtensions.has(extension);
 }
 
+// Use diskStorage so large video files never fully reside in Node.js heap.
+// memoryStorage() caused OOM crashes on Railway for videos > ~100 MB → 502.
 const videoUpload = multer({
-    storage: multer.memoryStorage(),
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, tmpdir()),
+        filename: (req, file, cb) => {
+            const rand = randomBytes(8).toString('hex');
+            const safe = (file.originalname || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_');
+            cb(null, `cv_upload_${rand}_${safe}`);
+        },
+    }),
     limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
     fileFilter: (req, file, cb) => {
         if (file.fieldname === 'video') {
