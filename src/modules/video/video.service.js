@@ -74,6 +74,14 @@ export class VideoDomainService {
         if (raw.startsWith('http://') || raw.startsWith('https://')) {
             // Full HTTP URL — extract R2 object key
             objectKey = this.storage.extractObjectKey(raw);
+
+            // Fallback: extract key from backend proxy URL stored in DB.
+            // e.g. https://backend.railway.app/api/v1/public/files/videos/abc.mp4
+            //   → videos/abc.mp4
+            if (!objectKey) {
+                const m = raw.match(/\/(?:api\/v1\/)?public\/files\/(.+?)(?:\?.*)?$/);
+                if (m) objectKey = decodeURIComponent(m[1]);
+            }
         } else if (!raw.startsWith('file://') && !raw.startsWith('content://')) {
             // Relative R2 object key stored directly in DB (e.g. "videos/123.mp4")
             objectKey = raw;
