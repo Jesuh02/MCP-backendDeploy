@@ -61,6 +61,16 @@ export function publicRoutes({ videoService, courseService, storageService }) {
                 return res.status(503).json({ success: false, error: 'Storage no disponible' });
             }
 
+            // Redirect to R2 public CDN URL — avoids proxying large media files through
+            // the Railway server (was causing 47-70s delays for video playback).
+            // The DB keeps the backend URL; the client follows the 302 and fetches
+            // directly from R2, so the stored URL acts as a stable indirection layer.
+            const publicUrl = storageService.getPublicUrl(key);
+            if (publicUrl && publicUrl.startsWith('http')) {
+                return res.redirect(302, publicUrl);
+            }
+
+            // Fallback: stream when R2 public URL is not configured (private bucket)
             const result = await storageService.streamFile(key);
             if (result.isFail()) {
                 const err = result.getError();
