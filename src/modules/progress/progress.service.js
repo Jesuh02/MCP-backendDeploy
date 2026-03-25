@@ -1,4 +1,4 @@
-import { Result } from '../../shared/Result.js';
+﻿import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class ProgressDomainService {
@@ -32,13 +32,13 @@ export class ProgressDomainService {
             progress = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
             subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
         } else {
-            progress ||= this._buildEmptyCourseProgress(userId, courseId);
+            progress = progress || this._buildEmptyCourseProgress(userId, courseId);
             if (progress && this.taskRepo && this.submissionRepo) {
                 this._scheduleUserCourseRefresh(userId, courseId);
             }
         }
 
-        return Result.ok({ ...progress, gradedTasks, subjectProgress });
+        return Result.ok({...progress, gradedTasks, subjectProgress });
     }
 
     async getSubjectProgress(userId, courseId) {
@@ -166,11 +166,11 @@ export class ProgressDomainService {
         const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Number(limit) : 5;
         const creatorId = Number(creatorUserId);
         if (!Number.isInteger(creatorId) || creatorId <= 0) {
-            console.warn('[ProgressService] getTopStudentsByCreator: creatorUserId inválido', creatorUserId);
+            console.warn('[ProgressService] getTopStudentsByCreator: creatorUserId invÃ¡lido', creatorUserId);
             return Result.ok([]);
         }
 
-        // ── 1. Obtener IDs de cursos del creador (via CourseRepository) ──
+        // â”€â”€ 1. Obtener IDs de cursos del creador (via CourseRepository) â”€â”€
         let courseIds = [];
         if (this.courseRepo && typeof this.courseRepo.findCourseIdsByCreatorUserId === 'function') {
             courseIds = await this.courseRepo.findCourseIdsByCreatorUserId(creatorId);
@@ -187,9 +187,9 @@ export class ProgressDomainService {
             return Result.ok([]);
         }
 
-        console.info(`[ProgressService] Creador ${creatorId} → ${courseIds.length} cursos: [${courseIds.join(', ')}]`);
+        console.info(`[ProgressService] Creador ${creatorId} â†’ ${courseIds.length} cursos: [${courseIds.join(', ')}]`);
 
-        // ── 2. Obtener progreso 'Ganado' en esos cursos (via ProgressRepository) ──
+        // â”€â”€ 2. Obtener progreso 'Ganado' en esos cursos (via ProgressRepository) â”€â”€
         const wonProgress = await this.progressRepo.findWonProgressByCourseIds(courseIds);
 
         if (!wonProgress || wonProgress.length === 0) {
@@ -197,7 +197,7 @@ export class ProgressDomainService {
             return Result.ok([]);
         }
 
-        // ── 3. Agregar métricas por estudiante (excluir al propio creador) ──
+        // â”€â”€ 3. Agregar mÃ©tricas por estudiante (excluir al propio creador) â”€â”€
         const aggregated = new Map();
         for (const row of wonProgress) {
             if (!Number.isInteger(row.userId) || row.userId <= 0) continue;
@@ -228,7 +228,7 @@ export class ProgressDomainService {
             }
         }
 
-        // Ranking: mayor promedio → más cursos aprobados → menor ID
+        // Ranking: mayor promedio â†’ mÃ¡s cursos aprobados â†’ menor ID
         const ranked = [...aggregated.values()]
             .filter(s => s.approved_courses > 0)
             .sort((a, b) => {
@@ -238,7 +238,7 @@ export class ProgressDomainService {
             })
             .slice(0, safeLimit);
 
-        // ── 4. Enriquecer con perfil de usuario (via UserRepository) ──
+        // â”€â”€ 4. Enriquecer con perfil de usuario (via UserRepository) â”€â”€
         const studentIds = ranked.map(s => s.user_id);
         if (studentIds.length > 0 && this.userRepo && typeof this.userRepo.findByIds === 'function') {
             const usersData = await this.userRepo.findByIds(studentIds);
@@ -287,7 +287,7 @@ export class ProgressDomainService {
             if (message.includes('no ha ganado el curso') || message.includes('estado actual')) {
                 return Result.fail(new ForbiddenError('Solo se pueden emitir certificados para progreso con estado Ganado'));
             }
-            // Any other DB / constraint error — wrap instead of rethrowing to avoid 500
+            // Any other DB / constraint error â€” wrap instead of rethrowing to avoid 500
             return Result.fail(new ForbiddenError(`No se pudo emitir el certificado: ${message}`));
         }
     }
@@ -319,9 +319,9 @@ export class ProgressDomainService {
         const pending = won.filter(r => !r.certificateIssuedAt || !r.certificateStoredUrl);
         if (pending.length === 0) return Result.ok({ issued: 0 });
         const pairs = pending.map(r => ({
-            userId:              r.userId,
-            courseId:            r.courseId,
-            certificateUrl:      r.certificateStoredUrl || null,
+            userId: r.userId,
+            courseId: r.courseId,
+            certificateUrl: r.certificateStoredUrl || null,
             certificateIssuedAt: r.certificateIssuedAt || null,
         }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);
@@ -342,9 +342,9 @@ export class ProgressDomainService {
         const pending = won.filter(r => !r.certificateIssuedAt || !r.certificateStoredUrl);
         if (pending.length === 0) return Result.ok({ issued: 0 });
         const pairs = pending.map(r => ({
-            userId:              r.userId,
-            courseId:            r.courseId,
-            certificateUrl:      r.certificateStoredUrl || null,
+            userId: r.userId,
+            courseId: r.courseId,
+            certificateUrl: r.certificateStoredUrl || null,
             certificateIssuedAt: r.certificateIssuedAt || null,
         }));
         const issued = await this.progressRepo.bulkIssueCertificates(pairs);
@@ -353,7 +353,7 @@ export class ProgressDomainService {
 
     async updateCertificateUrl(userId, courseId, url) {
         // url puede ser una URL completa o un path relativo de Storage.
-        // El repositorio almacena storage_path; la URL pública se construye en el cliente.
+        // El repositorio almacena storage_path; la URL pÃºblica se construye en el cliente.
         const updated = await this.progressRepo.updateCertificate(userId, courseId, {
             certificateUrl: url,
         });
@@ -493,7 +493,7 @@ export class ProgressDomainService {
         const refreshKey = `${userId}:${courseId}`;
         if (this._courseRefreshJobs.has(refreshKey)) return;
 
-        const refreshJob = (async () => {
+        const refreshJob = (async() => {
             try {
                 await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
             } catch (err) {
@@ -507,7 +507,7 @@ export class ProgressDomainService {
     }
 
     async _recalculateAndUpsertUserCourseProgress(userId, courseId, totalTasksFromCaller = null, subjectIdFallback = null) {
-        // Skip recalculation for creators/collaborators — they are not students
+        // Skip recalculation for creators/collaborators â€” they are not students
         const blocked = await this._isCreatorOrCollaborator(userId, courseId);
         if (blocked) return { userId, courseId, completedTasks: 0, totalTasks: 0, averageGrade: 0, progressPercentage: 0, status: 'Excluido' };
 
@@ -617,7 +617,7 @@ export class ProgressDomainService {
 
     _normalizeRoleIds(roles = []) {
         return [...new Set((roles || [])
-            .map((role) => Number(role?.id ?? role))
+            .map((role) => Number(role?.id??role))
             .filter((roleId) => Number.isInteger(roleId) && roleId > 0))];
     }
 
@@ -632,19 +632,19 @@ export class ProgressDomainService {
     }
 
     _isCourseAvailableForEnrollment(course) {
-        const storedActive = course?.isActive ?? course?.is_active;
-        const isActive = typeof storedActive === 'undefined'
-            ? true
-            : ['false', '0', 'no'].includes(String(storedActive).trim().toLowerCase())
-                ? false
-                : Boolean(storedActive);
+        const storedActive = course?.isActive??course?.is_active;
+        const isActive = typeof storedActive === 'undefined' ?
+            true :
+            ['false', '0', 'no'].includes(String(storedActive).trim().toLowerCase()) ?
+            false :
+            Boolean(storedActive);
         if (!isActive) return false;
         if (!course?.deadline) return true;
         const deadline = new Date(course.deadline);
         return Number.isNaN(deadline.getTime()) || deadline > new Date();
     }
 
-    // ─── Enrollment request flow (Pre-enrollment / Matrícula) ─────────────
+    // â”€â”€â”€ Enrollment request flow (Pre-enrollment / MatrÃ­cula) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Student requests enrollment in a course. Creates a pre_enrollment record
@@ -680,12 +680,12 @@ export class ProgressDomainService {
         if (existing) {
             const existingStatus = this._getEnrollmentStatusValue(existing);
             if (existingStatus === 'approved') {
-                return Result.ok({ ...existing, message: 'Ya estás matriculado' });
+                return Result.ok({...existing, message: 'Ya estÃ¡s matriculado' });
             }
             if (existingStatus === 'pending') {
-                return Result.ok({ ...existing, message: 'Tu solicitud ya está pendiente de aprobación' });
+                return Result.ok({...existing, message: 'Tu solicitud ya estÃ¡ pendiente de aprobaciÃ³n' });
             }
-            // rejected — allow re-request
+            // rejected â€” allow re-request
         }
 
         const pending = await this.progressRepo.upsertPreEnrollment(userId, courseId, 'pending');
@@ -695,7 +695,7 @@ export class ProgressDomainService {
             console.warn('[ProgressService] Error notifying admins about enrollment request:', err?.message)
         );
 
-        return Result.ok({ ...pending, message: 'Solicitud de matrícula enviada' });
+        return Result.ok({...pending, message: 'Solicitud de matrÃ­cula enviada' });
     }
 
     /**
@@ -703,7 +703,7 @@ export class ProgressDomainService {
      */
     async approveEnrollment(userId, courseId) {
         const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
-        if (!existing) return Result.fail(new NotFoundError('Solicitud de matrícula', `${userId}/${courseId}`));
+        if (!existing) return Result.fail(new NotFoundError('Solicitud de matrÃ­cula', `${userId}/${courseId}`));
 
         const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
 
@@ -716,8 +716,8 @@ export class ProgressDomainService {
                     if (course?.title) courseName = course.title;
                 }
                 await this._notificationService.send(userId, {
-                    title: '¡Matrícula aprobada!',
-                    message: `Tu solicitud de matrícula en "${courseName}" ha sido aprobada. ¡Ya puedes comenzar!`,
+                    title: 'Â¡MatrÃ­cula aprobada!',
+                    message: `Tu solicitud de matrÃ­cula en "${courseName}" ha sido aprobada. Â¡Ya puedes comenzar!`,
                     type: 'enrollment_approved',
                     relatedId: courseId,
                     metadata: { courseId, courseName },
@@ -730,12 +730,13 @@ export class ProgressDomainService {
                         const student = await this.userRepo.findById(userId);
                         if (student?.username) studentName = student.username;
                     }
-                    const { generateEnrollmentApprovedEmailHTML } = await import('../../templates/emailTemplates.js');
+                    const { generateEnrollmentApprovedEmailHTML } = await
+                    import ('../../templates/emailTemplates.js');
                     const html = generateEnrollmentApprovedEmailHTML(studentName, courseName);
                     await this._notificationService.sendEmail(userId, {
-                        subject: `✅ ¡Tu matrícula en "${courseName}" ha sido aprobada!`,
+                        subject: `âœ… Â¡Tu matrÃ­cula en "${courseName}" ha sido aprobada!`,
                         html,
-                        text: `¡Felicitaciones ${studentName}! Tu solicitud de matrícula en el curso "${courseName}" ha sido aprobada. Ya puedes acceder al contenido del curso en CourseV.`,
+                        text: `Â¡Felicitaciones ${studentName}! Tu solicitud de matrÃ­cula en el curso "${courseName}" ha sido aprobada. Ya puedes acceder al contenido del curso en CourseV.`,
                     });
                 } catch (emailErr) {
                     console.warn('[ProgressService] Error sending enrollment approved email:', emailErr?.message);
@@ -745,7 +746,7 @@ export class ProgressDomainService {
             }
         }
 
-        return Result.ok({ ...updated, message: 'Matrícula aprobada' });
+        return Result.ok({...updated, message: 'MatrÃ­cula aprobada' });
     }
 
     /**
@@ -753,10 +754,10 @@ export class ProgressDomainService {
      */
     async rejectEnrollment(userId, courseId) {
         const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
-        if (!existing) return Result.fail(new NotFoundError('Solicitud de matrícula', `${userId}/${courseId}`));
+        if (!existing) return Result.fail(new NotFoundError('Solicitud de matrÃ­cula', `${userId}/${courseId}`));
 
         const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'rejected');
-        return Result.ok({ ...updated, message: 'Matrícula rechazada' });
+        return Result.ok({...updated, message: 'MatrÃ­cula rechazada' });
     }
 
     /**
@@ -780,7 +781,7 @@ export class ProgressDomainService {
      */
     async revokeEnrollment(userId, courseId, reason = null) {
         const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
-        if (!existing) return Result.fail(new NotFoundError('Matrícula', `${userId}/${courseId}`));
+        if (!existing) return Result.fail(new NotFoundError('MatrÃ­cula', `${userId}/${courseId}`));
         await this.progressRepo.deleteEnrollment(userId, courseId, reason);
 
         // Notify the student about revocation
@@ -792,7 +793,7 @@ export class ProgressDomainService {
                     if (course?.title) courseName = course.title;
                 }
                 await this._notificationService.send(userId, {
-                    title: 'Se te quitó el acceso',
+                    title: 'Se te quitÃ³ el acceso',
                     message: `Tu acceso a "${courseName}" fue revocado. Motivo: ${reason}`,
                     type: 'enrollment_revoked',
                     relatedId: courseId,
@@ -806,14 +807,14 @@ export class ProgressDomainService {
         return Result.ok({ message: 'Acceso al curso revocado', reason });
     }
 
-    // ─── Subject Access Blocks ────────────────────────────────────
+    // â”€â”€â”€ Subject Access Blocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Admin: block a user from accessing a specific subject.
      */
     async blockSubjectAccess(userId, courseId, subjectId, reason, blockedBy = null) {
         if (!reason || !String(reason).trim()) {
-            return Result.fail(new ForbiddenError('Debe proporcionar una razón para bloquear el acceso'));
+            return Result.fail(new ForbiddenError('Debe proporcionar una razÃ³n para bloquear el acceso'));
         }
         const block = await this.progressRepo.blockSubjectAccess(userId, courseId, subjectId, reason.trim(), blockedBy);
 
@@ -826,7 +827,7 @@ export class ProgressDomainService {
                     if (subject?.name) subjectName = subject.name;
                 }
                 await this._notificationService.send(userId, {
-                    title: 'Se te quitó el permiso',
+                    title: 'Se te quitÃ³ el permiso',
                     message: `Tu acceso a la materia "${subjectName}" fue revocado. Motivo: ${reason}`,
                     type: 'subject_access_blocked',
                     relatedId: subjectId,
@@ -879,10 +880,19 @@ export class ProgressDomainService {
 
     /**
      * Check if student has an approved enrollment in a course.
+     * Checks both the pre_enrollment table AND direct progress records (for users
+     * enrolled directly by an admin without going through the request flow).
      */
     async isEnrolledAndApproved(userId, courseId) {
         const row = await this.progressRepo.findPreEnrollment(userId, courseId);
-        if (!row) return Result.ok({ enrolled: false, status: null, enrollmentStatus: null });
+        if (!row) {
+            // No pre_enrollment record â€” check if user has a direct enrollment (progress record)
+            const directlyEnrolled = await this.progressRepo.isEnrolled(userId, courseId);
+            if (directlyEnrolled) {
+                return Result.ok({ enrolled: true, status: 'approved', enrollmentStatus: 'approved' });
+            }
+            return Result.ok({ enrolled: false, status: null, enrollmentStatus: null });
+        }
         const status = this._getEnrollmentStatusValue(row);
         return Result.ok({
             enrolled: status === 'approved',
@@ -892,7 +902,7 @@ export class ProgressDomainService {
     }
 
     _getEnrollmentStatusValue(record) {
-        const status = record?.enrollmentStatus ?? record?.enrollment_status ?? record?.status ?? null;
+        const status = record?.enrollmentStatus??record?.enrollment_status??record?.status??null;
         return typeof status === 'string' ? status.trim().toLowerCase() : null;
     }
 
@@ -921,7 +931,7 @@ export class ProgressDomainService {
 
         // Send push/in-app notification to all admins
         await this._notificationService.sendBulk(adminUserIds, {
-            title: 'Nueva solicitud de matrícula',
+            title: 'Nueva solicitud de matrÃ­cula',
             message: `${studentName} ha solicitado matricularse en "${courseName}".`,
             type: 'enrollment_request',
             relatedId: courseId,
@@ -933,7 +943,8 @@ export class ProgressDomainService {
 
         // Send email to each admin
         try {
-            const { generateEnrollmentRequestEmailHTML } = await import('../../templates/emailTemplates.js');
+            const { generateEnrollmentRequestEmailHTML } = await
+            import ('../../templates/emailTemplates.js');
             for (const adminId of adminUserIds) {
                 if (Number(adminId) === Number(studentUserId)) continue;
                 try {
@@ -943,9 +954,9 @@ export class ProgressDomainService {
 
                     const html = generateEnrollmentRequestEmailHTML(adminName, studentName, courseName, studentAvatar);
                     await this._notificationService.sendEmail(adminId, {
-                        subject: `📋 Nueva solicitud de matrícula: ${studentName} → "${courseName}"`,
+                        subject: `ðŸ“‹ Nueva solicitud de matrÃ­cula: ${studentName} â†’ "${courseName}"`,
                         html,
-                        text: `${studentName} ha solicitado matricularse en el curso "${courseName}". Revisa la solicitud en el panel de administración.`,
+                        text: `${studentName} ha solicitado matricularse en el curso "${courseName}". Revisa la solicitud en el panel de administraciÃ³n.`,
                     });
                 } catch (emailErr) {
                     console.warn(`[ProgressService] Error sending enrollment email to admin ${adminId}:`, emailErr?.message);
