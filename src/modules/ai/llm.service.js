@@ -350,7 +350,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                 // ── Role-based data-access restriction ──────────────────────────────
                 // Roles: 1=estudiante, 2=docente, 3=admin
                 if (isAdmin) {
-                    systemPrompt += `\n\nNIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma (estudiantes, docentes, cursos, progreso, entregas).`;
+                    systemPrompt += `\n\nNIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma (estudiantes, docentes, cursos, progreso, entregas).\n⚠️ PROHIBIDO: Nunca uses auth.uid() — esa función no existe en este contexto y causará errores de tipo. Usa siempre IDs numéricos concretos o JOINs con la tabla usuarios.`;
                 } else if (isTeacher && userId) {
                     // Docente: only their own students and courses (created or collaborated)
                     // Sanitize JWT username for safe SQL embedding (prevent injection)
