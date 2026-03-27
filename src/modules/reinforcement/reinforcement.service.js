@@ -523,7 +523,7 @@ export class ReinforcementDomainService {
         // Step 2: Build prompt
         const contextBlock = this._buildContextBlock(topicName, ctx.topic?.description, taskName, ctx.task?.description, ragContent, ctx.ragFiles || []);
         const existingBlock = existingQuestions.length > 0
-            ? `\nPREGUNTAS YA EXISTENTES (NO REPETIR):\n${existingQuestions.slice(-50).map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
+            ? `\nPREGUNTAS YA EXISTENTES (NO REPETIR):\n${existingQuestions.slice(-15).map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
             : '';
 
         const diffLabel = (difficulty || 'HARD').toUpperCase();
