@@ -59,7 +59,7 @@ export class LLMAdapter {
                 ];
                 // Forward tools from options to LLMService so the model can call them
                 const tools = options.tools || [];
-                const response = await this._llmService.generateResponse(messages, tools);
+                const response = await this._llmService.generateResponse(messages, tools, { toolChoice: options.toolChoice });
                 // Return full response so callers can inspect tool_calls and metadata
                 return {
                     content: response.content,

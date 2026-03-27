@@ -350,6 +350,9 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || (DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc)));
             if (needsMCPTools) {
                 console.log(`[LLMDomainService] 🔐 MCP tools enabled — userId=${userId}, roles=${JSON.stringify(userRoles)}, isTeacher=${isTeacher}, isAdmin=${isAdmin}`);
+            } else if (!roleAllowsMCPTools && (DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc))) {
+                // Prompt looks like a DB query but roles block access — log to help diagnose empty-roles issues
+                console.warn(`[LLMDomainService] ⚠️ DB query detected but MCP tools BLOCKED — userId=${userId}, roles=${JSON.stringify(userRoles)} (empty roles = no DB access). Check that JWT contains roles or client sends userRoles in body.`);
             }
             // When tools are required we also augment the system prompt with explicit
             // instructions to use them.  This is important because some LLM models
@@ -459,12 +462,46 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                 }
                 // ────────────────────────────────────────────────────────────────────
             }
+
+            // ── PRE-LOAD SCHEMA: fetch real DB schema and inject before first LLM call ──
+            // This prevents the LLM from guessing table names from training knowledge and
+            // immediately saying "la tabla X no existe" without checking.
+            // We call get_database_schema HERE (programmatically) so the model already has
+            // full, accurate table names even if it skips the tool call itself.
+            if (needsMCPTools) {
+                try {
+                    const { MCPService } = await import('./mcp-legacy.service.js');
+                    const mcp = new MCPService();
+                    const schemaText = await mcp.getDynamicSchema();
+                    if (schemaText) {
+                        systemPrompt +=
+                            `\n\n[ESQUEMA ACTUAL DE LA BASE DE DATOS — Obtenido via get_database_schema]\n` +
+                            schemaText +
+                            `\n[FIN DEL ESQUEMA]\n\n` +
+                            `ACCIÓN OBLIGATORIA: Usa los nombres de tabla EXACTOS del esquema anterior.\n` +
+                            `Si el usuario menciona "transacciones" → usa la tabla real del esquema.\n` +
+                            `NUNCA digas que una tabla no existe sin primero mirar el esquema arriba.\n` +
+                            `Ahora llama query_database con el SQL correcto basado en el esquema real.`;
+                        console.log('[LLMDomainService] ✅ DB schema pre-loaded into system prompt');
+                    }
+                } catch (schErr) {
+                    console.warn('[LLMDomainService] Schema pre-fetch failed, continuing without:', schErr.message);
+                }
+            }
+
             const tools = needsMCPTools ? [
                 { name: 'query_database', description: 'Execute queries on Supabase database', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
                 { name: 'get_database_schema', description: 'Get complete database schema', parameters: { type: 'object', properties: {} } },
             ] : [];
 
-            let response = await this.llm.chat(systemPrompt, fullPrompt, { model, tools });
+            let response = await this.llm.chat(systemPrompt, fullPrompt, {
+                model,
+                tools,
+                // When MCP tools are needed, force the model to call at least one tool on the
+                // first turn. This prevents DeepSeek from answering "la tabla X no existe" from
+                // training knowledge instead of actually querying the database.
+                toolChoice: needsMCPTools ? 'required' : 'auto',
+            });
 
             // If the model returned tool_calls, execute them using MCPService and feed results back.
             let toolLoopExecuted = false;
