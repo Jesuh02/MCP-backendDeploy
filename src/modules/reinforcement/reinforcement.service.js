@@ -528,7 +528,10 @@ export class ReinforcementDomainService {
 
         const diffLabel = (difficulty || 'HARD').toUpperCase();
         const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount);
-        const userPrompt = `${contextBlock}\n${existingBlock}\n\nGenera EXACTAMENTE ${targetCount} ejercicios de evaluación en formato JSON array. MEZCLA tipos (multiple_choice, fill_in_blank, ordering) según el tema. Tu ÚNICA salida debe ser el JSON array.`;
+        const topicHint = topicName
+            ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Analiza el dominio (matemáticas, programación, idiomas, etc.) y elige los tipos de ejercicio más adecuados para ese dominio.`
+            : '';
+        const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}\n\nGenera EXACTAMENTE ${targetCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye al menos 2 tipos diferentes. Si el tema involucra cálculos, operaciones o completar código, usa fill_in_blank para esas preguntas. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
 
         // Step 3: Call LLM
         const llmStartMs = Date.now();
