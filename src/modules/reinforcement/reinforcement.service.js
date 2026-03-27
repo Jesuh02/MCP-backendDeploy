@@ -17,6 +17,31 @@ const require = createRequire(import.meta.url);
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch (_) { pdfParse = null; }
 
+// ─── Semaphore: máximo de llamadas LLM simultáneas en todo el proceso ───────
+const MAX_CONCURRENT_LLM = 3;
+let _activeLlmCalls = 0;
+const _llmQueue = [];
+
+async function withLlmSlot(fn) {
+    if (_activeLlmCalls < MAX_CONCURRENT_LLM) {
+        _activeLlmCalls++;
+        try { return await fn(); } finally { _activeLlmCalls--; _drainLlmQueue(); }
+    }
+    // Encolar y esperar slot libre
+    return new Promise((resolve, reject) => {
+        _llmQueue.push(async () => {
+            _activeLlmCalls++;
+            try { resolve(await fn()); } catch (e) { reject(e); } finally { _activeLlmCalls--; _drainLlmQueue(); }
+        });
+    });
+}
+function _drainLlmQueue() {
+    if (_llmQueue.length > 0 && _activeLlmCalls < MAX_CONCURRENT_LLM) {
+        const next = _llmQueue.shift();
+        next();
+    }
+}
+
 export class ReinforcementDomainService {
     constructor({ reinforcementRepository, llmPort = null, learningContextService = null }) {
         this.reinforcementRepo = reinforcementRepository;
@@ -24,6 +49,8 @@ export class ReinforcementDomainService {
         this.learningContextService = learningContextService;
         this.REQUIRED_QUESTION_COUNT = 10;
         this.questionCache = QuestionCacheService.getInstance();
+        // In-flight promises: evita llamadas LLM duplicadas para la misma clave
+        this._inFlight = new Map();
     }
 
     /** Setter for late injection (avoids circular constructor deps) */
@@ -408,7 +435,6 @@ export class ReinforcementDomainService {
         const cached = this.questionCache.get(userId, courseId, topicId, taskId, difficulty);
         if (cached && cached.length > 0) {
             console.log(`⚡ [ReinforcementService] generateQuestions: serving ${cached.length} from cache`);
-            // Consume cache (one-time use), then trigger background save
             this.questionCache.delete(userId, courseId, topicId, taskId, difficulty);
             this._backgroundSave(userId, courseId, topicId, taskId, cached).catch(() => {});
             return Result.ok({ questions: cached, count: cached.length, source: 'cache' });
@@ -418,18 +444,36 @@ export class ReinforcementDomainService {
             return Result.fail('LLM or LearningContextService not available for server-side generation');
         }
 
+        // 2. Dedup: si ya hay un LLM call en vuelo para esta misma clave, reutilizar
+        const flightKey = `${userId}:${courseId}:${topicId || 0}:${taskId || 0}:${(difficulty || 'HARD').toUpperCase()}`;
+        if (this._inFlight.has(flightKey)) {
+            console.log(`🔄 [ReinforcementService] Reusing in-flight LLM call for key=${flightKey}`);
+            try {
+                const questions = await this._inFlight.get(flightKey);
+                return Result.ok({ questions, count: questions.length, source: 'llm_shared' });
+            } catch (error) {
+                return Result.fail(error.message || 'Question generation failed');
+            }
+        }
+
+        // 3. Nueva llamada: registrar en _inFlight y limitar con semáforo global
+        const generationPromise = withLlmSlot(() =>
+            this._generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, targetCount)
+        );
+        this._inFlight.set(flightKey, generationPromise);
+
         try {
-            const questions = await this._generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, targetCount);
+            const questions = await generationPromise;
             if (!questions || questions.length === 0) {
                 return Result.ok({ questions: [], count: 0, source: 'llm', message: 'LLM returned no valid questions' });
             }
-
-            // Return immediately, save in background
             this._backgroundSave(userId, courseId, topicId, taskId, questions).catch(() => {});
             return Result.ok({ questions, count: questions.length, source: 'llm' });
         } catch (error) {
             console.error('[ReinforcementService] generateQuestions error:', error.message);
             return Result.fail(error.message || 'Question generation failed');
+        } finally {
+            this._inFlight.delete(flightKey);
         }
     }
 
@@ -439,7 +483,9 @@ export class ReinforcementDomainService {
     async _generateAndCache(userId, courseId, topicId, taskId, difficulty) {
         this.questionCache.markGenerating(userId, courseId, topicId, taskId, difficulty);
         try {
-            const questions = await this._generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, this.REQUIRED_QUESTION_COUNT);
+            const questions = await withLlmSlot(() =>
+                this._generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, this.REQUIRED_QUESTION_COUNT)
+            );
             if (questions && questions.length > 0) {
                 this.questionCache.set(userId, courseId, topicId, taskId, difficulty, questions);
                 console.log(`✅ [ReinforcementService] Prefetch complete: ${questions.length} questions cached`);

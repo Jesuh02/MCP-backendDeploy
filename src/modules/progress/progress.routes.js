@@ -8,6 +8,7 @@ export function progressRoutes({ progressController, requireRoles }) {
     router.get('/my/enrolled-course-ids', progressController.getEnrolledCourseIds);
     router.get('/top-students', progressController.getTopStudents);
     router.get('/creator/enrollment-analytics', progressController.getCreatorEnrollmentAnalytics);
+    router.get('/teacher/students', progressController.getTeacherStudentProgress);
     router.get('/course/:courseId', progressController.getByCourse);
     router.get('/course/:courseId/subjects', progressController.getSubjectProgress);
     router.get('/course/:courseId/all', progressController.getAllByCourse);

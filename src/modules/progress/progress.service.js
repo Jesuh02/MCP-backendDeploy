@@ -268,6 +268,85 @@ export class ProgressDomainService {
         return this.getTopStudentsByCreator(creatorUserId, limit);
     }
 
+    /**
+     * Devuelve el progreso de todos los estudiantes en los cursos donde
+     * `userId` es creador O colaborador. Si se pasa `courseId`, filtra a ese curso.
+     */
+    async getStudentProgressForTeacher(userId, courseId = null) {
+        // 1. Reunir IDs de cursos accesibles
+        let courseIds = [];
+
+        if (this.courseRepo && typeof this.courseRepo.findCourseIdsByCreatorUserId === 'function') {
+            const ownIds = await this.courseRepo.findCourseIdsByCreatorUserId(userId);
+            courseIds.push(...(ownIds || []).map(Number));
+        }
+
+        if (this.collaboratorRepo && typeof this.collaboratorRepo.findByUser === 'function') {
+            const collabs = await this.collaboratorRepo.findByUser(userId);
+            for (const c of (collabs || [])) {
+                const cid = Number(c.courseId || c.course_id);
+                if (cid && !courseIds.includes(cid)) courseIds.push(cid);
+            }
+        }
+
+        if (courseIds.length === 0) return Result.ok([]);
+
+        // 2. Filtrar por courseId específico si se pide
+        if (courseId) {
+            const numCourseId = Number(courseId);
+            if (!courseIds.includes(numCourseId)) {
+                return Result.fail(new ForbiddenError('No tienes acceso a ese curso'));
+            }
+            courseIds = [numCourseId];
+        }
+
+        // 3. Obtener progreso por curso y enriquecer con datos de usuario y curso
+        const results = [];
+        for (const cid of courseIds) {
+            const progress = await this.progressRepo.findByCourse(cid);
+            if (!progress?.length) continue;
+
+            let courseName = `Curso ${cid}`;
+            if (this.courseRepo) {
+                try {
+                    const course = await this.courseRepo.findById(cid);
+                    if (course?.title) courseName = course.title;
+                } catch (_) {}
+            }
+
+            if (this.userRepo && typeof this.userRepo.findByIds === 'function') {
+                const userIds = [...new Set(progress.map(p => p.userId).filter(Boolean))];
+                if (userIds.length > 0) {
+                    try {
+                        const users = await this.userRepo.findByIds(userIds);
+                        const usersById = new Map((users || []).map(u => [Number(u.id), u]));
+                        for (const p of progress) {
+                            const user = usersById.get(Number(p.userId));
+                            if (user) { p.username = user.username || null; p.avatar = user.avatar || null; }
+                        }
+                    } catch (_) {}
+                }
+            }
+
+            results.push({
+                courseId: cid,
+                courseName,
+                students: progress.map(p => ({
+                    userId: p.userId,
+                    username: p.username || `Usuario ${p.userId}`,
+                    avatar: p.avatar || null,
+                    completedTasks: p.completedTasks ?? 0,
+                    totalTasks: p.totalTasks ?? 0,
+                    averageGrade: p.averageGrade ?? 0,
+                    progressPercentage: p.progressPercentage ?? 0,
+                    status: p.status ?? 'Perdido',
+                })),
+            });
+        }
+
+        return Result.ok(results);
+    }
+
     async getCreatorEnrollmentAnalytics(creatorUserId, options = {}) {
         const analytics = await this.progressRepo.getCreatorEnrollmentAnalytics(creatorUserId, options);
         return Result.ok(analytics);
