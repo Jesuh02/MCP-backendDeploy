@@ -22,6 +22,7 @@ export const processPromptSchema = Joi.object({
     topicId: Joi.number().integer().optional(),
     topic_id: Joi.number().integer().optional(),
     freeLearning: Joi.boolean().optional(),
+    forceMCPTools: Joi.boolean().optional(),
     difficulty: Joi.string().valid('EASY', 'INTERMEDIATE', 'HARD').optional(),
 }).options({ allowUnknown: true });
 
