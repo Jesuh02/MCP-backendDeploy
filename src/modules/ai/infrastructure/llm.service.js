@@ -133,8 +133,11 @@ export class LLMService {
      * Generate a response from the LLM, potentially calling tools.
      * @param {Array} messages - History of messages
      * @param {Array} tools - List of tool definitions (JSON Schema)
+     * @param {Object} [opts] - Extra options
+     * @param {string} [opts.toolChoice] - "auto" (default) | "required" | "none"
      */
-    async generateResponse(messages, tools = []) {
+    async generateResponse(messages, tools = [], opts = {}) {
+        const toolChoice = opts.toolChoice || 'auto';
         await this._ensureInitialized();
         if (!this.model) throw new Error("LLM disabled");
 
@@ -195,7 +198,7 @@ export class LLMService {
 
             const modelWithTools = this.model.bind({
                 tools: formattedTools,
-                tool_choice: "auto" // Force the model to consider using tools
+                tool_choice: toolChoice, // "required" forces at least one tool call; "auto" lets model decide
             });
 
             const response = await modelWithTools.invoke(sanitizedMessages);

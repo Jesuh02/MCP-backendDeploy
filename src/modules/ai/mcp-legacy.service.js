@@ -1394,17 +1394,30 @@ export class MCPService {
             const MAX_SAFETY_ITERATIONS = 30;
             let lastSuccessfulResult = null;
 
+            // Pre-load real DB schema so the LLM never guesses at table names from training data
+            let preloadedSchema = '';
+            try {
+                preloadedSchema = await this.getDynamicSchema();
+                logger.info('✅ Schema pre-loaded for processQueryToData agent');
+            } catch (schErr) {
+                logger.warn(`⚠️ Schema pre-load failed: ${schErr.message}`);
+            }
+
             const systemMessage = new SystemMessage(`Eres un agente de base de datos. Tu objetivo es obtener datos RAW para exportar a Excel.
 
+**ESQUEMA REAL DE LA BASE DE DATOS (Pre-cargado automáticamente):**
+${preloadedSchema || '(esquema no disponible, usa get_database_schema)'}
+
 **HERRAMIENTAS:**
-1. \`get_database_schema\` - Obtiene el esquema de la base de datos
+1. \`get_database_schema\` - Obtiene el esquema de la base de datos (ya incluido arriba)
 2. \`query_database\` - Ejecuta consultas SQL
 
 **FLUJO:**
-1. Usa get_database_schema para conocer las tablas y columnas
-2. Ejecuta query_database con SQL válido
-3. Si hay error, analízalo y corrige
-4. Cuando obtengas datos, responde con: DATOS_LISTOS
+1. El esquema ya está cargado arriba — úsalo para identificar los nombres reales de tablas y columnas
+2. Si el usuario menciona un nombre en español (ej: "transacciones"), busca el nombre inglés en el esquema arriba
+3. Ejecuta query_database directamente con SQL correcto basado en el esquema
+4. Si hay error, analízalo y corrige
+5. Cuando obtengas datos, responde con: DATOS_LISTOS
 
 **REGLAS:**
 - USA SOLO columnas que existan en el esquema
