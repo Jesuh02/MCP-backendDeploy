@@ -342,7 +342,12 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             // Gate MCP tool access to teachers and admins only.
             // Students (role 1) must never get DB query access even when forceMCPTools is sent.
             const roleAllowsMCPTools = isAdmin || isTeacher;
-            let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || /query[_ ]database|consulta de business intelligence|consulta de business inteligencia|usa \'query_database\'|usa "query_database"|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n/i.test(promptLc));
+            // ── Detect if the prompt needs MCP database tools ──
+            // Broad detection: table names (Spanish & English), counting, records,
+            // general data queries, student progress patterns, and explicit tool requests.
+            const DB_TABLE_NAMES = /\b(usuarios|courses|cursos|videos|subjects|materias|topics|temas|tasks|tareas|task_submissions|entregas|submissions|subscriptions|suscripciones|transactions|transacciones|notifications|notificaciones|progreso_curso|progreso|collaborators|colaboradores|personas)\b/i;
+            const DB_QUERY_PATTERNS = /query[_ ]database|consulta de business inteli?gencia|usa ['"]?query_database['"]?|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n|cu[aá]nto|cu[aá]ntas|cu[aá]ntos|registros|total de|contar|conteo|cantidad|estad[ií]stica|reporte|datos de|d[ií]me|mu[eé]stra|lista|consulta|base de datos|tabla|schema|esquema|dashboard|m[eé]trica|ingresos|pagos|ventas|suscri|crear reporte|generar reporte|exportar/i;
+            let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || (DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc)));
             if (needsMCPTools) {
                 console.log(`[LLMDomainService] 🔐 MCP tools enabled — userId=${userId}, roles=${JSON.stringify(userRoles)}, isTeacher=${isTeacher}, isAdmin=${isAdmin}`);
             }
@@ -350,19 +355,38 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             // instructions to use them.  This is important because some LLM models
             // (including deepseek-chat) may otherwise ignore the tool definitions.
             if (needsMCPTools) {
-                systemPrompt += `\n\nINSTRUCCIONES DE HERRAMIENTA:\n` +
-                    `Cuando necesites datos reales de la base de datos, DEBES llamar a la ` +
-                    `herramienta \`query_database\` y esperar su respuesta antes de dar la ` +
-                    `respuesta final. No inventes valores. Para solicitarla, emite exactamente ` +
-                    `un bloque JSON como el siguiente en tu mensaje inicial (antes de cualquier ` +
-                    `explicación):\n\n` +
+                systemPrompt += `\n\nINSTRUCCIONES DE HERRAMIENTA (OBLIGATORIAS):\n` +
+                    `REGLA #1 — SIEMPRE CONSULTA ANTES DE AFIRMAR:\n` +
+                    `- PROHIBIDO decir que una tabla, columna o dato "no existe" sin antes verificar con \`get_database_schema\` o \`query_database\`.\n` +
+                    `- Si el usuario menciona un nombre de tabla en español (ej: "transacciones", "suscripciones", "tareas"), busca la tabla equivalente en inglés (transactions, subscriptions, tasks) o viceversa.\n` +
+                    `- Si no estás seguro del nombre exacto de una tabla o columna, usa PRIMERO \`get_database_schema\` para ver todas las tablas disponibles.\n` +
+                    `- Solo después de consultar la base de datos y confirmar que no hay resultados puedes informar al usuario.\n\n` +
+                    `REGLA #2 — FLUJO OBLIGATORIO:\n` +
+                    `1. Si tienes duda sobre el esquema → llama \`get_database_schema\`\n` +
+                    `2. Construye tu SQL con los nombres reales de las tablas/columnas\n` +
+                    `3. Ejecuta con \`query_database\`\n` +
+                    `4. Formula tu respuesta en Markdown con los datos reales\n\n` +
+                    `REGLA #3 — CÓMO USAR LAS HERRAMIENTAS:\n` +
+                    `Emite exactamente un bloque JSON como el siguiente:\n\n` +
                     "```json\n" +
                     "{\"tool\": \"query_database\", \"arguments\": {\"query\": \"<tu SQL aquí>\"}}\n" +
                     "```\n" +
-                    `Luego, una vez que el backend devuelva los resultados, formula tu reporte ` +
-                    `o conclusión en Markdown. No intentes responder directamente sin usar la ` +
-                    `herramienta. Puedes usar también \`get_database_schema\` si necesitas ver ` +
-                    `el esquema.`;
+                    `O para ver el esquema:\n` +
+                    "```json\n" +
+                    "{\"tool\": \"get_database_schema\", \"arguments\": {}}\n" +
+                    "```\n\n" +
+                    `REGLA #4 — MAPEO DE NOMBRES ESPAÑOL↔INGLÉS:\n` +
+                    `- transacciones = transactions\n` +
+                    `- suscripciones = subscriptions\n` +
+                    `- tareas = tasks\n` +
+                    `- entregas = task_submissions\n` +
+                    `- temas = topics\n` +
+                    `- materias = subjects\n` +
+                    `- cursos = courses\n` +
+                    `- notificaciones = notifications\n` +
+                    `- usuarios = usuarios (ya está en español)\n` +
+                    `- Si el usuario dice un nombre que no coincide exactamente, busca la tabla más similar en el schema.\n\n` +
+                    `No inventes valores. No respondas sin consultar la base de datos primero.`;
 
                 // ── Role-based data-access restriction ──────────────────────────────
                 // Roles: 1=estudiante, 2=docente, 3=admin
@@ -1121,8 +1145,10 @@ Responde de forma clara y constructiva.`;
             'El usuario hace una pregunta de negocio. Responde ÚNICAMENTE con el SQL necesario (SELECT o WITH ... SELECT), sin explicaciones.',
             'NUNCA selecciones columnas de ID. Usa JOINs para obtener nombres legibles.',
             'PROHIBIDO usar auth.uid() — esa función no existe en este contexto y causará errores de tipo.',
-            'Tablas reales del esquema: usuarios (id, username, email, avatar), personas (id, nombres, apellidos, email, avatar), courses (id, title, creator_user_id), subjects (id, course_id FK→courses.id, name), topics (id, name, materia_id FK→subjects.id — ⚠️ NO tiene course_id), tasks (id, title, description, topic_id), task_submissions (id, task_id, student_id, grade, feedback, file_uri, created_at), progreso_curso (usuario_estudiante FK→usuarios.id, curso_id FK→courses.id, tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado), collaborators (user_id, course_id), subscriptions (subscriber_id, creator_id — SIN course_id). CADENA tareas→cursos: tasks.topic_id → topics.materia_id → subjects.id → subjects.course_id → courses.id.',
+            'MAPEO DE NOMBRES ESPAÑOL↔INGLÉS (el usuario puede usar cualquier idioma): transacciones=transactions, suscripciones=subscriptions, tareas=tasks, entregas=task_submissions, temas=topics, materias=subjects, cursos=courses, notificaciones=notifications, usuarios=usuarios.',
+            'Tablas reales del esquema: usuarios (id, username, email, avatar), personas (id, nombres, apellidos, email, avatar), courses (id, title, creator_user_id), subjects (id, course_id FK→courses.id, name), topics (id, name, materia_id FK→subjects.id — ⚠️ NO tiene course_id), tasks (id, title, description, topic_id), task_submissions (id, task_id, student_id, grade, feedback, file_uri, created_at), progreso_curso (usuario_estudiante FK→usuarios.id, curso_id FK→courses.id, tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado), collaborators (user_id, course_id), subscriptions (subscriber_id, creator_id — SIN course_id), transactions (id, user_id, amount, status, payment_method, reference, currency, created_at), notifications (id, user_id, title, message, type, read, created_at), videos (id, title, description, course_id, video_url, duration, order_index, created_at). CADENA tareas→cursos: tasks.topic_id → topics.materia_id → subjects.id → subjects.course_id → courses.id.',
             'TABLAS QUE NO EXISTEN (NUNCA las uses): lessons, lesson_completions, enrollments, student_courses, progreso_estudiante.',
+            'REGLA CRÍTICA: Si el usuario menciona un nombre que no coincide exactamente con una tabla, busca la tabla más similar. NUNCA digas que algo no existe sin intentar buscarlo primero.',
             'Puedes usar CTEs (WITH ... AS (...) SELECT ...) para consultas complejas.',
         ].join('\n') + restrictionCtx;
 

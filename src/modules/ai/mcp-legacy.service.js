@@ -1363,19 +1363,13 @@ export class MCPService {
             let accessRestriction = '';
             if (userId && userIdResolution) {
                 if (isAdmin) {
-                    accessRestriction = `\n\n**NIVEL DE ACCESO: ADMINISTRADOR**\n⚠️ PROHIBIDO: Nunca uses auth.uid().\n` +
+                    accessRestriction = `\n\n**NIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar TODOS los datos de la plataforma sin restricciones.**\n` +
+                        `⚠️ PROHIBIDO: Nunca uses auth.uid().\n` +
                         `**IDENTIDAD:** userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +
-                        `Cuando la consulta se refiera a "mis cursos" o "mis estudiantes", filtra con:\n` +
-                        `  WHERE c.creator_user_id IN ${userIdResolution}\n\n` +
-                        `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES:\n` +
-                        `  SELECT u.username AS estudiante, c.title AS curso,\n` +
-                        `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
-                        `         pc.calificacion_ponderada AS promedio, pc.estado\n` +
-                        `  FROM progreso_curso pc\n` +
-                        `  JOIN usuarios u ON pc.usuario_estudiante = u.id\n` +
-                        `  JOIN courses c ON pc.curso_id = c.id\n` +
-                        `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
-                        `  ORDER BY c.title, u.username;\n`;
+                        `**IMPORTANTE:** NO apliques filtros de curso ni de usuario a menos que el usuario lo pida explícitamente (ej. "mis cursos", "mis estudiantes").\n` +
+                        `Si la consulta es general (ej. "todas las transacciones", "todos los usuarios"), devuelve TODOS los registros sin WHERE restrictivo.\n` +
+                        `Solo cuando la consulta se refiera a "mis cursos" o "mis estudiantes", filtra con:\n` +
+                        `  WHERE c.creator_user_id IN ${userIdResolution}\n`;
                 } else {
                     accessRestriction = `\n\n**RESTRICCIÓN DE ACCESO OBLIGATORIA:**\n` +
                         `userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +

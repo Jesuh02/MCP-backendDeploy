@@ -29,12 +29,17 @@ export class ExcelController {
             }
 
             const effectiveUserId = userId || req.user ?.userId ?.toString() || 'anon';
+            const username = req.user?.username || null;
+            // Prefer JWT roles (from req.user), fall back to body-supplied roles (for Android without JWT).
+            const userRoles = (req.user?.roles || req.body?.userRoles || []).map(Number);
 
-            console.log(`📊 Generating Excel for query: "${query}" (User: ${effectiveUserId})`);
+            console.log(`📊 Generating Excel for query: "${query}" (User: ${effectiveUserId}, roles: ${JSON.stringify(userRoles)})`);
 
             const result = await this.excelService.generateFromQuery({
                 query: query.trim(),
                 userId: effectiveUserId,
+                username,
+                userRoles,
             });
 
             if (result.isFail()) {
