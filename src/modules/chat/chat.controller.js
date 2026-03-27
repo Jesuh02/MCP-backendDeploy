@@ -37,10 +37,20 @@ export class ChatMessageController extends BaseController {
     };
 
     create = async(req, res, next) => {
+        const body = req.body;
+        // Normalize snake_case (Vue/web) and camelCase (Android) keys
         const data = {
-            ...req.body,
-            usuarioId: req.body.usuarioId ?? req.user.userId,
-            username: req.body.username ?? req.user.username,
+            ...body,
+            message: body.message,
+            isFromUser: body.isFromUser ?? body.is_from_user ?? false,
+            timestamp: (typeof body.timestamp === 'number' ? body.timestamp : null) ?? Date.now(),
+            sessionId: body.sessionId ?? body.session_id ?? null,
+            hasCalification: body.hasCalification ?? body.has_calification ?? false,
+            calificationValue: body.calificationValue ?? body.calification_value ?? null,
+            calificationAdded: body.calificationAdded ?? body.calification_added ?? false,
+            usuarioId: body.usuarioId ?? body.usuario_id ?? req.user?.userId ?? null,
+            username: body.username ?? req.user?.username ?? null,
+            origin: body.origin ?? null,
         };
         this.handleResult(res, next, (async() => {
             const result = await this.chatMessageService.create(data);
@@ -51,10 +61,20 @@ export class ChatMessageController extends BaseController {
     };
 
     upsert = async(req, res, next) => {
+        const body = req.body;
+        // Normalize snake_case (Vue/web) and camelCase (Android) keys
         const data = {
-            ...req.body,
-            usuarioId: req.body.usuarioId ?? req.user.userId,
-            username: req.body.username ?? req.user.username,
+            ...body,
+            message: body.message,
+            isFromUser: body.isFromUser ?? body.is_from_user ?? false,
+            timestamp: (typeof body.timestamp === 'number' ? body.timestamp : null) ?? Date.now(),
+            sessionId: body.sessionId ?? body.session_id ?? null,
+            hasCalification: body.hasCalification ?? body.has_calification ?? false,
+            calificationValue: body.calificationValue ?? body.calification_value ?? null,
+            calificationAdded: body.calificationAdded ?? body.calification_added ?? false,
+            usuarioId: body.usuarioId ?? body.usuario_id ?? req.user?.userId ?? null,
+            username: body.username ?? req.user?.username ?? null,
+            origin: body.origin ?? null,
         };
         this.store(req, res, next, () =>
             this.chatMessageService.upsert(data)

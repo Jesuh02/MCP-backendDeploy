@@ -34,6 +34,8 @@ export class LLMController {
                 freeLearning: value.freeLearning || false,
                 forceMCPTools: value.forceMCPTools || false,
                 difficulty: value.difficulty || null,
+                // Pass authenticated user's roles for data-access scoping
+                userRoles: (req.user?.roles || []).map(Number),
             };
 
             const result = await this.llmService.processPrompt(params);
