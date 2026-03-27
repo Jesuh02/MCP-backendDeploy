@@ -317,7 +317,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             // If the prompt asks for database queries or BI instructions, expose MCP tools
             const promptLc = String(fullPrompt || '').toLowerCase();
             // Allow caller to force enabling MCP tools (useful for channel integrations)
-            const needsMCPTools = forceMCPTools || /query[_ ]database|consulta de business intelligence|consulta de business inteligencia|usa \'query_database\'|usa "query_database"/i.test(promptLc);
+            const needsMCPTools = forceMCPTools || /query[_ ]database|consulta de business intelligence|consulta de business inteligencia|usa \'query_database\'|usa "query_database"|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n/i.test(promptLc);
             // When tools are required we also augment the system prompt with explicit
             // instructions to use them.  This is important because some LLM models
             // (including deepseek-chat) may otherwise ignore the tool definitions.
@@ -346,17 +346,37 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                     systemPrompt += `\n\nRESTRICCIÓN DE ACCESO A DATOS — OBLIGATORIA E IRRENUNCIABLE:\n` +
                         `Este usuario es DOCENTE (no administrador). ID del docente autenticado: ${userId}.\n` +
                         `Todas tus consultas SQL DEBEN incluir filtros que limiten los resultados a su propio ámbito.\n\n` +
+                        `ESQUEMA CORRECTO — TABLAS REALES (PROHIBIDO inventar tablas inexistentes):\n` +
+                        `  usuarios: id, usuario (login), persona_id\n` +
+                        `  personas: id, nombres, apellidos, email, avatar\n` +
+                        `  courses: id, title, creator_user_id\n` +
+                        `  topics: id, name, course_id\n` +
+                        `  tasks: id, title, description, topic_id\n` +
+                        `  task_submissions: id, task_id, student_id (FK→usuarios.id), grade, feedback, file_uri, created_at\n` +
+                        `  progreso_estudiante: usuario_estudiante (FK→usuarios.id), curso_id (FK→courses.id), tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado ('Ganado'|'Perdido')\n` +
+                        `  collaborators: user_id, course_id\n` +
+                        `  subscriptions: subscriber_id, creator_id  ← SIN course_id\n` +
+                        `  TABLAS INEXISTENTES (PROHIBIDO usarlas): lessons, lesson_completions, enrollments, student_courses, progreso_curso\n\n` +
                         `SUBQUERY DE CURSOS ACCESIBLES (úsala siempre para filtrar por curso):\n` +
                         `  (SELECT id FROM courses WHERE creator_user_id = ${userId} UNION SELECT course_id FROM collaborators WHERE user_id = ${userId})\n\n` +
                         `SUBQUERY DE ALUMNOS ACCESIBLES (úsala siempre para filtrar estudiantes):\n` +
-                        `  (SELECT subscriber_id FROM subscriptions WHERE creator_id = ${userId})\n\n` +
+                        `  (SELECT DISTINCT pe.usuario_estudiante FROM progreso_estudiante pe WHERE pe.curso_id IN (SELECT id FROM courses WHERE creator_user_id = ${userId} UNION SELECT course_id FROM collaborators WHERE user_id = ${userId}))\n\n` +
+                        `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES (adapta según la pregunta):\n` +
+                        `  SELECT u.usuario AS estudiante, c.title AS curso,\n` +
+                        `         pe.tareas_completadas, pe.tareas_totales, pe.porcentaje_progreso,\n` +
+                        `         pe.calificacion_ponderada AS promedio, pe.estado\n` +
+                        `  FROM progreso_estudiante pe\n` +
+                        `  JOIN usuarios u ON pe.usuario_estudiante = u.id\n` +
+                        `  JOIN courses c ON pe.curso_id = c.id\n` +
+                        `  WHERE pe.curso_id IN (SELECT id FROM courses WHERE creator_user_id = ${userId} UNION SELECT course_id FROM collaborators WHERE user_id = ${userId})\n` +
+                        `  ORDER BY c.title, u.usuario;\n\n` +
                         `REGLAS DE FILTRADO OBLIGATORIAS (aplican a TODAS las queries sin excepción):\n` +
-                        `1. Consultas de estudiantes/usuarios → filtrar por id IN (subquery de alumnos accesibles).\n` +
-                        `2. Consultas de progreso (progreso_curso) → filtrar por course_id IN (subquery de cursos accesibles).\n` +
-                        `3. Consultas de entregas (task_submissions) → filtrar por student_id IN (subquery de alumnos accesibles).\n` +
-                        `4. Consultas de cursos → filtrar por id IN (subquery de cursos accesibles).\n` +
-                        `5. PROHIBIDO devolver datos de estudiantes o cursos de otros docentes.\n` +
-                        `6. PROHIBIDO omitir estos filtros en cualquier consulta SQL.\n` +
+                        `1. Consultas de progreso → usar tabla progreso_estudiante, filtrar por curso_id IN (subquery de cursos accesibles).\n` +
+                        `2. Consultas de entregas (task_submissions) → filtrar por student_id IN (subquery de alumnos accesibles).\n` +
+                        `3. Consultas de cursos → filtrar por id IN (subquery de cursos accesibles).\n` +
+                        `4. PROHIBIDO devolver datos de estudiantes o cursos de otros docentes.\n` +
+                        `5. PROHIBIDO omitir estos filtros en cualquier consulta SQL.\n` +
+                        `6. PROHIBIDO usar tablas que no existen: lessons, lesson_completions, enrollments, student_courses, progreso_curso.\n` +
                         `7. Si el usuario solicita ver "todos" los estudiantes o cursos, aplica igualmente los filtros — solo muestra los suyos.`;
                 }
                 // ────────────────────────────────────────────────────────────────────
@@ -432,7 +452,8 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                     } else {
                         // Strategy 2: two-step direct DB query (SQL generation + execution + final answer)
                         try {
-                            response = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model);
+                            const fallbackResult = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model);
+                            if (fallbackResult !== null && fallbackResult !== undefined) response = fallbackResult;
                         } catch (e) {
                             console.warn('[LLMDomainService] Direct DB query fallback failed:', e.message);
                         }
@@ -441,6 +462,10 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             }
 
             // 6. Post-process response to detect Grading Signal
+            // Guard: if all fallbacks failed response may still be null/missing content
+            if (!response || response.content == null) {
+                return Result.fail(new ValidationError('El asistente no pudo generar una respuesta. Por favor intenta de nuevo.'));
+            }
             let content = response.content;
             let esCalificacion = false;
             let nota = null;
@@ -1003,23 +1028,29 @@ Responde de forma clara y constructiva.`;
      */
     async _directDbQueryFallback(systemPrompt, fullPrompt, originalPrompt, model) {
         // Step 1: generate SQL
+        // Extract any role-based access restrictions from the existing systemPrompt to enforce them in SQL generation
+        const restrictionMatch = systemPrompt.match(/RESTRICCIÓN DE ACCESO[\s\S]+?(?=\n\n[A-ZÁÉÍÓÚ]|\n\nMODO|$)/);
+        const restrictionCtx = restrictionMatch ? `\n\n${restrictionMatch[0]}` : '';
+
         const sqlSystemPrompt = [
             'Eres un experto en SQL para PostgreSQL/Supabase.',
-            'El usuario hace una pregunta de negocio. Responde ÚNICAMENTE con el SQL necesario, sin explicaciones.',
+            'El usuario hace una pregunta de negocio. Responde ÚNICAMENTE con el SQL necesario (SELECT o WITH ... SELECT), sin explicaciones.',
             'NUNCA selecciones columnas de ID. Usa JOINs para obtener nombres legibles.',
-            'Si no sabes la estructura exacta, usa SELECT COUNT(*) o tablas comunes: usuarios, courses, subscriptions.',
-        ].join('\n');
+            'Tablas reales del esquema: usuarios (id, usuario, persona_id), personas (id, nombres, apellidos, email, avatar), courses (id, title, creator_user_id), topics (id, name, course_id), tasks (id, title, description, topic_id), task_submissions (id, task_id, student_id, grade, feedback, file_uri, created_at), progreso_estudiante (usuario_estudiante FK→usuarios.id, curso_id FK→courses.id, tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado), collaborators (user_id, course_id), subscriptions (subscriber_id, creator_id — SIN course_id).',
+            'TABLAS QUE NO EXISTEN (NUNCA las uses): lessons, lesson_completions, enrollments, student_courses, progreso_curso.',
+            'Puedes usar CTEs (WITH ... AS (...) SELECT ...) para consultas complejas.',
+        ].join('\n') + restrictionCtx;
 
         const sqlResponse = await this.llm.chat(sqlSystemPrompt, originalPrompt, { model, tools: [] });
         const sqlText = String(sqlResponse.content || '').trim();
 
-        // Extract SQL from possible code block
+        // Extract SQL from possible code block (also supports CTEs starting with WITH)
         const sqlMatch = sqlText.match(/```sql\s*([\s\S]+?)\s*```/i) ||
-            sqlText.match(/```\s*(SELECT[\s\S]+?)\s*```/i) ||
-            sqlText.match(/(SELECT[\s\S]+)/i);
+            sqlText.match(/```\s*((WITH|SELECT)[\s\S]+?)\s*```/i) ||
+            sqlText.match(/((WITH\s+\w+|SELECT)[\s\S]+)/i);
         const sql = sqlMatch ? sqlMatch[1].trim() : sqlText;
 
-        if (!sql || !/^\s*SELECT/i.test(sql)) {
+        if (!sql || !/^\s*(SELECT|WITH)\b/i.test(sql)) {
             console.warn('[LLMDomainService] SQL fallback: no valid SELECT generated');
             return null;
         }
