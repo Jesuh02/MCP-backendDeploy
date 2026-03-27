@@ -24,6 +24,7 @@ export const processPromptSchema = Joi.object({
     freeLearning: Joi.boolean().optional(),
     forceMCPTools: Joi.boolean().optional(),
     difficulty: Joi.string().valid('EASY', 'INTERMEDIATE', 'HARD').optional(),
+    userRoles: Joi.array().items(Joi.number().integer()).optional(),
 }).options({ allowUnknown: true });
 
 export const analyzeSubmissionSchema = Joi.object({

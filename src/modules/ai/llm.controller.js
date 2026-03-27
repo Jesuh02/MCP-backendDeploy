@@ -34,8 +34,9 @@ export class LLMController {
                 freeLearning: value.freeLearning || false,
                 forceMCPTools: value.forceMCPTools || false,
                 difficulty: value.difficulty || null,
-                // Pass authenticated user's roles for data-access scoping
-                userRoles: (req.user?.roles || []).map(Number),
+                // Pass authenticated user's roles for data-access scoping.
+                // Prefer JWT roles (from req.user), fall back to body-supplied roles (for Android without JWT).
+                userRoles: (req.user?.roles || value.userRoles || []).map(Number),
             };
 
             const result = await this.llmService.processPrompt(params);

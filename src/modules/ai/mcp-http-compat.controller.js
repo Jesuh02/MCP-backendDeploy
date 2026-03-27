@@ -100,12 +100,23 @@ export class MCPHttpCompatController {
         const toolName = params?.name;
         const args = params?.arguments || {};
 
+        // Extract authenticated user context (from JWT middleware if present, or from request meta)
+        const userContext = {
+            userId: req.user?.userId || params?.meta?.userId || args._userId || null,
+            userRoles: req.user?.roles || params?.meta?.userRoles || args._userRoles || [],
+        };
+
+        // Strip internal meta fields from args before passing to tool
+        const cleanArgs = { ...args };
+        delete cleanArgs._userId;
+        delete cleanArgs._userRoles;
+
         try {
             if (!this.mcpServiceLegacy) {
                 throw new Error('MCPService not initialized');
             }
 
-            const result = await this._dispatchToolCall(toolName, args);
+            const result = await this._dispatchToolCall(toolName, cleanArgs, userContext);
 
             // If the result is already a plain string (e.g. LLM agent response),
             // use it as-is so the client receives human-readable text instead of
@@ -137,10 +148,10 @@ export class MCPHttpCompatController {
      * Despacha la llamada a la herramienta correspondiente.
      * @private
      */
-    async _dispatchToolCall(toolName, args) {
+    async _dispatchToolCall(toolName, args, userContext = {}) {
         switch (toolName) {
             case 'query_database':
-                return this._handleQueryDatabase(args);
+                return this._handleQueryDatabase(args, userContext);
 
             case 'get_database_schema':
                 return this.mcpServiceLegacy.getDatabaseSchema();
@@ -157,7 +168,7 @@ export class MCPHttpCompatController {
      * Ejecuta query_database distinguiendo entre SQL directo y lenguaje natural.
      * @private
      */
-    async _handleQueryDatabase(args) {
+    async _handleQueryDatabase(args, userContext = {}) {
         const isSQLQuery = /^\s*(select|insert|update|delete|with)\s/i.test(args.query);
 
         if (isSQLQuery) {
@@ -165,7 +176,7 @@ export class MCPHttpCompatController {
         }
 
         try {
-            const agentResponse = await this.mcpServiceLegacy.processQueryWithAgent(args.query);
+            const agentResponse = await this.mcpServiceLegacy.processQueryWithAgent(args.query, userContext);
             // Return the text directly so callers can render it without JSON-parsing.
             return typeof agentResponse === 'string' ? agentResponse : agentResponse;
         } catch (agentErr) {
