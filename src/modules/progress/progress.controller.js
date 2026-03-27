@@ -171,6 +171,15 @@ export class ProgressController {
         } catch (err) { next(err); }
     };
 
+    getTeacherStudentProgress = async(req, res, next) => {
+        try {
+            const courseId = req.query.courseId ? parseInt(req.query.courseId) : null;
+            const result = await this.progressService.getStudentProgressForTeacher(req.user.userId, courseId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     issueCertificate = async(req, res, next) => {
         try {
             const courseId = parseInt(req.params.courseId);
