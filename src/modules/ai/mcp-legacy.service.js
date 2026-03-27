@@ -1533,6 +1533,12 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
             // When userId is present but no explicit roles, default to teacher-level restriction (safe default)
             const hasUserContext = !!userId;
 
+            if (hasUserContext) {
+                logger.info(`🔐 processQueryWithAgent — userId=${userId}, roles=${JSON.stringify(userRoles)}, isAdmin=${isAdmin}, isTeacher=${isTeacher}`);
+            } else {
+                logger.warn(`⚠️ processQueryWithAgent — No userId in userContext, queries will have NO access restriction`);
+            }
+
             let accessRestriction = '';
             if (hasUserContext && isAdmin) {
                 accessRestriction = `\n\n**NIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma.**`;
@@ -1627,7 +1633,13 @@ GROUP BY u.id, u.username
 - Para temas: muestra el nombre (name). Para tareas: muestra el título (title).
 - Si una columna es una FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el nombre legible.
 - Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos" o "course_id: 5" o SELECT user_id FROM ...
-- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o SELECT u.username FROM ... JOIN usuarios u ON ...`);
+- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o SELECT u.username FROM ... JOIN usuarios u ON ...
+
+**REGLA DE PRESENTACIÓN — NUNCA MOSTRAR SQL AL USUARIO:**
+- PROHIBIDO mostrar código SQL, consultas SQL o bloques \`\`\`sql en tu respuesta final al usuario.
+- El usuario NO debe ver SELECT, FROM, WHERE, JOIN, ni ninguna sentencia SQL.
+- Cuando recibas datos exitosos, presenta SOLO un resumen claro en lenguaje natural (Markdown).
+- Si necesitas ejecutar SQL, hazlo internamente con la herramienta, pero tu respuesta final debe ser en español claro, sin código.`);
 
             conversationHistory.push(systemMessage);
             conversationHistory.push(new HumanMessage(query));
@@ -1741,6 +1753,10 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                         // Clean up any residual code blocks that shouldn't be shown
                         let finalResponse = responseContent;
                         finalResponse = finalResponse.replace(/```json\s*\{[\s\S]*?"tool"[\s\S]*?\}\s*```/gi, '');
+                        // Strip SQL code blocks (user must never see raw SQL)
+                        finalResponse = finalResponse.replace(/```sql[\s\S]*?```/gi, '');
+                        // Strip any remaining inline SQL statements
+                        finalResponse = finalResponse.replace(/```\s*SELECT[\s\S]*?```/gi, '');
                         
                         return finalResponse.trim();
                     }
