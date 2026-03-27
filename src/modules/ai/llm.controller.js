@@ -32,6 +32,7 @@ export class LLMController {
                 taskId: value.taskId,
                 topicId: value.topicId || value.topic_id,
                 freeLearning: value.freeLearning || false,
+                forceMCPTools: value.forceMCPTools || false,
                 difficulty: value.difficulty || null,
             };
 

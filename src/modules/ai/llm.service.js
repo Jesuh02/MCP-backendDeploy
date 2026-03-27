@@ -68,7 +68,7 @@ export class LLMDomainService {
                         if (!isEasyDifficulty) {
                             try {
                                 const { MCPService } = await
-                                import ('./MCPService.js');
+                                import ('./mcp-legacy.service.js');
                                 const mcpService = new MCPService();
                                 const history = await mcpService.getReinforcementHistory(
                                     userId, courseId, topicId || null, taskId || null
@@ -285,7 +285,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                 try {
                     // Use MCPService WITHOUT topic/task filter to match the duplicate detection scope
                     const { MCPService } = await
-                    import ('./MCPService.js');
+                    import ('./mcp-legacy.service.js');
                     const mcpService = new MCPService();
                     // Pass null for topicId and taskId to get ALL questions for this user+course
                     const history = await mcpService.getReinforcementHistory(
@@ -363,7 +363,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                         }
 
                         try {
-                            const { MCPService } = await import('./MCPService.js');
+                            const { MCPService } = await import('./mcp-legacy.service.js');
                             const mcp = new MCPService();
                             const toolResult = await mcp.executeMCPTool(toolName, toolArgs);
                             // Append tool result to system prompt to allow the model to continue reasoning
@@ -381,20 +381,37 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                 console.warn('[LLMDomainService] Tool execution loop failed:', toolLoopErr && (toolLoopErr.message || toolLoopErr));
             }
 
-            // If we expected tools but never actually got any calls and the model
-            // returned an empty or clearly placeholder answer, try one more time with
-            // an even stronger reminder. This handles cases like the one reported
-            // where deepseek-chat ignored the initial instruction and returned no
-            // content at all.
+            // If we expected tools but never actually got any calls, try two recovery strategies:
+            // 1. Parse inline JSON tool call emitted by the model in its text content.
+            // 2. Two-step fallback: ask the LLM to generate SQL, execute it directly, then answer.
             if (needsMCPTools) {
                 const hadToolCalls = Array.isArray(response.tool_calls) && response.tool_calls.length > 0;
-                const textContent = String(response.content || '').trim();
-                if (!hadToolCalls && textContent.length === 0) {
-                    // append a reminder to the system prompt
-                    const extra = `\n\n**RECUERDA:** si la pregunta requiere datos de la base de datos, ` +
-                        `¡DEBES usar la herramienta query_database! Emite primero el JSON ` +
-                        `correspondiente y luego elabora la respuesta con los resultados.`;
-                    response = await this.llm.chat(systemPrompt + extra, fullPrompt, { model, tools });
+                if (!hadToolCalls) {
+                    const textContent = String(response.content || '').trim();
+
+                    // Strategy 1: detect inline JSON tool call in model content
+                    const inlineCall = this._extractInlineToolCall(textContent);
+                    if (inlineCall) {
+                        try {
+                            const { MCPService } = await import('./mcp-legacy.service.js');
+                            const mcp = new MCPService();
+                            const toolResult = await mcp.executeMCPTool(inlineCall.tool, inlineCall.arguments);
+                            const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+                            response = await this.llm.chat(
+                                systemPrompt + `\n\n[TOOL_RESULT name=${inlineCall.tool}]\n${resultStr}\n[END_TOOL_RESULT]`,
+                                fullPrompt, { model, tools: [] }
+                            );
+                        } catch (e) {
+                            console.warn('[LLMDomainService] Inline tool call execution failed:', e.message);
+                        }
+                    } else {
+                        // Strategy 2: two-step direct DB query (SQL generation + execution + final answer)
+                        try {
+                            response = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model);
+                        } catch (e) {
+                            console.warn('[LLMDomainService] Direct DB query fallback failed:', e.message);
+                        }
+                    }
                 }
             }
 
@@ -925,6 +942,77 @@ Responde de forma clara y constructiva.`;
         }
 
         return parts.join(' ').trim();
+    }
+
+    /**
+     * Extracts an inline JSON tool call from model text output.
+     * DeepSeek sometimes emits the JSON in the message body instead of tool_calls.
+     * Supports both ```json {...} ``` blocks and bare JSON objects.
+     */
+    _extractInlineToolCall(text) {
+        if (!text) return null;
+        // Match ```json { "tool": ..., "arguments": ... } ```
+        const codeBlock = text.match(/```json\s*(\{[\s\S]*?\})\s*```/i);
+        if (codeBlock) {
+            try {
+                const parsed = JSON.parse(codeBlock[1]);
+                if (parsed.tool && parsed.arguments) return parsed;
+            } catch { /* not valid JSON */ }
+        }
+        // Match bare JSON objects containing "tool" and "arguments" keys
+        const bare = text.match(/\{[^{}]*"tool"\s*:[^{}]*"arguments"\s*:[^{}]*\}/s);
+        if (bare) {
+            try {
+                const parsed = JSON.parse(bare[0]);
+                if (parsed.tool && parsed.arguments) return parsed;
+            } catch { /* not valid JSON */ }
+        }
+        return null;
+    }
+
+    /**
+     * Two-step DB query fallback when DeepSeek refuses to use tool_calls.
+     * Step 1: Ask the model to generate SQL.
+     * Step 2: Execute via MCPService directly.
+     * Step 3: Ask the model to format the result in Markdown.
+     */
+    async _directDbQueryFallback(systemPrompt, fullPrompt, originalPrompt, model) {
+        // Step 1: generate SQL
+        const sqlSystemPrompt = [
+            'Eres un experto en SQL para PostgreSQL/Supabase.',
+            'El usuario hace una pregunta de negocio. Responde ÚNICAMENTE con el SQL necesario, sin explicaciones.',
+            'NUNCA selecciones columnas de ID. Usa JOINs para obtener nombres legibles.',
+            'Si no sabes la estructura exacta, usa SELECT COUNT(*) o tablas comunes: usuarios, courses, subscriptions.',
+        ].join('\n');
+
+        const sqlResponse = await this.llm.chat(sqlSystemPrompt, originalPrompt, { model, tools: [] });
+        const sqlText = String(sqlResponse.content || '').trim();
+
+        // Extract SQL from possible code block
+        const sqlMatch = sqlText.match(/```sql\s*([\s\S]+?)\s*```/i) ||
+            sqlText.match(/```\s*(SELECT[\s\S]+?)\s*```/i) ||
+            sqlText.match(/(SELECT[\s\S]+)/i);
+        const sql = sqlMatch ? sqlMatch[1].trim() : sqlText;
+
+        if (!sql || !/^\s*SELECT/i.test(sql)) {
+            console.warn('[LLMDomainService] SQL fallback: no valid SELECT generated');
+            return null;
+        }
+
+        console.log('[LLMDomainService] Direct SQL fallback executing:', sql.substring(0, 120));
+
+        // Step 2: execute via MCPService
+        const { MCPService } = await import('./mcp-legacy.service.js');
+        const mcp = new MCPService();
+        const toolResult = await mcp.executeMCPTool('query_database', { query: sql });
+        const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+
+        // Step 3: format final answer
+        return await this.llm.chat(
+            systemPrompt + `\n\n[DATOS OBTENIDOS DE LA BASE DE DATOS]\n${resultStr}\n[FIN DE DATOS]\n\nFormula ahora tu respuesta en Markdown claro usando SOLO los datos anteriores. No inventes valores.`,
+            fullPrompt,
+            { model, tools: [] }
+        );
     }
 }
 export default LLMDomainService;
