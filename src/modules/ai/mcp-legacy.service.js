@@ -1546,7 +1546,20 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
 
             let accessRestriction = '';
             if (hasUserContext && isAdmin) {
-                accessRestriction = `\n\n**NIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma.**\n⚠️ PROHIBIDO: Nunca uses auth.uid() — esa función no existe en este contexto y causará errores de tipo. Usa siempre IDs numéricos concretos o JOINs con la tabla usuarios.`;
+                accessRestriction = `\n\n**NIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma.**\n⚠️ PROHIBIDO: Nunca uses auth.uid() — esa función no existe en este contexto y causará errores de tipo.\n\n` +
+                `**IDENTIDAD DEL USUARIO AUTENTICADO:** userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +
+                `Cuando el usuario pregunte por "mis cursos", "mis estudiantes" o datos propios, filtra usando:\n` +
+                `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                `  O con JOIN: JOIN usuarios creador ON c.creator_user_id = creador.id WHERE creador.username = '${safeUsername || 'N/A'}'\n\n` +
+                `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES:\n` +
+                `  SELECT u.username AS estudiante, c.title AS curso,\n` +
+                `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
+                `         pc.calificacion_ponderada AS promedio, pc.estado\n` +
+                `  FROM progreso_curso pc\n` +
+                `  JOIN usuarios u ON pc.usuario_estudiante = u.id\n` +
+                `  JOIN courses c ON pc.curso_id = c.id\n` +
+                `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
+                `  ORDER BY c.title, u.username;`;
             } else if (hasUserContext) {
                 // Teacher or unknown role: always restrict to the authenticated user's own data
                 accessRestriction = `\n\n**RESTRICCIÓN DE ACCESO OBLIGATORIA E IRRENUNCIABLE:**
