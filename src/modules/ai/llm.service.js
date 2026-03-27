@@ -168,6 +168,8 @@ export class LLMDomainService {
 
             systemPrompt += `\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos de base de datos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.) al usuario.\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra siempre el username o nombre (first_name, last_name). Haz JOIN con la tabla usuarios.\n- Para cursos: muestra siempre el título (title). Haz JOIN con courses.\n- Para temas: muestra siempre el nombre (name). Para tareas: muestra siempre el título (title).\n- Si una columna es una FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible (username, title, name).\n- Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos" o "id: 5" o SELECT user_id, course_id FROM ...\n- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o SELECT u.username, c.title FROM ... JOIN usuarios u ON ...\n- Esta regla aplica a TODAS las respuestas y consultas SQL sin excepción.`;
 
+            systemPrompt += `\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR SQL AL USUARIO:\n- PROHIBIDO mostrar código SQL, consultas SQL o bloques de código SQL en tu respuesta.\n- El usuario NO debe ver SELECT, FROM, WHERE, JOIN, ni ninguna sentencia SQL.\n- Cuando necesites datos de la base de datos, usa la herramienta internamente, pero tu respuesta final debe ser en lenguaje natural claro (Markdown).\n- Si la herramienta devuelve datos, presenta un resumen legible. NUNCA copies el SQL que usaste.`;
+
             // INSTRUCCIÓN SEMÁNTICA: Detección de intención de calificación (Requerimiento estricto: NO usar regex en input usuario)
             // El LLM es responsable de señalizar si es una solicitud de nota válida.
             systemPrompt += `\n\nREGLA CRÍTICA — ETIQUETA [GRADING_REQUEST]:
@@ -324,6 +326,9 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             // Students (role 1) must never get DB query access even when forceMCPTools is sent.
             const roleAllowsMCPTools = isAdmin || isTeacher;
             let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || /query[_ ]database|consulta de business intelligence|consulta de business inteligencia|usa \'query_database\'|usa "query_database"|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n/i.test(promptLc));
+            if (needsMCPTools) {
+                console.log(`[LLMDomainService] 🔐 MCP tools enabled — userId=${userId}, roles=${JSON.stringify(userRoles)}, isTeacher=${isTeacher}, isAdmin=${isAdmin}`);
+            }
             // When tools are required we also augment the system prompt with explicit
             // instructions to use them.  This is important because some LLM models
             // (including deepseek-chat) may otherwise ignore the tool definitions.
@@ -480,12 +485,20 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                     }
                 }
 
-                // Final safety net: if the response content still looks like a raw JSON tool call
-                // (which would expose internal SQL to the user), replace it with an error message.
-                const finalContent = String(response?.content || '');
+                // Final safety net: strip any SQL or tool call JSON that leaked into the response
+                let finalContent = String(response?.content || '');
                 if (/"tool"\s*:\s*"query_database"/.test(finalContent)) {
                     console.warn('[LLMDomainService] Response still contains raw tool call after all fallbacks — suppressing.');
                     response = { ...response, content: 'Lo siento, no pude obtener los datos en este momento. Por favor intenta de nuevo.' };
+                } else {
+                    // Strip SQL code blocks that leaked through (user must never see raw SQL)
+                    let cleaned = finalContent;
+                    cleaned = cleaned.replace(/```sql[\s\S]*?```/gi, '');
+                    cleaned = cleaned.replace(/```\s*SELECT[\s\S]*?```/gi, '');
+                    if (cleaned !== finalContent) {
+                        console.warn('[LLMDomainService] Stripped leaked SQL blocks from response.');
+                        response = { ...response, content: cleaned.trim() };
+                    }
                 }
             }
 

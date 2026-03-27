@@ -9,8 +9,20 @@ import { processPromptSchema, analyzeSubmissionSchema, feedbackSchema } from './
 import { ValidationError } from '../../shared/errors/index.js';
 
 export class LLMController {
-    constructor({ llmService }) {
+    constructor({ llmService, excelService = null }) {
         this.llmService = llmService;
+        this.excelService = excelService;
+    }
+
+    /**
+     * Returns true when the user's prompt (and optional progress context) indicates an intent
+     * to export student progress as an Excel/spreadsheet file.
+     */
+    _isProgressExcelIntent(prompt, taskDescription = '') {
+        const excelKw = /\b(excel|xls|xlsx|exportar|descargar\s+reporte|generar\s+reporte|haz?\s+un?\s+excel|crea?\s+un?\s+excel|spreadsheet|hoja\s+de\s+c[aá]lculo|reporte\s+excel)\b/i;
+        const progressKw = /\b(progreso|estudiantes?|calificaci[oó]n(es)?|notas?|avance|rendimiento)\b/i;
+        const combined = `${prompt} ${taskDescription}`;
+        return excelKw.test(combined) && (progressKw.test(combined) || taskDescription.includes('RESUMEN DE PROGRESO'));
     }
 
     processPrompt = async(req, res, next) => {
@@ -39,6 +51,28 @@ export class LLMController {
                 userRoles: (req.user?.roles || value.userRoles || []).map(Number),
             };
 
+            // Detect Excel generation intent for student progress and generate the file proactively
+            let excelUrl = null;
+            if (this.excelService && this._isProgressExcelIntent(params.prompt, params.taskDescription || '')) {
+                try {
+                    const progressQuery = (params.taskDescription || '').includes('RESUMEN DE PROGRESO')
+                        ? `Progreso de estudiantes: ${params.taskDescription}`
+                        : `Progreso de todos los estudiantes en los cursos del docente con userId ${params.userId}`;
+
+                    const excelResult = await this.excelService.generateFromQuery({
+                        query: progressQuery,
+                        userId: String(params.userId || 'anon'),
+                    });
+
+                    if (!excelResult.isFail()) {
+                        excelUrl = excelResult.getValue().url;
+                        console.log(`[LLM] Excel de progreso generado: ${excelUrl}`);
+                    }
+                } catch (excelErr) {
+                    console.error('[LLM] Error generando Excel de progreso:', excelErr.message);
+                }
+            }
+
             const result = await this.llmService.processPrompt(params);
             if (result.isFail()) return next(result.getError());
 
@@ -46,7 +80,8 @@ export class LLMController {
             // Adapt to legacy Android client expectations (respuesta_texto)
             const data = {
                 ...resultValue,
-                respuesta_texto: resultValue.response
+                respuesta_texto: resultValue.response,
+                ...(excelUrl && { excelUrl }),
             };
 
             res.json({ success: true, data });

@@ -430,7 +430,7 @@ export function createContainer() {
     const chatMessageController = new ChatMessageController({ chatMessageService });
 
     const ttsController = new TTSController({ ttsService });
-    const llmController = new LLMController({ llmService: llmDomainService });
+    const llmController = new LLMController({ llmService: llmDomainService, excelService });
     const videoProcessingController = new VideoProcessingController({ videoProcessingService });
     const videoStreamingController = new VideoStreamingController({ videoStreamingService });
     const ragController = new RAGController({ ragService: ragDomainService });
