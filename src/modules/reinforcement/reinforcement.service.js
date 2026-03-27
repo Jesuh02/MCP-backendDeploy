@@ -531,7 +531,7 @@ export class ReinforcementDomainService {
         const topicHint = topicName
             ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Analiza el dominio (matemáticas, programación, idiomas, etc.) y elige los tipos de ejercicio más adecuados para ese dominio.`
             : '';
-        const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}\n\nGenera EXACTAMENTE ${targetCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye al menos 2 tipos diferentes. Si el tema involucra cálculos, operaciones o completar código, usa fill_in_blank para esas preguntas. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
+        const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}\n\nGenera EXACTAMENTE ${targetCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales (cálculos, completar código, etc.), no solo preguntas teóricas. Si el tema involucra operaciones, cálculos o completar algo, usa fill_in_blank para que el estudiante practique. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
 
         // Step 3: Call LLM
         const llmStartMs = Date.now();
@@ -590,29 +590,39 @@ TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
 1. "multiple_choice" — Pregunta de opción múltiple clásica.
    Campos: { type: "multiple_choice", question, options (array de 4), correctIndex (0-3), explanation }
 
-2. "fill_in_blank" — Ejercicio práctico donde el estudiante debe escribir la respuesta.
-   Ideal para: operaciones matemáticas, completar código, completar frases, traducciones.
+2. "fill_in_blank" — Ejercicio PRÁCTICO donde el estudiante resuelve y escribe la respuesta.
+   OBLIGATORIO para: cálculos matemáticos, resolver operaciones, completar código, completar frases, traducciones.
    Campos: { type: "fill_in_blank", question (usa "___" para marcar el espacio), correctAnswer (string), hint (pista opcional), explanation }
-   Ejemplos:
-   - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 15 × 3 = ___", correctAnswer: "45", hint: "Multiplica paso a paso", explanation: "15 × 3 = 45" }
+   Ejemplos por dominio:
+   - Matemáticas/Suma: { type: "fill_in_blank", question: "Resuelve: 24 + 18 = ___", correctAnswer: "42", hint: "Suma las unidades primero: 4+8=12, lleva 1", explanation: "24 + 18 = 42. Se suman unidades (4+8=12, se escribe 2 y se lleva 1) y luego decenas (2+1+1=4)." }
+   - Matemáticas/Multiplicación: { type: "fill_in_blank", question: "Resuelve: 15 × 3 = ___", correctAnswer: "45", hint: "Multiplica paso a paso", explanation: "15 × 3 = 45" }
    - Programación: { type: "fill_in_blank", question: "Completa: console.___(\"Hola\")", correctAnswer: "log", hint: "Método para imprimir en consola", explanation: "console.log() imprime mensajes en la consola" }
    - Inglés: { type: "fill_in_blank", question: "Complete: She ___ (go) to school yesterday.", correctAnswer: "went", hint: "Past simple del verbo go", explanation: "El pasado simple de 'go' es 'went'" }
+   - Física: { type: "fill_in_blank", question: "Si F = m × a, y m = 5kg, a = 3m/s², entonces F = ___ N", correctAnswer: "15", hint: "Multiplica masa por aceleración", explanation: "F = 5 × 3 = 15 N" }
 
 3. "ordering" — Ordenar elementos en la secuencia correcta.
-   Ideal para: pasos de un algoritmo, líneas de código, procesos, cronología.
+   Ideal para: pasos de un algoritmo, líneas de código, procesos, cronología, pasos de resolución.
    Campos: { type: "ordering", question, items (array desordenado), correctOrder (array de índices del orden correcto), explanation }
-   Ejemplo: { type: "ordering", question: "Ordena los pasos para compilar un programa en C", items: ["Ejecutar", "Escribir código", "Compilar", "Depurar"], correctOrder: [1, 2, 3, 0], explanation: "Primero se escribe, luego compila, depura y finalmente ejecuta" }
+   Ejemplo: { type: "ordering", question: "Ordena los pasos para resolver 234 + 178", items: ["Obtener resultado: 412", "Sumar unidades: 4+8=12, escribir 2, llevar 1", "Sumar centenas: 2+1+1=4", "Sumar decenas: 3+7+1=11, escribir 1, llevar 1"], correctOrder: [1, 3, 2, 0], explanation: "Se suman de derecha a izquierda: unidades, decenas y centenas, llevando cuando sea necesario." }
 
-DECISIÓN INTELIGENTE DE TIPOS:
-- Analiza el TEMA y TAREA del estudiante para decidir qué tipos de ejercicios son más apropiados.
-- Si el tema es MATEMÁTICAS, FÍSICA, QUÍMICA: prioriza "fill_in_blank" para cálculos y "multiple_choice" para conceptos.
-- Si el tema es PROGRAMACIÓN: usa "fill_in_blank" para completar código, "ordering" para ordenar líneas, "multiple_choice" para conceptos.
-- Si el tema es IDIOMAS (inglés, etc.): usa "fill_in_blank" para gramática/vocabulario, "multiple_choice" para comprensión.
-- Si el tema es HISTORIA, CIENCIAS SOCIALES: prioriza "multiple_choice" y "ordering" para cronología.
-- Si el tema es PROCESOS, METODOLOGÍAS: prioriza "ordering" para secuencias.
-- MEZCLA los tipos: de ${targetCount} ejercicios, incluye al menos 2-3 tipos diferentes.
+DECISIÓN INTELIGENTE DE TIPOS — PRIORIZA EJERCICIOS PRÁCTICOS:
+- PRIMERO identifica el DOMINIO del tema/tarea (matemáticas, programación, idiomas, ciencias, etc.)
+- SEGUNDO decide qué tipos de ejercicios MIDEN MEJOR la competencia del estudiante en ese dominio.
+- PRINCIPIO CLAVE: Si el tema involucra HACER (calcular, resolver, programar, escribir), usa "fill_in_blank" para que el estudiante HAGA, no solo elija respuestas.
+
+REGLAS POR DOMINIO:
+- MATEMÁTICAS (suma, resta, multiplicación, división, álgebra, cálculo): MÍNIMO 5 de ${targetCount} deben ser "fill_in_blank" con operaciones reales para resolver. Los números deben variar según la dificultad: EASY (1 dígito: 3+5), INTERMEDIATE (2 dígitos: 47+38), HARD (3+ dígitos o multi-paso: 234+567+89). Incluye 1-2 "ordering" para pasos de resolución.
+- PROGRAMACIÓN: MÍNIMO 4 "fill_in_blank" para completar código, 2 "ordering" para secuencias de código, resto "multiple_choice" para conceptos.
+- IDIOMAS (inglés, francés, etc.): MÍNIMO 4 "fill_in_blank" para gramática/vocabulario/traducción, resto "multiple_choice" para comprensión lectora.
+- CIENCIAS (física, química, biología): MÍNIMO 3 "fill_in_blank" para cálculos y fórmulas, 1 "ordering" para procesos, resto "multiple_choice".
+- HISTORIA, SOCIALES: 2-3 "ordering" para cronología, resto "multiple_choice" para análisis.
+- OTROS DOMINIOS: MÍNIMO 3 "fill_in_blank", 1-2 "ordering", resto "multiple_choice".
+
+REGLAS DE CALIDAD:
 - Los ejercicios fill_in_blank deben tener UNA sola respuesta correcta clara y verificable.
 - Para ordering, provee entre 3 y 6 items.
+- VARÍA la dificultad dentro de los ejercicios: empieza simple y sube gradualmente.
+- Contextualiza: usa escenarios de la vida real cuando sea posible.
 `;
 
         return `Eres un profesor experto diseñando ${targetCount} ejercicios de evaluación inteligente.
@@ -620,7 +630,7 @@ ${difficultyInstructions[difficulty] || difficultyInstructions.HARD}
 ${groundingRule}
 ${exerciseTypeInstructions}
 PROHIBIDO ejercicios de memorización pura. El estudiante debe PENSAR y APLICAR conocimientos.
-La explicación debe ser clara y educativa.
+La explicación debe ser clara y educativa, enseñando el procedimiento de resolución paso a paso.
 FORMATO: JSON array con los campos según el type de cada ejercicio.`;
     }
 
