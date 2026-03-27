@@ -1335,7 +1335,7 @@ export class MCPService {
      * Uses MCP Agent with tools to query the database iteratively.
      * NO RETRY LIMIT - Self-correcting until success.
      */
-    async processQueryToData(query, userId = null) {
+    async processQueryToData(query, userId = null, userContext = {}) {
             logger.info(`📊 Processing query to data (MCP Agent): "${query}" (User: ${userId})`);
 
             // Ensure lazy initialization runs before checking model availability
@@ -1345,6 +1345,50 @@ export class MCPService {
 
             if (!this.llmService || !this.llmService.model) {
                 throw new Error("LLM Service not available for SQL generation");
+            }
+
+            // ============================================================
+            // 🔐 ACCESS RESTRICTION for Excel data queries
+            // ============================================================
+            const { userRoles = [], username } = userContext;
+            const safeUsername = (username || '').replace(/'/g, "''");
+            const userIdResolution = safeUsername
+                ? `(SELECT id FROM usuarios WHERE id = ${userId} UNION SELECT id FROM usuarios WHERE username = '${safeUsername}')`
+                : userId ? `${userId}` : null;
+            const isAdmin = userId && Array.isArray(userRoles) && userRoles.map(Number).includes(3);
+
+            let accessRestriction = '';
+            if (userId && userIdResolution) {
+                if (isAdmin) {
+                    accessRestriction = `\n\n**NIVEL DE ACCESO: ADMINISTRADOR**\n⚠️ PROHIBIDO: Nunca uses auth.uid().\n` +
+                        `**IDENTIDAD:** userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +
+                        `Cuando la consulta se refiera a "mis cursos" o "mis estudiantes", filtra con:\n` +
+                        `  WHERE c.creator_user_id IN ${userIdResolution}\n\n` +
+                        `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES:\n` +
+                        `  SELECT u.username AS estudiante, c.title AS curso,\n` +
+                        `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
+                        `         pc.calificacion_ponderada AS promedio, pc.estado\n` +
+                        `  FROM progreso_curso pc\n` +
+                        `  JOIN usuarios u ON pc.usuario_estudiante = u.id\n` +
+                        `  JOIN courses c ON pc.curso_id = c.id\n` +
+                        `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
+                        `  ORDER BY c.title, u.username;\n`;
+                } else {
+                    accessRestriction = `\n\n**RESTRICCIÓN DE ACCESO OBLIGATORIA:**\n` +
+                        `userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +
+                        `⚠️ PROHIBIDO: Nunca uses auth.uid().\n` +
+                        `SUBQUERY DE CURSOS ACCESIBLES:\n` +
+                        `  (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n\n` +
+                        `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES:\n` +
+                        `  SELECT u.username AS estudiante, c.title AS curso,\n` +
+                        `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
+                        `         pc.calificacion_ponderada AS promedio, pc.estado\n` +
+                        `  FROM progreso_curso pc\n` +
+                        `  JOIN usuarios u ON pc.usuario_estudiante = u.id\n` +
+                        `  JOIN courses c ON pc.curso_id = c.id\n` +
+                        `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
+                        `  ORDER BY c.title, u.username;\n`;
+                }
             }
 
             // Use the MCP Agent approach
@@ -1381,7 +1425,7 @@ export class MCPService {
 - Siempre haz JOIN con las tablas correspondientes para resolver FKs a nombres legibles.
 - Ejemplo PROHIBIDO: SELECT user_id, course_id FROM subscriptions
 - Ejemplo CORRECTO: SELECT u.username, c.title FROM subscriptions s JOIN usuarios u ON s.subscriber_id = u.id JOIN courses c ON c.creator_user_id = s.creator_id
-
+${accessRestriction}
 **FORMATO:**
 \`\`\`json
 {"tool": "nombre", "arguments": {"query": "SELECT..."}}

@@ -10,10 +10,10 @@ export class ExcelDomainService {
         this.fileStoragePort = fileStoragePort;
     }
 
-    async generateFromQuery({ query, userId }) {
+    async generateFromQuery({ query, userId, username, userRoles }) {
         let result;
         try {
-            result = await this.mcpService.processQueryToData(query, userId);
+            result = await this.mcpService.processQueryToData(query, userId, { username, userRoles });
         } catch (e) {
             try {
                 result = await this.mcpService.processQuery(query);

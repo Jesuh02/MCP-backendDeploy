@@ -64,6 +64,8 @@ export class LLMController {
                     const excelResult = await this.excelService.generateFromQuery({
                         query: progressQuery,
                         userId: String(params.userId || 'anon'),
+                        username: params.username,
+                        userRoles: params.userRoles,
                     });
 
                     if (!excelResult.isFail()) {
