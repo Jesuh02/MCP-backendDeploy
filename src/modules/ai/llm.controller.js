@@ -40,6 +40,8 @@ export class LLMController {
                 fileUri: value.fileUri || value.file_uri,
                 studentId: value.studentId || value.student_id,
                 userId: req.user?.userId || value.userId,
+                // Authenticated username from JWT — used for course ownership lookup
+                username: req.user?.username || null,
                 submissionId: value.submissionId,
                 taskId: value.taskId,
                 topicId: value.topicId || value.topic_id,

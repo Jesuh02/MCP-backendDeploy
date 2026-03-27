@@ -103,6 +103,7 @@ export class MCPHttpCompatController {
         // Extract authenticated user context (from JWT middleware if present, or from request meta)
         const userContext = {
             userId: req.user?.userId || params?.meta?.userId || args._userId || null,
+            username: req.user?.username || params?.meta?.username || null,
             userRoles: req.user?.roles || params?.meta?.userRoles || args._userRoles || [],
         };
 
