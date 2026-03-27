@@ -170,6 +170,23 @@ export class LLMDomainService {
 
             systemPrompt += `\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR SQL AL USUARIO:\n- PROHIBIDO mostrar código SQL, consultas SQL o bloques de código SQL en tu respuesta.\n- El usuario NO debe ver SELECT, FROM, WHERE, JOIN, ni ninguna sentencia SQL.\n- Cuando necesites datos de la base de datos, usa la herramienta internamente, pero tu respuesta final debe ser en lenguaje natural claro (Markdown).\n- Si la herramienta devuelve datos, presenta un resumen legible. NUNCA copies el SQL que usaste.`;
 
+            systemPrompt += `\n\nREGLA DE EXCEL — GENERACIÓN AUTOMÁTICA:
+- Cuando el usuario solicite un archivo Excel, un reporte en Excel o una hoja de cálculo, el SISTEMA se encarga de generarlo automáticamente. TÚ NO generas el archivo.
+- NUNCA digas "No puedo generar archivos Excel" ni "no tengo la capacidad de crear Excel". El sistema SÍ genera el Excel y el usuario recibirá un botón de descarga automáticamente.
+- Tu trabajo cuando el usuario pide un Excel: presenta los datos en una TABLA MARKDOWN bien formateada y añade un resumen breve. El archivo Excel se adjuntará automáticamente por el sistema.
+- Ejemplo de respuesta CORRECTA cuando piden Excel: "Aquí tienes el progreso de tus estudiantes: [tabla markdown] El archivo Excel está listo para descargar."
+- Ejemplo de respuesta PROHIBIDA: "No puedo generar archivos Excel, pero aquí tienes los datos..."`;
+
+            systemPrompt += `\n\nREGLA DE FORMATO DE TABLAS — MARKDOWN:
+- Cuando presentes datos tabulares, usa SIEMPRE tablas Markdown correctamente formateadas.
+- Formato obligatorio:
+  | Columna 1 | Columna 2 | Columna 3 |
+  |-----------|-----------|-----------|
+  | dato 1    | dato 2    | dato 3    |
+- Asegúrate de que la línea de separadores (|---|---|---|) esté SIEMPRE presente después de los encabezados.
+- Alinea las columnas para que sea legible.
+- NO uses formato de lista o texto plano para datos que tienen estructura tabular.`;
+
             // INSTRUCCIÓN SEMÁNTICA: Detección de intención de calificación (Requerimiento estricto: NO usar regex en input usuario)
             // El LLM es responsable de señalizar si es una solicitud de nota válida.
             systemPrompt += `\n\nREGLA CRÍTICA — ETIQUETA [GRADING_REQUEST]:
