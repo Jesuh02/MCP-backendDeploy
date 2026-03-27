@@ -51,7 +51,20 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
             return next();
         }
 
-        // ── Extraer token ──
+        // ── Alternativa: X-API-Key para clientes legacy (Android) ──
+        const apiKey = req.headers['x-api-key'];
+        const expectedApiKey = process.env.API_KEY;
+        if (apiKey && expectedApiKey && apiKey === expectedApiKey) {
+            // API key válida — extraer identidad del body (legacy clients envían userId/userRoles en el body)
+            req.user = {
+                userId: req.body?.userId || null,
+                username: req.body?.username || null,
+                roles: (req.body?.userRoles || []).map(Number),
+            };
+            return next();
+        }
+
+        // ── Extraer token JWT ──
         const authHeader = req.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
             const err = new UnauthorizedError('Token de autenticación requerido');
