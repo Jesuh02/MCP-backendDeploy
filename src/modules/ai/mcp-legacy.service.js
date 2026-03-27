@@ -1546,7 +1546,7 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
 
             let accessRestriction = '';
             if (hasUserContext && isAdmin) {
-                accessRestriction = `\n\n**NIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma.**`;
+                accessRestriction = `\n\n**NIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma.**\n⚠️ PROHIBIDO: Nunca uses auth.uid() — esa función no existe en este contexto y causará errores de tipo. Usa siempre IDs numéricos concretos o JOINs con la tabla usuarios.`;
             } else if (hasUserContext) {
                 // Teacher or unknown role: always restrict to the authenticated user's own data
                 accessRestriction = `\n\n**RESTRICCIÓN DE ACCESO OBLIGATORIA E IRRENUNCIABLE:**

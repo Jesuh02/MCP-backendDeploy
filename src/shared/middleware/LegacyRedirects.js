@@ -21,6 +21,8 @@ const REDIRECT_MAP = [
 
 function redirect(app, to) {
     return (req, res, next) => {
+        // Preserve originalUrl so AuthMiddleware sees the /api/v1 target path
+        req.originalUrl = to;
         req.url = to;
         app.handle(req, res, next);
     };
