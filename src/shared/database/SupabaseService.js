@@ -335,13 +335,15 @@ CREATE TABLE public.tasks (
 );
 CREATE TABLE public.topics (
   id bigint NOT NULL DEFAULT nextval('topics_id_seq'::regclass),
-  course_id bigint,
   name text NOT NULL,
   description text,
   order_index integer DEFAULT 0,
+  materia_id bigint,
+  subject_id bigint,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT topics_pkey PRIMARY KEY (id),
-  CONSTRAINT topics_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id)
+  CONSTRAINT fk_topics_materia FOREIGN KEY (materia_id) REFERENCES public.subjects(id),
+  CONSTRAINT topics_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.subjects(id)
 );
 CREATE TABLE public.usuarios (
   id bigint NOT NULL DEFAULT nextval('usuarios_id_seq'::regclass),

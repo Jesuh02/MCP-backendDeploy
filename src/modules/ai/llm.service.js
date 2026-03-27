@@ -385,7 +385,8 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                         `  usuarios: id, username, email, avatar\n` +
                         `  personas: id, nombres, apellidos, email, avatar\n` +
                         `  courses: id, title, creator_user_id\n` +
-                        `  topics: id, name, course_id\n` +
+                        `  subjects: id, course_id (FK→courses.id), name\n` +
+                        `  topics: id, name, materia_id (FK→subjects.id) — ⚠️ NO tiene course_id\n` +
                         `  tasks: id, title, description, topic_id\n` +
                         `  task_submissions: id, task_id, student_id (FK→usuarios.id), grade, feedback, file_uri, created_at\n` +
                         `  progreso_curso: usuario_estudiante (FK→usuarios.id), curso_id (FK→courses.id), tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado ('Ganado'|'Perdido')\n` +
@@ -1103,7 +1104,7 @@ Responde de forma clara y constructiva.`;
             'El usuario hace una pregunta de negocio. Responde ÚNICAMENTE con el SQL necesario (SELECT o WITH ... SELECT), sin explicaciones.',
             'NUNCA selecciones columnas de ID. Usa JOINs para obtener nombres legibles.',
             'PROHIBIDO usar auth.uid() — esa función no existe en este contexto y causará errores de tipo.',
-            'Tablas reales del esquema: usuarios (id, username, email, avatar), personas (id, nombres, apellidos, email, avatar), courses (id, title, creator_user_id), topics (id, name, course_id), tasks (id, title, description, topic_id), task_submissions (id, task_id, student_id, grade, feedback, file_uri, created_at), progreso_curso (usuario_estudiante FK→usuarios.id, curso_id FK→courses.id, tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado), collaborators (user_id, course_id), subscriptions (subscriber_id, creator_id — SIN course_id).',
+            'Tablas reales del esquema: usuarios (id, username, email, avatar), personas (id, nombres, apellidos, email, avatar), courses (id, title, creator_user_id), subjects (id, course_id FK→courses.id, name), topics (id, name, materia_id FK→subjects.id — ⚠️ NO tiene course_id), tasks (id, title, description, topic_id), task_submissions (id, task_id, student_id, grade, feedback, file_uri, created_at), progreso_curso (usuario_estudiante FK→usuarios.id, curso_id FK→courses.id, tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado), collaborators (user_id, course_id), subscriptions (subscriber_id, creator_id — SIN course_id). CADENA tareas→cursos: tasks.topic_id → topics.materia_id → subjects.id → subjects.course_id → courses.id.',
             'TABLAS QUE NO EXISTEN (NUNCA las uses): lessons, lesson_completions, enrollments, student_courses, progreso_estudiante.',
             'Puedes usar CTEs (WITH ... AS (...) SELECT ...) para consultas complejas.',
         ].join('\n') + restrictionCtx;

@@ -96,8 +96,8 @@ export class MCPService {
             // Add relationships hint
             schemaText += `\n**RELACIONES (Foreign Keys):**\n`;
             schemaText += `- courses.creator_user_id → usuarios.id (creador del curso)\n`;
-            schemaText += `- videos.course_id → courses.id\n`;
-            schemaText += `- topics.course_id → courses.id\n`;
+            schemaText += `- subjects.course_id → courses.id\n`;
+            schemaText += `- topics.materia_id → subjects.id (⚠️ topics NO tiene course_id, usa materia_id → subjects → courses)\n`;
             schemaText += `- tasks.topic_id → topics.id\n`;
             schemaText += `- task_submissions.task_id → tasks.id\n`;
             schemaText += `- task_submissions.user_id → usuarios.id\n`;
@@ -105,6 +105,8 @@ export class MCPService {
             schemaText += `- subscriptions.subscriber_id → usuarios.id\n`;
             schemaText += `- transactions.user_id → usuarios.id\n`;
             schemaText += `- notifications.user_id → usuarios.id\n`;
+            schemaText += `- videos.course_id → courses.id\n`;
+            schemaText += `\n**⚠️ CADENA CORRECTA PARA TAREAS→CURSOS:** tasks.topic_id → topics.materia_id → subjects.id → subjects.course_id → courses.id\n`;
 
             // Cache the result
             this._schemaCache = schemaText;
@@ -130,7 +132,8 @@ export class MCPService {
 - **usuarios**: id, username, email, first_name, last_name, is_active, created_at
 - **courses**: id, title, description, price, is_premium, creator_user_id, thumbnail_url, created_at
 - **videos**: id, title, description, course_id, video_url, duration, order_index, created_at
-- **topics**: id, title, description, course_id, order_index, created_at
+- **subjects**: id, course_id, name, description, order_index, is_active, created_at
+- **topics**: id, name, description, materia_id (FK→subjects.id), subject_id (FK→subjects.id), order_index, created_at (⚠️ NO tiene course_id)
 - **tasks**: id, title, description, topic_id, due_date, max_grade, created_at
 - **task_submissions**: id, task_id, user_id, file_url, grade, feedback, submitted_at, graded_at
 - **subscriptions**: id, creator_id, subscriber_id, subscription_date, created_at (⚠️ NO tiene course_id!)
@@ -1425,6 +1428,12 @@ export class MCPService {
 - Siempre haz JOIN con las tablas correspondientes para resolver FKs a nombres legibles.
 - Ejemplo PROHIBIDO: SELECT user_id, course_id FROM subscriptions
 - Ejemplo CORRECTO: SELECT u.username, c.title FROM subscriptions s JOIN usuarios u ON s.subscriber_id = u.id JOIN courses c ON c.creator_user_id = s.creator_id
+
+**⚠️ ESQUEMA CRÍTICO — COLUMNAS QUE NO EXISTEN:**
+- topics NO tiene course_id. La cadena correcta es: tasks.topic_id → topics.materia_id → subjects.id → subjects.course_id → courses.id
+- subscriptions NO tiene course_id.
+- Para consultas de PROGRESO, usa SIEMPRE la tabla \`progreso_curso\` (tiene curso_id directo a courses.id). NO necesitas pasar por topics/subjects.
+- Si existe una CONSULTA DE REFERENCIA abajo, úsala directamente con query_database sin consultar get_database_schema primero.
 ${accessRestriction}
 **FORMATO:**
 \`\`\`json
