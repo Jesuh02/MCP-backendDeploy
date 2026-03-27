@@ -44,7 +44,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [] }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
@@ -335,6 +335,31 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                     `o conclusión en Markdown. No intentes responder directamente sin usar la ` +
                     `herramienta. Puedes usar también \`get_database_schema\` si necesitas ver ` +
                     `el esquema.`;
+
+                // ── Role-based data-access restriction ──────────────────────────────
+                // Roles: 1=estudiante, 2=docente, 3=admin
+                const isAdmin = Array.isArray(userRoles) && userRoles.map(Number).includes(3);
+                if (isAdmin) {
+                    systemPrompt += `\n\nNIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma (estudiantes, docentes, cursos, progreso, entregas).`;
+                } else if (userId) {
+                    // Docente: only their own students and courses (created or collaborated)
+                    systemPrompt += `\n\nRESTRICCIÓN DE ACCESO A DATOS — OBLIGATORIA E IRRENUNCIABLE:\n` +
+                        `Este usuario es DOCENTE (no administrador). ID del docente autenticado: ${userId}.\n` +
+                        `Todas tus consultas SQL DEBEN incluir filtros que limiten los resultados a su propio ámbito.\n\n` +
+                        `SUBQUERY DE CURSOS ACCESIBLES (úsala siempre para filtrar por curso):\n` +
+                        `  (SELECT id FROM courses WHERE creator_user_id = ${userId} UNION SELECT course_id FROM collaborators WHERE user_id = ${userId})\n\n` +
+                        `SUBQUERY DE ALUMNOS ACCESIBLES (úsala siempre para filtrar estudiantes):\n` +
+                        `  (SELECT subscriber_id FROM subscriptions WHERE creator_id = ${userId})\n\n` +
+                        `REGLAS DE FILTRADO OBLIGATORIAS (aplican a TODAS las queries sin excepción):\n` +
+                        `1. Consultas de estudiantes/usuarios → filtrar por id IN (subquery de alumnos accesibles).\n` +
+                        `2. Consultas de progreso (progreso_curso) → filtrar por course_id IN (subquery de cursos accesibles).\n` +
+                        `3. Consultas de entregas (task_submissions) → filtrar por student_id IN (subquery de alumnos accesibles).\n` +
+                        `4. Consultas de cursos → filtrar por id IN (subquery de cursos accesibles).\n` +
+                        `5. PROHIBIDO devolver datos de estudiantes o cursos de otros docentes.\n` +
+                        `6. PROHIBIDO omitir estos filtros en cualquier consulta SQL.\n` +
+                        `7. Si el usuario solicita ver "todos" los estudiantes o cursos, aplica igualmente los filtros — solo muestra los suyos.`;
+                }
+                // ────────────────────────────────────────────────────────────────────
             }
             const tools = needsMCPTools ? [
                 { name: 'query_database', description: 'Execute queries on Supabase database', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },

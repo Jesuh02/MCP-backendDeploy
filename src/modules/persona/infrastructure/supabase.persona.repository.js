@@ -1,3 +1,25 @@
+import crypto from 'crypto';
+
+/**
+ * Hash determinístico SHA-256 para datos sensibles (teléfono, dirección, etc.).
+ */
+function hashSensitive(value) {
+    if (value === null || value === undefined) return null;
+    const str = String(value).trim();
+    if (!str) return null;
+    return crypto.createHash('sha256').update(str).digest('hex');
+}
+
+/**
+ * Hash determinístico SHA-256 para cédula (solo dígitos).
+ */
+function hashCedula(rawCedula) {
+    if (!rawCedula) return null;
+    const digits = String(rawCedula).replace(/\D/g, '').trim();
+    if (!digits) return null;
+    return crypto.createHash('sha256').update(digits).digest('hex');
+}
+
 /**
  * SupabasePersonaRepository — CRUD para tabla personas.
  */
@@ -24,12 +46,12 @@ export class SupabasePersonaRepository {
     async findByIdentificacion(identificacion) {
         const normalized = normalizeCedulaValue(identificacion);
         if (!normalized) return null;
-        const numericId = parseInt(normalized, 10);
-        if (isNaN(numericId) || numericId <= 0) return null;
+        const hash = hashCedula(normalized);
+        if (!hash) return null;
         const { data, error } = await this.client
             .from('personas')
             .select('*')
-            .or(`identificacion.eq.${numericId},identificacion_original.eq.${normalized}`)
+            .eq('identificacion_original', hash)
             .maybeSingle();
         if (error || !data) return null;
         return data;
@@ -43,13 +65,14 @@ export class SupabasePersonaRepository {
 
     async create(personaData) {
         const cedula = resolveCedula(personaData);
+        const cedulaHash = hashCedula(cedula);
         const payload = {
             nombres: personaData.nombres,
             apellidos: personaData.apellidos || '',
-            identificacion: cedula ? parseInt(cedula, 10) : null,
-            identificacion_original: cedula || null,
-            telefono: personaData.telefono || '',
-            direccion: personaData.direccion || '',
+            identificacion: null,
+            identificacion_original: cedulaHash || null,
+            telefono: personaData.telefono ? hashSensitive(personaData.telefono) : '',
+            direccion: personaData.direccion ? hashSensitive(personaData.direccion) : '',
             fecha_nacimiento: personaData.fecha_nacimiento || null,
             genero: personaData.genero || null,
             ...(personaData.institucion_id != null && { institucion_id: personaData.institucion_id }),
@@ -65,11 +88,11 @@ export class SupabasePersonaRepository {
         if (personaData.apellidos !== undefined) payload.apellidos = personaData.apellidos;
         if (personaData.cedula !== undefined || personaData.identificacion !== undefined) {
             const cedula = resolveCedula(personaData);
-            payload.identificacion = cedula ? parseInt(cedula, 10) : null;
-            payload.identificacion_original = cedula || null;
+            payload.identificacion = null;
+            payload.identificacion_original = hashCedula(cedula);
         }
-        if (personaData.telefono !== undefined) payload.telefono = personaData.telefono;
-        if (personaData.direccion !== undefined) payload.direccion = personaData.direccion;
+        if (personaData.telefono !== undefined) payload.telefono = personaData.telefono ? hashSensitive(personaData.telefono) : '';
+        if (personaData.direccion !== undefined) payload.direccion = personaData.direccion ? hashSensitive(personaData.direccion) : '';
         if (personaData.fecha_nacimiento !== undefined) payload.fecha_nacimiento = personaData.fecha_nacimiento;
         if (personaData.genero !== undefined) payload.genero = personaData.genero;
         if (personaData.institucion_id !== undefined) payload.institucion_id = personaData.institucion_id;
@@ -85,33 +108,19 @@ export class SupabasePersonaRepository {
     }
 
     async searchByIdentificacion(query, limit = 20) {
+        // La cédula está hasheada en DB: solo es posible búsqueda exacta por hash.
         const digits = String(query || '').replace(/\D/g, '').trim();
         if (!digits) return [];
         const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
-
-        const searches = [
-            // Partial match on text column
-            this.client.from('personas').select('*').ilike('identificacion_original', `%${digits}%`).limit(safeLimit),
-        ];
-        // Exact match on bigint column
-        const numericId = parseInt(digits, 10);
-        if (!isNaN(numericId) && numericId > 0) {
-            searches.push(this.client.from('personas').select('*').eq('identificacion', numericId).limit(safeLimit));
-        }
-
-        const results = await Promise.all(searches);
-        const seen = new Set();
-        const personas = [];
-        for (const { data } of results) {
-            for (const p of data || []) {
-                if (seen.has(p.id)) continue;
-                seen.add(p.id);
-                personas.push(p);
-                if (personas.length >= safeLimit) break;
-            }
-            if (personas.length >= safeLimit) break;
-        }
-        return personas;
+        const hash = hashCedula(digits);
+        if (!hash) return [];
+        const { data, error } = await this.client
+            .from('personas')
+            .select('*')
+            .eq('identificacion_original', hash)
+            .limit(safeLimit);
+        if (error || !data?.length) return [];
+        return data;
     }
 
     async count() {

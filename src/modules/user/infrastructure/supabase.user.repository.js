@@ -1,3 +1,27 @@
+import crypto from 'crypto';
+
+/**
+ * Hash determinístico SHA-256 para correos electrónicos.
+ * Normaliza a minúsculas antes de hashear para consistencia.
+ */
+function hashEmail(email) {
+    if (!email) return null;
+    const normalized = String(email).trim().toLowerCase();
+    if (!normalized) return null;
+    return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
+/**
+ * Hash determinístico SHA-256 para cédulas (solo dígitos).
+ * Usado cuando la persona se crea inline en UserRepository.
+ */
+function hashCedula(digits) {
+    if (!digits) return null;
+    const d = String(digits).replace(/\D/g, '').trim();
+    if (!d) return null;
+    return crypto.createHash('sha256').update(d).digest('hex');
+}
+
 /**
  * SupabaseUserRepository — Implementa IUserRepository usando Supabase PostgREST.
  */
@@ -82,10 +106,12 @@ export class SupabaseUserRepository {
     }
 
     async findByEmail(email) {
-        const { data, error } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').ilike('email', email).maybeSingle();
+        const hashed = hashEmail(email);
+        if (!hashed) return null;
+        const { data, error } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').eq('email', hashed).maybeSingle();
         if (error) {
             console.warn(`[UserRepo] findByEmail error (with join): ${error.message}, trying without join`);
-            const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').ilike('email', email).maybeSingle();
+            const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').eq('email', hashed).maybeSingle();
             if (e2 || !d2) return null;
             return this._enrichWithRoles(this._mapUser(d2));
         }
@@ -99,14 +125,14 @@ export class SupabaseUserRepository {
         if (userData.persona && !personaId) {
             const cedula = userData.persona.cedula ?? userData.persona.identificacion ?? null;
             const cedulaDigits = cedula ? String(cedula).replace(/\D/g, '').trim() : null;
-            const numericId = cedulaDigits ? parseInt(cedulaDigits, 10) : null;
 
             // If cedula provided, check if a persona with that cedula already exists (e.g. from a previous partial attempt)
-            if (numericId) {
+            if (cedulaDigits) {
+                const existingCedulaHash = hashCedula(cedulaDigits);
                 const { data: existing } = await this.client
                     .from('personas')
                     .select('id')
-                    .eq('identificacion', numericId)
+                    .eq('identificacion_original', existingCedulaHash)
                     .maybeSingle();
                 if (existing) {
                     console.log(`[UserRepo] Reusing existing persona id=${existing.id} for cedula ${cedulaDigits}`);
@@ -115,12 +141,16 @@ export class SupabaseUserRepository {
             }
 
             if (!personaId) {
+                const hashedCedula = hashCedula(cedulaDigits);
+                const hashedTelefono = userData.persona.telefono
+                    ? crypto.createHash('sha256').update(String(userData.persona.telefono).trim()).digest('hex')
+                    : null;
                 const { data: p, error: pe } = await this.client.from('personas').insert({
                     nombres: userData.persona.nombres || userData.persona.nombre || '',
                     apellidos: userData.persona.apellidos || userData.persona.apellido || '',
-                    identificacion: numericId,
-                    identificacion_original: cedulaDigits || null,
-                    telefono: userData.persona.telefono || '',
+                    identificacion: null,
+                    identificacion_original: hashedCedula || null,
+                    telefono: hashedTelefono || '',
                     direccion: '',
                     fecha_nacimiento: userData.persona.fecha_nacimiento || null,
                     ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
@@ -135,7 +165,7 @@ export class SupabaseUserRepository {
         // 2. Create usuario
         const { data, error } = await this.client.from('usuarios').insert({
             username: userData.username,
-            email: userData.email,
+            email: hashEmail(userData.email),
             contrasena: userData.password,
             avatar: userData.avatar || null,
             persona_id: personaId,
@@ -148,7 +178,7 @@ export class SupabaseUserRepository {
     async update(id, data) {
         const updatePayload = {};
         if (data.username !== undefined) updatePayload.username = data.username;
-        if (data.email !== undefined) updatePayload.email = data.email;
+        if (data.email !== undefined) updatePayload.email = hashEmail(data.email);
         if (data.avatar !== undefined) updatePayload.avatar = data.avatar;
         if (data.password !== undefined) updatePayload.contrasena = data.password;
         if (data.is_active !== undefined) updatePayload.is_active = data.is_active;
@@ -212,26 +242,22 @@ export class SupabaseUserRepository {
         const textSearchLimit = Math.max(safeLimit * 2, 40);
         const baseSelect = 'id, username, email, avatar, persona_id, personas!fk_usuarios_persona(*)';
 
-        // Text-based searches (username, email, nombres, apellidos)
+        // Text-based searches (username, nombres, apellidos)
+        // Email excluido: está hasheado y no permite búsqueda parcial.
         const textSearches = [
             this.client.from('usuarios').select(baseSelect).ilike('username', `%${normalizedQuery}%`).limit(textSearchLimit),
-            this.client.from('usuarios').select(baseSelect).ilike('email', `%${normalizedQuery}%`).limit(textSearchLimit),
             this.client.from('usuarios').select(baseSelect).ilike('personas.nombres', `%${normalizedQuery}%`).limit(textSearchLimit),
             this.client.from('usuarios').select(baseSelect).ilike('personas.apellidos', `%${normalizedQuery}%`).limit(textSearchLimit),
         ];
 
-        // If the query contains digits, search directly in personas table then join users.
-        // This avoids unreliable embedded-resource filter syntax (personas.identificacion=eq.X)
-        // which can fail silently when PostgREST FK resolution is ambiguous.
+        // Si la consulta tiene dígitos, hashear la cédula y buscar por hash exacto.
+        // La cédula está hasheada en DB — solo es posible búsqueda exacta.
         const identificationPromise = digitsOnly
             ? (async () => {
-                const numericId = parseInt(digitsOnly, 10);
-                const orParts = [`identificacion_original.ilike.%${digitsOnly}%`];
-                if (!isNaN(numericId) && numericId > 0) orParts.push(`identificacion.eq.${numericId}`);
-                // Fetch full persona rows (not just id) so we can attach them manually
-                // and avoid relying on the FK-hint join, which can fail silently.
+                const cedulaHash = hashCedula(digitsOnly);
+                if (!cedulaHash) return { data: [] };
                 const { data: matchedPersonas } = await this.client
-                    .from('personas').select('*').or(orParts.join(',')).limit(safeLimit);
+                    .from('personas').select('*').eq('identificacion_original', cedulaHash).limit(safeLimit);
                 if (!matchedPersonas?.length) return { data: [] };
                 const personaById = new Map(matchedPersonas.map(p => [p.id, p]));
                 const personaIds = matchedPersonas.map(p => p.id);
@@ -241,7 +267,6 @@ export class SupabaseUserRepository {
                     .in('persona_id', personaIds)
                     .limit(safeLimit);
                 if (!usersRaw?.length) return { data: [] };
-                // Attach persona manually — no FK-hint needed
                 return { data: usersRaw.map(u => ({ ...u, personas: personaById.get(u.persona_id) ?? null })) };
             })()
             : Promise.resolve({ data: [] });
@@ -255,13 +280,9 @@ export class SupabaseUserRepository {
         const matchesQuery = (u) => {
             const persona = u.personas ?? u.persona ?? null;
             const username = this._normalizeSearchText(u.username);
-            const email = this._normalizeSearchText(u.email);
             const fullName = this._normalizeSearchText(`${persona?.nombres || ''} ${persona?.apellidos || ''}`);
-            const documentDigits = this._normalizeDigits(this._extractPersonaDocument(persona));
-            const textMatches = [username, email, fullName].some((value) => value.includes(normalizedQuery));
-
-            if (!digitsOnly) return textMatches;
-            return textMatches || (documentDigits.length > 0 && documentDigits.includes(digitsOnly));
+            // Email e identificacion están hasheados — solo se compara username y nombre completo.
+            return username.includes(normalizedQuery) || fullName.includes(normalizedQuery);
         };
 
         for (const { data } of searchResults) {

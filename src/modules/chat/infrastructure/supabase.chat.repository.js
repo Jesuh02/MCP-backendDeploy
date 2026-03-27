@@ -55,6 +55,7 @@ export class SupabaseChatMessageRepository {
             is_typing: messageData.isTyping ?? false,
             is_error: messageData.isError ?? false,
             is_graph_response: messageData.isGraphResponse ?? false,
+            origin: messageData.origin ?? null,
         };
 
         const { data, error } = await this.client
@@ -80,9 +81,8 @@ export class SupabaseChatMessageRepository {
             is_typing: messageData.isTyping ?? false,
             is_error: messageData.isError ?? false,
             is_graph_response: messageData.isGraphResponse ?? false,
+            origin: messageData.origin ?? null,
         };
-
-        // NEVER include id in the payload — the column is GENERATED ALWAYS AS IDENTITY.
         // If a remote id is provided, update the existing row; otherwise insert a new one.
         if (messageData.id && typeof messageData.id === 'number') {
             // Try to update by id first (only valid remote/Supabase ids)
