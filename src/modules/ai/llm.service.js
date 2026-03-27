@@ -389,6 +389,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             let response = await this.llm.chat(systemPrompt, fullPrompt, { model, tools });
 
             // If the model returned tool_calls, execute them using MCPService and feed results back.
+            let toolLoopExecuted = false;
             try {
                 const extractToolCalls = (r) => r?.tool_calls || r?.toolCalls || (r?.raw && (r.raw.tool_calls || r.raw.toolCalls)) || null;
                 let toolCalls = extractToolCalls(response);
@@ -396,6 +397,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                 const MAX_TOOL_ITERS = 3;
                 while (toolCalls && toolCalls.length > 0 && loop < MAX_TOOL_ITERS) {
                     loop++;
+                    toolLoopExecuted = true;
                     // Process each tool call sequentially
                     for (const tc of toolCalls) {
                         const toolName = tc.name || tc.id || (tc.function && tc.function.name) || null;
@@ -426,38 +428,58 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                 console.warn('[LLMDomainService] Tool execution loop failed:', toolLoopErr && (toolLoopErr.message || toolLoopErr));
             }
 
-            // If we expected tools but never actually got any calls, try two recovery strategies:
-            // 1. Parse inline JSON tool call emitted by the model in its text content.
-            // 2. Two-step fallback: ask the LLM to generate SQL, execute it directly, then answer.
-            if (needsMCPTools) {
-                const hadToolCalls = Array.isArray(response.tool_calls) && response.tool_calls.length > 0;
-                if (!hadToolCalls) {
-                    const textContent = String(response.content || '').trim();
+            // If we expected tools but the proper tool_calls mechanism never fired, try recovery strategies.
+            // NOTE: only enter this block if the tool-calls loop never executed — if it ran at least once
+            // the model already received DB data and composed its final answer; running the fallback
+            // would overwrite that valid response.
+            if (needsMCPTools && !toolLoopExecuted) {
+                const textContent = String(response.content || '').trim();
 
-                    // Strategy 1: detect inline JSON tool call in model content
-                    const inlineCall = this._extractInlineToolCall(textContent);
-                    if (inlineCall) {
-                        try {
-                            const { MCPService } = await import('./mcp-legacy.service.js');
-                            const mcp = new MCPService();
-                            const toolResult = await mcp.executeMCPTool(inlineCall.tool, inlineCall.arguments);
-                            const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
-                            response = await this.llm.chat(
-                                systemPrompt + `\n\n[TOOL_RESULT name=${inlineCall.tool}]\n${resultStr}\n[END_TOOL_RESULT]`,
-                                fullPrompt, { model, tools: [] }
-                            );
-                        } catch (e) {
-                            console.warn('[LLMDomainService] Inline tool call execution failed:', e.message);
-                        }
-                    } else {
-                        // Strategy 2: two-step direct DB query (SQL generation + execution + final answer)
+                // Strategy 1: detect inline JSON tool call emitted by the model in its text body.
+                // DeepSeek and some models emit {"tool":...,"arguments":...} as markdown instead of tool_calls.
+                const inlineCall = this._extractInlineToolCall(textContent);
+                if (inlineCall) {
+                    let inlineSucceeded = false;
+                    try {
+                        const { MCPService } = await import('./mcp-legacy.service.js');
+                        const mcp = new MCPService();
+                        const toolResult = await mcp.executeMCPTool(inlineCall.tool, inlineCall.arguments);
+                        const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+                        response = await this.llm.chat(
+                            systemPrompt + `\n\n[TOOL_RESULT name=${inlineCall.tool}]\n${resultStr}\n[END_TOOL_RESULT]`,
+                            fullPrompt, { model, tools: [] }
+                        );
+                        inlineSucceeded = true;
+                    } catch (e) {
+                        console.warn('[LLMDomainService] Inline tool call execution failed, falling back to direct query:', e.message);
+                    }
+
+                    // If inline execution failed, cascade to Strategy 2 so we don't return raw SQL to the user.
+                    if (!inlineSucceeded) {
                         try {
                             const fallbackResult = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model);
                             if (fallbackResult !== null && fallbackResult !== undefined) response = fallbackResult;
                         } catch (e) {
-                            console.warn('[LLMDomainService] Direct DB query fallback failed:', e.message);
+                            console.warn('[LLMDomainService] Direct DB query fallback (after inline failure) failed:', e.message);
                         }
                     }
+                } else {
+                    // Strategy 2: two-step direct DB query (SQL generation + execution + final answer).
+                    // Runs when the model produced no tool call at all (neither via tool_calls nor inline JSON).
+                    try {
+                        const fallbackResult = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model);
+                        if (fallbackResult !== null && fallbackResult !== undefined) response = fallbackResult;
+                    } catch (e) {
+                        console.warn('[LLMDomainService] Direct DB query fallback failed:', e.message);
+                    }
+                }
+
+                // Final safety net: if the response content still looks like a raw JSON tool call
+                // (which would expose internal SQL to the user), replace it with an error message.
+                const finalContent = String(response?.content || '');
+                if (/"tool"\s*:\s*"query_database"/.test(finalContent)) {
+                    console.warn('[LLMDomainService] Response still contains raw tool call after all fallbacks — suppressing.');
+                    response = { ...response, content: 'Lo siento, no pude obtener los datos en este momento. Por favor intenta de nuevo.' };
                 }
             }
 
