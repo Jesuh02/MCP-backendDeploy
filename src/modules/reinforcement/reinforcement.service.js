@@ -544,32 +544,82 @@ La explicación debe justificar la correcta y refutar cada incorrecta.
 FORMATO: JSON array. Campos: question, options (array de 4), correctIndex (0-3), explanation.`;
     }
 
-    /** @private Parse questions from LLM JSON output */
-    _parseQuestionsJson(content) {
-        try {
-            const start = content.indexOf('[');
-            const end = content.lastIndexOf(']');
-            if (start === -1 || end === -1 || start >= end) return [];
+    /** @private Validate and normalize a single parsed question object */
+    _normalizeQuestion(q) {
+        if (!q || typeof q.question !== 'string' || q.question.trim().length < 8) return null;
+        if (!Array.isArray(q.options) || q.options.length < 4) return null;
+        const correctIndex = Number(q.correctIndex ?? q.correct_index ?? 0);
+        if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= q.options.length) return null;
+        return {
+            question: q.question.trim(),
+            options: q.options.map(o => String(o ?? '').trim()),
+            correctIndex,
+            explanation: (String(q.explanation ?? '')).trim() || `La respuesta correcta es: "${q.options[correctIndex]}"`,
+        };
+    }
 
-            const jsonStr = content.substring(start, end + 1);
-            const parsed = JSON.parse(jsonStr);
+    /** @private Extract complete JSON objects from a potentially truncated array string */
+    _extractObjectsFromBrokenArray(jsonStr) {
+        const results = [];
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+        let objStart = -1;
 
-            if (!Array.isArray(parsed)) return [];
+        for (let i = 0; i < jsonStr.length; i++) {
+            const ch = jsonStr[i];
+            if (escape) { escape = false; continue; }
+            if (ch === '\\' && inString) { escape = true; continue; }
+            if (ch === '"') { inString = !inString; continue; }
+            if (inString) continue;
 
-            return parsed.filter(q =>
-                q && typeof q.question === 'string' && q.question.length >= 8 &&
-                Array.isArray(q.options) && q.options.length >= 4 &&
-                typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < q.options.length
-            ).map(q => ({
-                question: q.question.trim(),
-                options: q.options.map(o => String(o).trim()),
-                correctIndex: q.correctIndex,
-                explanation: (q.explanation || '').trim() || `La respuesta correcta es: "${q.options[q.correctIndex]}"`,
-            }));
-        } catch (e) {
-            console.warn('[ReinforcementService] JSON parse error:', e.message);
-            return [];
+            if (ch === '{') {
+                if (depth === 0) objStart = i;
+                depth++;
+            } else if (ch === '}') {
+                depth--;
+                if (depth === 0 && objStart !== -1) {
+                    try {
+                        const obj = JSON.parse(jsonStr.substring(objStart, i + 1));
+                        results.push(obj);
+                    } catch (_) { /* skip malformed object */ }
+                    objStart = -1;
+                }
+            }
         }
+        return results;
+    }
+
+    /** @private Parse questions from LLM JSON output with fallback repair */
+    _parseQuestionsJson(content) {
+        const start = content.indexOf('[');
+        const end = content.lastIndexOf(']');
+
+        // Strategy 1: clean JSON array
+        if (start !== -1 && end !== -1 && start < end) {
+            try {
+                const parsed = JSON.parse(content.substring(start, end + 1));
+                if (Array.isArray(parsed)) {
+                    const normalized = parsed.map(q => this._normalizeQuestion(q)).filter(Boolean);
+                    if (normalized.length > 0) return normalized;
+                }
+            } catch (_) { /* fall through to repair */ }
+        }
+
+        // Strategy 2: extract individual objects (handles truncated/malformed arrays)
+        console.warn('[ReinforcementService] JSON parse failed, attempting object extraction repair...');
+        const searchIn = start !== -1 ? content.substring(start) : content;
+        const objects = this._extractObjectsFromBrokenArray(searchIn);
+        if (objects.length > 0) {
+            const normalized = objects.map(q => this._normalizeQuestion(q)).filter(Boolean);
+            if (normalized.length > 0) {
+                console.log(`[ReinforcementService] Repair recovered ${normalized.length} questions from broken JSON`);
+                return normalized;
+            }
+        }
+
+        console.warn('[ReinforcementService] JSON repair failed, no valid questions extracted');
+        return [];
     }
 
     /** @private Fast local dedup using normalized text comparison */
