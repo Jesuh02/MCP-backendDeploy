@@ -317,7 +317,13 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             // If the prompt asks for database queries or BI instructions, expose MCP tools
             const promptLc = String(fullPrompt || '').toLowerCase();
             // Allow caller to force enabling MCP tools (useful for channel integrations)
-            const needsMCPTools = forceMCPTools || /query[_ ]database|consulta de business intelligence|consulta de business inteligencia|usa \'query_database\'|usa "query_database"|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n/i.test(promptLc);
+            // Roles: 1=estudiante, 2=docente, 3=admin
+            const isAdmin = Array.isArray(userRoles) && userRoles.map(Number).includes(3);
+            const isTeacher = Array.isArray(userRoles) && userRoles.map(Number).includes(2);
+            // Gate MCP tool access to teachers and admins only.
+            // Students (role 1) must never get DB query access even when forceMCPTools is sent.
+            const roleAllowsMCPTools = isAdmin || isTeacher;
+            let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || /query[_ ]database|consulta de business intelligence|consulta de business inteligencia|usa \'query_database\'|usa "query_database"|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n/i.test(promptLc));
             // When tools are required we also augment the system prompt with explicit
             // instructions to use them.  This is important because some LLM models
             // (including deepseek-chat) may otherwise ignore the tool definitions.
@@ -338,10 +344,9 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
 
                 // ── Role-based data-access restriction ──────────────────────────────
                 // Roles: 1=estudiante, 2=docente, 3=admin
-                const isAdmin = Array.isArray(userRoles) && userRoles.map(Number).includes(3);
                 if (isAdmin) {
                     systemPrompt += `\n\nNIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma (estudiantes, docentes, cursos, progreso, entregas).`;
-                } else if (userId) {
+                } else if (isTeacher && userId) {
                     // Docente: only their own students and courses (created or collaborated)
                     systemPrompt += `\n\nRESTRICCIÓN DE ACCESO A DATOS — OBLIGATORIA E IRRENUNCIABLE:\n` +
                         `Este usuario es DOCENTE (no administrador). ID del docente autenticado: ${userId}.\n` +
