@@ -528,7 +528,7 @@ export class ReinforcementDomainService {
 
         const diffLabel = (difficulty || 'HARD').toUpperCase();
         const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount);
-        const userPrompt = `${contextBlock}\n${existingBlock}\n\nGenera EXACTAMENTE ${targetCount} preguntas de opción múltiple en formato JSON array. Tu ÚNICA salida debe ser el JSON array.`;
+        const userPrompt = `${contextBlock}\n${existingBlock}\n\nGenera EXACTAMENTE ${targetCount} ejercicios de evaluación en formato JSON array. MEZCLA tipos (multiple_choice, fill_in_blank, ordering) según el tema. Tu ÚNICA salida debe ser el JSON array.`;
 
         // Step 3: Call LLM
         const llmStartMs = Date.now();
@@ -572,36 +572,101 @@ export class ReinforcementDomainService {
 
     /** @private Build system prompt based on difficulty */
     _buildSystemPrompt(difficulty, targetCount) {
-        const groundingRule = `REGLA: Basa las preguntas EXCLUSIVAMENTE en el material proporcionado. NO inventes información.`;
+        const groundingRule = `REGLA: Basa los ejercicios EXCLUSIVAMENTE en el material proporcionado. NO inventes información.`;
 
         const difficultyInstructions = {
-            EASY: `Genera preguntas de NIVEL INTRODUCTORIO (comprensión). El estudiante debe ENTENDER conceptos, no memorizar datos. Usa "¿Por qué?", "¿Para qué?", "¿Qué pasaría si...?"`,
-            INTERMEDIATE: `Genera preguntas de NIVEL INTERMEDIO (análisis). Plantea escenarios prácticos. El estudiante debe ANALIZAR y DECIDIR. Usa causa-efecto, comparaciones y aplicación.`,
-            HARD: `Genera preguntas de NIVEL MÁXIMO (evaluación). Presenta escenarios complejos. El estudiante debe EVALUAR consecuencias e implicaciones. Opciones sutilmente plausibles. Taxonomía de Bloom: Aplicar, Analizar, Evaluar.`,
-            FREE: `Genera preguntas variadas que cubran TODO el contenido del documento. Mezcla niveles: comprensión, análisis y aplicación.`,
+            EASY: `NIVEL INTRODUCTORIO: ejercicios de comprensión y práctica básica. Operaciones simples, conceptos fundamentales. Usa "¿Por qué?", "¿Para qué?", "¿Qué pasaría si...?" para preguntas; ejercicios directos y sencillos para práctica.`,
+            INTERMEDIATE: `NIVEL INTERMEDIO: ejercicios de análisis y aplicación. Escenarios prácticos, resolución de problemas contextualizados. El estudiante debe ANALIZAR, DECIDIR y APLICAR conocimientos.`,
+            HARD: `NIVEL MÁXIMO: ejercicios de evaluación y síntesis. Escenarios complejos, problemas multi-paso. Taxonomía de Bloom: Aplicar, Analizar, Evaluar, Crear. Opciones sutilmente plausibles en preguntas; ejercicios que requieren razonamiento profundo.`,
+            FREE: `Genera ejercicios variados que cubran TODO el contenido. Mezcla niveles: comprensión, análisis, aplicación y creación.`,
         };
 
-        return `Eres un profesor experto generando ${targetCount} preguntas de opción múltiple.
+        const exerciseTypeInstructions = `
+TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
+
+1. "multiple_choice" — Pregunta de opción múltiple clásica.
+   Campos: { type: "multiple_choice", question, options (array de 4), correctIndex (0-3), explanation }
+
+2. "fill_in_blank" — Ejercicio práctico donde el estudiante debe escribir la respuesta.
+   Ideal para: operaciones matemáticas, completar código, completar frases, traducciones.
+   Campos: { type: "fill_in_blank", question (usa "___" para marcar el espacio), correctAnswer (string), hint (pista opcional), explanation }
+   Ejemplos:
+   - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 15 × 3 = ___", correctAnswer: "45", hint: "Multiplica paso a paso", explanation: "15 × 3 = 45" }
+   - Programación: { type: "fill_in_blank", question: "Completa: console.___(\"Hola\")", correctAnswer: "log", hint: "Método para imprimir en consola", explanation: "console.log() imprime mensajes en la consola" }
+   - Inglés: { type: "fill_in_blank", question: "Complete: She ___ (go) to school yesterday.", correctAnswer: "went", hint: "Past simple del verbo go", explanation: "El pasado simple de 'go' es 'went'" }
+
+3. "ordering" — Ordenar elementos en la secuencia correcta.
+   Ideal para: pasos de un algoritmo, líneas de código, procesos, cronología.
+   Campos: { type: "ordering", question, items (array desordenado), correctOrder (array de índices del orden correcto), explanation }
+   Ejemplo: { type: "ordering", question: "Ordena los pasos para compilar un programa en C", items: ["Ejecutar", "Escribir código", "Compilar", "Depurar"], correctOrder: [1, 2, 3, 0], explanation: "Primero se escribe, luego compila, depura y finalmente ejecuta" }
+
+DECISIÓN INTELIGENTE DE TIPOS:
+- Analiza el TEMA y TAREA del estudiante para decidir qué tipos de ejercicios son más apropiados.
+- Si el tema es MATEMÁTICAS, FÍSICA, QUÍMICA: prioriza "fill_in_blank" para cálculos y "multiple_choice" para conceptos.
+- Si el tema es PROGRAMACIÓN: usa "fill_in_blank" para completar código, "ordering" para ordenar líneas, "multiple_choice" para conceptos.
+- Si el tema es IDIOMAS (inglés, etc.): usa "fill_in_blank" para gramática/vocabulario, "multiple_choice" para comprensión.
+- Si el tema es HISTORIA, CIENCIAS SOCIALES: prioriza "multiple_choice" y "ordering" para cronología.
+- Si el tema es PROCESOS, METODOLOGÍAS: prioriza "ordering" para secuencias.
+- MEZCLA los tipos: de ${targetCount} ejercicios, incluye al menos 2-3 tipos diferentes.
+- Los ejercicios fill_in_blank deben tener UNA sola respuesta correcta clara y verificable.
+- Para ordering, provee entre 3 y 6 items.
+`;
+
+        return `Eres un profesor experto diseñando ${targetCount} ejercicios de evaluación inteligente.
 ${difficultyInstructions[difficulty] || difficultyInstructions.HARD}
 ${groundingRule}
-PROHIBIDO preguntas de memorización pura. El estudiante debe PENSAR, no recordar datos.
-Cada pregunta: 4 opciones, 1 correcta. Varía correctIndex (0-3).
-La explicación debe justificar la correcta y refutar cada incorrecta.
-FORMATO: JSON array. Campos: question, options (array de 4), correctIndex (0-3), explanation.`;
+${exerciseTypeInstructions}
+PROHIBIDO ejercicios de memorización pura. El estudiante debe PENSAR y APLICAR conocimientos.
+La explicación debe ser clara y educativa.
+FORMATO: JSON array con los campos según el type de cada ejercicio.`;
     }
 
-    /** @private Validate and normalize a single parsed question object */
+    /** @private Validate and normalize a single parsed question/exercise object */
     _normalizeQuestion(q) {
-        if (!q || typeof q.question !== 'string' || q.question.trim().length < 8) return null;
-        if (!Array.isArray(q.options) || q.options.length < 4) return null;
-        const correctIndex = Number(q.correctIndex ?? q.correct_index ?? 0);
-        if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= q.options.length) return null;
-        return {
-            question: q.question.trim(),
-            options: q.options.map(o => String(o ?? '').trim()),
-            correctIndex,
-            explanation: (String(q.explanation ?? '')).trim() || `La respuesta correcta es: "${q.options[correctIndex]}"`,
-        };
+        if (!q || typeof q.question !== 'string' || q.question.trim().length < 5) return null;
+        const type = String(q.type || 'multiple_choice').trim().toLowerCase();
+
+        switch (type) {
+            case 'fill_in_blank': {
+                const correctAnswer = String(q.correctAnswer ?? q.correct_answer ?? '').trim();
+                if (!correctAnswer) return null;
+                return {
+                    type: 'fill_in_blank',
+                    question: q.question.trim(),
+                    correctAnswer,
+                    hint: String(q.hint ?? '').trim() || null,
+                    explanation: String(q.explanation ?? '').trim() || `La respuesta correcta es: "${correctAnswer}"`,
+                };
+            }
+            case 'ordering': {
+                const items = Array.isArray(q.items) ? q.items.map(i => String(i ?? '').trim()) : [];
+                const correctOrder = Array.isArray(q.correctOrder ?? q.correct_order)
+                    ? (q.correctOrder ?? q.correct_order).map(Number)
+                    : [];
+                if (items.length < 3 || correctOrder.length !== items.length) return null;
+                if (!correctOrder.every(i => Number.isInteger(i) && i >= 0 && i < items.length)) return null;
+                return {
+                    type: 'ordering',
+                    question: q.question.trim(),
+                    items,
+                    correctOrder,
+                    explanation: String(q.explanation ?? '').trim() || 'Revisa el orden correcto en la explicación.',
+                };
+            }
+            default: {
+                // multiple_choice (backward compatible)
+                if (!Array.isArray(q.options) || q.options.length < 2) return null;
+                const correctIndex = Number(q.correctIndex ?? q.correct_index ?? 0);
+                if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= q.options.length) return null;
+                return {
+                    type: 'multiple_choice',
+                    question: q.question.trim(),
+                    options: q.options.map(o => String(o ?? '').trim()),
+                    correctIndex,
+                    explanation: String(q.explanation ?? '').trim() || `La respuesta correcta es: "${q.options[correctIndex]}"`,
+                };
+            }
+        }
     }
 
     /** @private Extract complete JSON objects from a potentially truncated array string */

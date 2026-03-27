@@ -1,0 +1,67 @@
+INGLES
+Diseñar ejercicios prácticos para una evaluación de inglés no se trata solo de llenar huecos con verbos; se trata de medir si el estudiante realmente puede comunicar y entender ideas.
+
+Para que una evaluación sea efectiva, debe ser equilibrada, contextualizada y, sobre todo, reflejar situaciones de la vida real. Aquí te detallo cómo deben ser:
+
+1. Contextualizados (Adiós a las frases sueltas)
+Evita las listas de oraciones aleatorias. Los ejercicios deben contar una historia o situarse en un escenario específico.
+
+Mal: "He ___ (go) to the park."
+
+Bien: Un correo electrónico incompleto sobre unas vacaciones donde el alumno debe usar el tiempo verbal correcto según la narrativa.
+
+2. Basados en las "4 Habilidades"
+Una evaluación completa debe cubrir los pilares del lenguaje:
+
+Listening: No uses solo audios de "estudio". Busca fragmentos de podcasts, noticias o diálogos con ruidos de fondo naturales.
+
+Reading: Incluye diferentes formatos (artículos, mensajes de WhatsApp, menús, instrucciones técnicas).
+
+Writing: Pide tareas con un propósito (escribir una queja, una invitación o una opinión).
+
+Speaking: Fomenta la interacción, no solo el monólogo. Evalúa la fluidez y la capacidad de reaccionar a lo que dice el otro.
+
+3. Niveles de Complejidad (Taxonomía de Bloom)
+No te quedes solo en la memoria. Estructura los ejercicios de menor a mayor dificultad:
+| Tipo de Ejercicio | Qué evalúa | Ejemplo |
+| :--- | :--- | :--- |
+| Identificación | Conocimiento básico | Unir palabras con imágenes. |
+| Producción controlada | Aplicación de reglas | Transformar oraciones de Activa a Pasiva. |
+| Producción libre | Creatividad y fluidez | "Describe cómo sería tu ciudad ideal en 50 años". |
+
+4. Auténticos y Significativos
+El ejercicio debe parecerse a algo que el alumno haría fuera del aula.
+
+Ejemplo: En lugar de traducir palabras sueltas de comida, pídeles que lean una receta y decidan qué ingredientes necesitan comprar según lo que ya tienen en su "nevera" virtual.
+
+5. Instrucciones Claras y Concisas
+Parece obvio, pero el mayor error es que el alumno falle porque no entendió la instrucción, no porque no sepa inglés.
+
+Tip Pro: Usa verbos de acción directos: Circle, Underline, Match, Summarize. Si el nivel es bajo, puedes incluir un ejemplo resuelto (Item 0).
+
+6. Manejo del Error
+Los ejercicios deben permitir evaluar no solo la "respuesta correcta", sino el alcance comunicativo.
+
+Si un alumno escribe "I goed to the beach", cometió un error gramatical, pero el mensaje se entiende perfectamente.
+
+Diferencia entre ejercicios de precisión (donde la gramática es vital) y de fluidez (donde el mensaje manda).
+
+
+programacion
+1. Tipos de ejercicios "Touch-First"
+En móvil, escribir código largo es frustrante. Los ejercicios deben ser de interacción rápida:
+
+Bloques de código (Drag & Drop): El usuario arrastra piezas de código para completar una función. Es ideal para aprender sintaxis sin pelearse con el teclado.
+
+Parson’s Problems (Ordenar líneas): Das todas las líneas de un programa pero desordenadas. El reto es ponerlas en el orden lógico correcto.
+
+Opción múltiple con "Trampas": Mostrar tres fragmentos de código similares y pedir cuál es el que imprime X resultado o cuál no tiene errores.
+
+Rellenar el hueco (Fill-in-the-blanks): Una línea de código donde falta un símbolo clave (un ;, una { o el nombre de una variable).
+
+2. Feedback Inmediato y "Humano"
+No uses errores de consola crípticos (como SyntaxError: Unexpected token).
+
+Explicaciones visuales: Si el usuario falla, muestra un mensaje amigable: "¡Casi! Recuerda que en Python los bloques se definen por la sangría (espacios), no por llaves".
+
+Pistas progresivas: Un botón de "Pista" que no da la respuesta, sino que resalta el área del error o da una analogía.
