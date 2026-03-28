@@ -497,9 +497,11 @@ export class ReinforcementDomainService {
 
     /**
      * @private Core question generation logic (context + LLM call).
+     * Iterates until accumulating exactly targetCount valid unique questions.
      */
     async _generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, targetCount) {
         const startMs = Date.now();
+        const MAX_ITERATIONS = 3;
 
         // Step 1: Get learning context (parallel DB queries + RAG)
         const contextResult = await this.learningContextService.buildLearningContext({
@@ -520,39 +522,69 @@ export class ReinforcementDomainService {
 
         console.log(`📚 [ReinforcementService] Context built in ${Date.now() - startMs}ms: topic='${topicName}', task='${taskName}', ragChunks=${ctx.ragChunks || 0}, existingQ=${existingQuestions.length}`);
 
-        // Step 2: Build prompt
+        // Step 2: Build shared context
         const contextBlock = this._buildContextBlock(topicName, ctx.topic?.description, taskName, ctx.task?.description, ragContent, ctx.ragFiles || []);
-        const existingBlock = existingQuestions.length > 0
-            ? `\nPREGUNTAS YA EXISTENTES (NO REPETIR):\n${existingQuestions.slice(-15).map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
-            : '';
-
         const diffLabel = (difficulty || 'HARD').toUpperCase();
         const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount);
         const topicHint = topicName
             ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Analiza el dominio (matemáticas, programación, idiomas, etc.) y elige los tipos de ejercicio más adecuados para ese dominio.`
             : '';
-        const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}\n\nGenera EXACTAMENTE ${targetCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales (cálculos, completar código, etc.), no solo preguntas teóricas. Si el tema involucra operaciones, cálculos o completar algo, usa fill_in_blank para que el estudiante practique. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
 
-        // Step 3: Call LLM
-        const llmStartMs = Date.now();
-        const llmResponse = await this.llmPort.chat(systemPrompt, userPrompt, {
-            temperature: 0.4,
-            maxTokens: 8000,
-        });
-        console.log(`🤖 [ReinforcementService] LLM responded in ${Date.now() - llmStartMs}ms`);
+        // Accumulate unique questions across iterations
+        const accumulated = [];
+        const allExcludedTexts = [...existingQuestions];
 
-        // Step 4: Parse JSON
-        const content = llmResponse?.content || '';
-        const questions = this._parseQuestionsJson(content);
+        for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+            const remaining = targetCount - accumulated.length;
+            if (remaining <= 0) break;
 
-        if (questions.length > 0) {
-            // Local dedup against existing
-            const deduped = this._localDedup(questions, existingQuestions);
-            console.log(`✅ [ReinforcementService] Generated ${questions.length} questions, ${deduped.length} after local dedup (total ${Date.now() - startMs}ms)`);
-            return deduped.slice(0, targetCount);
+            // Build exclusion block including previously accumulated questions
+            const exclusionList = allExcludedTexts.slice(-50);
+            const existingBlock = exclusionList.length > 0
+                ? `\nPREGUNTAS YA EXISTENTES (NO REPETIR):\n${exclusionList.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
+                : '';
+
+            const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}\n\nGenera EXACTAMENTE ${remaining} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales (cálculos, completar código, etc.), no solo preguntas teóricas. Si el tema involucra operaciones, cálculos o completar algo, usa fill_in_blank para que el estudiante practique. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
+
+            // Step 3: Call LLM
+            const llmStartMs = Date.now();
+            const llmResponse = await this.llmPort.chat(systemPrompt, userPrompt, {
+                temperature: 0.4 + (iteration * 0.1),
+                maxTokens: 8000,
+            });
+            console.log(`🤖 [ReinforcementService] LLM responded in ${Date.now() - llmStartMs}ms (iteration ${iteration + 1}/${MAX_ITERATIONS})`);
+
+            // Step 4: Parse JSON
+            const content = llmResponse?.content || '';
+            const questions = this._parseQuestionsJson(content);
+
+            if (questions.length === 0) {
+                console.warn(`[ReinforcementService] Iteration ${iteration + 1}: LLM returned 0 parseable questions`);
+                continue;
+            }
+
+            // Local dedup against existing + accumulated
+            const deduped = this._localDedup(questions, allExcludedTexts);
+            console.log(`🔄 [ReinforcementService] Iteration ${iteration + 1}: parsed=${questions.length}, afterDedup=${deduped.length}, accumulated=${accumulated.length}/${targetCount}`);
+
+            for (const q of deduped) {
+                if (accumulated.length >= targetCount) break;
+                accumulated.push(q);
+                allExcludedTexts.push(q.question);
+            }
+
+            if (accumulated.length >= targetCount) break;
+            console.log(`⚠️ [ReinforcementService] Only ${accumulated.length}/${targetCount} after iteration ${iteration + 1}, retrying...`);
         }
 
-        return questions;
+        console.log(`✅ [ReinforcementService] Final: ${accumulated.length}/${targetCount} unique questions (total ${Date.now() - startMs}ms)`);
+
+        // Log questions that will be shown in the UI
+        this.logQuestionBatch('preguntas mostradas en la interfaz', accumulated, {
+            userId, courseId, topicId, taskId, difficulty: diffLabel,
+        });
+
+        return accumulated.slice(0, targetCount);
     }
 
     /** @private Build the context text block for the prompt */
