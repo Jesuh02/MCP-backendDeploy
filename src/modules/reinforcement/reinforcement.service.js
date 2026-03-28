@@ -501,7 +501,8 @@ export class ReinforcementDomainService {
      */
     async _generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, targetCount) {
         const startMs = Date.now();
-        const MAX_ITERATIONS = 3;
+        const MAX_ITERATIONS = 6;
+        const MIN_ACCEPTABLE = Math.max(targetCount - 1, 1); // Accept minimum targetCount-1 (e.g. 9 of 10)
 
         // Step 1: Get learning context (parallel DB queries + RAG)
         const contextResult = await this.learningContextService.buildLearningContext({
@@ -534,9 +535,17 @@ export class ReinforcementDomainService {
         const accumulated = [];
         const allExcludedTexts = [...existingQuestions];
 
+        let consecutiveZero = 0; // Track consecutive iterations yielding 0 new questions
+
         for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
             const remaining = targetCount - accumulated.length;
             if (remaining <= 0) break;
+
+            // If we already have minimum acceptable and two consecutive iterations yielded nothing, stop
+            if (accumulated.length >= MIN_ACCEPTABLE && consecutiveZero >= 2) {
+                console.log(`✅ [ReinforcementService] Stopping early: ${accumulated.length}/${targetCount} (>= min ${MIN_ACCEPTABLE}) after ${consecutiveZero} empty iterations`);
+                break;
+            }
 
             // Build exclusion block including previously accumulated questions
             const exclusionList = allExcludedTexts.slice(-50);
@@ -544,12 +553,15 @@ export class ReinforcementDomainService {
                 ? `\nPREGUNTAS YA EXISTENTES (NO REPETIR):\n${exclusionList.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
                 : '';
 
-            const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}\n\nGenera EXACTAMENTE ${remaining} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales (cálculos, completar código, etc.), no solo preguntas teóricas. Si el tema involucra operaciones, cálculos o completar algo, usa fill_in_blank para que el estudiante practique. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
+            // Ask for a few extra to compensate for dedup losses
+            const requestCount = Math.min(remaining + 2, remaining * 2, 10);
 
-            // Step 3: Call LLM
+            const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}\n\nGenera EXACTAMENTE ${requestCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales (cálculos, completar código, etc.), no solo preguntas teóricas. Si el tema involucra operaciones, cálculos o completar algo, usa fill_in_blank para que el estudiante practique. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
+
+            // Step 3: Call LLM (temperature increases on retries to encourage variety)
             const llmStartMs = Date.now();
             const llmResponse = await this.llmPort.chat(systemPrompt, userPrompt, {
-                temperature: 0.4 + (iteration * 0.1),
+                temperature: Math.min(0.4 + (iteration * 0.1), 0.9),
                 maxTokens: 8000,
             });
             console.log(`🤖 [ReinforcementService] LLM responded in ${Date.now() - llmStartMs}ms (iteration ${iteration + 1}/${MAX_ITERATIONS})`);
@@ -560,12 +572,13 @@ export class ReinforcementDomainService {
 
             if (questions.length === 0) {
                 console.warn(`[ReinforcementService] Iteration ${iteration + 1}: LLM returned 0 parseable questions`);
+                consecutiveZero++;
                 continue;
             }
 
             // Local dedup against existing + accumulated
             const deduped = this._localDedup(questions, allExcludedTexts);
-            console.log(`🔄 [ReinforcementService] Iteration ${iteration + 1}: parsed=${questions.length}, afterDedup=${deduped.length}, accumulated=${accumulated.length}/${targetCount}`);
+            const prevAccumulated = accumulated.length;
 
             for (const q of deduped) {
                 if (accumulated.length >= targetCount) break;
@@ -573,16 +586,33 @@ export class ReinforcementDomainService {
                 allExcludedTexts.push(q.question);
             }
 
+            const newlyAdded = accumulated.length - prevAccumulated;
+            console.log(`🔄 [ReinforcementService] Iteration ${iteration + 1}: parsed=${questions.length}, afterDedup=${deduped.length}, newlyAdded=${newlyAdded}, accumulated=${accumulated.length}/${targetCount}`);
+
+            if (newlyAdded === 0) {
+                consecutiveZero++;
+            } else {
+                consecutiveZero = 0;
+            }
+
             if (accumulated.length >= targetCount) break;
-            console.log(`⚠️ [ReinforcementService] Only ${accumulated.length}/${targetCount} after iteration ${iteration + 1}, retrying...`);
+            console.log(`⚠️ [ReinforcementService] Only ${accumulated.length}/${targetCount} after iteration ${iteration + 1}, retrying... (min acceptable: ${MIN_ACCEPTABLE})`);
         }
 
-        console.log(`✅ [ReinforcementService] Final: ${accumulated.length}/${targetCount} unique questions (total ${Date.now() - startMs}ms)`);
+        console.log(`✅ [ReinforcementService] Final: ${accumulated.length}/${targetCount} unique questions (min acceptable: ${MIN_ACCEPTABLE}, total ${Date.now() - startMs}ms)`);
 
         // Log questions that will be shown in the UI
         this.logQuestionBatch('preguntas mostradas en la interfaz', accumulated, {
             userId, courseId, topicId, taskId, difficulty: diffLabel,
+            totalGenerated: accumulated.length,
+            targetCount,
+            minAcceptable: MIN_ACCEPTABLE,
+            elapsedMs: Date.now() - startMs,
         });
+
+        if (accumulated.length < MIN_ACCEPTABLE) {
+            console.warn(`⚠️ [ReinforcementService] WARNING: Only ${accumulated.length} questions generated (minimum acceptable: ${MIN_ACCEPTABLE}). Returning what we have.`);
+        }
 
         return accumulated.slice(0, targetCount);
     }
