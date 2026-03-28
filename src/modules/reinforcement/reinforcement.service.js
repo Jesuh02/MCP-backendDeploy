@@ -695,6 +695,23 @@ REGLAS DE CALIDAD:
 - Para ordering, provee entre 3 y 6 items.
 - VARÍA la dificultad dentro de los ejercicios: empieza simple y sube gradualmente.
 - Contextualiza: usa escenarios de la vida real cuando sea posible.
+
+REGLA CRÍTICA DE LONGITUD EN OPCIONES (multiple_choice) — ANTI-SESGO DE LONGITUD:
+- TODAS las opciones DEBEN tener longitud MUY SIMILAR (máximo 15% de diferencia en caracteres entre la más corta y la más larga).
+- La respuesta correcta NUNCA debe ser más larga, más detallada ni más elaborada que las incorrectas.
+- Si la respuesta correcta necesita ser específica, haz que TODAS las opciones sean IGUALMENTE específicas y detalladas.
+- PROHIBIDO ABSOLUTO: opciones cortas como distractores y la correcta larga/detallada. El estudiante NO debe poder adivinar por longitud.
+- TÉCNICA OBLIGATORIA: Escribe PRIMERO la respuesta correcta con el nivel de detalle necesario. Luego escribe CADA distractor con el MISMO nivel de detalle, la MISMA estructura gramatical y longitud SIMILAR.
+- Si la correcta tiene una explicación causal ("porque...", "ya que...", "debido a..."), TODAS las opciones deben tener explicaciones causales de longitud similar.
+- Si la correcta es corta (ej: un número o una palabra), TODAS las opciones deben ser igual de cortas.
+- Ejemplo MALO: ["2", "15", "42, porque se suman las unidades primero y luego las decenas", "8"] ← la correcta es obvia por ser más larga.
+- Ejemplo BUENO: ["34, sumando primero 16 más 18", "42, sumando primero 24 más 18", "38, sumando primero 20 más 18", "46, sumando primero 28 más 18"] ← todas con la misma estructura y longitud.
+- Ejemplo BUENO (corto): ["34", "42", "38", "46"] ← todas cortas e iguales.
+- VERIFICACIÓN: Antes de finalizar cada pregunta multiple_choice, CUENTA los caracteres de cada opción. Si alguna difiere más de 15% del promedio, REESCRIBE las opciones.
+
+DISTRIBUCIÓN OBLIGATORIA DE TIPOS:
+- SIEMPRE incluye AL MENOS 3 ejercicios "fill_in_blank" y AL MENOS 1 "ordering" en cada set de ${targetCount}.
+- NUNCA generes SOLO preguntas "multiple_choice". La variedad es OBLIGATORIA.
 `;
 
         return `Eres un profesor experto diseñando ${targetCount} ejercicios de evaluación inteligente.
@@ -703,6 +720,7 @@ ${groundingRule}
 ${exerciseTypeInstructions}
 PROHIBIDO ejercicios de memorización pura. El estudiante debe PENSAR y APLICAR conocimientos.
 La explicación debe ser clara y educativa, enseñando el procedimiento de resolución paso a paso.
+REGLA ANTI-SESGO: En preguntas de opción múltiple, TODAS las opciones DEBEN tener la MISMA longitud y estructura. Escribe PRIMERO la correcta, luego iguala CADA distractor en largo y detalle. La respuesta correcta NUNCA debe ser la más larga. VERIFICA contando caracteres.
 FORMATO: JSON array con los campos según el type de cada ejercicio.`;
     }
 
@@ -743,12 +761,48 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                 if (!Array.isArray(q.options) || q.options.length < 2) return null;
                 const correctIndex = Number(q.correctIndex ?? q.correct_index ?? 0);
                 if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= q.options.length) return null;
+                const options = q.options.map(o => String(o ?? '').trim());
+
+                // Anti-length-bias: equalize all option lengths
+                const optionLens = options.map(o => o.length);
+                const avgLen = optionLens.reduce((a, b) => a + b, 0) / optionLens.length;
+                const correctLen = options[correctIndex].length;
+                const maxOtherLen = Math.max(...options.filter((_, i) => i !== correctIndex).map(o => o.length));
+
+                // If correct answer is >40% longer than the average of others, trim it
+                if (avgLen > 0 && correctLen > avgLen * 1.4) {
+                    console.warn(`[ReinforcementService] Length bias detected: correct="${options[correctIndex].substring(0, 40)}..." (${correctLen} chars) vs avg (${Math.round(avgLen)} chars). Equalizing.`);
+                    const targetLen = Math.round(Math.max(maxOtherLen, avgLen * 1.1));
+                    if (correctLen > targetLen) {
+                        const trimmed = options[correctIndex].substring(0, targetLen);
+                        // Find a natural break point (comma, period, dash, 'porque', 'ya que')
+                        const breakPoints = [
+                            trimmed.lastIndexOf(','),
+                            trimmed.lastIndexOf('.'),
+                            trimmed.lastIndexOf(' -'),
+                            trimmed.lastIndexOf(' porque'),
+                            trimmed.lastIndexOf(' ya que'),
+                            trimmed.lastIndexOf(' debido'),
+                        ].filter(p => p > targetLen * 0.4);
+                        const bestBreak = breakPoints.length > 0 ? Math.max(...breakPoints) : -1;
+                        if (bestBreak > 0) {
+                            options[correctIndex] = options[correctIndex].substring(0, bestBreak).trim();
+                        } else {
+                            // Trim to last complete word within target length
+                            const lastSpace = trimmed.lastIndexOf(' ');
+                            if (lastSpace > targetLen * 0.5) {
+                                options[correctIndex] = options[correctIndex].substring(0, lastSpace).trim();
+                            }
+                        }
+                    }
+                }
+
                 return {
                     type: 'multiple_choice',
                     question: q.question.trim(),
-                    options: q.options.map(o => String(o ?? '').trim()),
+                    options,
                     correctIndex,
-                    explanation: String(q.explanation ?? '').trim() || `La respuesta correcta es: "${q.options[correctIndex]}"`,
+                    explanation: String(q.explanation ?? '').trim() || `La respuesta correcta es: "${options[correctIndex]}"`,
                 };
             }
         }

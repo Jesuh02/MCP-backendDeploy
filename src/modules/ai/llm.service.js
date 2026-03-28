@@ -233,12 +233,22 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             if (this._isReinforcementRequest(prompt)) {
                 systemPrompt += `\n\nINSTRUCCIÓN CRÍTICA DE FORMATO JSON:
 - Tu respuesta DEBE ser ÚNICAMENTE un array JSON válido. Sin texto antes ni después.
-- Cada objeto debe tener los 4 campos en este ORDEN EXACTO: "question", "options", "correctIndex", "explanation".
+- Cada objeto DEBE tener un campo "type" que sea "multiple_choice", "fill_in_blank" o "ordering".
+- Para "multiple_choice": campos "question", "type", "options" (array de 4), "correctIndex" (0-3), "explanation".
+- Para "fill_in_blank": campos "question", "type", "correctAnswer" (string), "hint" (string opcional), "explanation".
+- Para "ordering": campos "question", "type", "items" (array desordenado), "correctOrder" (array de índices), "explanation".
 - NUNCA mezcles campos de diferentes objetos. Completa un objeto completamente ANTES de iniciar el siguiente.
-- Estructura cada objeto así: {"question":"...","options":["A","B","C","D"],"correctIndex":N,"explanation":"..."}
 - Asegúrate de poner comas entre campos y entre objetos.
-- Genera EXACTAMENTE 10 preguntas que se puedan verificar DIRECTAMENTE en el contexto RAG proporcionado.
-- Cada explicación DEBE referenciar el texto específico del material que justifica la respuesta correcta.`;
+- Genera EXACTAMENTE 10 ejercicios que se puedan verificar DIRECTAMENTE en el contexto RAG proporcionado.
+- OBLIGATORIO: incluye AL MENOS 3 ejercicios "fill_in_blank" y AL MENOS 1 "ordering". NUNCA generes solo "multiple_choice".
+- Cada explicación DEBE referenciar el texto específico del material que justifica la respuesta correcta.
+- REGLA ANTI-SESGO DE LONGITUD EN OPCIONES (multiple_choice):
+  * TODAS las opciones DEBEN tener longitud MUY SIMILAR (máximo 15% diferencia en caracteres).
+  * La respuesta correcta NUNCA debe ser la más larga ni la más elaborada.
+  * TÉCNICA: Escribe PRIMERO la correcta, luego escribe CADA distractor con la MISMA estructura gramatical, MISMO nivel de detalle y longitud SIMILAR.
+  * Si la correcta tiene una explicación causal ("porque...", "ya que..."), TODAS deben tenerla.
+  * Si la correcta es corta (número, palabra), TODAS deben ser igual de cortas.
+  * VERIFICA: Cuenta los caracteres de cada opción antes de finalizar. Si alguna difiere >15% del promedio, REESCRIBE.`;
 
                 // 2.6. PEDAGOGICAL QUALITY: 10/10 questions — thinking, not searching
                 systemPrompt += `\n\nINSTRUCCIÓN PEDAGÓGICA — NIVEL 10/10 (OBLIGATORIO ESTRICTO):
@@ -1010,6 +1020,42 @@ Responde de forma clara y constructiva.`;
                 continue;
             }
 
+            const type = String(rawQuestion?.type || 'multiple_choice').trim().toLowerCase();
+
+            if (type === 'fill_in_blank') {
+                const correctAnswer = String(rawQuestion?.correctAnswer ?? rawQuestion?.correct_answer ?? '').trim();
+                if (!correctAnswer) continue;
+                sanitized.push({
+                    type: 'fill_in_blank',
+                    question: questionText,
+                    correctAnswer,
+                    hint: String(rawQuestion?.hint ?? '').trim() || null,
+                    explanation: String(rawQuestion?.explanation || '').trim() || `La respuesta correcta es: "${correctAnswer}"`,
+                });
+                seenQuestions.add(normalizedQuestion);
+                if (sanitized.length >= 10) break;
+                continue;
+            }
+
+            if (type === 'ordering') {
+                const items = Array.isArray(rawQuestion?.items) ? rawQuestion.items.map(i => String(i ?? '').trim()) : [];
+                const correctOrder = Array.isArray(rawQuestion?.correctOrder ?? rawQuestion?.correct_order)
+                    ? (rawQuestion.correctOrder ?? rawQuestion.correct_order).map(Number)
+                    : [];
+                if (items.length < 3 || correctOrder.length !== items.length) continue;
+                sanitized.push({
+                    type: 'ordering',
+                    question: questionText,
+                    items,
+                    correctOrder,
+                    explanation: String(rawQuestion?.explanation || '').trim() || 'Revisa el orden correcto en la explicación.',
+                });
+                seenQuestions.add(normalizedQuestion);
+                if (sanitized.length >= 10) break;
+                continue;
+            }
+
+            // multiple_choice (default)
             const rawOptions = Array.isArray(rawQuestion?.options)
                 ? rawQuestion.options.map(option => String(option || '').trim()).filter(Boolean)
                 : [];
@@ -1044,6 +1090,7 @@ Responde de forma clara y constructiva.`;
                 `La respuesta correcta es: "${options[correctIndex] || 'la opción correcta'}".`;
 
             sanitized.push({
+                type: 'multiple_choice',
                 question: questionText,
                 options,
                 correctIndex,
