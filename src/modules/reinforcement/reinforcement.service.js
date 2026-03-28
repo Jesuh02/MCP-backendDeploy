@@ -501,7 +501,7 @@ export class ReinforcementDomainService {
      */
     async _generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, targetCount) {
         const startMs = Date.now();
-        const MAX_ITERATIONS = 6;
+        const MAX_ITERATIONS = 10;
         const MIN_ACCEPTABLE = Math.max(targetCount - 1, 1); // Accept minimum targetCount-1 (e.g. 9 of 10)
 
         // Step 1: Get learning context (parallel DB queries + RAG)
@@ -541,8 +541,8 @@ export class ReinforcementDomainService {
             const remaining = targetCount - accumulated.length;
             if (remaining <= 0) break;
 
-            // If we already have minimum acceptable and two consecutive iterations yielded nothing, stop
-            if (accumulated.length >= MIN_ACCEPTABLE && consecutiveZero >= 2) {
+            // Only stop early if we have enough AND 3+ consecutive iterations yielded nothing
+            if (accumulated.length >= MIN_ACCEPTABLE && consecutiveZero >= 3) {
                 console.log(`✅ [ReinforcementService] Stopping early: ${accumulated.length}/${targetCount} (>= min ${MIN_ACCEPTABLE}) after ${consecutiveZero} empty iterations`);
                 break;
             }
