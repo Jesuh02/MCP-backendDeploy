@@ -86,7 +86,7 @@ export class AuthService {
             const user = await this.userRepo.findById(result.decoded.userId);
             if (!user) return Result.fail(new UnauthorizedError('Usuario no encontrado'));
             if (user.isActive === false) return Result.fail(new ForbiddenError('Tu usuario ha sido desactivado, por favor contactar a soporte'));
-            const tokens = this._generateTokens(user);
+            const tokens = this._generateTokens(user, result.decoded.tenantId);
             return Result.ok(tokens);
         } catch {
             return Result.fail(new UnauthorizedError('Refresh token inválido'));
@@ -105,10 +105,10 @@ export class AuthService {
         return Result.ok({ message: 'Contraseña actualizada' });
     }
 
-    _generateTokens(user) {
+    _generateTokens(user, tenantId = 'qa-develop') {
         // Asegurar que roles sean IDs numéricos para comparación correcta en requireRoles
         const roleIds = (user.roles || []).map(r => Number(r.id || r.rol_id)).filter(id => Number.isInteger(id) && id > 0);
-        const payload = { userId: user.id, username: user.username, roles: roleIds };
+        const payload = { userId: user.id, username: user.username, roles: roleIds, tenantId };
         return {
             accessToken: this.jwt.signAccessToken(payload),
             refreshToken: this.jwt.signRefreshToken(payload),
