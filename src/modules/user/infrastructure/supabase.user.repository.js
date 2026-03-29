@@ -23,6 +23,19 @@ function hashCedula(digits) {
 }
 
 /**
+ * HMAC-SHA256 determinístico para verificar unicidad de contraseñas entre usuarios.
+ * Usa un pepper del entorno para que el hash no sea reversible sin la clave.
+ */
+const PASSWORD_FINGERPRINT_PEPPER =
+    process.env.PASSWORD_FINGERPRINT_PEPPER ||
+    (process.env.JWT_SECRET || 'coursev-default') + '-pwd-fp';
+
+export function hashPasswordFingerprint(password) {
+    if (!password) return null;
+    return crypto.createHmac('sha256', PASSWORD_FINGERPRINT_PEPPER).update(password).digest('hex');
+}
+
+/**
  * SupabaseUserRepository — Implementa IUserRepository usando Supabase PostgREST.
  */
 export class SupabaseUserRepository {
@@ -119,6 +132,26 @@ export class SupabaseUserRepository {
         return this._enrichWithRoles(this._mapUser(data));
     }
 
+    /**
+     * Busca si ya existe un usuario con el mismo fingerprint de contraseña.
+     * Requiere la columna password_fingerprint en la tabla usuarios.
+     * Retorna null (sin lanzar) si la columna no existe aún.
+     */
+    async findByPasswordFingerprint(fingerprint) {
+        if (!fingerprint) return null;
+        try {
+            const { data, error } = await this.client
+                .from('usuarios')
+                .select('id')
+                .eq('password_fingerprint', fingerprint)
+                .maybeSingle();
+            if (error) return null; // column may not exist yet
+            return data || null;
+        } catch {
+            return null;
+        }
+    }
+
     async create(userData) {
         // 1. Create persona first if provided
         let personaId = userData.personaId || null;
@@ -162,7 +195,7 @@ export class SupabaseUserRepository {
                 personaId = p.id;
             }
         }
-        // 2. Create usuario
+        // 2. Create usuario (sin fingerprint para máxima compatibilidad)
         const { data, error } = await this.client.from('usuarios').insert({
             username: userData.username,
             email: hashEmail(userData.email),
@@ -173,6 +206,16 @@ export class SupabaseUserRepository {
         if (error) throw new Error(`Error creando usuario: ${error.message}`);
         // 3. Assign default role (1 = estudiante)
         await this.assignRole(data.id, 1);
+        // 4. Almacenar fingerprint de contraseña (requiere migración DB; falla silenciosamente)
+        if (userData.passwordFingerprint) {
+            const { error: fpErr } = await this.client
+                .from('usuarios')
+                .update({ password_fingerprint: userData.passwordFingerprint })
+                .eq('id', data.id);
+            if (fpErr) {
+                console.warn('[UserRepo] password_fingerprint no almacenado (¿falta la columna?):', fpErr.message);
+            }
+        }
         return {...data, roles: [{ id: 1, nombre: 'Estudiante' }] };
     }
     async update(id, data) {
