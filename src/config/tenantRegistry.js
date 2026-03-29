@@ -99,7 +99,7 @@ export function initializeTenantRegistry(primaryClientFromProvider) {
     }
 
     // ── Auto-discover additional tenants from TENANT_<ID>_SUPABASE_URL env vars ──
-    const tenantEnvPattern = /^TENANT_([A-Z0-9]+)_SUPABASE_URL$/;
+    const tenantEnvPattern = /^TENANT_([A-Z0-9_]+)_SUPABASE_URL$/;
     for (const [envKey, url] of Object.entries(process.env)) {
         const match = tenantEnvPattern.exec(envKey);
         if (!match || !url) continue;
