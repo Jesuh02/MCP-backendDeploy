@@ -15,7 +15,7 @@
  *     that prevents username-collision attacks across tenants.
  */
 import { Result } from '../../shared/Result.js';
-import { UnauthorizedError } from '../../shared/errors/index.js';
+import { UnauthorizedError, ConflictError, ValidationError } from '../../shared/errors/index.js';
 import { SupabaseUserRepository, hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
 import { SupabaseInstitucionRepository } from '../institucion/infrastructure/supabase.institucion.repository.js';
 import { SupabasePersonaRepository } from '../persona/infrastructure/supabase.persona.repository.js';
@@ -43,6 +43,71 @@ export class CrossTenantAuthService {
         );
 
         return this._resolveMatches(results, 'Credenciales inválidas');
+    }
+
+    /**
+     * Registers a user in multiple tenant databases (parallel).
+     * Used when the user selects more than one institution at sign-up.
+     *
+     * Strategy per tenant:
+     *   - If the username/email already exists → treat the existing account as the
+     *     match (idempotent re-registration).
+     *   - If the tenant create succeeds → return the new user match.
+     *   - On error → log and skip (partial success is still a success).
+     *
+     * @param {{ username, email, password, persona, personaId, tenantIds: string[] }} params
+     * @returns {Result<{ user, accessToken, refreshToken, availableTenants, registeredTenants, failedTenants }>}
+     */
+    async multiTenantRegister({ username, email, password, persona, personaId, tenantIds }) {
+        const entries = getAllTenantEntries().filter(e => tenantIds.includes(e.id));
+        if (entries.length === 0) {
+            return Result.fail(new ValidationError('Ninguna institución seleccionada está registrada'));
+        }
+
+        // Hash password once, reuse across all tenant DBs
+        const hashedPassword = await this.jwt.hashPassword(password);
+        const passwordFingerprint = hashPasswordFingerprint(password);
+
+        const settled = await Promise.allSettled(
+            entries.map(entry =>
+                this._registerInTenant(entry, { username, email, hashedPassword, passwordFingerprint, persona, personaId }),
+            ),
+        );
+
+        const successes = settled
+            .filter(r => r.status === 'fulfilled' && r.value !== null)
+            .map(r => r.value);
+
+        const failedTenants = entries
+            .filter((_, i) => settled[i].status !== 'fulfilled' || settled[i].value === null)
+            .map(e => e.id);
+
+        if (successes.length === 0) {
+            return Result.fail(new ConflictError('Usuario', username));
+        }
+
+        const allTenantIds = successes.map(s => s._payload.tenantId);
+        const primary = successes[0];
+
+        // Re-sign tokens so the JWT carries the full availableTenants list
+        const accessToken = this.jwt.signAccessToken({
+            ...primary._payload,
+            availableTenants: allTenantIds,
+        });
+        const refreshToken = this.jwt.signRefreshToken({
+            ...primary._payload,
+            availableTenants: allTenantIds,
+        });
+
+        const { _payload, ...safeMatch } = primary;
+        return Result.ok({
+            ...safeMatch,
+            accessToken,
+            refreshToken,
+            availableTenants: successes.map(s => ({ id: s.tenant.id, name: s.tenant.name })),
+            registeredTenants: allTenantIds,
+            failedTenants,
+        });
     }
 
     /**
@@ -273,6 +338,36 @@ export class CrossTenantAuthService {
             accessToken: this.jwt.signAccessToken(rawPayload),
             refreshToken: this.jwt.signRefreshToken(rawPayload),
         };
+    }
+
+    /**
+     * Registers a new user in a single tenant database.
+     * If the user already exists, returns the existing account match (idempotent).
+     *
+     * @param {object} entry  Tenant entry from getAllTenantEntries()
+     * @param {{ username, email, hashedPassword, passwordFingerprint, persona, personaId }} payload
+     * @returns {Promise<object|null>}  Match object or null on unrecoverable error
+     */
+    async _registerInTenant(entry, { username, email, hashedPassword, passwordFingerprint, persona, personaId }) {
+        if (!entry.client) return null;
+        try {
+            const userRepo = new SupabaseUserRepository(entry.client);
+
+            // Idempotent: if user already exists in this tenant, return that match
+            let existing = await userRepo.findByUsername(username);
+            if (!existing) existing = await userRepo.findByEmail(email);
+            if (existing) {
+                console.log(`[CrossTenantAuth] User '${username}' already exists in tenant ${entry.id} — reusing`);
+                return this._buildMatch(entry, existing);
+            }
+
+            const user = await userRepo.create({ username, email, password: hashedPassword, passwordFingerprint, persona, personaId });
+            console.log(`[CrossTenantAuth] Registered user '${username}' in tenant ${entry.id}`);
+            return this._buildMatch(entry, user);
+        } catch (e) {
+            console.warn(`[CrossTenantAuth] Registration failed for tenant ${entry.id}: ${e.message}`);
+            return null;
+        }
     }
 }
 

@@ -38,11 +38,15 @@ export class AuthController {
             const { error, value } = registerSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
 
-            // Validate tenantId if provided — must be a registered tenant
-            const requestedTenant = value.tenantId?.trim() || null;
-            if (requestedTenant) {
-                const known = TENANT_CONFIGS.find(t => t.id === requestedTenant);
-                if (!known) return next(new ValidationError(`Tenant desconocido: ${requestedTenant}`));
+            // Support both tenantIds[] (multi-tenant) and legacy tenantId (single)
+            const rawIds = value.tenantIds?.length > 0
+                ? value.tenantIds.map(id => id.trim()).filter(Boolean)
+                : (value.tenantId?.trim() ? [value.tenantId.trim()] : []);
+
+            // Validate all requested tenants are registered
+            for (const id of rawIds) {
+                const known = TENANT_CONFIGS.find(t => t.id === id);
+                if (!known) return next(new ValidationError(`Institución desconocida: ${id}`));
             }
 
             // Check password uniqueness across all tenants before creating the account
@@ -53,11 +57,18 @@ export class AuthController {
                 }
             }
 
-            // Route registration to the correct tenant database
-            const doRegister = () => this.authService.register(value);
-            const result = requestedTenant
-                ? await runInTenantContext(requestedTenant, doRegister)
-                : await doRegister();
+            let result;
+            if (rawIds.length > 1) {
+                // Multi-tenant: register in all selected tenant databases in parallel
+                result = await this.crossTenantAuthService.multiTenantRegister({ ...value, tenantIds: rawIds });
+            } else {
+                // Single-tenant (existing behaviour)
+                const requestedTenant = rawIds[0] || null;
+                const doRegister = () => this.authService.register({ ...value, tenantId: requestedTenant });
+                result = requestedTenant
+                    ? await runInTenantContext(requestedTenant, doRegister)
+                    : await doRegister();
+            }
 
             if (result.isFail()) return next(result.getError());
             res.status(201).json({ success: true, data: result.getValue() });
