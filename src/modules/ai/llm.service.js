@@ -17,7 +17,7 @@
 
 import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
-import { TENANT_CONFIGS } from '../../config/tenantRegistry.js';
+import { TENANT_CONFIGS, runInTenantContext } from '../../config/tenantRegistry.js';
 
 /**
  * In-memory cache: tracks the last time a multi-tenant user was asked
@@ -76,6 +76,9 @@ export class LLMDomainService {
             let effectiveInstitutionName = institutionName || (tenantId
                 ? (userTenants.find(t => t.id === tenantId)?.name ?? tenantId)
                 : null);
+            // The tenant whose DB should actually serve queries (may differ from JWT tenantId
+            // when user explicitly names a different institution in the prompt).
+            let effectiveTenantId = tenantId;
 
             if (userTenants.length > 1 && !fromWhatsApp) {
                 // Check if the prompt explicitly names one of the institutions
@@ -86,8 +89,9 @@ export class LLMDomainService {
                 );
 
                 if (explicitTenant) {
-                    // User named a specific institution — use it
+                    // User named a specific institution — use it and cache for 24h
                     effectiveInstitutionName = explicitTenant.name;
+                    effectiveTenantId = explicitTenant.id;
                     if (userId) {
                         _tenantAskCache.set(userId, { tenantId: explicitTenant.id, askedAt: Date.now() });
                     }
@@ -98,6 +102,7 @@ export class LLMDomainService {
                     if (cached && (Date.now() - cached.askedAt) < TWENTY_FOUR_HOURS) {
                         // Use the previously selected tenant
                         effectiveInstitutionName = userTenants.find(t => t.id === cached.tenantId)?.name ?? cached.tenantId;
+                        effectiveTenantId = cached.tenantId;
                     } else {
                         // Must ask the user which institution to query
                         if (userId) {
@@ -117,6 +122,23 @@ export class LLMDomainService {
                 }
             }
             // ── END MULTI-TENANT AWARENESS ─────────────────────────────────────────
+
+            // ── CROSS-TENANT CONTEXT SWITCH ────────────────────────────────────────
+            // When the resolved institution differs from the JWT tenant, re-run the
+            // entire prompt inside that tenant's AsyncLocalStorage context so all
+            // repository / MCP calls transparently query the correct Supabase DB.
+            if (effectiveTenantId && effectiveTenantId !== tenantId) {
+                return runInTenantContext(effectiveTenantId, () =>
+                    this.processPrompt({
+                        prompt, model, courseId, taskDescription, fileContent, fileUri,
+                        studentId, userId, username, submissionId, taskId, topicId,
+                        freeLearning, forceMCPTools, difficulty, userRoles, fromWhatsApp,
+                        tenantId: effectiveTenantId,   // now matches context → no re-dispatch
+                        availableTenants,
+                        institutionName: effectiveInstitutionName,
+                    }),
+                );
+            }
 
             // 0. Auto-fetch file content from R2 when not provided by the client
             let resolvedFileContent = fileContent || '';
@@ -1343,7 +1365,7 @@ Responde de forma clara y constructiva.`;
             'NUNCA selecciones columnas de ID. Usa JOINs para obtener nombres legibles.',
             'PROHIBIDO usar auth.uid() — esa función no existe en este contexto y causará errores de tipo.',
             'MAPEO DE NOMBRES ESPAÑOL↔INGLÉS (el usuario puede usar cualquier idioma): transacciones=transactions, suscripciones=subscriptions, tareas=tasks, entregas=task_submissions, temas=topics, materias=subjects, cursos=courses, notificaciones=notifications, usuarios=usuarios.',
-            'Tablas reales del esquema: usuarios (id, username, email, avatar), personas (id, nombres, apellidos, email, avatar), courses (id, title, creator_user_id), subjects (id, course_id FK→courses.id, name), topics (id, name, materia_id FK→subjects.id — ⚠️ NO tiene course_id), tasks (id, title, description, topic_id), task_submissions (id, task_id, student_id, grade, feedback, file_uri, created_at), progreso_curso (usuario_estudiante FK→usuarios.id, curso_id FK→courses.id, tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado), collaborators (user_id, course_id), subscriptions (subscriber_id, creator_id — SIN course_id), transactions (id, user_id, amount, status, payment_method, reference, currency, created_at), notifications (id, user_id, title, message, type, read, created_at), videos (id, title, description, course_id, video_url, duration, order_index, created_at). CADENA tareas→cursos: tasks.topic_id → topics.materia_id → subjects.id → subjects.course_id → courses.id.',
+            'Tablas reales del esquema: usuarios (id, username, email, avatar), personas (id, nombres, apellidos, email, avatar), courses (id, title, creator_user_id), subjects (id, course_id FK→courses.id, name), topics (id, name, materia_id FK→subjects.id — ⚠️ NO tiene course_id), tasks (id, title, description, topic_id), task_submissions (id, task_id, student_id, grade, feedback, file_uri, created_at), progreso_curso (usuario_estudiante FK→usuarios.id, curso_id FK→courses.id, tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado), collaborators (user_id, course_id), subscriptions (subscriber_id, creator_id — SIN course_id), transactions (id, user_id, amount, status, payment_method, reference, currency, created_at), notifications (id, user_id, title, message, type, read, created_at), videos (id, title, description, course_id, video_url, duration, order_index, created_at), whatsapp_sessions (id, user_id FK→usuarios.id, phone_number, wa_id, is_active, linked_at, last_message_at, otp_code, otp_expires_at — is_active=TRUE significa vinculado y verificado). CADENA tareas→cursos: tasks.topic_id → topics.materia_id → subjects.id → subjects.course_id → courses.id.',
             'TABLAS QUE NO EXISTEN (NUNCA las uses): lessons, lesson_completions, enrollments, student_courses, progreso_estudiante.',
             'REGLA CRÍTICA: Si el usuario menciona un nombre que no coincide exactamente con una tabla, busca la tabla más similar. NUNCA digas que algo no existe sin intentar buscarlo primero.',
             'Puedes usar CTEs (WITH ... AS (...) SELECT ...) para consultas complejas.',
