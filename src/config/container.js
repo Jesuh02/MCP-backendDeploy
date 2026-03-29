@@ -254,7 +254,7 @@ export function createContainer() {
     // ═══════════════════════════════════════════════════════════
 
     // Nivel 0: servicios sin dependencias inter-servicio
-    const authService = new AuthService({ userRepository: userRepo, jwtAdapter });
+    const authService = new AuthService({ userRepository: userRepo, jwtAdapter, institucionRepository: institucionRepo });
     const userService = new UserDomainService({
         userRepository: userRepo,
         fileStoragePort: storageAdapter,
