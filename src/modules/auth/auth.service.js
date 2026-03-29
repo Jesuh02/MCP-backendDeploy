@@ -2,9 +2,10 @@ import { Result } from '../../shared/Result.js';
 import { UnauthorizedError, ConflictError, ValidationError, NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class AuthService {
-    constructor({ userRepository, jwtAdapter }) {
+    constructor({ userRepository, jwtAdapter, institucionRepository }) {
         this.userRepo = userRepository;
         this.jwt = jwtAdapter;
+        this.institucionRepo = institucionRepository || null;
     }
 
     async register({ username, email, password, persona, personaId }) {
@@ -23,6 +24,7 @@ export class AuthService {
             return Result.fail(new ValidationError(dbErr.message));
         }
 
+        await this._enrichWithInstitution(user);
         const tokens = this._generateTokens(user);
         return Result.ok({ user: this._safeUser(user), ...tokens });
     }
@@ -72,6 +74,7 @@ export class AuthService {
             return Result.fail(new UnauthorizedError('Credenciales inválidas'));
         }
 
+        await this._enrichWithInstitution(user);
         const tokens = this._generateTokens(user);
         return Result.ok({ user: this._safeUser(user), ...tokens });
     }
@@ -117,6 +120,21 @@ export class AuthService {
         return safe;
     }
 
+    /** Enrich user object with institution details from persona.institucion_id */
+    async _enrichWithInstitution(user) {
+        if (!this.institucionRepo || !user) return user;
+        const persona = user.persona ?? user.personas ?? null;
+        const institucionId = persona?.institucion_id ?? null;
+        if (!institucionId) return user;
+        try {
+            const inst = await this.institucionRepo.findById(institucionId);
+            if (inst) user.institucion = inst;
+        } catch (e) {
+            console.warn('[AuthService] Could not enrich institution:', e.message);
+        }
+        return user;
+    }
+
     /**
      * Login with Google - finds or creates user by email and returns JWT tokens.
      * This ensures the Android client gets proper authentication for the correct user.
@@ -146,6 +164,7 @@ export class AuthService {
                 }
             }
 
+            await this._enrichWithInstitution(user);
             const tokens = this._generateTokens(user);
             return Result.ok({ user: this._safeUser(user), ...tokens, isNewUser: false });
         }
@@ -181,6 +200,7 @@ export class AuthService {
                     }
                 }
 
+                await this._enrichWithInstitution(existingUser);
                 const tokens = this._generateTokens(existingUser);
                 return Result.ok({ user: this._safeUser(existingUser), ...tokens, isNewUser: false });
             }
