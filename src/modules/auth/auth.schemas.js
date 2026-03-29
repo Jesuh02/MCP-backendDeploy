@@ -18,6 +18,7 @@ export const registerSchema = Joi.object({
         'any.required': 'La contraseña es requerida',
     }),
     tenantId: Joi.string().max(64).allow(null, '').optional(),
+    tenantIds: Joi.array().items(Joi.string().max(64)).min(1).optional(),
     personaId: Joi.number().integer().positive().optional(),
     persona: Joi.object({
         nombre: Joi.string().allow('').optional(),
