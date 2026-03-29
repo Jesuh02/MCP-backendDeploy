@@ -6,6 +6,7 @@
  */
 import { BaseController } from '../../shared/BaseController.js';
 import { parsePagination } from '../../shared/pagination.js';
+import { getIO } from '../../config/socketServer.js';
 
 export class ChatMessageController extends BaseController {
     constructor({ chatMessageService }) {
@@ -74,6 +75,12 @@ export class ChatMessageController extends BaseController {
             const result = await this.chatMessageService.create(data);
             if (result.isFail()) return result;
             res.status(201);
+            // Emit real-time event to the user's chat room
+            const msg = result.getValue();
+            const io = getIO();
+            if (io && msg.usuarioId && msg.origin) {
+                io.to(`chat:${msg.usuarioId}:${msg.origin}`).emit('chat:new-message', msg);
+            }
             return result;
         })());
     };
@@ -103,9 +110,17 @@ export class ChatMessageController extends BaseController {
             attachedFileType: body.attachedFileType ?? body.attached_file_type ?? null,
             senderAvatar: body.senderAvatar ?? body.sender_avatar ?? null,
         };
-        this.store(req, res, next, () =>
-            this.chatMessageService.upsert(data)
-        );
+        this.handleResult(res, next, (async () => {
+            const result = await this.chatMessageService.upsert(data);
+            if (result.isFail()) return result;
+            // Emit real-time event to the user's chat room
+            const msg = result.getValue();
+            const io = getIO();
+            if (io && msg.usuarioId && msg.origin) {
+                io.to(`chat:${msg.usuarioId}:${msg.origin}`).emit('chat:new-message', msg);
+            }
+            return result;
+        })());
     };
     delete = async(req, res, next) => {
         this.store(req, res, next, () =>
