@@ -7,6 +7,7 @@
 
 import { processPromptSchema, analyzeSubmissionSchema, feedbackSchema } from './llm.schemas.js';
 import { ValidationError } from '../../shared/errors/index.js';
+import { TENANT_CONFIGS, getCurrentTenantId } from '../../config/tenantRegistry.js';
 
 export class LLMController {
     constructor({ llmService, excelService = null }) {
@@ -31,6 +32,14 @@ export class LLMController {
             if (error) return next(ValidationError.fromJoi(error));
 
             // Normalize field names (Android client sends both formats)
+            // Resolve tenant context: TenantMiddleware has already run and set the AsyncLocalStorage
+            // context. getCurrentTenantId() returns the tenant resolved from X-Tenant-Id / JWT.
+            const resolvedTenantId = getCurrentTenantId() || req.user?.tenantId || 'qa-develop';
+            const jwtAvailableTenants = Array.isArray(req.user?.availableTenants)
+                ? req.user.availableTenants
+                : (req.user?.tenantId ? [req.user.tenantId] : [resolvedTenantId]);
+            const institutionName = TENANT_CONFIGS.find(t => t.id === resolvedTenantId)?.name ?? resolvedTenantId;
+
             const params = {
                 prompt: value.prompt,
                 model: value.model,
@@ -51,6 +60,10 @@ export class LLMController {
                 // Pass authenticated user's roles for data-access scoping.
                 // Prefer JWT roles (from req.user), fall back to body-supplied roles (for Android without JWT).
                 userRoles: (req.user?.roles || value.userRoles || []).map(Number),
+                // Multi-tenant context: which institution is active and which ones are available
+                tenantId: resolvedTenantId,
+                availableTenants: jwtAvailableTenants,
+                institutionName,
             };
 
             // Detect Excel generation intent for student progress and generate the file proactively
