@@ -100,3 +100,4 @@ scripts/migration_certificates_integrity.sql
 scripts/alter_personas_identificacion_to_bigint.sql
 scripts/split_progreso_estudiante.sql
 scripts/migration_qa_to_prod.sql
+scripts/migration_execute_sql_function.sql

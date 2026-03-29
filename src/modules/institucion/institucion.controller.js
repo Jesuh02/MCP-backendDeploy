@@ -2,6 +2,7 @@ import Joi from 'joi';
 import { ValidationError } from '../../shared/errors/index.js';
 import { getAllTenantEntries } from '../../config/tenantRegistry.js';
 import { SupabaseInstitucionRepository } from './infrastructure/supabase.institucion.repository.js';
+import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
 
 const createSchema = Joi.object({
     nombre: Joi.string().min(2).max(200).required(),
@@ -78,6 +79,46 @@ export class InstitucionController {
             const result = await this.service.delete(parseInt(req.params.id));
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * Searches a username across ALL tenant databases and returns which
+     * institutions the user belongs to.  Used by the chat "¿En cuántas
+     * instituciones estoy?" feature.
+     */
+    lookupUserAcrossTenants = async (req, res, next) => {
+        try {
+            const username = req.params.username;
+            if (!username || username.trim().length < 1) {
+                return next(new ValidationError('Se requiere un username'));
+            }
+            const entries = getAllTenantEntries();
+            const results = await Promise.allSettled(
+                entries.map(async (entry) => {
+                    if (!entry.client) return null;
+                    const repo = new SupabaseUserRepository(entry.client);
+                    const user = await repo.findByUsername(username.trim());
+                    if (!user) return null;
+                    return {
+                        tenantId: entry.id,
+                        tenantName: entry.name,
+                        username: user.username,
+                        roles: (user.roles || []).map(r => r.nombre || r.name || r.id || r),
+                    };
+                }),
+            );
+            const found = results
+                .filter(r => r.status === 'fulfilled' && r.value !== null)
+                .map(r => r.value);
+            res.json({
+                success: true,
+                data: {
+                    username: username.trim(),
+                    totalInstitutions: found.length,
+                    institutions: found,
+                },
+            });
         } catch (err) { next(err); }
     };
 
