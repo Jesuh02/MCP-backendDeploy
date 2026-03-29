@@ -1,29 +1,21 @@
 import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema, googleLoginSchema } from './auth.schemas.js';
 import { ValidationError, ConflictError } from '../../shared/errors/index.js';
 import { runInTenantContext, getTenantClient, TENANT_CONFIGS } from '../../config/tenantRegistry.js';
+import { verifyGoogleIdToken } from './infrastructure/google-token.verifier.js';
 
-function parseGoogleTokenPayload(idToken) {
-    const [, payload] = idToken.split('.');
-    if (!payload) throw new ValidationError('Google credential inválida');
-
-    try {
-        return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    } catch {
-        throw new ValidationError('Google credential inválida');
-    }
-}
-
-function normalizeGoogleLoginPayload(payload) {
-    if (!payload.idToken || payload.email) return payload;
-
-    const decoded = parseGoogleTokenPayload(payload.idToken);
-    if (!decoded.email) throw new ValidationError('El email es requerido');
+/**
+ * Verifica criptográficamente el idToken de Google (cuando está presente)
+ * y normaliza el payload para el servicio de autenticación.
+ * Si el payload ya trae email directamente (llamada interna de confianza), lo usa tal cual.
+ */
+async function normalizeGoogleLoginPayload(payload) {
+    const verified = await verifyGoogleIdToken(payload.idToken);
 
     return {
         ...payload,
-        email: decoded.email,
-        displayName: payload.displayName || decoded.name || decoded.given_name || '',
-        avatarUrl: payload.avatarUrl || decoded.picture || null,
+        email: verified.email,
+        displayName: payload.displayName || verified.name || verified.given_name || '',
+        avatarUrl: payload.avatarUrl || verified.picture || null,
     };
 }
 
@@ -118,7 +110,8 @@ export class AuthController {
         try {
             const { error, value } = googleLoginSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.authService.loginWithGoogle(normalizeGoogleLoginPayload(value));
+            const normalized = await normalizeGoogleLoginPayload(value);
+            const result = await this.authService.loginWithGoogle(normalized);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -140,7 +133,8 @@ export class AuthController {
         try {
             const { error, value } = googleLoginSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.crossTenantAuthService.googleLogin(normalizeGoogleLoginPayload(value));
+            const normalized = await normalizeGoogleLoginPayload(value);
+            const result = await this.crossTenantAuthService.googleLogin(normalized);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
