@@ -7,7 +7,8 @@
 
 import { processPromptSchema, analyzeSubmissionSchema, feedbackSchema } from './llm.schemas.js';
 import { ValidationError } from '../../shared/errors/index.js';
-import { TENANT_CONFIGS, getCurrentTenantId } from '../../config/tenantRegistry.js';
+import { TENANT_CONFIGS, getCurrentTenantId, getAllTenantEntries } from '../../config/tenantRegistry.js';
+import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
 
 export class LLMController {
     constructor({ llmService, excelService = null }) {
@@ -24,6 +25,40 @@ export class LLMController {
         const progressKw = /\b(progreso|estudiantes?|calificaci[oó]n(es)?|notas?|avance|rendimiento)\b/i;
         const combined = `${prompt} ${taskDescription}`;
         return excelKw.test(combined) && (progressKw.test(combined) || taskDescription.includes('RESUMEN DE PROGRESO'));
+    }
+
+    /**
+     * Detects if the prompt asks about which institutions the user belongs to.
+     * e.g. "¿En cuántas instituciones estoy?", "mis instituciones", "a qué instituciones pertenezco"
+     */
+    _isInstitutionLookupIntent(prompt) {
+        const p = prompt.toLowerCase();
+        return /\b(cu[aá]ntas?\s+instituciones|en\s+qu[eé]\s+instituciones|mis\s+instituciones|instituciones\s+pertenezco|instituciones\s+estoy|a\s+qu[eé]\s+instituciones|pertenezco\s+a\s+(?:cu[aá]ntas?|qu[eé])\s+instituciones)\b/i.test(p);
+    }
+
+    /**
+     * Searches a username across all registered tenant databases and returns
+     * a human-readable summary of the institutions found.
+     */
+    async _lookupUserInstitutions(username) {
+        const entries = getAllTenantEntries();
+        const results = await Promise.allSettled(
+            entries.map(async (entry) => {
+                if (!entry.client) return null;
+                const repo = new SupabaseUserRepository(entry.client);
+                const user = await repo.findByUsername(username);
+                if (!user) return null;
+                return {
+                    tenantId: entry.id,
+                    tenantName: entry.name,
+                    username: user.username,
+                    roles: (user.roles || []).map(r => r.nombre || r.name || r.id || r),
+                };
+            }),
+        );
+        return results
+            .filter(r => r.status === 'fulfilled' && r.value !== null)
+            .map(r => r.value);
     }
 
     processPrompt = async(req, res, next) => {
@@ -65,6 +100,40 @@ export class LLMController {
                 availableTenants: jwtAvailableTenants,
                 institutionName,
             };
+
+            // ── INSTITUTION LOOKUP SHORT-CIRCUIT ──────────────────────────────────
+            // Detect "¿En cuántas instituciones estoy?" and answer directly without LLM.
+            if (this._isInstitutionLookupIntent(value.prompt)) {
+                const username = req.user?.username || null;
+                if (!username) {
+                    return res.json({
+                        success: true,
+                        data: {
+                            response: '❌ No se pudo determinar tu nombre de usuario. Inicia sesión nuevamente.',
+                            respuesta_texto: '❌ No se pudo determinar tu nombre de usuario. Inicia sesión nuevamente.',
+                        },
+                    });
+                }
+                try {
+                    const found = await this._lookupUserInstitutions(username);
+                    let response;
+                    if (found.length === 0) {
+                        response = `No se encontró el usuario **${username}** en ninguna institución registrada.`;
+                    } else {
+                        const list = found.map((f, i) =>
+                            `${i + 1}. **${f.tenantName}** — Roles: ${Array.isArray(f.roles) && f.roles.length > 0 ? f.roles.join(', ') : 'Sin roles asignados'}`,
+                        ).join('\n');
+                        response = `🏛️ El usuario **${username}** está registrado en **${found.length}** institución(es):\n\n${list}`;
+                    }
+                    return res.json({
+                        success: true,
+                        data: { response, respuesta_texto: response },
+                    });
+                } catch (lookupErr) {
+                    console.error('[LLM] Institution lookup error:', lookupErr.message);
+                    // Fall through to normal LLM processing
+                }
+            }
 
             // Detect Excel generation intent for student progress and generate the file proactively
             let excelUrl = null;

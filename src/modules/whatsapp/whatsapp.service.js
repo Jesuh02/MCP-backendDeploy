@@ -28,6 +28,7 @@ import {
     MESSAGES,
 } from '../../utils/whatsappFormatter.js';
 import { getAllTenantEntries, TENANT_CONFIGS, runInTenantContext, getTenantClient, getCurrentTenantId } from '../../config/tenantRegistry.js';
+import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
 
 /** Key used to persist the user's selected query-tenant in conversationContext. */
 const TENANT_SEL_PREFIX = '__TENANT_SEL__:';
@@ -784,6 +785,9 @@ export class WhatsAppDomainService {
                     case 'MY_PROGRESS':
                         response = await this._handleMyProgress(user);
                         break;
+                    case 'MY_INSTITUTIONS':
+                        response = await this._handleMyInstitutions(user);
+                        break;
                     case 'GENERAL_QUESTION':
                     default:
                         response = await this._handleGeneralQuestion(text, session, user, userRoles);
@@ -1109,6 +1113,10 @@ export class WhatsAppDomainService {
         if (text.startsWith('/ayuda')) return { intent: 'HELP', requiresRole: null };
         if (text.startsWith('/desvincular')) return { intent: 'UNLINK', requiresRole: null };
         if (text.startsWith('/mi_progreso')) return { intent: 'MY_PROGRESS', requiresRole: null };
+        if (text.startsWith('/mis_instituciones')) return { intent: 'MY_INSTITUTIONS', requiresRole: null };
+
+        // 1b. Heuristic: institution lookup question
+        if (this._isInstitutionLookupIntent(text)) return { intent: 'MY_INSTITUTIONS', requiresRole: null };
 
         // 2. Detección explícita de intención de calificar — en casos ambiguos
         // consultamos al LLM para evitar falsos positivos.  Palabras que indican
@@ -1164,6 +1172,10 @@ export class WhatsAppDomainService {
     _isProgressIntent(text) {
         const keywords = ['progreso', 'avance', 'cómo van', 'como van', 'mi progreso'];
         return keywords.some(kw => text.includes(kw));
+    }
+
+    _isInstitutionLookupIntent(text) {
+        return /\b(cu[aá]ntas?\s+instituciones|en\s+qu[eé]\s+instituciones|mis\s+instituciones|instituciones\s+pertenezco|instituciones\s+estoy|a\s+qu[eé]\s+instituciones|pertenezco\s+a\s+(?:cu[aá]ntas?|qu[eé])\s+instituciones)\b/i.test(text);
     }
 
     _isMCPIntent(text) {
@@ -1470,6 +1482,45 @@ export class WhatsAppDomainService {
         } catch (error) {
             console.error('[WhatsApp] Error fetching my progress:', error.message);
             return '❌ Error al consultar tu progreso. Intenta de nuevo.';
+        }
+    }
+
+    /**
+     * Handler: ¿En cuántas instituciones estoy?
+     * Searches the user's username across ALL tenant databases.
+     */
+    async _handleMyInstitutions(user) {
+        try {
+            const username = user?.username;
+            if (!username) return '❌ No se pudo determinar tu nombre de usuario.';
+
+            const entries = getAllTenantEntries();
+            const results = await Promise.allSettled(
+                entries.map(async (entry) => {
+                    if (!entry.client) return null;
+                    const repo = new SupabaseUserRepository(entry.client);
+                    const found = await repo.findByUsername(username);
+                    if (!found) return null;
+                    return {
+                        tenantName: entry.name,
+                        roles: (found.roles || []).map(r => r.nombre || r.name || r.id || r),
+                    };
+                }),
+            );
+            const found = results
+                .filter(r => r.status === 'fulfilled' && r.value !== null)
+                .map(r => r.value);
+
+            if (found.length === 0) {
+                return `No se encontró el usuario *${username}* en ninguna institución registrada.`;
+            }
+            const list = found.map((f, i) =>
+                `${i + 1}. *${f.tenantName}* — Roles: ${Array.isArray(f.roles) && f.roles.length > 0 ? f.roles.join(', ') : 'Sin roles'}`,
+            ).join('\n');
+            return `🏛️ El usuario *${username}* está registrado en *${found.length}* institución(es):\n\n${list}`;
+        } catch (error) {
+            console.error('[WhatsApp] Error in institution lookup:', error.message);
+            return '❌ Error al buscar instituciones. Intenta de nuevo.';
         }
     }
 
