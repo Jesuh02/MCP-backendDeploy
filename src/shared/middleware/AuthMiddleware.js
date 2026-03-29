@@ -76,7 +76,11 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
         const { valid, decoded, error } = jwtAdapter.verifyAccessToken(token);
 
         if (!valid) {
-            return next(new UnauthorizedError(`Token inválido: ${error}`));
+            const err = new UnauthorizedError(`Token inválido: ${error}`);
+            if (error && error.includes('expirado')) {
+                err.silent = true; // Token expirado es un caso esperado — no loguear warning
+            }
+            return next(err);
         }
 
         // ── Inyectar usuario autenticado ──
