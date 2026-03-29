@@ -38,20 +38,85 @@ export class MCPService {
     /**
      * Executes a raw SQL query on the active tenant's Supabase project
      * via the `execute_sql` RPC function.
+     *
+     * If the RPC doesn't exist (e.g. new tenant DB), attempts to auto-create it
+     * via a direct Postgres connection (TENANT_<ID>_DATABASE_URL) and retry.
      */
     async _executeRawSQL(sqlQuery) {
         const client = this._tenantClient;
         if (sqlQuery.trim().endsWith(';')) sqlQuery = sqlQuery.trim().slice(0, -1);
-        logger.info('🔍 [MCPService._executeRawSQL] Executing on tenant:', getCurrentTenantId() || 'default');
+        const tenantId = getCurrentTenantId() || 'default';
+        logger.info('🔍 [MCPService._executeRawSQL] Executing on tenant:', tenantId);
         const { data, error } = await client.rpc('execute_sql', { query: sqlQuery });
         if (error) {
             // Surface SQL errors directly so the LLM can self-correct
-            if (error.code !== 'PGRST202' && !error.message?.includes('not found')) {
+            if (error.code !== 'PGRST202' && !error.message?.includes('not found') && !error.message?.includes('schema cache')) {
                 throw new Error(`SQL Error: ${error.message}`);
             }
-            throw new Error(`RPC execute_sql unavailable: ${error.message}`);
+
+            // execute_sql function doesn't exist — try to auto-create it
+            logger.warn(`[MCPService] execute_sql not found on tenant '${tenantId}', attempting auto-provision...`);
+            const provisioned = await this._autoProvisionExecuteSql(tenantId);
+            if (provisioned) {
+                // Retry after provisioning
+                const retry = await client.rpc('execute_sql', { query: sqlQuery });
+                if (!retry.error) return retry.data;
+                throw new Error(`SQL Error after auto-provision: ${retry.error.message}`);
+            }
+            throw new Error(`RPC execute_sql unavailable on tenant '${tenantId}': ${error.message}. Run scripts/migration_execute_sql_function.sql on this tenant's Supabase SQL Editor, or set TENANT_${tenantId.toUpperCase()}_DATABASE_URL for auto-provisioning.`);
         }
         return data;
+    }
+
+    /**
+     * Attempts to create the execute_sql function on a tenant DB via direct Postgres connection.
+     * Looks for TENANT_<ID>_DATABASE_URL or DATABASE_URL (for primary) env vars.
+     * @private
+     * @param {string} tenantId
+     * @returns {Promise<boolean>} true if the function was created successfully
+     */
+    async _autoProvisionExecuteSql(tenantId) {
+        // Already attempted? Don't retry during this process lifecycle
+        if (!this._provisionAttempts) this._provisionAttempts = new Set();
+        if (this._provisionAttempts.has(tenantId)) return false;
+        this._provisionAttempts.add(tenantId);
+
+        // Find the DATABASE_URL for this tenant
+        const envKey = `TENANT_${tenantId.toUpperCase().replace(/-/g, '_')}_DATABASE_URL`;
+        const dbUrl = process.env[envKey] || (tenantId === 'qa-develop' ? process.env.DATABASE_URL : null);
+
+        if (!dbUrl) {
+            logger.warn(`[MCPService] No ${envKey} configured — cannot auto-provision execute_sql. Set it in Railway environment variables.`);
+            return false;
+        }
+
+        let pgClient;
+        try {
+            const { default: pkg } = await import('pg');
+            const { Client } = pkg;
+            pgClient = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+            await pgClient.connect();
+
+            await pgClient.query(`
+                CREATE OR REPLACE FUNCTION public.execute_sql(query text)
+                RETURNS json LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+                DECLARE result json;
+                BEGIN
+                    EXECUTE format('SELECT COALESCE(json_agg(t), ''[]''::json) FROM (%s) t', query) INTO result;
+                    RETURN COALESCE(result, '[]'::json);
+                END; $$;
+            `);
+            await pgClient.query(`GRANT EXECUTE ON FUNCTION public.execute_sql(text) TO authenticated;`);
+            await pgClient.query(`GRANT EXECUTE ON FUNCTION public.execute_sql(text) TO service_role;`);
+
+            logger.info(`✅ [MCPService] Auto-provisioned execute_sql on tenant '${tenantId}'`);
+            return true;
+        } catch (err) {
+            logger.error(`❌ [MCPService] Auto-provision execute_sql failed on '${tenantId}': ${err.message}`);
+            return false;
+        } finally {
+            if (pgClient) { try { await pgClient.end(); } catch (_) { /* ignore */ } }
+        }
     }
 
     /**
@@ -79,14 +144,16 @@ export class MCPService {
      */
     async getDynamicSchema() {
         const now = Date.now();
+        const tenantId = getCurrentTenantId() || 'default';
 
-        // Return cached schema if still valid
-        if (this._schemaCache && (now - this._schemaCacheTime) < this._schemaCacheTTL) {
-            logger.info('📋 Using cached database schema');
-            return this._schemaCache;
+        // Per-tenant schema caching
+        const tenantCache = this._tenantSchemaCaches.get(tenantId);
+        if (tenantCache && (now - tenantCache.time) < this._schemaCacheTTL) {
+            logger.info(`📋 Using cached database schema for tenant '${tenantId}'`);
+            return tenantCache.schema;
         }
 
-        logger.info('🔄 Fetching fresh database schema from Supabase...');
+        logger.info(`🔄 Fetching fresh database schema from Supabase (tenant: ${tenantId})...`);
 
         try {
             // New query requested by user to get full DDL details
@@ -156,11 +223,10 @@ export class MCPService {
             schemaText += `- videos.course_id → courses.id\n`;
             schemaText += `\n**⚠️ CADENA CORRECTA PARA TAREAS→CURSOS:** tasks.topic_id → topics.materia_id → subjects.id → subjects.course_id → courses.id\n`;
 
-            // Cache the result
-            this._schemaCache = schemaText;
-            this._schemaCacheTime = now;
+            // Cache the result per-tenant
+            this._tenantSchemaCaches.set(tenantId, { schema: schemaText, time: now });
 
-            logger.info(`✅ Schema loaded: ${result.length} tables found`);
+            logger.info(`✅ Schema loaded for tenant '${tenantId}': ${result.length} columns found`);
             return schemaText;
 
         } catch (error) {
