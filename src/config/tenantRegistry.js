@@ -137,6 +137,11 @@ export function getTenantClient(tenantId) {
     return tenantClients.get(tenantId) || defaultClient;
 }
 
+/** Returns true if there is a dedicated client for the given tenantId. */
+export function hasTenantClient(tenantId) {
+    return tenantClients.has(tenantId);
+}
+
 /** Returns the client for the current request via AsyncLocalStorage. */
 export function getCurrentTenantClient() {
     const store = tenantContext.getStore();
@@ -178,6 +183,11 @@ export function createTenantAwareProxy(fallbackClient) {
  * @returns {Promise<T>}
  */
 export function runInTenantContext(tenantId, fn) {
+    if (!hasTenantClient(tenantId)) {
+        return Promise.reject(
+            new Error(`[TenantRegistry] No dedicated client for tenant "${tenantId}". Available: ${TENANT_CONFIGS.map(t => t.id).join(', ')}`),
+        );
+    }
     const client = getTenantClient(tenantId);
     return new Promise((resolve, reject) => {
         tenantContext.run({ tenantId, client }, () => {
