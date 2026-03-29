@@ -355,6 +355,11 @@ export class WhatsAppDomainService {
             let session = null;
             let sessionTenantId = 'qa-develop';
 
+            // sessionIsMultiTenant = true only when this phone number genuinely
+            // has sessions in MORE THAN ONE tenant.  A user linked to a single
+            // institution should never see the institution-selection menu.
+            let sessionIsMultiTenant = false;
+
             if (this.crossTenantSessionRepo) {
                 const crossResult = await this.crossTenantSessionRepo.findByPhoneNumber(from);
 
@@ -362,6 +367,7 @@ export class WhatsAppDomainService {
                     // Phone exists in multiple tenant DBs.  We will ask the user which
                     // institution they want to query after identifying the session.
                     // Use the first active session as the authoritative session tenant.
+                    sessionIsMultiTenant = true;
                     const activeCross = crossResult.filter(m => m.session.isActive);
                     const primaryMatch = activeCross[0] || crossResult[0];
                     session = primaryMatch?.session ?? null;
@@ -415,7 +421,7 @@ export class WhatsAppDomainService {
             // and may differ from the "session tenant" when the user explicitly requests
             // a different institution or has accounts in multiple tenants.
             const queryTenantId = await runInTenantContext(sessionTenantId, async () => {
-                return this._resolveQueryTenant(from, text, session, sessionTenantId);
+                return this._resolveQueryTenant(from, text, session, sessionTenantId, sessionIsMultiTenant);
             });
 
             // If _resolveQueryTenant sent a menu/reply and returned null, stop here.
@@ -455,7 +461,7 @@ export class WhatsAppDomainService {
      * @param {string} sessionTenantId - Tenant where the session is stored.
      * @returns {Promise<string|null>} tenantId, or null if a menu was sent.
      */
-    async _resolveQueryTenant(from, text, session, sessionTenantId) {
+    async _resolveQueryTenant(from, text, session, sessionTenantId, isMultiTenant = false) {
         const availableTenants = TENANT_CONFIGS.map(t => ({ id: t.id, name: t.name }));
 
         // Allow user to explicitly request a different institution at any time
@@ -473,8 +479,11 @@ export class WhatsAppDomainService {
             return storedTenant;
         }
 
-        // Single tenant — use session tenant directly
-        if (availableTenants.length <= 1) {
+        // If the user's phone number exists in only ONE tenant, skip the
+        // institution-selection menu entirely and use the session tenant directly.
+        // `isMultiTenant` is true only when the cross-tenant lookup returned sessions
+        // from more than one database for this phone number.
+        if (!isMultiTenant || availableTenants.length <= 1) {
             return sessionTenantId;
         }
 
