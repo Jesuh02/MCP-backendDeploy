@@ -23,6 +23,12 @@ export class AuthService {
             user = await this.userRepo.create({ username, email, password: hashedPassword, passwordFingerprint, persona, personaId });
         } catch (dbErr) {
             console.error('[AuthService] register DB error:', dbErr.message);
+            if (dbErr.message?.includes('usuarios_usuario_key')) {
+                return Result.fail(new ConflictError('Usuario', username));
+            }
+            if (dbErr.message?.includes('usuarios_email_key') || dbErr.message?.includes('duplicate key') && dbErr.message?.includes('email')) {
+                return Result.fail(new ConflictError('Email', email));
+            }
             return Result.fail(new ValidationError(dbErr.message));
         }
 
