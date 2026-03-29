@@ -2,11 +2,31 @@
  * Supabase Service
  * Handles all database operations with Supabase
  * Implements singleton pattern for connection reuse
+ *
+ * Auto-heals a misconfigured SUPABASE_URL by deriving the correct project URL
+ * from the JWT `ref` claim in the service key. This prevents silent failures
+ * when SUPABASE_URL does not match the actual project of the provided key.
  */
 
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '../logging/Logger.js';
 import { R2StorageAdapter } from '../../modules/storage/infrastructure/r2.storage.adapter.js';
+
+/**
+ * Decodes a Supabase JWT and returns the project ref claim (e.g. "abc123").
+ * Returns null if the key is absent or cannot be decoded.
+ */
+function extractProjectRef(jwtKey) {
+    if (!jwtKey) return null;
+    try {
+        const [, payload] = jwtKey.split('.');
+        if (!payload) return null;
+        const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+        return decoded.ref || null;
+    } catch {
+        return null;
+    }
+}
 
 export class SupabaseService {
     static instance = null;
@@ -16,16 +36,30 @@ export class SupabaseService {
             return SupabaseService.instance;
         }
 
-        const supabaseUrl = process.env.SUPABASE_URL;
+        const configuredUrl = process.env.SUPABASE_URL;
         const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
 
-        if (!supabaseUrl || !supabaseKey) {
+        if (!configuredUrl || !supabaseKey) {
             console.error('❌ Supabase credentials missing!');
             console.error('   Required environment variables:');
-            console.error('   - SUPABASE_URL (current:', supabaseUrl ? 'SET' : 'NOT SET', ')');
+            console.error('   - SUPABASE_URL (current:', configuredUrl ? 'SET' : 'NOT SET', ')');
             console.error('   - SUPABASE_SERVICE_KEY or SUPABASE_KEY (current:', supabaseKey ? 'SET' : 'NOT SET', ')');
             console.error('   Configure these in Railway Dashboard > Variables');
             throw new Error('Supabase credentials not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY/SUPABASE_KEY in Railway environment variables');
+        }
+
+        // Auto-heal: the JWT service key's `ref` claim is the authoritative project identifier.
+        // If SUPABASE_URL points to the wrong project, derive and use the correct URL instead.
+        const derivedRef = extractProjectRef(supabaseKey);
+        const derivedUrl = derivedRef ? `https://${derivedRef}.supabase.co` : null;
+        const supabaseUrl = (derivedUrl && derivedUrl !== configuredUrl) ? derivedUrl : configuredUrl;
+
+        if (supabaseUrl !== configuredUrl) {
+            logger.warn(
+                `[SupabaseService] SUPABASE_URL mismatch detected. ` +
+                `Configured: ${configuredUrl}, derived from key: ${supabaseUrl}. ` +
+                `Using derived URL. Update SUPABASE_URL in Railway to remove this warning.`,
+            );
         }
 
         this.client = createClient(supabaseUrl, supabaseKey, {
