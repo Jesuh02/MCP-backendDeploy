@@ -16,7 +16,7 @@
  */
 import { Result } from '../../shared/Result.js';
 import { UnauthorizedError } from '../../shared/errors/index.js';
-import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
+import { SupabaseUserRepository, hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
 import { SupabaseInstitucionRepository } from '../institucion/infrastructure/supabase.institucion.repository.js';
 import { SupabasePersonaRepository } from '../persona/infrastructure/supabase.persona.repository.js';
 import { getAllTenantEntries } from '../../config/tenantRegistry.js';
@@ -59,6 +59,38 @@ export class CrossTenantAuthService {
         );
 
         return this._resolveMatches(results, 'Usuario no encontrado en ninguna institución');
+    }
+
+    /**
+     * Verifica que la contraseña no esté ya en uso en NINGÚN tenant.
+     * Consulta el fingerprint HMAC en paralelo en todas las bases de datos
+     * registradas. Si el fingerprint no está en la DB (columna no creada aún)
+     * la operación falla abierta (permite el registro).
+     *
+     * @param {string} password  Contraseña en texto plano enviada por el usuario.
+     * @returns {Result<{ available: boolean }>}
+     */
+    async checkPasswordUniqueness(password) {
+        if (!password) return Result.ok({ available: true });
+        const fingerprint = hashPasswordFingerprint(password);
+        if (!fingerprint) return Result.ok({ available: true });
+
+        const entries = getAllTenantEntries();
+        const checks = await Promise.all(
+            entries.map(async (entry) => {
+                if (!entry.client) return false;
+                try {
+                    const userRepo = new SupabaseUserRepository(entry.client);
+                    const existing = await userRepo.findByPasswordFingerprint(fingerprint);
+                    return !!existing;
+                } catch {
+                    return false; // fail open si la columna no existe
+                }
+            }),
+        );
+
+        const isUsed = checks.some(Boolean);
+        return Result.ok({ available: !isUsed });
     }
 
     // ──────────── Private helpers ────────────

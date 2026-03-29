@@ -1,5 +1,5 @@
 import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema, googleLoginSchema } from './auth.schemas.js';
-import { ValidationError } from '../../shared/errors/index.js';
+import { ValidationError, ConflictError } from '../../shared/errors/index.js';
 
 function parseGoogleTokenPayload(idToken) {
     const [, payload] = idToken.split('.');
@@ -36,9 +36,28 @@ export class AuthController {
         try {
             const { error, value } = registerSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
+
+            // Check password uniqueness across all tenants before creating the account
+            if (this.crossTenantAuthService && value.password) {
+                const uniqueCheck = await this.crossTenantAuthService.checkPasswordUniqueness(value.password);
+                if (!uniqueCheck.isFail() && !uniqueCheck.getValue().available) {
+                    return next(new ConflictError('Contraseña', 'ya está en uso por otro usuario'));
+                }
+            }
+
             const result = await this.authService.register(value);
             if (result.isFail()) return next(result.getError());
             res.status(201).json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    checkPassword = async(req, res, next) => {
+        try {
+            const { password } = req.body;
+            if (!password) return res.json({ success: true, data: { available: true } });
+            const result = await this.crossTenantAuthService.checkPasswordUniqueness(password);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
 

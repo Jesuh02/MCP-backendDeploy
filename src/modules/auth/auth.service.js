@@ -1,5 +1,6 @@
 import { Result } from '../../shared/Result.js';
 import { UnauthorizedError, ConflictError, ValidationError, NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
+import { hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
 
 export class AuthService {
     constructor({ userRepository, jwtAdapter, institucionRepository }) {
@@ -16,9 +17,10 @@ export class AuthService {
         if (existingEmail) return Result.fail(new ConflictError('Email', email));
 
         const hashedPassword = await this.jwt.hashPassword(password);
+        const passwordFingerprint = hashPasswordFingerprint(password);
         let user;
         try {
-            user = await this.userRepo.create({ username, email, password: hashedPassword, persona, personaId });
+            user = await this.userRepo.create({ username, email, password: hashedPassword, passwordFingerprint, persona, personaId });
         } catch (dbErr) {
             console.error('[AuthService] register DB error:', dbErr.message);
             return Result.fail(new ValidationError(dbErr.message));

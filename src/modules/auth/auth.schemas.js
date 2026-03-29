@@ -52,6 +52,12 @@ export const changePasswordSchema = Joi.object({
     newPassword: Joi.string().min(6).max(128).required(),
 });
 
+export const checkPasswordSchema = Joi.object({
+    password: Joi.string().min(1).required().messages({
+        'any.required': 'La contraseña es requerida',
+    }),
+});
+
 export const googleLoginSchema = Joi.object({
     email: Joi.string().email().optional().messages({
         'string.email': 'Email inválido',
