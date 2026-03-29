@@ -31,6 +31,11 @@ export class ChatMessageDomainService {
         return Result.ok(messages);
     }
 
+    async getByUserAndOrigin(usuarioId, origin, pagination) {
+        const messages = await this.chatMessageRepo.findByUserAndOrigin(usuarioId, origin, pagination);
+        return Result.ok(messages);
+    }
+
     async create(data) {
         const created = await this.chatMessageRepo.create(data);
         return Result.ok(created);

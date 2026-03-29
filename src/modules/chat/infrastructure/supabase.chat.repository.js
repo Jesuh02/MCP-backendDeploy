@@ -19,7 +19,7 @@ export class SupabaseChatMessageRepository {
         return this._mapToDomain(data);
     }
 
-    async findBySession(sessionId, { offset = 0, limit = 100 } = {}) {
+    async findBySession(sessionId, { offset = 0, limit = 500 } = {}) {
         const { data, error } = await this.client
             .from('chat_messages')
             .select('*')
@@ -30,12 +30,24 @@ export class SupabaseChatMessageRepository {
         return (data || []).map(row => this._mapToDomain(row));
     }
 
-    async findByUser(usuarioId, { offset = 0, limit = 50 } = {}) {
+    async findByUser(usuarioId, { offset = 0, limit = 200 } = {}) {
         const { data, error } = await this.client
             .from('chat_messages')
             .select('*')
             .eq('usuario_id', usuarioId)
             .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+        if (error) throw new Error(error.message);
+        return (data || []).map(row => this._mapToDomain(row));
+    }
+
+    async findByUserAndOrigin(usuarioId, origin, { offset = 0, limit = 500 } = {}) {
+        const { data, error } = await this.client
+            .from('chat_messages')
+            .select('*')
+            .eq('usuario_id', usuarioId)
+            .eq('origin', origin)
+            .order('timestamp', { ascending: true })
             .range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
         return (data || []).map(row => this._mapToDomain(row));
@@ -56,6 +68,15 @@ export class SupabaseChatMessageRepository {
             is_error: messageData.isError ?? false,
             is_graph_response: messageData.isGraphResponse ?? false,
             origin: messageData.origin ?? null,
+            wa_message_id: messageData.waMessageId ?? null,
+            message_type: messageData.messageType ?? 'text',
+            status: messageData.status ?? 'sent',
+            submission_id: messageData.submissionId ?? null,
+            excel_url: messageData.excelUrl ?? null,
+            attached_file_url: messageData.attachedFileUrl ?? null,
+            attached_file_name: messageData.attachedFileName ?? null,
+            attached_file_type: messageData.attachedFileType ?? null,
+            sender_avatar: messageData.senderAvatar ?? null,
         };
 
         const { data, error } = await this.client
@@ -82,6 +103,15 @@ export class SupabaseChatMessageRepository {
             is_error: messageData.isError ?? false,
             is_graph_response: messageData.isGraphResponse ?? false,
             origin: messageData.origin ?? null,
+            wa_message_id: messageData.waMessageId ?? null,
+            message_type: messageData.messageType ?? 'text',
+            status: messageData.status ?? 'sent',
+            submission_id: messageData.submissionId ?? null,
+            excel_url: messageData.excelUrl ?? null,
+            attached_file_url: messageData.attachedFileUrl ?? null,
+            attached_file_name: messageData.attachedFileName ?? null,
+            attached_file_type: messageData.attachedFileType ?? null,
+            sender_avatar: messageData.senderAvatar ?? null,
         };
         // If a remote id is provided, update the existing row; otherwise insert a new one.
         if (messageData.id && typeof messageData.id === 'number') {
@@ -148,6 +178,16 @@ export class SupabaseChatMessageRepository {
             isTyping: row.is_typing,
             isError: row.is_error,
             isGraphResponse: row.is_graph_response,
+            origin: row.origin,
+            waMessageId: row.wa_message_id,
+            messageType: row.message_type,
+            status: row.status,
+            submissionId: row.submission_id,
+            excelUrl: row.excel_url,
+            attachedFileUrl: row.attached_file_url,
+            attachedFileName: row.attached_file_name,
+            attachedFileType: row.attached_file_type,
+            senderAvatar: row.sender_avatar,
             createdAt: row.created_at,
         };
     }
