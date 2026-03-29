@@ -3,6 +3,7 @@ import { Router } from 'express';
 export function institucionRoutes({ institucionController }) {
     const router = Router();
 
+    router.get('/cross-tenant', institucionController.listAllTenants);
     router.get('/', institucionController.list);
     router.get('/search', institucionController.search);
     router.get('/:id', institucionController.getById);

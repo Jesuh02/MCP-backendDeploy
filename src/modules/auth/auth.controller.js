@@ -1,5 +1,6 @@
 import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema, googleLoginSchema } from './auth.schemas.js';
 import { ValidationError, ConflictError } from '../../shared/errors/index.js';
+import { runInTenantContext, getTenantClient, TENANT_CONFIGS } from '../../config/tenantRegistry.js';
 
 function parseGoogleTokenPayload(idToken) {
     const [, payload] = idToken.split('.');
@@ -37,6 +38,13 @@ export class AuthController {
             const { error, value } = registerSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
 
+            // Validate tenantId if provided — must be a registered tenant
+            const requestedTenant = value.tenantId?.trim() || null;
+            if (requestedTenant) {
+                const known = TENANT_CONFIGS.find(t => t.id === requestedTenant);
+                if (!known) return next(new ValidationError(`Tenant desconocido: ${requestedTenant}`));
+            }
+
             // Check password uniqueness across all tenants before creating the account
             if (this.crossTenantAuthService && value.password) {
                 const uniqueCheck = await this.crossTenantAuthService.checkPasswordUniqueness(value.password);
@@ -45,7 +53,12 @@ export class AuthController {
                 }
             }
 
-            const result = await this.authService.register(value);
+            // Route registration to the correct tenant database
+            const doRegister = () => this.authService.register(value);
+            const result = requestedTenant
+                ? await runInTenantContext(requestedTenant, doRegister)
+                : await doRegister();
+
             if (result.isFail()) return next(result.getError());
             res.status(201).json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

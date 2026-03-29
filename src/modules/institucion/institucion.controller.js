@@ -1,5 +1,7 @@
 import Joi from 'joi';
 import { ValidationError } from '../../shared/errors/index.js';
+import { getAllTenantEntries } from '../../config/tenantRegistry.js';
+import { SupabaseInstitucionRepository } from './infrastructure/supabase.institucion.repository.js';
 
 const createSchema = Joi.object({
     nombre: Joi.string().min(2).max(200).required(),
@@ -76,6 +78,32 @@ export class InstitucionController {
             const result = await this.service.delete(parseInt(req.params.id));
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * Returns institutions from ALL registered tenants, each tagged with tenantId.
+     * Used by registration forms to let the user pick their institution regardless
+     * of which Supabase project it lives in.
+     */
+    listAllTenants = async (req, res, next) => {
+        try {
+            const entries = getAllTenantEntries();
+            const perTenant = await Promise.all(
+                entries.map(async (entry) => {
+                    if (!entry.client) return [];
+                    try {
+                        const repo = new SupabaseInstitucionRepository(entry.client);
+                        const items = await repo.findAll({ limit: 500 });
+                        return items.map(inst => ({ ...inst, tenantId: entry.id }));
+                    } catch {
+                        return [];
+                    }
+                }),
+            );
+            // Flatten: institutions from all tenants in a single array, sorted by name
+            const all = perTenant.flat().sort((a, b) => a.nombre.localeCompare(b.nombre));
+            res.json({ success: true, data: all });
         } catch (err) { next(err); }
     };
 }
