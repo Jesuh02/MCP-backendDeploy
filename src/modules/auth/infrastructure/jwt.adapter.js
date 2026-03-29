@@ -30,6 +30,8 @@ export class JWTAdapter {
                 userId: payload.userId,
                 username: payload.username,
                 roles: payload.roles || [],
+                tenantId: payload.tenantId || null,
+                availableTenants: payload.availableTenants || (payload.tenantId ? [payload.tenantId] : []),
                 type: 'access',
             },
             ACCESS_TOKEN_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY }
@@ -45,6 +47,8 @@ export class JWTAdapter {
             return jwt.sign({
                     userId: payload.userId,
                     username: payload.username,
+                    tenantId: payload.tenantId || null,
+                    availableTenants: payload.availableTenants || (payload.tenantId ? [payload.tenantId] : []),
                     type: 'refresh',
                 },
                 REFRESH_TOKEN_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY }

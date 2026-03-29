@@ -27,6 +27,12 @@ import {
     formatProgressReport,
     MESSAGES,
 } from '../../utils/whatsappFormatter.js';
+import { getAllTenantEntries, TENANT_CONFIGS, runInTenantContext, getTenantClient } from '../../config/tenantRegistry.js';
+
+/** Key used to persist the user's selected query-tenant in conversationContext. */
+const TENANT_SEL_PREFIX = '__TENANT_SEL__:';
+/** Key used to signal that the bot is waiting for institution selection. */
+const PENDING_SEL_CONTENT = '__PENDING_TENANT_SEL__';
 
 export class WhatsAppDomainService {
     /**
@@ -35,6 +41,7 @@ export class WhatsAppDomainService {
     constructor({
         whatsAppPort,
         whatsAppSessionRepo,
+        crossTenantSessionRepo,
         userRepository,
         rolRepository,
         mcpDomainService,
@@ -47,6 +54,8 @@ export class WhatsAppDomainService {
     }) {
         this.whatsAppPort = whatsAppPort;
         this.sessionRepo = whatsAppSessionRepo;
+        /** @type {import('./infrastructure/cross-tenant-whatsapp-session.repository.js').CrossTenantWhatsAppSessionRepository} */
+        this.crossTenantSessionRepo = crossTenantSessionRepo;
         this.userRepo = userRepository;
         this.rolRepo = rolRepository;
         this.mcpService = mcpDomainService;
@@ -340,42 +349,40 @@ export class WhatsAppDomainService {
                 console.log(`[WhatsApp] text after sanitization: '${text}'`);
             }
 
-            // 4. Buscar sesión activa por número de teléfono
-            let session = await this.sessionRepo.findByPhoneNumber(from);
-            console.log('[WhatsApp] session lookup result initial:', !!session, session && { id: session.id, userId: session.userId, phoneNumber: session.phoneNumber, isActive: session.isActive });
+            // 4. Session lookup across ALL tenant databases.
+            //    WebHook requests carry no JWT so TenantMiddleware sets the default
+            //    tenant.  We must probe every tenant to find where this phone lives.
+            let session = null;
+            let sessionTenantId = 'qa-develop';
 
-            // If no session was found, try adding a default country code (e.g. +57)
-            // or stripping leading plus in case the stored record has a different
-            // prefix.  This helps when the user linked using a local number or the
-            // provider delivers the "from" value without the country code.
-            if (!session) {
-                // try using configured default country code or infer one from the
-        // business phone number if none was explicitly provided.  This fixes
-        // scenarios where the incoming "from" value lacks "+57" (or any CC)
-        // and the session lookup would otherwise miss because the stored entry
-        // is E.164.
-        const defaultCC = this._getDefaultCountryCode();
-        if (defaultCC) {
-            let alt = from;
-            // remove leading + if present then prefix defaultCC
-            alt = `+${defaultCC}${alt.replace(/^\+/, '')}`;
-            session = await this.sessionRepo.findByPhoneNumber(alt);
-            if (session) {
-                console.log('[WhatsApp] session found using default country code alt=', alt);
-            }
-        }
+            if (this.crossTenantSessionRepo) {
+                const crossResult = await this.crossTenantSessionRepo.findByPhoneNumber(from);
+
+                if (Array.isArray(crossResult)) {
+                    // Phone exists in multiple tenant DBs.  We will ask the user which
+                    // institution they want to query after identifying the session.
+                    // Use the first active session as the authoritative session tenant.
+                    const activeCross = crossResult.filter(m => m.session.isActive);
+                    const primaryMatch = activeCross[0] || crossResult[0];
+                    session = primaryMatch?.session ?? null;
+                    sessionTenantId = primaryMatch?.tenantId ?? 'qa-develop';
+                } else if (crossResult) {
+                    session = crossResult.session;
+                    sessionTenantId = crossResult.tenantId;
+                }
+            } else {
+                // Fallback: single-tenant mode (crossTenantSessionRepo not wired)
+                session = await this.sessionRepo.findByPhoneNumber(from);
             }
 
-            // If we found a session but the stored phone number differs from the
-            // normalized incoming number, update the record so future lookups are
-            // exact.  This keeps the database in sync with what WhatsApp actually
-            // reports (which may include +57 even when user linked without it).
+            console.log('[WhatsApp] cross-tenant session lookup:', !!session, session && { id: session.id, tenantId: sessionTenantId, isActive: session?.isActive });
+
+            // Normalize phone number in session if it differs from incoming value
             if (session && session.phoneNumber && session.phoneNumber !== from) {
                 try {
                     await this.sessionRepo.update(session.id, { phone_number: from });
-                    console.log('[WhatsApp] updated session phoneNumber to', from);
                 } catch (e) {
-                    console.warn('[WhatsApp] could not update session phoneNumber', e && e.message);
+                    console.warn('[WhatsApp] phone normalize update failed:', e?.message);
                 }
             }
 
@@ -398,24 +405,188 @@ export class WhatsAppDomainService {
             }
 
             if (!session || !session.isActive) {
-                // Try fallbacks: sometimes phone stored without + or other formatting
                 console.warn('[WhatsApp] Session not found or inactive for', from);
-                if (process.env.WHATSAPP_DEBUG === 'true') {
-                    const inferredCC = this._getDefaultCountryCode();
-                    console.log('[WhatsApp] debug session lookup details: inferredCC=', inferredCC);
-                }
                 await this._sendReply(from, MESSAGES.NOT_LINKED);
                 return;
             }
 
-            // 5. Obtener usuario y roles
-            const user = await this.userRepo.findById(session.userId);
-            if (!user) {
-                await this._sendReply(from, MESSAGES.NOT_LINKED);
-                return;
-            }
+            // ── Institution (tenant) selection ─────────────────────────────────────
+            // Determine which tenant the LLM should query. This is the "query tenant"
+            // and may differ from the "session tenant" when the user explicitly requests
+            // a different institution or has accounts in multiple tenants.
+            const queryTenantId = await runInTenantContext(sessionTenantId, async () => {
+                return this._resolveQueryTenant(from, text, session, sessionTenantId);
+            });
 
-            const userRoles = (user.roles || []).map(r => r.id || r.rol_id || r);
+            // If _resolveQueryTenant sent a menu/reply and returned null, stop here.
+            if (queryTenantId === null) return;
+
+            // ── Wrap the rest of message processing in the resolved query tenant ──
+            // All repository calls below (userRepo, courseRepo, progressRepo, mcpService…)
+            // will transparently route to the selected institution's Supabase database.
+            await runInTenantContext(queryTenantId, () =>
+                this._processMessageWithTenant(from, text, messageBody, waMessageId, session, sessionTenantId, queryTenantId),
+            );
+        } catch (error) {
+            console.error('[WhatsAppDomainService] Error handling message:', error);
+            await this._sendReply(from, MESSAGES.ERROR).catch((e) => {
+                console.warn('[WhatsApp] failed to send error reply:', e && (e.message || e));
+            });
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Institution (tenant) selection helpers
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Resolves which tenant (institution) the user wants to query.
+     *
+     * Decision tree:
+     *   1. User writes "consulta/cambia a <institution>" → switch and persist.
+     *   2. Session context has an existing selection → honour it.
+     *   3. Only 1 tenant is available → use it directly.
+     *   4. Multiple tenants & pending selection → parse user's choice.
+     *   5. Multiple tenants & no selection yet → send selection menu, return null.
+     *
+     * @param {string} from - E.164 phone number.
+     * @param {string} text - Sanitized message text.
+     * @param {WhatsAppSession} session - Current WhatsApp session.
+     * @param {string} sessionTenantId - Tenant where the session is stored.
+     * @returns {Promise<string|null>} tenantId, or null if a menu was sent.
+     */
+    async _resolveQueryTenant(from, text, session, sessionTenantId) {
+        const availableTenants = TENANT_CONFIGS.map(t => ({ id: t.id, name: t.name }));
+
+        // Allow user to explicitly request a different institution at any time
+        const explicitTenant = this._detectExplicitTenantRequest(text, availableTenants);
+        if (explicitTenant) {
+            this._setSelectedTenantInContext(session, explicitTenant.id);
+            await this.sessionRepo.update(session.id, { conversation_context: session.conversationContext });
+            await this._sendReply(from, `✅ Perfecto, consultaré la información de *${explicitTenant.name}*.`);
+            return explicitTenant.id;
+        }
+
+        // Check if session already has a stored selection
+        const storedTenant = this._getSelectedTenantFromContext(session);
+        if (storedTenant && TENANT_CONFIGS.some(t => t.id === storedTenant)) {
+            return storedTenant;
+        }
+
+        // Single tenant — use session tenant directly
+        if (availableTenants.length <= 1) {
+            return sessionTenantId;
+        }
+
+        // Multiple tenants: check if we are awaiting the user's selection
+        const isPending = session.conversationContext.some(
+            e => e.role === 'system' && e.content === PENDING_SEL_CONTENT,
+        );
+
+        if (isPending) {
+            // Try to parse user reply as a selection
+            const chosen = this._parseTenantSelection(text, availableTenants);
+            if (chosen) {
+                this._setSelectedTenantInContext(session, chosen.id);
+                await this.sessionRepo.update(session.id, { conversation_context: session.conversationContext });
+                await this._sendReply(from, `✅ Perfecto, consultaré la información de *${chosen.name}*.\n\n¿En qué puedo ayudarte?`);
+                return chosen.id;
+            }
+            // Could not parse — show menu again
+            await this._sendReply(from, '⚠️ No reconocí tu selección. Por favor responde con el número o el nombre de la institución.');
+            await this._sendReply(from, this._formatInstitutionMenu(availableTenants));
+            return null;
+        }
+
+        // First time the user writes with multiple tenants available → send selection menu
+        session.conversationContext.push({ role: 'system', content: PENDING_SEL_CONTENT, timestamp: Date.now() });
+        await this.sessionRepo.update(session.id, { conversation_context: session.conversationContext });
+        await this._sendReply(from, this._formatInstitutionMenu(availableTenants));
+        return null; // processing stops; we wait for the user to reply
+    }
+
+    /**
+     * Formats a numbered institution selection menu for WhatsApp.
+     * @param {{ id: string, name: string }[]} tenants
+     * @returns {string}
+     */
+    _formatInstitutionMenu(tenants) {
+        const lines = tenants.map((t, i) => `${i + 1}. ${t.name}`).join('\n');
+        return `🏫 *¿De qué institución deseas consultar los datos?*\n\n${lines}\n\nResponde con el número o el nombre de la institución.`;
+    }
+
+    /**
+     * Detects if the message contains an explicit institution change request.
+     * e.g. "consulta Incat", "obtén info de qa", "cambia a Politécnico"
+     * @param {string} text
+     * @param {{ id: string, name: string }[]} tenants
+     * @returns {{ id: string, name: string } | null}
+     */
+    _detectExplicitTenantRequest(text, tenants) {
+        const switchKw = /\b(consulta|consultar|cambia|cambiar|quiero datos de|informaci[oó]n de|usa|usar|obt[eé]n info de|selecciona|seleccionar)\b/i;
+        if (!switchKw.test(text)) return null;
+        return this._parseTenantSelection(text, tenants);
+    }
+
+    /**
+     * Tries to match text against tenant list by number ("1","2") or name fragment.
+     * @param {string} text
+     * @param {{ id: string, name: string }[]} tenants
+     * @returns {{ id: string, name: string } | null}
+     */
+    _parseTenantSelection(text, tenants) {
+        const trimmed = text.trim();
+
+        // Numeric selection ("1", "2", …)
+        const numMatch = /^(\d+)$/.exec(trimmed);
+        if (numMatch) {
+            const idx = parseInt(numMatch[1], 10) - 1;
+            return (idx >= 0 && idx < tenants.length) ? tenants[idx] : null;
+        }
+
+        // Name fragment match (case-insensitive)
+        const lower = trimmed.toLowerCase();
+        return tenants.find(t => lower.includes(t.id.toLowerCase()) || lower.includes(t.name.toLowerCase())) ?? null;
+    }
+
+    /** Reads the selected query tenant from conversationContext. */
+    _getSelectedTenantFromContext(session) {
+        for (let i = session.conversationContext.length - 1; i >= 0; i--) {
+            const entry = session.conversationContext[i];
+            if (entry.role === 'system' && entry.content?.startsWith(TENANT_SEL_PREFIX)) {
+                return entry.content.slice(TENANT_SEL_PREFIX.length);
+            }
+        }
+        return null;
+    }
+
+    /** Persists the selected query tenant into conversationContext (in-place). */
+    _setSelectedTenantInContext(session, tenantId) {
+        // Remove old pending and old selection entries
+        session.conversationContext = session.conversationContext.filter(
+            e => !(e.role === 'system' && (e.content === PENDING_SEL_CONTENT || e.content?.startsWith(TENANT_SEL_PREFIX))),
+        );
+        session.conversationContext.push({ role: 'system', content: `${TENANT_SEL_PREFIX}${tenantId}`, timestamp: Date.now() });
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Message processing inside the resolved tenant context
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Processes the incoming message once the query tenant is fully resolved.
+     * All repository calls here transparently route to the selected tenant database
+     * because this method is invoked inside runInTenantContext().
+     */
+    async _processMessageWithTenant(from, text, messageBody, waMessageId, session, sessionTenantId, queryTenantId) {
+        // 5. Fetch user from the resolved query-tenant database.
+        const user = await this.userRepo.findById(session.userId);
+        if (!user) {
+            await this._sendReply(from, MESSAGES.NOT_LINKED);
+            return;
+        }
+
+        const userRoles = (user.roles || []).map(r => r.id || r.rol_id || r);
 
             // DIRECT MCP ROUTING: For queries coming from WhatsApp we should
             // prefer the MCP pipeline (same functions used by DatabaseQueryFragment.kt)
@@ -599,12 +770,6 @@ export class WhatsAppDomainService {
                 conversation_context: session.conversationContext,
                 last_message_at: new Date().toISOString(),
             });
-        } catch (error) {
-            console.error('[WhatsAppDomainService] Error handling message:', error);
-            await this._sendReply(from, MESSAGES.ERROR).catch((e) => {
-                console.warn('[WhatsApp] failed to send error reply:', e && (e.message || e));
-            });
-        }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1078,8 +1243,10 @@ export class WhatsAppDomainService {
                 conversationHistory: context.map(c => ({ role: c.role, content: c.content })),
                 userId: user.id,
                 username: user.username,
-                // only force tools when we've decided the query persona applies
-                forceMCPTools: forceTools,
+                userRoles,
+                fromWhatsApp: true,
+                // admins get BI tools via forceTools; all other WhatsApp users get scoped MCP access
+                forceMCPTools: forceTools || !!user.id,
             });
 
             console.log('[WhatsApp] LLM processPrompt result:', result && (result.isOk ? (result.isOk() ? 'ok' : 'fail') : typeof result));

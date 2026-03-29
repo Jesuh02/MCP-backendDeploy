@@ -1,10 +1,11 @@
-/**
+﻿/**
  * MCP Service - Model Context Protocol
  * Handles prompt processing and context management
  */
 
 import { RAGService } from './rag-legacy.service.js';
 import { SupabaseService } from '../../shared/database/SupabaseService.js';
+import { getCurrentTenantClient, getCurrentTenantId } from '../../config/tenantRegistry.js';
 import { logger } from '../../shared/logging/Logger.js';
 import { LLMService } from './infrastructure/llm.service.js';
 import { getGitHubService } from '../../shared/github/GitHubService.js';
@@ -22,6 +23,53 @@ export class MCPService {
         this._schemaCache = null;
         this._schemaCacheTime = 0;
         this._schemaCacheTTL = 5 * 60 * 1000; // 5 minutes
+        // Per-tenant schema cache (keyed by tenantId)
+        this._tenantSchemaCaches = new Map();
+    }
+
+    /**
+     * Returns the active tenant's Supabase client, falling back to the singleton.
+     * Works because MCPService methods are called inside runInTenantContext().
+     */
+    get _tenantClient() {
+        return getCurrentTenantClient() || this.supabase.client;
+    }
+
+    /**
+     * Executes a raw SQL query on the active tenant's Supabase project
+     * via the `execute_sql` RPC function.
+     */
+    async _executeRawSQL(sqlQuery) {
+        const client = this._tenantClient;
+        if (sqlQuery.trim().endsWith(';')) sqlQuery = sqlQuery.trim().slice(0, -1);
+        logger.info('🔍 [MCPService._executeRawSQL] Executing on tenant:', getCurrentTenantId() || 'default');
+        const { data, error } = await client.rpc('execute_sql', { query: sqlQuery });
+        if (error) {
+            // Surface SQL errors directly so the LLM can self-correct
+            if (error.code !== 'PGRST202' && !error.message?.includes('not found')) {
+                throw new Error(`SQL Error: ${error.message}`);
+            }
+            throw new Error(`RPC execute_sql unavailable: ${error.message}`);
+        }
+        return data;
+    }
+
+    /**
+     * Returns the DB schema for the active tenant (per-tenant cached).
+     * Falls back to the singleton SupabaseService schema when no tenant override is active.
+     */
+    async _getDatabaseSchema() {
+        const tenantId = getCurrentTenantId();
+        if (!tenantId) return this.supabase.getDatabaseSchema();
+
+        const cached = this._tenantSchemaCaches.get(tenantId);
+        if (cached && (Date.now() - cached.time < this._schemaCacheTTL)) return cached.schema;
+
+        // Reuse the singleton's implementation but bind it to the tenant client
+        const svc = this.supabase;
+        const schema = await svc.getDatabaseSchema.call({ client: this._tenantClient, executeRawSQL: (sql) => this._executeRawSQL(sql), schemaCache: null, schemaCacheTime: null });
+        this._tenantSchemaCaches.set(tenantId, { schema, time: Date.now() });
+        return schema;
     }
 
     /**
@@ -54,7 +102,7 @@ export class MCPService {
                 ORDER BY table_name, ordinal_position;
             `;
 
-            const result = await this.supabase.executeRawSQL(schemaSQL);
+            const result = await this._executeRawSQL(schemaSQL);
 
             if (!result || !Array.isArray(result) || result.length === 0) {
                 logger.warn('⚠️ Could not fetch schema, using fallback');
@@ -179,7 +227,7 @@ export class MCPService {
 
         try {
             // New Schema Query: questions_history -> linked to question_sessions
-            let query = this.supabase.client
+            let query = this._tenantClient
                 .from('questions_history')
                 .select(`
                     id,
@@ -240,7 +288,7 @@ export class MCPService {
      */
     async _getLegacyReinforcementHistory(userId, courseId, topicId = null, taskId = null) {
         try {
-            let query = this.supabase.client
+            let query = this._tenantClient
                 .from('reinforcement_question_history')
                 .select('questions')
                 .eq('user_id', userId)
@@ -321,7 +369,7 @@ export class MCPService {
 
             // 1. Get recent history (Windowing Pattern) - Server Side Filtering
             // Instead of client sending full JSON, we query DB directly
-            let query = this.supabase.client
+            let query = this._tenantClient
                 .from('reinforcement_question_history')
                 .select('questions, created_at')
                 .eq('user_id', userId)
@@ -501,7 +549,7 @@ export class MCPService {
             const EmbeddingService = (await
                 import ('./infrastructure/embedding.service.js')).EmbeddingService;
             const embeddingService = EmbeddingService.getInstance();
-            const supabase = this.supabase.client;
+            const supabase = this._tenantClient;
 
             // Ensure services are ready
             if (!embeddingService.isReady()) {
@@ -1026,7 +1074,7 @@ export class MCPService {
             sqlStatements.push(sql);
 
             try {
-                const { count, error } = await this.supabase.client
+                const { count, error } = await this._tenantClient
                     .from(table)
                     .select('*', { head: true, count: 'exact' });
 
@@ -1046,7 +1094,7 @@ export class MCPService {
             sqlStatements.push(sql);
 
             try {
-                const { data, error } = await this.supabase.client
+                const { data, error } = await this._tenantClient
                     .from(table)
                     .select('*')
                     .limit(5);
@@ -1108,7 +1156,7 @@ export class MCPService {
                     let fieldFound = false;
 
                     for (const column of config.candidateFields) {
-                        const { data, error } = await this.supabase.client
+                        const { data, error } = await this._tenantClient
                             .from(config.table)
                             .select(column);
 
@@ -1122,7 +1170,7 @@ export class MCPService {
                     }
 
                     if (!fieldFound) {
-                        const { data, error } = await this.supabase.client
+                        const { data, error } = await this._tenantClient
                             .from(config.table)
                             .select('*');
 
@@ -1514,7 +1562,7 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
                     
                     if (fallbackSql) {
                         try {
-                            const fallbackResult = await this.supabase.executeRawSQL(fallbackSql);
+                            const fallbackResult = await this._executeRawSQL(fallbackSql);
                             return {
                                 data: fallbackResult,
                                 sql: fallbackSql,
@@ -1859,7 +1907,7 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                         if (fallbackSql) {
                             try {
                                 logger.info(`📊 Executing fallback SQL: ${fallbackSql}`);
-                                const fallbackResult = await this.supabase.executeRawSQL(fallbackSql);
+                                const fallbackResult = await this._executeRawSQL(fallbackSql);
                                 const resultCount = Array.isArray(fallbackResult) ? fallbackResult.length : 0;
                                 logger.info(`✅ Fallback SQL success: ${resultCount} results`);
                                 
@@ -1942,7 +1990,7 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
     /**
      * Execute an MCP tool
      */
-    async executeMCPTool(toolName, args) {
+    async executeMCPTool(toolName, args, context = {}) {
         logger.info(`🔧 Executing MCP tool: ${toolName}`);
 
         switch (toolName) {
@@ -1954,11 +2002,24 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                 if (!args.query) {
                     throw new Error("El parámetro 'query' es requerido para query_database");
                 }
-                
+
+                // Security: block data-mutating statements from WhatsApp channel
+                if (context.fromWhatsApp) {
+                    const sqlTrimmed = String(args.query).trim();
+                    const mutationPattern = /^\s*(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\b/i;
+                    if (mutationPattern.test(sqlTrimmed)) {
+                        logger.warn(`[MCP] Blocked mutation SQL from WhatsApp (userId=${context.scopedUserId}): ${sqlTrimmed.substring(0, 120)}`);
+                        return { success: false, error: 'Operaciones de escritura no están permitidas desde WhatsApp. Solo se permiten consultas SELECT.' };
+                    }
+                    if (context.scopedUserId) {
+                        logger.info(`[MCP] WhatsApp-scoped SELECT — userId=${context.scopedUserId}`);
+                    }
+                }
+
                 logger.info(`📊 Executing SQL: ${args.query}`);
                 
                 try {
-                    const result = await this.supabase.executeRawSQL(args.query);
+                    const result = await this._executeRawSQL(args.query);
                     return {
                         success: true,
                         query: args.query,
@@ -2012,7 +2073,7 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                     try {
                         // Get actual columns for this table
                         const columnsSQL = `SELECT column_name FROM information_schema.columns WHERE table_name = '${tableName}' AND table_schema = 'public' ORDER BY ordinal_position`;
-                        const columns = await this.supabase.executeRawSQL(columnsSQL);
+                        const columns = await this._executeRawSQL(columnsSQL);
                         
                         if (columns && columns.length > 0) {
                             correctColumns = columns.map(c => c.column_name);
@@ -2258,7 +2319,7 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
             if (operation === 'raw_sql') {
                 // Execute raw SQL query directly
                 try {
-                    const result = await this.supabase.executeRawSQL(sql);
+                    const result = await this._executeRawSQL(sql);
                     return {
                         data: result,
                         sql: sql
@@ -2281,7 +2342,7 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
      */
     async getDatabaseSchema() {
         try {
-            const schema = await this.supabase.getDatabaseSchema();
+            const schema = await this._getDatabaseSchema();
 
             return {
                 schema,

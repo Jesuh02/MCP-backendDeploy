@@ -44,7 +44,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [] }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
@@ -350,8 +350,9 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
             const isAdmin = Array.isArray(userRoles) && userRoles.map(Number).includes(3);
             const isTeacher = Array.isArray(userRoles) && userRoles.map(Number).includes(2);
             // Gate MCP tool access to teachers and admins only.
-            // Students (role 1) must never get DB query access even when forceMCPTools is sent.
-            const roleAllowsMCPTools = isAdmin || isTeacher;
+            // When fromWhatsApp=true, all authenticated users can query their OWN data (scoped by userId).
+            // Students (role 1) get limited MCP access only when authenticated via WhatsApp.
+            const roleAllowsMCPTools = isAdmin || isTeacher || (fromWhatsApp && !!userId);
             // ── Detect if the prompt needs MCP database tools ──
             // Broad detection: table names (Spanish & English), counting, records,
             // general data queries, student progress patterns, and explicit tool requests.
@@ -411,23 +412,60 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                     ? `(SELECT id FROM usuarios WHERE id = ${userId} UNION SELECT id FROM usuarios WHERE username = '${safeUsername}')`
                     : `${userId}`;
                 if (isAdmin && userId) {
-                    systemPrompt += `\n\nNIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma (estudiantes, docentes, cursos, progreso, entregas).\n` +
-                        `⚠️ PROHIBIDO: Nunca uses auth.uid() — esa función no existe en este contexto y causará errores de tipo.\n\n` +
-                        `IDENTIDAD DEL USUARIO AUTENTICADO: userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +
-                        `Cuando el usuario pregunte por "mis cursos", "mis estudiantes" o datos propios, filtra usando:\n` +
-                        `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
-                        `  O con JOIN: JOIN usuarios creador ON c.creator_user_id = creador.id WHERE creador.username = '${safeUsername || 'N/A'}'\n\n` +
-                        `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES:\n` +
-                        `  SELECT u.username AS estudiante, c.title AS curso,\n` +
-                        `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
-                        `         pc.calificacion_ponderada AS promedio, pc.estado\n` +
-                        `  FROM progreso_curso pc\n` +
-                        `  JOIN usuarios u ON pc.usuario_estudiante = u.id\n` +
-                        `  JOIN courses c ON pc.curso_id = c.id\n` +
-                        `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
-                        `  ORDER BY c.title, u.username;`;
+                    if (fromWhatsApp) {
+                        // WhatsApp channel: even admins are restricted to their own data
+                        systemPrompt += `\n\nACCESO VÍA WHATSAPP — SOLO TUS PROPIOS DATOS (ADMIN):\n` +
+                            `En este canal ÚNICAMENTE puedes consultar TUS datos (cursos que creaste, tus estudiantes, tu actividad).\n` +
+                            `⚠️ PROHIBIDO: consultar datos de otros usuarios. PROHIBIDO: usar auth.uid().\n\n` +
+                            `IDENTIDAD AUTENTICADA: userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +
+                            `Filtra SIEMPRE usando:\n` +
+                            `  WHERE creator_user_id IN ${userIdResolution}\n` +
+                            `  O: WHERE user_id IN ${userIdResolution}\n\n` +
+                            `CONSULTA DE REFERENCIA — TUS ESTUDIANTES:\n` +
+                            `  SELECT u.username AS estudiante, c.title AS curso,\n` +
+                            `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
+                            `         pc.calificacion_ponderada AS promedio, pc.estado\n` +
+                            `  FROM progreso_curso pc\n` +
+                            `  JOIN usuarios u ON pc.usuario_estudiante = u.id\n` +
+                            `  JOIN courses c ON pc.curso_id = c.id\n` +
+                            `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                            `  ORDER BY c.title, u.username;`;
+                    } else {
+                        systemPrompt += `\n\nNIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma (estudiantes, docentes, cursos, progreso, entregas).\n` +
+                            `⚠️ PROHIBIDO: Nunca uses auth.uid() — esa función no existe en este contexto y causará errores de tipo.\n\n` +
+                            `IDENTIDAD DEL USUARIO AUTENTICADO: userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +
+                            `Cuando el usuario pregunte por "mis cursos", "mis estudiantes" o datos propios, filtra usando:\n` +
+                            `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                            `  O con JOIN: JOIN usuarios creador ON c.creator_user_id = creador.id WHERE creador.username = '${safeUsername || 'N/A'}'\n\n` +
+                            `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES:\n` +
+                            `  SELECT u.username AS estudiante, c.title AS curso,\n` +
+                            `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
+                            `         pc.calificacion_ponderada AS promedio, pc.estado\n` +
+                            `  FROM progreso_curso pc\n` +
+                            `  JOIN usuarios u ON pc.usuario_estudiante = u.id\n` +
+                            `  JOIN courses c ON pc.curso_id = c.id\n` +
+                            `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
+                            `  ORDER BY c.title, u.username;`;
+                    }
                 } else if (isAdmin) {
                     systemPrompt += `\n\nNIVEL DE ACCESO: ADMINISTRADOR — Puedes consultar todos los datos de la plataforma (estudiantes, docentes, cursos, progreso, entregas).\n⚠️ PROHIBIDO: Nunca uses auth.uid() — esa función no existe en este contexto y causará errores de tipo. Usa siempre IDs numéricos concretos o JOINs con la tabla usuarios.`;
+                } else if (fromWhatsApp && userId && !isAdmin && !isTeacher) {
+                    // Student via WhatsApp: only their own progress and submissions
+                    systemPrompt += `\n\nACCESO VÍA WHATSAPP — ESTUDIANTE (SOLO TUS DATOS):\n` +
+                        `Eres el asistente personal del estudiante ${safeUsername || `ID=${userId}`}. ` +
+                        `SOLO está permitido consultar datos de ESTE estudiante. PROHIBIDO ver datos de otros usuarios.\n\n` +
+                        `IDENTIDAD: userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n\n` +
+                        `CONSULTAS PERMITIDAS (filtra SIEMPRE por usuario_estudiante=${userId} o student_id=${userId}):\n` +
+                        `1. Progreso en cursos:\n` +
+                        `   SELECT c.title AS curso, pc.tareas_completadas, pc.tareas_totales,\n` +
+                        `          pc.porcentaje_progreso, pc.calificacion_ponderada AS promedio, pc.estado\n` +
+                        `   FROM progreso_curso pc JOIN courses c ON pc.curso_id = c.id\n` +
+                        `   WHERE pc.usuario_estudiante = ${userId}\n` +
+                        `2. Entregas de tareas:\n` +
+                        `   SELECT t.title AS tarea, ts.grade, ts.feedback, ts.created_at\n` +
+                        `   FROM task_submissions ts JOIN tasks t ON ts.task_id = t.id\n` +
+                        `   WHERE ts.student_id = ${userId}\n` +
+                        `REGLA ABSOLUTA: NUNCA omitas el filtro WHERE ... = ${userId} en ninguna consulta.`;
                 } else if (isTeacher && userId) {
                     // Docente: only their own students and courses (created or collaborated)
                     systemPrompt += `\n\nRESTRICCIÓN DE ACCESO A DATOS — OBLIGATORIA E IRRENUNCIABLE:\n` +
@@ -537,7 +575,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                         try {
                             const { MCPService } = await import('./mcp-legacy.service.js');
                             const mcp = new MCPService();
-                            const toolResult = await mcp.executeMCPTool(toolName, toolArgs);
+                            const toolResult = await mcp.executeMCPTool(toolName, toolArgs, { fromWhatsApp, scopedUserId: userId });
                             // Append tool result to system prompt to allow the model to continue reasoning
                             const toolResultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
                             response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools });
@@ -568,7 +606,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                     try {
                         const { MCPService } = await import('./mcp-legacy.service.js');
                         const mcp = new MCPService();
-                        const toolResult = await mcp.executeMCPTool(inlineCall.tool, inlineCall.arguments);
+                        const toolResult = await mcp.executeMCPTool(inlineCall.tool, inlineCall.arguments, { fromWhatsApp, scopedUserId: userId });
                         const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
                         response = await this.llm.chat(
                             systemPrompt + `\n\n[TOOL_RESULT name=${inlineCall.tool}]\n${resultStr}\n[END_TOOL_RESULT]`,

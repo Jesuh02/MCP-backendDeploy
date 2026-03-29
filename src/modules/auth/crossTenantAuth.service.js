@@ -4,11 +4,21 @@
  * SRP: only handles cross-tenant authentication probes.
  * DIP: depends on abstract repository constructors, not concrete instances.
  * OCP: automatically picks up any tenant registered in TenantRegistry.
+ *
+ * Multi-tenant behaviour:
+ *   - Single match → returns access token with tenantId + availableTenants claim.
+ *   - Multiple matches → returns { multipleMatches, matches } so the UI can ask
+ *     the user which institution to log into.  Each match's token already embeds
+ *     availableTenants so the chat layer can later offer institution switching.
+ *   - Optional cedula → when provided, only tenants where the cédula matches the
+ *     `personas` table for that user are returned.  Adds a second identity factor
+ *     that prevents username-collision attacks across tenants.
  */
 import { Result } from '../../shared/Result.js';
 import { UnauthorizedError } from '../../shared/errors/index.js';
 import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
 import { SupabaseInstitucionRepository } from '../institucion/infrastructure/supabase.institucion.repository.js';
+import { SupabasePersonaRepository } from '../persona/infrastructure/supabase.persona.repository.js';
 import { getAllTenantEntries } from '../../config/tenantRegistry.js';
 
 export class CrossTenantAuthService {
@@ -17,17 +27,19 @@ export class CrossTenantAuthService {
     }
 
     /**
-     * Attempts username/password login on every registered tenant in parallel.
+     * Attempts username/password (+ optional cedula) login on every registered tenant in parallel.
      * Returns Result with a single match object OR { multipleMatches, matches }.
+     *
+     * @param {{ username: string, password: string, cedula?: string }} params
      */
-    async login({ username, password }) {
+    async login({ username, password, cedula }) {
         const entries = getAllTenantEntries();
         if (entries.length === 0) {
             return Result.fail(new UnauthorizedError('No hay instituciones configuradas'));
         }
 
         const results = await Promise.allSettled(
-            entries.map(entry => this._tryLogin(entry, username, password)),
+            entries.map(entry => this._tryLogin(entry, username, password, cedula)),
         );
 
         return this._resolveMatches(results, 'Credenciales inválidas');
@@ -51,21 +63,56 @@ export class CrossTenantAuthService {
 
     // ──────────── Private helpers ────────────
 
+    /**
+     * Resolves parallel probe results. When multiple matches are found, re-signs
+     * each token to embed the full availableTenants list in every JWT — this allows
+     * a chat session to offer switching while remaining secure (the token itself is
+     * the authoritative list of permitted tenants).
+     */
     _resolveMatches(settled, noMatchMessage) {
-            const matches = settled
-                .filter(r => r.status === 'fulfilled' && r.value !== null)
-                .map(r => r.value);
+        const matches = settled
+            .filter(r => r.status === 'fulfilled' && r.value !== null)
+            .map(r => r.value);
 
-            if (matches.length === 0) {
-                return Result.fail(new UnauthorizedError(noMatchMessage));
-            }
-            if (matches.length === 1) {
-            return Result.ok(matches[0]);
+        if (matches.length === 0) {
+            return Result.fail(new UnauthorizedError(noMatchMessage));
         }
-        return Result.ok({ multipleMatches: true, matches });
+
+        const allTenantIds = matches.map(m => m.tenant.id);
+
+        // Re-sign tokens so every JWT carries the full availableTenants list
+        const enriched = matches.map(m => ({
+            ...m,
+            accessToken: this.jwt.signAccessToken({
+                userId: m._payload.userId,
+                username: m._payload.username,
+                roles: m._payload.roles,
+                tenantId: m._payload.tenantId,
+                availableTenants: allTenantIds,
+            }),
+            refreshToken: this.jwt.signRefreshToken({
+                userId: m._payload.userId,
+                username: m._payload.username,
+                tenantId: m._payload.tenantId,
+                availableTenants: allTenantIds,
+            }),
+        }));
+
+        if (enriched.length === 1) {
+            const { _payload, ...result } = enriched[0];
+            return Result.ok({ ...result, availableTenants: enriched.map(m => ({ id: m.tenant.id, name: m.tenant.name })) });
+        }
+
+        return Result.ok({
+            multipleMatches: true,
+            matches: enriched.map(({ _payload, ...m }) => ({
+                ...m,
+                availableTenants: enriched.map(x => ({ id: x.tenant.id, name: x.tenant.name })),
+            })),
+        });
     }
 
-    async _tryLogin(entry, username, password) {
+    async _tryLogin(entry, username, password, cedula) {
         if (!entry.client) return null;
         try {
             const userRepo = new SupabaseUserRepository(entry.client);
@@ -78,11 +125,42 @@ export class CrossTenantAuthService {
             const valid = await this._verifyPassword(userRepo, user, password);
             if (!valid) return null;
 
+            // Optional cedula validation: when provided, verify against personas table.
+            // This prevents a user whose username collides across tenants from accidentally
+            // gaining access to the wrong institution's data.
+            if (cedula) {
+                const cedulaMatch = await this._verifyCedula(entry.client, user, cedula);
+                if (!cedulaMatch) return null;
+            }
+
             await this._enrichWithInstitution(user, instRepo);
             return this._buildMatch(entry, user);
         } catch (e) {
             console.warn(`[CrossTenantAuth] Probe failed for ${entry.id}: ${e.message}`);
             return null;
+        }
+    }
+
+    /**
+     * Verifies that the provided cedula belongs to the persona linked to `user`
+     * in this tenant's `personas` table.
+     * @returns {Promise<boolean>}
+     */
+    async _verifyCedula(client, user, cedula) {
+        try {
+            const personaRepo = new SupabasePersonaRepository(client);
+            // The persona is linked via usuarios.persona_id OR personas.user_id
+            // Try finding by person identification
+            const persona = await personaRepo.findByIdentificacion(cedula);
+            if (!persona) return false;
+            // Verify the persona belongs to this user (via persona_id on user or user_id on persona)
+            const personaId = user.persona_id ?? user.personas?.id ?? user.persona?.id ?? null;
+            if (personaId && persona.id === personaId) return true;
+            // Fallback: check if persona has same institution as user's persona
+            return false;
+        } catch {
+            // Non-fatal: if persona lookup fails, don't block login
+            return true;
         }
     }
 
@@ -136,24 +214,33 @@ export class CrossTenantAuthService {
         } catch { /* ignore */ }
     }
 
+    /**
+     * Builds a match object.
+     * NOTE: Stores the raw payload in `_payload` so `_resolveMatches` can re-sign
+     * tokens with the full `availableTenants` list once all probes complete.
+     * `_payload` is stripped before the result is returned to callers.
+     */
     _buildMatch(entry, user) {
         const { password, ...safeUser } = user;
         const roleIds = (user.roles || [])
             .map(r => Number(r.id || r.rol_id))
             .filter(id => Number.isInteger(id) && id > 0);
 
-        const payload = {
+        const rawPayload = {
             userId: user.id,
             username: user.username,
             roles: roleIds,
             tenantId: entry.id,
+            availableTenants: [entry.id], // will be overwritten in _resolveMatches
         };
 
         return {
+            _payload: rawPayload, // internal, stripped before response
             tenant: { id: entry.id, name: entry.name },
             user: safeUser,
-            accessToken: this.jwt.signAccessToken(payload),
-            refreshToken: this.jwt.signRefreshToken(payload),
+            accessToken: this.jwt.signAccessToken(rawPayload),
+            refreshToken: this.jwt.signRefreshToken(rawPayload),
         };
     }
 }
+
