@@ -17,6 +17,14 @@
 
 import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
+import { TENANT_CONFIGS } from '../../config/tenantRegistry.js';
+
+/**
+ * In-memory cache: tracks the last time a multi-tenant user was asked
+ * to select an institution. Key = userId, value = { tenantId, askedAt }.
+ * Cleared when the process restarts (acceptable — 24h window is advisory).
+ */
+const _tenantAskCache = new Map();
 
 export class LLMDomainService {
     constructor({
@@ -41,15 +49,75 @@ export class LLMDomainService {
 
     /**
      * Procesa un prompt con RAG y contexto inteligente.
-     * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number }} params
+     * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number, tenantId?: string, availableTenants?: string[], institutionName?: string }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
 
         try {
+            // ── MULTI-TENANT INSTITUTION AWARENESS ────────────────────────────────
+            // Determine institution context for this request.
+            // Rules:
+            //   A) Single tenant → use it directly, inform the LLM.
+            //   B) Multiple tenants + prompt explicitly names an institution → match it.
+            //   C) Multiple tenants + already asked within 24h → use the cached selection.
+            //   D) Multiple tenants + not asked yet → ask the user (return early).
+            const allTenantConfigs = TENANT_CONFIGS.map(t => ({ id: t.id, name: t.name }));
+            // Limit to tenants the user is actually enrolled in (from JWT availableTenants).
+            // If availableTenants is empty (old client/WhatsApp), fall back to all configs.
+            const userTenants = (Array.isArray(availableTenants) && availableTenants.length > 0)
+                ? allTenantConfigs.filter(t => availableTenants.includes(t.id))
+                : allTenantConfigs;
+
+            // Resolve the effective institution name for the system prompt
+            let effectiveInstitutionName = institutionName || (tenantId
+                ? (userTenants.find(t => t.id === tenantId)?.name ?? tenantId)
+                : null);
+
+            if (userTenants.length > 1 && !fromWhatsApp) {
+                // Check if the prompt explicitly names one of the institutions
+                const promptLower = prompt.toLowerCase();
+                const explicitTenant = userTenants.find(t =>
+                    promptLower.includes(t.name.toLowerCase()) ||
+                    promptLower.includes(t.id.toLowerCase()),
+                );
+
+                if (explicitTenant) {
+                    // User named a specific institution — use it
+                    effectiveInstitutionName = explicitTenant.name;
+                    if (userId) {
+                        _tenantAskCache.set(userId, { tenantId: explicitTenant.id, askedAt: Date.now() });
+                    }
+                } else {
+                    // Check 24-hour cache
+                    const cached = userId ? _tenantAskCache.get(userId) : null;
+                    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+                    if (cached && (Date.now() - cached.askedAt) < TWENTY_FOUR_HOURS) {
+                        // Use the previously selected tenant
+                        effectiveInstitutionName = userTenants.find(t => t.id === cached.tenantId)?.name ?? cached.tenantId;
+                    } else {
+                        // Must ask the user which institution to query
+                        if (userId) {
+                            _tenantAskCache.set(userId, { tenantId: tenantId || userTenants[0].id, askedAt: Date.now() });
+                        }
+                        const menuLines = userTenants.map((t, i) => `${i + 1}. *${t.name}*`).join('\n');
+                        const askMsg = `🏫 Tienes acceso a múltiples instituciones. ¿De cuál deseas consultar la información?\n\n${menuLines}\n\nResponde con el número o el nombre de la institución y luego repite tu pregunta.`;
+                        return Result.ok({
+                            response: askMsg,
+                            model: null,
+                            usage: null,
+                            esCalificacion: false,
+                            nota: null,
+                            requiresTenantSelection: true,
+                        });
+                    }
+                }
+            }
+            // ── END MULTI-TENANT AWARENESS ─────────────────────────────────────────
+
             // 0. Auto-fetch file content from R2 when not provided by the client
             let resolvedFileContent = fileContent || '';
             if (!resolvedFileContent) {
@@ -165,6 +233,13 @@ export class LLMDomainService {
 
             // 2. Build system prompt with context
             let systemPrompt = 'Eres un asistente educativo experto. Responde de manera clara, precisa y útil.';
+
+            // ── Inject institution context so the LLM always knows which tenant it serves ──
+            if (effectiveInstitutionName) {
+                systemPrompt += `\n\nINSTITUCIÓN ACTIVA: ${effectiveInstitutionName}. ` +
+                    `Todas las consultas, datos y respuestas corresponden a esta institución. ` +
+                    `Si el usuario pregunta sobre otra institución, indícale que para eso debe seleccionarla desde el selector de institución en la interfaz.`;
+            }
 
             systemPrompt += `\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos de base de datos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.) al usuario.\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra siempre el username o nombre (first_name, last_name). Haz JOIN con la tabla usuarios.\n- Para cursos: muestra siempre el título (title). Haz JOIN con courses.\n- Para temas: muestra siempre el nombre (name). Para tareas: muestra siempre el título (title).\n- Si una columna es una FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible (username, title, name).\n- Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos" o "id: 5" o SELECT user_id, course_id FROM ...\n- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o SELECT u.username, c.title FROM ... JOIN usuarios u ON ...\n- Esta regla aplica a TODAS las respuestas y consultas SQL sin excepción.`;
 
