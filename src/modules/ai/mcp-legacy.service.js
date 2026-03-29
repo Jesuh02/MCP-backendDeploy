@@ -187,12 +187,15 @@ export class MCPService {
 - **subscriptions**: id, creator_id, subscriber_id, subscription_date, created_at (⚠️ NO tiene course_id!)
 - **transactions**: id, user_id, amount, status, payment_method, reference, currency, created_at
 - **notifications**: id, user_id, title, message, type, read, created_at
+- **whatsapp_sessions**: id, user_id (FK→usuarios.id), phone_number, wa_id, is_active, linked_at, last_message_at, otp_code, otp_expires_at, created_at
 
 **⚠️ ADVERTENCIAS CRÍTICAS:**
 - subscriptions.creator_id = usuarios.id (el creador del curso)
 - subscriptions.subscriber_id = usuarios.id (el suscriptor)
 - subscriptions NO tiene course_id - usa creator_id para relacionar con el creador
-- Para contar suscriptores de un creador: WHERE subscriptions.creator_id = usuarios.id`;
+- Para contar suscriptores de un creador: WHERE subscriptions.creator_id = usuarios.id
+- whatsapp_sessions.is_active = TRUE indica que el usuario está vinculado y verificado
+- Para saber si un usuario tiene WhatsApp vinculado: JOIN whatsapp_sessions ws ON ws.user_id = usuarios.id WHERE ws.is_active = TRUE`;
     }
 
     /**
