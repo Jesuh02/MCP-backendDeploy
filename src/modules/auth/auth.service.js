@@ -9,7 +9,7 @@ export class AuthService {
         this.institucionRepo = institucionRepository || null;
     }
 
-    async register({ username, email, password, persona, personaId }) {
+    async register({ username, email, password, persona, personaId, tenantId }) {
         const existingUser = await this.userRepo.findByUsername(username);
         if (existingUser) return Result.fail(new ConflictError('Usuario', username));
 
@@ -27,7 +27,7 @@ export class AuthService {
         }
 
         await this._enrichWithInstitution(user);
-        const tokens = this._generateTokens(user);
+        const tokens = this._generateTokens(user, tenantId || 'qa-develop');
         return Result.ok({ user: this._safeUser(user), ...tokens });
     }
     async login({ username, password }) {
@@ -110,7 +110,8 @@ export class AuthService {
     _generateTokens(user, tenantId = 'qa-develop') {
         // Asegurar que roles sean IDs numéricos para comparación correcta en requireRoles
         const roleIds = (user.roles || []).map(r => Number(r.id || r.rol_id)).filter(id => Number.isInteger(id) && id > 0);
-        const payload = { userId: user.id, username: user.username, roles: roleIds, tenantId };
+        const effectiveTenant = tenantId || 'qa-develop';
+        const payload = { userId: user.id, username: user.username, roles: roleIds, tenantId: effectiveTenant, availableTenants: [effectiveTenant] };
         return {
             accessToken: this.jwt.signAccessToken(payload),
             refreshToken: this.jwt.signRefreshToken(payload),
