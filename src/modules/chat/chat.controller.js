@@ -36,6 +36,15 @@ export class ChatMessageController extends BaseController {
         );
     };
 
+    getByUserAndOrigin = async(req, res, next) => {
+        const userId = req.user.userId;
+        const origin = req.params.origin;
+        const pg = parsePagination(req.query);
+        this.store(req, res, next, () =>
+            this.chatMessageService.getByUserAndOrigin(userId, origin, pg)
+        );
+    };
+
     create = async(req, res, next) => {
         const body = req.body;
         // Normalize snake_case (Vue/web) and camelCase (Android) keys
@@ -51,6 +60,15 @@ export class ChatMessageController extends BaseController {
             usuarioId: body.usuarioId ?? body.usuario_id ?? req.user?.userId ?? null,
             username: body.username ?? req.user?.username ?? null,
             origin: body.origin ?? null,
+            waMessageId: body.waMessageId ?? body.wa_message_id ?? null,
+            messageType: body.messageType ?? body.message_type ?? 'text',
+            status: body.status ?? 'sent',
+            submissionId: body.submissionId ?? body.submission_id ?? null,
+            excelUrl: body.excelUrl ?? body.excel_url ?? null,
+            attachedFileUrl: body.attachedFileUrl ?? body.attached_file_url ?? null,
+            attachedFileName: body.attachedFileName ?? body.attached_file_name ?? null,
+            attachedFileType: body.attachedFileType ?? body.attached_file_type ?? null,
+            senderAvatar: body.senderAvatar ?? body.sender_avatar ?? null,
         };
         this.handleResult(res, next, (async() => {
             const result = await this.chatMessageService.create(data);
@@ -75,6 +93,15 @@ export class ChatMessageController extends BaseController {
             usuarioId: body.usuarioId ?? body.usuario_id ?? req.user?.userId ?? null,
             username: body.username ?? req.user?.username ?? null,
             origin: body.origin ?? null,
+            waMessageId: body.waMessageId ?? body.wa_message_id ?? null,
+            messageType: body.messageType ?? body.message_type ?? 'text',
+            status: body.status ?? 'sent',
+            submissionId: body.submissionId ?? body.submission_id ?? null,
+            excelUrl: body.excelUrl ?? body.excel_url ?? null,
+            attachedFileUrl: body.attachedFileUrl ?? body.attached_file_url ?? null,
+            attachedFileName: body.attachedFileName ?? body.attached_file_name ?? null,
+            attachedFileType: body.attachedFileType ?? body.attached_file_type ?? null,
+            senderAvatar: body.senderAvatar ?? body.sender_avatar ?? null,
         };
         this.store(req, res, next, () =>
             this.chatMessageService.upsert(data)
