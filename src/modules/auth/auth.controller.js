@@ -27,8 +27,9 @@ function normalizeGoogleLoginPayload(payload) {
 }
 
 export class AuthController {
-    constructor({ authService }) {
+    constructor({ authService, crossTenantAuthService }) {
         this.authService = authService;
+        this.crossTenantAuthService = crossTenantAuthService;
     }
 
     register = async(req, res, next) => {
@@ -75,6 +76,28 @@ export class AuthController {
             const { error, value } = googleLoginSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
             const result = await this.authService.loginWithGoogle(normalizeGoogleLoginPayload(value));
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Cross-tenant login: searches ALL tenant databases in parallel. */
+    crossTenantLogin = async(req, res, next) => {
+        try {
+            const { error, value } = loginSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            const result = await this.crossTenantAuthService.login(value);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Cross-tenant Google login: searches ALL tenant databases in parallel. */
+    crossTenantGoogleLogin = async(req, res, next) => {
+        try {
+            const { error, value } = googleLoginSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            const result = await this.crossTenantAuthService.googleLogin(normalizeGoogleLoginPayload(value));
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

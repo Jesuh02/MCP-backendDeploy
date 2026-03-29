@@ -6,6 +6,7 @@ import { CachedRepository } from '../shared/database/CachedRepository.js';
 import { withCircuitBreaker } from '../shared/infrastructure/CircuitBreaker.js';
 import { SupabaseOutboxRepository } from '../shared/outbox/SupabaseOutboxRepository.js';
 import { OutboxProcessor } from '../shared/outbox/OutboxProcessor.js';
+import { initializeTenantRegistry, createTenantAwareProxy } from './tenantRegistry.js';
 
 import { R2StorageAdapter } from '../modules/storage/infrastructure/r2.storage.adapter.js';
 import { FCMAdapter } from '../modules/notification/infrastructure/fcm.adapter.js';
@@ -21,6 +22,7 @@ import { CacheAdapter } from '../shared/cache/CacheAdapter.js';
 import { MetaWhatsAppAdapter } from '../modules/whatsapp/infrastructure/meta-whatsapp.adapter.js';
 
 import { AuthService } from '../modules/auth/auth.service.js';
+import { CrossTenantAuthService } from '../modules/auth/crossTenantAuth.service.js';
 import { AuthController } from '../modules/auth/auth.controller.js';
 
 import { UserDomainService } from '../modules/user/user.service.js';
@@ -175,7 +177,10 @@ export function createContainer() {
     let supabase, client;
     try {
         supabase = SupabaseService.getInstance();
-        client = supabase.client;
+        // Initialize multi-tenant registry and wrap the client with a proxy
+        // so all repositories transparently route to the correct tenant DB.
+        initializeTenantRegistry(supabase.client);
+        client = createTenantAwareProxy(supabase.client);
     } catch (e) {
         console.warn('⚠️ Container: Supabase no disponible —', e.message);
         client = null;
@@ -255,6 +260,7 @@ export function createContainer() {
 
     // Nivel 0: servicios sin dependencias inter-servicio
     const authService = new AuthService({ userRepository: userRepo, jwtAdapter, institucionRepository: institucionRepo });
+    const crossTenantAuthService = new CrossTenantAuthService({ jwtAdapter });
     const userService = new UserDomainService({
         userRepository: userRepo,
         fileStoragePort: storageAdapter,
@@ -395,7 +401,7 @@ export function createContainer() {
     // 4. CONTROLADORES — Inyectar servicios de dominio
     // ═══════════════════════════════════════════════════════════
 
-    const authController = new AuthController({ authService });
+    const authController = new AuthController({ authService, crossTenantAuthService });
     const userController = new UserController({ userService, whatsAppService: whatsAppDomainService });
     const collaboratorController = new CollaboratorController({ collaboratorService });
     const courseController = new CourseController({ courseService });
@@ -499,6 +505,7 @@ export function createContainer() {
 
         // Servicios de dominio
         authService,
+        crossTenantAuthService,
         userService,
         courseService,
         videoService,

@@ -35,11 +35,16 @@ import { publicRoutes } from '../../modules/health/public.routes.js';
 import { institucionRoutes } from '../../modules/institucion/institucion.routes.js';
 import { whatsappRoutes } from '../../modules/whatsapp/whatsapp.routes.js';
 import { createCourseActiveGuard } from '../../shared/middleware/courseActiveGuard.js';
+import { createTenantMiddleware } from '../../shared/middleware/TenantMiddleware.js';
 
 export function createRouter(deps) {
     const router = Router();
-    const { authMiddleware, requireRoles, courseRepository } = deps;
+    const { authMiddleware, requireRoles, courseRepository, jwtAdapter } = deps;
     const courseActiveGuard = createCourseActiveGuard(courseRepository);
+
+    // ── Tenant context must be resolved first for ALL requests ──
+    const tenantMiddleware = createTenantMiddleware(jwtAdapter);
+    router.use(tenantMiddleware);
 
     router.use('/auth', authRoutes(deps));
     router.use('/', healthRoutes(deps));

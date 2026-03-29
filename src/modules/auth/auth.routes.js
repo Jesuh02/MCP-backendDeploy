@@ -12,6 +12,10 @@ export function authRoutes({ authController }) {
     router.post('/refresh-token', validate(refreshTokenSchema), authController.refreshToken);
     router.post('/change-password', validate(changePasswordSchema), authController.changePassword);
 
+    // Cross-tenant: searches ALL tenant databases in parallel
+    router.post('/cross-tenant-login', authRateLimiter, validate(loginSchema), authController.crossTenantLogin);
+    router.post('/cross-tenant-google', authRateLimiter, validate(googleLoginSchema), authController.crossTenantGoogleLogin);
+
     return router;
 }
 export default authRoutes;
