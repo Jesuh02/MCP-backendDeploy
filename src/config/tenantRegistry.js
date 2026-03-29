@@ -99,7 +99,7 @@ export function initializeTenantRegistry(primaryClientFromProvider) {
     }
 
     // ── Auto-discover additional tenants from TENANT_<ID>_SUPABASE_URL env vars ──
-    const tenantEnvPattern = /^TENANT_([A-Z0-9]+)_SUPABASE_URL$/;
+    const tenantEnvPattern = /^TENANT_([A-Z0-9_]+)_SUPABASE_URL$/;
     for (const [envKey, url] of Object.entries(process.env)) {
         const match = tenantEnvPattern.exec(envKey);
         if (!match || !url) continue;
@@ -135,6 +135,11 @@ export function initializeTenantRegistry(primaryClientFromProvider) {
 /** Returns the Supabase client for a specific tenantId. Falls back to default. */
 export function getTenantClient(tenantId) {
     return tenantClients.get(tenantId) || defaultClient;
+}
+
+/** Returns true if there is a dedicated client for the given tenantId. */
+export function hasTenantClient(tenantId) {
+    return tenantClients.has(tenantId);
 }
 
 /** Returns the client for the current request via AsyncLocalStorage. */
@@ -178,6 +183,11 @@ export function createTenantAwareProxy(fallbackClient) {
  * @returns {Promise<T>}
  */
 export function runInTenantContext(tenantId, fn) {
+    if (!hasTenantClient(tenantId)) {
+        return Promise.reject(
+            new Error(`[TenantRegistry] No dedicated client for tenant "${tenantId}". Available: ${TENANT_CONFIGS.map(t => t.id).join(', ')}`),
+        );
+    }
     const client = getTenantClient(tenantId);
     return new Promise((resolve, reject) => {
         tenantContext.run({ tenantId, client }, () => {
