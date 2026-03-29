@@ -18,6 +18,8 @@ export class WhatsAppSession {
         updatedAt = null,
         otpCode = null,
         otpExpiresAt = null,
+        /** tenantId is NOT a DB column — it is enriched at lookup time by the cross-tenant repo. */
+        tenantId = null,
     } = {}) {
         Object.assign(this, {
             id,
@@ -32,6 +34,7 @@ export class WhatsAppSession {
             updatedAt,
             otpCode,
             otpExpiresAt,
+            tenantId,
         });
     }
 

@@ -135,6 +135,7 @@ import { TTSController } from '../modules/tts/tts.controller.js';
 
 import { WhatsAppDomainService } from '../modules/whatsapp/whatsapp.service.js';
 import { SupabaseWhatsAppSessionRepository } from '../modules/whatsapp/infrastructure/supabase.whatsapp-session.repository.js';
+import { CrossTenantWhatsAppSessionRepository } from '../modules/whatsapp/infrastructure/cross-tenant-whatsapp-session.repository.js';
 import { WhatsAppController } from '../modules/whatsapp/whatsapp.controller.js';
 
 import { HealthController } from '../modules/health/health.controller.js';
@@ -250,6 +251,7 @@ export function createContainer() {
     const reinforcementResultRepo = new SupabaseReinforcementResultRepository(client);
     const chatMessageRepo = new SupabaseChatMessageRepository(client);
     const whatsAppSessionRepo = new SupabaseWhatsAppSessionRepository(client);
+    const crossTenantWhatsAppSessionRepo = new CrossTenantWhatsAppSessionRepository();
     const collaboratorRepo = new SupabaseCollaboratorRepository(client);
     const institucionRepo = new SupabaseInstitucionRepository(client);
 
@@ -384,6 +386,7 @@ export function createContainer() {
     const whatsAppDomainService = safeInit('WhatsAppDomainService', () => new WhatsAppDomainService({
         whatsAppPort: whatsAppAdapter,
         whatsAppSessionRepo,
+        crossTenantSessionRepo: crossTenantWhatsAppSessionRepo,
         userRepository: userRepo,
         rolRepository: rolRepo,
         // Pass the legacy MCPService implementation so the WhatsApp flow can

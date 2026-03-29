@@ -166,3 +166,28 @@ export function createTenantAwareProxy(fallbackClient) {
         },
     });
 }
+
+/**
+ * Runs `fn` inside a specific tenant's AsyncLocalStorage context.
+ * All tenant-aware repositories invoked inside `fn` will route to `tenantId`.
+ *
+ * SRP: encapsulates the boilerplate of running code in a tenant context.
+ *
+ * @param {string} tenantId
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export function runInTenantContext(tenantId, fn) {
+    const client = getTenantClient(tenantId);
+    return new Promise((resolve, reject) => {
+        tenantContext.run({ tenantId, client }, () => {
+            Promise.resolve().then(fn).then(resolve).catch(reject);
+        });
+    });
+}
+
+/** Returns the currently active tenantId from AsyncLocalStorage (or null). */
+export function getCurrentTenantId() {
+    const store = tenantContext.getStore();
+    return store ? store.tenantId : null;
+}
