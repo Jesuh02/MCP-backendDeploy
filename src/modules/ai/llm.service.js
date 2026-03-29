@@ -17,7 +17,7 @@
 
 import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
-import { TENANT_CONFIGS } from '../../config/tenantRegistry.js';
+import { TENANT_CONFIGS, runInTenantContext } from '../../config/tenantRegistry.js';
 
 /**
  * In-memory cache: tracks the last time a multi-tenant user was asked
@@ -76,6 +76,9 @@ export class LLMDomainService {
             let effectiveInstitutionName = institutionName || (tenantId
                 ? (userTenants.find(t => t.id === tenantId)?.name ?? tenantId)
                 : null);
+            // The tenant whose DB should actually serve queries (may differ from JWT tenantId
+            // when user explicitly names a different institution in the prompt).
+            let effectiveTenantId = tenantId;
 
             if (userTenants.length > 1 && !fromWhatsApp) {
                 // Check if the prompt explicitly names one of the institutions
@@ -86,8 +89,9 @@ export class LLMDomainService {
                 );
 
                 if (explicitTenant) {
-                    // User named a specific institution — use it
+                    // User named a specific institution — use it and cache for 24h
                     effectiveInstitutionName = explicitTenant.name;
+                    effectiveTenantId = explicitTenant.id;
                     if (userId) {
                         _tenantAskCache.set(userId, { tenantId: explicitTenant.id, askedAt: Date.now() });
                     }
@@ -98,6 +102,7 @@ export class LLMDomainService {
                     if (cached && (Date.now() - cached.askedAt) < TWENTY_FOUR_HOURS) {
                         // Use the previously selected tenant
                         effectiveInstitutionName = userTenants.find(t => t.id === cached.tenantId)?.name ?? cached.tenantId;
+                        effectiveTenantId = cached.tenantId;
                     } else {
                         // Must ask the user which institution to query
                         if (userId) {
@@ -117,6 +122,23 @@ export class LLMDomainService {
                 }
             }
             // ── END MULTI-TENANT AWARENESS ─────────────────────────────────────────
+
+            // ── CROSS-TENANT CONTEXT SWITCH ────────────────────────────────────────
+            // When the resolved institution differs from the JWT tenant, re-run the
+            // entire prompt inside that tenant's AsyncLocalStorage context so all
+            // repository / MCP calls transparently query the correct Supabase DB.
+            if (effectiveTenantId && effectiveTenantId !== tenantId) {
+                return runInTenantContext(effectiveTenantId, () =>
+                    this.processPrompt({
+                        prompt, model, courseId, taskDescription, fileContent, fileUri,
+                        studentId, userId, username, submissionId, taskId, topicId,
+                        freeLearning, forceMCPTools, difficulty, userRoles, fromWhatsApp,
+                        tenantId: effectiveTenantId,   // now matches context → no re-dispatch
+                        availableTenants,
+                        institutionName: effectiveInstitutionName,
+                    }),
+                );
+            }
 
             // 0. Auto-fetch file content from R2 when not provided by the client
             let resolvedFileContent = fileContent || '';
