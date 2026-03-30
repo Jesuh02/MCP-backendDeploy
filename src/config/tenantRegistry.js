@@ -18,6 +18,8 @@ const tenantClients = new Map();
 
 /** Default (primary) Supabase client — updated during initialization if URL was wrong. */
 let defaultClient = null;
+/** ID of the primary tenant — set during initialization. */
+let primaryTenantId = null;
 /** Public registry: tenant metadata (no secrets). */
 export const TENANT_CONFIGS = [];
 
@@ -94,6 +96,7 @@ export function initializeTenantRegistry(primaryClientFromProvider) {
         if (!tenantClients.has(tenantMeta.id)) {
             TENANT_CONFIGS.push({ ...tenantMeta, supabaseUrl: effectiveUrl });
             tenantClients.set(tenantMeta.id, primaryClient);
+            primaryTenantId = tenantMeta.id;
             console.log(`  ✅ Primary tenant registered: ${tenantMeta.id} → ${effectiveUrl}`);
         }
     }
@@ -135,6 +138,11 @@ export function initializeTenantRegistry(primaryClientFromProvider) {
 /** Returns the Supabase client for a specific tenantId. Falls back to default. */
 export function getTenantClient(tenantId) {
     return tenantClients.get(tenantId) || defaultClient;
+}
+
+/** Returns the ID of the primary tenant for this server instance. */
+export function getPrimaryTenantId() {
+    return primaryTenantId || 'qa-develop';
 }
 
 /** Returns true if there is a dedicated client for the given tenantId. */
