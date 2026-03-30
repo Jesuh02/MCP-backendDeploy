@@ -84,10 +84,6 @@ function mountHealthChecks(app, authMiddleware, requireRoles) {
     app.get('/health', (_req, res) => res.json(healthPayload()));
     app.get('/_health', (_req, res) => res.status(200).send('OK'));
 
-    app.get('/ping-debug', (req, res) => {
-        res.json({ ...healthPayload(), clientIp: req.ip, headers: req.headers });
-    });
-
     app.get('/api/v1/diagnostics/quick', authMiddleware, requireRoles(3), (_req, res) => {
         res.json({
             success: true,
