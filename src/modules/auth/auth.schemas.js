@@ -41,6 +41,9 @@ export const loginSchema = Joi.object({
     password: Joi.string().required().messages({
         'any.required': 'La contraseña es requerida',
     }),
+    cedula: Joi.string().allow('', null).optional().messages({
+        'string.base': 'La cédula debe ser texto',
+    }),
 });
 
 export const refreshTokenSchema = Joi.object({
