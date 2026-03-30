@@ -1550,21 +1550,47 @@ export class WhatsAppDomainService {
             if (!username) return '❌ No se pudo determinar tu nombre de usuario.';
 
             const entries = getAllTenantEntries();
+            // Fetch matches + cedula hash to filter by same physical person
             const results = await Promise.allSettled(
                 entries.map(async (entry) => {
                     if (!entry.client) return null;
                     const repo = new SupabaseUserRepository(entry.client);
                     const found = await repo.findByUsername(username);
                     if (!found) return null;
+                    // Fetch persona cedula hash for identity verification
+                    let cedulaHash = null;
+                    try {
+                        const personaId = found.persona_id ?? found.personas?.id ?? found.persona?.id ?? null;
+                        if (personaId) {
+                            const personaRepo = new SupabasePersonaRepository(entry.client);
+                            const persona = await personaRepo.findById(personaId);
+                            cedulaHash = persona?.identificacion_original ?? null;
+                        }
+                    } catch { /* ignore */ }
                     return {
                         tenantName: entry.name,
                         roles: (found.roles || []).map(r => r.nombre || r.name || r.id || r),
+                        cedulaHash,
                     };
                 }),
             );
-            const found = results
+            const allFound = results
                 .filter(r => r.status === 'fulfilled' && r.value !== null)
                 .map(r => r.value);
+
+            // Filter: only include tenants where the cedula matches the current user's persona
+            let currentCedula = null;
+            try {
+                const personaId = user.persona_id ?? user.personas?.id ?? user.persona?.id ?? null;
+                if (personaId) {
+                    const personaRepo = new SupabasePersonaRepository(getTenantClient(getCurrentTenantId()));
+                    const persona = await personaRepo.findById(personaId);
+                    currentCedula = persona?.identificacion_original ?? null;
+                }
+            } catch { /* ignore */ }
+            const found = currentCedula
+                ? allFound.filter(f => !f.cedulaHash || f.cedulaHash === currentCedula)
+                : allFound;
 
             if (found.length === 0) {
                 return `No se encontró el usuario *${username}* en ninguna institución registrada.`;
