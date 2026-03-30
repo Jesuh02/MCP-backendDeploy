@@ -14,6 +14,7 @@
  *     `personas` table for that user are returned.  Adds a second identity factor
  *     that prevents username-collision attacks across tenants.
  */
+import crypto from 'crypto';
 import { Result } from '../../shared/Result.js';
 import { UnauthorizedError, ConflictError, ValidationError } from '../../shared/errors/index.js';
 import { SupabaseUserRepository, hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
@@ -197,13 +198,18 @@ export class CrossTenantAuthService {
                     // Signal the UI to show the cedula field
                     return Result.ok({ needsCedula: true });
                 }
-                // Filter to the match whose persona cedula equals the provided value
-                const filtered = matches.filter(m => m._cedulaHash === cedula);
+                // Hash the plain cedula from the client before comparing to stored SHA-256 hashes
+                const cedulaDigits = String(cedula).replace(/\D/g, '').trim();
+                const hashedCedula = cedulaDigits
+                    ? crypto.createHash('sha256').update(cedulaDigits).digest('hex')
+                    : null;
+                const filtered = hashedCedula ? matches.filter(m => m._cedulaHash === hashedCedula) : [];
                 if (filtered.length === 0) {
                     return Result.fail(new UnauthorizedError(
                         'La cédula ingresada no corresponde a ninguna cuenta con estas credenciales.',
                     ));
                 }
+                // If the same cedula appears in multiple institutions → same person, show selection
                 matches = filtered;
             } else if (cedulaHashes.length > 0 && cedulaHashes.length < matches.length) {
                 // Some matches are missing cedula data — cannot confirm same person.
@@ -211,7 +217,11 @@ export class CrossTenantAuthService {
                 if (!cedula) {
                     return Result.ok({ needsCedula: true });
                 }
-                const filtered = matches.filter(m => m._cedulaHash === cedula);
+                const cedulaDigits = String(cedula).replace(/\D/g, '').trim();
+                const hashedCedula = cedulaDigits
+                    ? crypto.createHash('sha256').update(cedulaDigits).digest('hex')
+                    : null;
+                const filtered = hashedCedula ? matches.filter(m => m._cedulaHash === hashedCedula) : [];
                 matches = filtered.length > 0 ? filtered : [matches[0]];
             } else if (cedulaHashes.length === 0) {
                 // No cedula data at all in any tenant → auto-select first match.
