@@ -29,6 +29,7 @@ import {
 } from '../../utils/whatsappFormatter.js';
 import { getAllTenantEntries, TENANT_CONFIGS, runInTenantContext, getTenantClient, getCurrentTenantId } from '../../config/tenantRegistry.js';
 import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
+import { SupabasePersonaRepository } from '../persona/infrastructure/supabase.persona.repository.js';
 
 /** Key used to persist the user's selected query-tenant in conversationContext. */
 const TENANT_SEL_PREFIX = '__TENANT_SEL__:';
@@ -369,12 +370,40 @@ export class WhatsAppDomainService {
                 const crossResult = await this.crossTenantSessionRepo.findByPhoneNumber(from);
 
                 if (Array.isArray(crossResult)) {
-                    // Phone exists in multiple tenant DBs.  We will ask the user which
-                    // institution they want to query after identifying the session.
-                    // Use the first active session as the authoritative session tenant.
-                    sessionIsMultiTenant = true;
+                    // Phone exists in multiple tenant DBs.  Verify they belong to the
+                    // same physical person by comparing cedula hashes before offering
+                    // institution selection.
                     const activeCross = crossResult.filter(m => m.session.isActive);
-                    const primaryMatch = activeCross[0] || crossResult[0];
+                    const pool = activeCross.length ? activeCross : crossResult;
+
+                    // Fetch cedula hashes for each match to verify identity
+                    const cedulaHashes = await Promise.all(
+                        pool.map(async (m) => {
+                            try {
+                                const userId = m.session.userId;
+                                if (!userId || !m.client) return null;
+                                const userRepo = new SupabaseUserRepository(m.client);
+                                const user = await userRepo.findById(userId);
+                                const personaId = user?.persona_id ?? user?.personas?.id ?? null;
+                                if (!personaId) return null;
+                                const personaRepo = new SupabasePersonaRepository(m.client);
+                                const persona = await personaRepo.findById(personaId);
+                                return persona?.identificacion_original ?? null;
+                            } catch { return null; }
+                        }),
+                    );
+
+                    const validHashes = cedulaHashes.filter(Boolean);
+                    const uniqueHashes = [...new Set(validHashes)];
+
+                    // Only treat as multi-tenant if ALL matches have the same cedula
+                    const isSamePerson = validHashes.length === pool.length && uniqueHashes.length === 1;
+
+                    if (isSamePerson && pool.length > 1) {
+                        sessionIsMultiTenant = true;
+                    }
+
+                    const primaryMatch = pool[0];
                     session = primaryMatch?.session ?? null;
                     sessionTenantId = primaryMatch?.tenantId ?? 'qa-develop';
                 } else if (crossResult) {

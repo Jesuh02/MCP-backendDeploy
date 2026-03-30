@@ -177,6 +177,7 @@ export class CrossTenantAuthService {
 
         // When multiple matches exist, verify they belong to the same physical person
         // by comparing the cedula hash (identificacion_original) from each persona.
+        // ALL matches must have a cedula AND all must be identical to confirm identity.
         if (matches.length > 1) {
             const cedulaHashes = matches.map(m => m._cedulaHash).filter(Boolean);
             const uniqueHashes = [...new Set(cedulaHashes)];
@@ -192,6 +193,14 @@ export class CrossTenantAuthService {
             if (cedulaHashes.length === 0) {
                 return Result.fail(new UnauthorizedError(
                     'No se pudo verificar la identidad del usuario en múltiples instituciones. Asegúrese de tener una cédula asociada a su perfil.',
+                ));
+            }
+
+            // If SOME matches are missing cedula data → cannot confirm they are the
+            // same person (e.g. one persona has cedula, the other doesn't)
+            if (cedulaHashes.length < matches.length) {
+                return Result.fail(new UnauthorizedError(
+                    'No se pudo verificar la identidad del usuario en todas las instituciones. Algunos perfiles no tienen cédula asociada.',
                 ));
             }
         }
@@ -291,7 +300,12 @@ export class CrossTenantAuthService {
             }
 
             await this._enrichWithInstitution(user, instRepo);
-            return { ...this._buildMatch(entry, user), isNewUser: false };
+
+            // Fetch cedula hash so _resolveMatches can verify identity across tenants
+            const cedulaHash = await this._fetchCedulaHash(entry.client, user);
+            const match = { ...this._buildMatch(entry, user), isNewUser: false };
+            match._cedulaHash = cedulaHash;
+            return match;
         } catch (e) {
             console.warn(`[CrossTenantAuth] Google probe failed for ${entry.id}: ${e.message}`);
             return null;
