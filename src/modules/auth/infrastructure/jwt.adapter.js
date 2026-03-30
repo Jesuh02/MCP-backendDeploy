@@ -11,8 +11,14 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
-const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || process.env.ACCESS_TOKEN_SECRET || 'coursev-default-secret-change-me';
-const REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET || ACCESS_TOKEN_SECRET + '-refresh';
+const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || process.env.ACCESS_TOKEN_SECRET;
+if (!ACCESS_TOKEN_SECRET) {
+    throw new Error('[FATAL] JWT_SECRET no está definido. El servidor no puede arrancar de forma segura.');
+}
+const REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET;
+if (!REFRESH_TOKEN_SECRET) {
+    throw new Error('[FATAL] JWT_REFRESH_SECRET no está definido. El servidor no puede arrancar de forma segura.');
+}
 const ACCESS_TOKEN_EXPIRY = process.env.JWT_EXPIRY || '15m';
 const REFRESH_TOKEN_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '30d';
 const SALT_ROUNDS = 10;
