@@ -61,14 +61,12 @@ export const checkPasswordSchema = Joi.object({
 });
 
 export const googleLoginSchema = Joi.object({
-    email: Joi.string().email().optional().messages({
-        'string.email': 'Email inválido',
+    idToken: Joi.string().min(1).required().messages({
+        'any.required': 'El idToken de Google es requerido',
+        'string.empty': 'El idToken de Google es requerido',
     }),
     displayName: Joi.string().allow('').optional(),
     avatarUrl: Joi.string().uri().allow(null, '').optional(),
-    idToken: Joi.string().allow('').optional(),
     username: Joi.string().min(3).max(30).allow(null, '').optional(),
-}).or('email', 'idToken').messages({
-    'object.missing': 'El email o el idToken es requerido',
 });
 
