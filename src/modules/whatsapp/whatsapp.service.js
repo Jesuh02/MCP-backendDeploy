@@ -388,6 +388,9 @@ export class WhatsAppDomainService {
                                 if (!personaId) return null;
                                 const personaRepo = new SupabasePersonaRepository(m.client);
                                 const persona = await personaRepo.findById(personaId);
+                                // Prefer numeric identificacion (actual cedula) over identificacion_original (legacy/hash)
+                                const ident = persona?.identificacion;
+                                if (ident && Number.isFinite(Number(ident)) && Number(ident) > 0) return String(ident);
                                 return persona?.identificacion_original ?? null;
                             } catch { return null; }
                         }),
@@ -684,8 +687,16 @@ export class WhatsAppDomainService {
                             sessionPersonaRepo.findById(sessionPersonaId),
                             queryPersonaRepo.findById(queryPersonaId),
                         ]);
-                        const sessionCedula = sessionPersona?.identificacion_original ?? null;
-                        const queryCedula = queryPersona?.identificacion_original ?? null;
+                        const sessionCedula = (() => {
+                            const id = sessionPersona?.identificacion;
+                            if (id && Number.isFinite(Number(id)) && Number(id) > 0) return String(id);
+                            return sessionPersona?.identificacion_original ?? null;
+                        })();
+                        const queryCedula = (() => {
+                            const id = queryPersona?.identificacion;
+                            if (id && Number.isFinite(Number(id)) && Number(id) > 0) return String(id);
+                            return queryPersona?.identificacion_original ?? null;
+                        })();
                         if (sessionCedula && queryCedula && sessionCedula !== queryCedula) {
                             console.warn(`[WhatsApp] Cedula mismatch for '${sessionUser.username}' between ${sessionTenantId} and ${queryTenantId} — different people, using session user`);
                             user = sessionUser;
