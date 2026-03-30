@@ -669,6 +669,32 @@ export class WhatsAppDomainService {
             user = typeof this.userRepo.findByUsername === 'function'
                 ? await this.userRepo.findByUsername(sessionUser.username)
                 : null;
+            // Verify cedula: the user found in the query tenant must be the same
+            // physical person as the session user (prevent username-collision).
+            if (user) {
+                try {
+                    const sessionPersonaId = sessionUser.persona_id ?? sessionUser.personas?.id ?? sessionUser.persona?.id ?? null;
+                    const queryPersonaId = user.persona_id ?? user.personas?.id ?? user.persona?.id ?? null;
+                    if (sessionPersonaId && queryPersonaId) {
+                        const sessionClient = getTenantClient(sessionTenantId);
+                        const queryClient = getTenantClient(queryTenantId);
+                        const sessionPersonaRepo = new SupabasePersonaRepository(sessionClient);
+                        const queryPersonaRepo = new SupabasePersonaRepository(queryClient);
+                        const [sessionPersona, queryPersona] = await Promise.all([
+                            sessionPersonaRepo.findById(sessionPersonaId),
+                            queryPersonaRepo.findById(queryPersonaId),
+                        ]);
+                        const sessionCedula = sessionPersona?.identificacion_original ?? null;
+                        const queryCedula = queryPersona?.identificacion_original ?? null;
+                        if (sessionCedula && queryCedula && sessionCedula !== queryCedula) {
+                            console.warn(`[WhatsApp] Cedula mismatch for '${sessionUser.username}' between ${sessionTenantId} and ${queryTenantId} — different people, using session user`);
+                            user = sessionUser;
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[WhatsApp] Cedula verification failed: ${e.message}`);
+                }
+            }
             if (!user) {
                 console.warn(`[WhatsApp] User '${sessionUser.username}' not found in queryTenant=${queryTenantId}; using sessionTenant user identity`);
                 // Fall back to the session-tenant user so the conversation can continue.
