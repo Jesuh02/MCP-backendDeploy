@@ -13,7 +13,6 @@ import { UnauthorizedError } from '../errors/index.js';
 const DEFAULT_PUBLIC_PATHS = [
     '/health',
     '/_health',
-    '/ping-debug',
     '/debug-env',
     '/api/v1/auth/login',
     '/api/v1/auth/register',

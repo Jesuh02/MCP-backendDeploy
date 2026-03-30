@@ -288,18 +288,6 @@ app.get('/_health', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Lightweight debug endpoint to verify incoming connections from other devices
-app.get('/ping-debug', (req, res) => {
-    try {
-        const remote = req.ip || (req.connection && req.connection.remoteAddress) || '<unknown>';
-        console.log('🔍 /ping-debug requested from', remote);
-        console.log('    headers:', JSON.stringify(req.headers));
-    } catch (e) {
-        console.log('Error in /ping-debug logging', e.message);
-    }
-    res.json({ ok: true, ip: req.ip, headers: req.headers, ts: new Date().toISOString() });
-});
-
 // Endpoint de diagnóstico para verificar variables de entorno (sin revelar secretos)
 app.get('/debug-env', (req, res) => {
     res.json({
