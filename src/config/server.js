@@ -64,14 +64,14 @@ export function createApp() {
     app.use('/api/v1', errorHandler);
 
     mountLegacyRedirects(app, container);
-    mountHealthChecks(app);
+    mountHealthChecks(app, authMiddleware, requireRoles);
 
     app.use(errorHandler);
 
     return { app, container };
 }
 
-function mountHealthChecks(app) {
+function mountHealthChecks(app, authMiddleware, requireRoles) {
     const healthPayload = () => ({
         status: 'ok',
         version: '3.0.0',
@@ -88,7 +88,7 @@ function mountHealthChecks(app) {
         res.json({ ...healthPayload(), clientIp: req.ip, headers: req.headers });
     });
 
-    app.get('/api/v1/diagnostics/quick', (_req, res) => {
+    app.get('/api/v1/diagnostics/quick', authMiddleware, requireRoles(3), (_req, res) => {
         res.json({
             success: true,
             timestamp: new Date().toISOString(),
