@@ -56,9 +56,13 @@ export function createTenantMiddleware(jwtAdapter) {
         // within the same authenticated session.  Only accepted when the user's JWT
         // explicitly lists that tenant in availableTenants — prevents privilege
         // escalation to tenants the user doesn't belong to.
+        // availableTenants may be strings ["qa-develop"] or objects [{id:"qa-develop",name:"..."}]
         const requestedTenant = req.headers['x-tenant-id'];
-        if (requestedTenant && availableTenants && availableTenants.includes(requestedTenant)) {
-            tenantId = requestedTenant;
+        if (requestedTenant && availableTenants) {
+            const isAllowed = availableTenants.some(t =>
+                (typeof t === 'string' ? t : t?.id) === requestedTenant
+            );
+            if (isAllowed) tenantId = requestedTenant;
         }
 
         const client = getTenantClient(tenantId);
