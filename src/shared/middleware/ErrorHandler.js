@@ -41,6 +41,20 @@ export function errorHandler(err, req, res, _next) {
         );
     }
 
+    // Error de tamaño de payload (body-parser)
+    if (err.type === 'entity.too.large') {
+        return res.status(413).json({
+            success: false,
+            error: {
+                code: 'PAYLOAD_TOO_LARGE',
+                message: 'El cuerpo de la petición excede el tamaño máximo permitido',
+                statusCode: 413,
+                timestamp: new Date().toISOString(),
+                path: req.path,
+            },
+        });
+    }
+
     // Error de validación Joi
     if (err.isJoi || err.name === 'ValidationError') {
         return res.status(400).json({
