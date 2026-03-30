@@ -69,7 +69,7 @@ export class SupabasePersonaRepository {
         const payload = {
             nombres: personaData.nombres,
             apellidos: personaData.apellidos || '',
-            identificacion: null,
+            identificacion: cedula ? Number(cedula) : null,
             identificacion_original: cedulaHash || null,
             telefono: personaData.telefono ? hashSensitive(personaData.telefono) : '',
             direccion: personaData.direccion ? hashSensitive(personaData.direccion) : '',
@@ -88,7 +88,7 @@ export class SupabasePersonaRepository {
         if (personaData.apellidos !== undefined) payload.apellidos = personaData.apellidos;
         if (personaData.cedula !== undefined || personaData.identificacion !== undefined) {
             const cedula = resolveCedula(personaData);
-            payload.identificacion = null;
+            payload.identificacion = cedula ? Number(cedula) : null;
             payload.identificacion_original = hashCedula(cedula);
         }
         if (personaData.telefono !== undefined) payload.telefono = personaData.telefono ? hashSensitive(personaData.telefono) : '';
