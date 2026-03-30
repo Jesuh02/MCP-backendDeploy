@@ -83,6 +83,11 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
             const err = new UnauthorizedError(`Token inválido: ${error}`);
             if (error && error.includes('expirado')) {
                 err.silent = true; // Token expirado es un caso esperado — no loguear warning
+            } else if (error && error.includes('invalid signature')) {
+                // Firma inválida: token emitido por otro servidor (multi-tenant con JWT_SECRET distinto).
+                // Es un caso operacional esperado — el cliente debe reautenticarse.
+                err.silent = true;
+                err.code = 'INVALID_TOKEN_SIGNATURE'; // Código específico para que el cliente salte el refresh
             }
             return next(err);
         }
