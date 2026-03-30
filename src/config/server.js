@@ -28,7 +28,7 @@ export function createApp() {
             res.header('Vary', 'Origin');
         }
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-MCP-Client, X-MCP-Request-Id');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-MCP-Client, X-MCP-Request-Id, X-Tenant-Id');
         if (req.method === 'OPTIONS') return res.sendStatus(204);
         next();
     });

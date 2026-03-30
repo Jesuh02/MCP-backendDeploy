@@ -68,8 +68,12 @@ export class LLMDomainService {
             const allTenantConfigs = TENANT_CONFIGS.map(t => ({ id: t.id, name: t.name }));
             // Limit to tenants the user is actually enrolled in (from JWT availableTenants).
             // If availableTenants is empty (old client/WhatsApp), fall back to all configs.
-            const userTenants = (Array.isArray(availableTenants) && availableTenants.length > 0)
-                ? allTenantConfigs.filter(t => availableTenants.includes(t.id))
+            // availableTenants may be strings ["qa-develop"] or objects [{id:"qa-develop",name:"..."}]
+            const normalizedAvailable = (Array.isArray(availableTenants) && availableTenants.length > 0)
+                ? availableTenants.map(t => typeof t === 'string' ? t : t?.id).filter(Boolean)
+                : [];
+            const userTenants = (normalizedAvailable.length > 0)
+                ? allTenantConfigs.filter(t => normalizedAvailable.includes(t.id))
                 : allTenantConfigs;
 
             // Resolve the effective institution name for the system prompt
