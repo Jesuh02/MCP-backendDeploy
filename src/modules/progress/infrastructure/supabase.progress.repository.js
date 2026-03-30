@@ -265,15 +265,30 @@ export class SupabaseProgressRepository {
             ...(!isSubjectLevel && progressData.enrollment_status ? { enrollment_status: progressData.enrollment_status } : {}),
         };
 
-        const { data, error } = await this.client
+        // Manual upsert: avoid relying on DB unique constraint (ON CONFLICT) which may not exist.
+        let findQuery = this.client
             .from(tableName)
-            .upsert(payload, {
-                onConflict: isSubjectLevel
-                    ? 'usuario_estudiante,curso_id,materia_id'
-                    : 'usuario_estudiante,curso_id',
-            })
-            .select()
-            .single();
+            .select('id')
+            .eq('usuario_estudiante', progressData.userId)
+            .eq('curso_id', progressData.courseId);
+        if (isSubjectLevel) findQuery = findQuery.eq('materia_id', Number(progressData.subjectId));
+        const { data: existing } = await findQuery.maybeSingle();
+
+        let data, error;
+        if (existing?.id) {
+            ({ data, error } = await this.client
+                .from(tableName)
+                .update(payload)
+                .eq('id', existing.id)
+                .select()
+                .single());
+        } else {
+            ({ data, error } = await this.client
+                .from(tableName)
+                .insert(payload)
+                .select()
+                .single());
+        }
         if (error) throw new Error(error.message);
 
         const cert = isSubjectLevel
