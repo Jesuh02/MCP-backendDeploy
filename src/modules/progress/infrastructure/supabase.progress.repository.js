@@ -1096,23 +1096,51 @@ export class SupabaseProgressRepository {
 
     async upsertPreEnrollment(userId, courseId, status = 'pending', reviewedBy = null) {
         const now = new Date().toISOString();
-        const payload = {
-            user_id:      userId,
-            course_id:    courseId,
-            status,
-            requested_at: now,
-        };
-        if (status === 'approved') {
-            payload.reviewed_at = now;
-            if (reviewedBy) payload.reviewed_by = reviewedBy;
+        
+        // 🛡️ Defensive approach: Find existing record first
+        // This works whether or not the UNIQUE constraint exists
+        const existing = await this.findPreEnrollment(userId, courseId);
+        
+        if (existing) {
+            // UPDATE existing record
+            const updatePayload = { status };
+            if (status === 'approved') {
+                updatePayload.reviewed_at = now;
+                if (reviewedBy) updatePayload.reviewed_by = reviewedBy;
+            }
+            
+            const { data, error } = await this.client
+                .from('pre_enrollments')
+                .update(updatePayload)
+                .eq('user_id', userId)
+                .eq('course_id', courseId)
+                .select()
+                .single();
+            
+            if (error) throw new Error(error.message);
+            return this._mapPreEnrollmentRecord(data);
+        } else {
+            // INSERT new record
+            const insertPayload = {
+                user_id:      userId,
+                course_id:    courseId,
+                status,
+                requested_at: now,
+            };
+            if (status === 'approved') {
+                insertPayload.reviewed_at = now;
+                if (reviewedBy) insertPayload.reviewed_by = reviewedBy;
+            }
+            
+            const { data, error } = await this.client
+                .from('pre_enrollments')
+                .insert(insertPayload)
+                .select()
+                .single();
+            
+            if (error) throw new Error(error.message);
+            return this._mapPreEnrollmentRecord(data);
         }
-        const { data, error } = await this.client
-            .from('pre_enrollments')
-            .upsert(payload, { onConflict: 'user_id,course_id' })
-            .select()
-            .single();
-        if (error) throw new Error(error.message);
-        return this._mapPreEnrollmentRecord(data);
     }
 
     /**

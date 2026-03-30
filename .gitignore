@@ -103,3 +103,4 @@ scripts/migration_qa_to_prod.sql
 scripts/migration_execute_sql_function.sql
 scripts/test_incat_login.js
 scripts/cleanup_rag_and_questions.sql
+scripts/fix_pre_enrollments_unique_constraint.sql
