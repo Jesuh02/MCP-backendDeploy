@@ -29,6 +29,7 @@ import {
 } from '../../utils/whatsappFormatter.js';
 import { getAllTenantEntries, TENANT_CONFIGS, runInTenantContext, getTenantClient, getCurrentTenantId } from '../../config/tenantRegistry.js';
 import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
+import { SupabasePersonaRepository } from '../persona/infrastructure/supabase.persona.repository.js';
 
 /** Key used to persist the user's selected query-tenant in conversationContext. */
 const TENANT_SEL_PREFIX = '__TENANT_SEL__:';
@@ -369,12 +370,40 @@ export class WhatsAppDomainService {
                 const crossResult = await this.crossTenantSessionRepo.findByPhoneNumber(from);
 
                 if (Array.isArray(crossResult)) {
-                    // Phone exists in multiple tenant DBs.  We will ask the user which
-                    // institution they want to query after identifying the session.
-                    // Use the first active session as the authoritative session tenant.
-                    sessionIsMultiTenant = true;
+                    // Phone exists in multiple tenant DBs.  Verify they belong to the
+                    // same physical person by comparing cedula hashes before offering
+                    // institution selection.
                     const activeCross = crossResult.filter(m => m.session.isActive);
-                    const primaryMatch = activeCross[0] || crossResult[0];
+                    const pool = activeCross.length ? activeCross : crossResult;
+
+                    // Fetch cedula hashes for each match to verify identity
+                    const cedulaHashes = await Promise.all(
+                        pool.map(async (m) => {
+                            try {
+                                const userId = m.session.userId;
+                                if (!userId || !m.client) return null;
+                                const userRepo = new SupabaseUserRepository(m.client);
+                                const user = await userRepo.findById(userId);
+                                const personaId = user?.persona_id ?? user?.personas?.id ?? null;
+                                if (!personaId) return null;
+                                const personaRepo = new SupabasePersonaRepository(m.client);
+                                const persona = await personaRepo.findById(personaId);
+                                return persona?.identificacion_original ?? null;
+                            } catch { return null; }
+                        }),
+                    );
+
+                    const validHashes = cedulaHashes.filter(Boolean);
+                    const uniqueHashes = [...new Set(validHashes)];
+
+                    // Only treat as multi-tenant if ALL matches have the same cedula
+                    const isSamePerson = validHashes.length === pool.length && uniqueHashes.length === 1;
+
+                    if (isSamePerson && pool.length > 1) {
+                        sessionIsMultiTenant = true;
+                    }
+
+                    const primaryMatch = pool[0];
                     session = primaryMatch?.session ?? null;
                     sessionTenantId = primaryMatch?.tenantId ?? 'qa-develop';
                 } else if (crossResult) {
@@ -640,6 +669,32 @@ export class WhatsAppDomainService {
             user = typeof this.userRepo.findByUsername === 'function'
                 ? await this.userRepo.findByUsername(sessionUser.username)
                 : null;
+            // Verify cedula: the user found in the query tenant must be the same
+            // physical person as the session user (prevent username-collision).
+            if (user) {
+                try {
+                    const sessionPersonaId = sessionUser.persona_id ?? sessionUser.personas?.id ?? sessionUser.persona?.id ?? null;
+                    const queryPersonaId = user.persona_id ?? user.personas?.id ?? user.persona?.id ?? null;
+                    if (sessionPersonaId && queryPersonaId) {
+                        const sessionClient = getTenantClient(sessionTenantId);
+                        const queryClient = getTenantClient(queryTenantId);
+                        const sessionPersonaRepo = new SupabasePersonaRepository(sessionClient);
+                        const queryPersonaRepo = new SupabasePersonaRepository(queryClient);
+                        const [sessionPersona, queryPersona] = await Promise.all([
+                            sessionPersonaRepo.findById(sessionPersonaId),
+                            queryPersonaRepo.findById(queryPersonaId),
+                        ]);
+                        const sessionCedula = sessionPersona?.identificacion_original ?? null;
+                        const queryCedula = queryPersona?.identificacion_original ?? null;
+                        if (sessionCedula && queryCedula && sessionCedula !== queryCedula) {
+                            console.warn(`[WhatsApp] Cedula mismatch for '${sessionUser.username}' between ${sessionTenantId} and ${queryTenantId} — different people, using session user`);
+                            user = sessionUser;
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[WhatsApp] Cedula verification failed: ${e.message}`);
+                }
+            }
             if (!user) {
                 console.warn(`[WhatsApp] User '${sessionUser.username}' not found in queryTenant=${queryTenantId}; using sessionTenant user identity`);
                 // Fall back to the session-tenant user so the conversation can continue.
@@ -1495,21 +1550,47 @@ export class WhatsAppDomainService {
             if (!username) return '❌ No se pudo determinar tu nombre de usuario.';
 
             const entries = getAllTenantEntries();
+            // Fetch matches + cedula hash to filter by same physical person
             const results = await Promise.allSettled(
                 entries.map(async (entry) => {
                     if (!entry.client) return null;
                     const repo = new SupabaseUserRepository(entry.client);
                     const found = await repo.findByUsername(username);
                     if (!found) return null;
+                    // Fetch persona cedula hash for identity verification
+                    let cedulaHash = null;
+                    try {
+                        const personaId = found.persona_id ?? found.personas?.id ?? found.persona?.id ?? null;
+                        if (personaId) {
+                            const personaRepo = new SupabasePersonaRepository(entry.client);
+                            const persona = await personaRepo.findById(personaId);
+                            cedulaHash = persona?.identificacion_original ?? null;
+                        }
+                    } catch { /* ignore */ }
                     return {
                         tenantName: entry.name,
                         roles: (found.roles || []).map(r => r.nombre || r.name || r.id || r),
+                        cedulaHash,
                     };
                 }),
             );
-            const found = results
+            const allFound = results
                 .filter(r => r.status === 'fulfilled' && r.value !== null)
                 .map(r => r.value);
+
+            // Filter: only include tenants where the cedula matches the current user's persona
+            let currentCedula = null;
+            try {
+                const personaId = user.persona_id ?? user.personas?.id ?? user.persona?.id ?? null;
+                if (personaId) {
+                    const personaRepo = new SupabasePersonaRepository(getTenantClient(getCurrentTenantId()));
+                    const persona = await personaRepo.findById(personaId);
+                    currentCedula = persona?.identificacion_original ?? null;
+                }
+            } catch { /* ignore */ }
+            const found = currentCedula
+                ? allFound.filter(f => !f.cedulaHash || f.cedulaHash === currentCedula)
+                : allFound;
 
             if (found.length === 0) {
                 return `No se encontró el usuario *${username}* en ninguna institución registrada.`;
