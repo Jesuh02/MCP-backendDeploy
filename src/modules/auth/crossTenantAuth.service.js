@@ -32,14 +32,14 @@ export class CrossTenantAuthService {
      *
      * @param {{ username: string, password: string, cedula?: string }} params
      */
-    async login({ username, password, cedula }) {
+    async login({ username, password }) {
         const entries = getAllTenantEntries();
         if (entries.length === 0) {
             return Result.fail(new UnauthorizedError('No hay instituciones configuradas'));
         }
 
         const results = await Promise.allSettled(
-            entries.map(entry => this._tryLogin(entry, username, password, cedula)),
+            entries.map(entry => this._tryLogin(entry, username, password)),
         );
 
         return this._resolveMatches(results, 'Credenciales inválidas');
@@ -175,6 +175,36 @@ export class CrossTenantAuthService {
             return Result.fail(new UnauthorizedError(noMatchMessage));
         }
 
+        // When multiple matches exist, verify they belong to the same physical person
+        // by comparing the cedula hash (identificacion_original) from each persona.
+        // ALL matches must have a cedula AND all must be identical to confirm identity.
+        if (matches.length > 1) {
+            const cedulaHashes = matches.map(m => m._cedulaHash).filter(Boolean);
+            const uniqueHashes = [...new Set(cedulaHashes)];
+
+            // If persona cedula data is available and hashes differ → different people
+            if (uniqueHashes.length > 1) {
+                return Result.fail(new UnauthorizedError(
+                    'Credenciales ambiguas: existen usuarios con las mismas credenciales en diferentes instituciones pero con cédulas distintas. Contacte soporte.',
+                ));
+            }
+
+            // If no cedula data available for any match → cannot confirm identity
+            if (cedulaHashes.length === 0) {
+                return Result.fail(new UnauthorizedError(
+                    'No se pudo verificar la identidad del usuario en múltiples instituciones. Asegúrese de tener una cédula asociada a su perfil.',
+                ));
+            }
+
+            // If SOME matches are missing cedula data → cannot confirm they are the
+            // same person (e.g. one persona has cedula, the other doesn't)
+            if (cedulaHashes.length < matches.length) {
+                return Result.fail(new UnauthorizedError(
+                    'No se pudo verificar la identidad del usuario en todas las instituciones. Algunos perfiles no tienen cédula asociada.',
+                ));
+            }
+        }
+
         const allTenantIds = matches.map(m => m.tenant.id);
 
         // Re-sign tokens so every JWT carries the full availableTenants list
@@ -196,20 +226,21 @@ export class CrossTenantAuthService {
         }));
 
         if (enriched.length === 1) {
-            const { _payload, ...result } = enriched[0];
-            return Result.ok({ ...result, availableTenants: enriched.map(m => ({ id: m.tenant.id, name: m.tenant.name })) });
+            const { _payload, _cedulaHash, ...result } = enriched[0];
+            return Result.ok({ ...result, personaCedulaHash: _cedulaHash || null, availableTenants: enriched.map(m => ({ id: m.tenant.id, name: m.tenant.name })) });
         }
 
         return Result.ok({
             multipleMatches: true,
-            matches: enriched.map(({ _payload, ...m }) => ({
+            matches: enriched.map(({ _payload, _cedulaHash, ...m }) => ({
                 ...m,
+                personaCedulaHash: _cedulaHash || null,
                 availableTenants: enriched.map(x => ({ id: x.tenant.id, name: x.tenant.name })),
             })),
         });
     }
 
-    async _tryLogin(entry, username, password, cedula) {
+    async _tryLogin(entry, username, password) {
         if (!entry.client) return null;
         try {
             const userRepo = new SupabaseUserRepository(entry.client);
@@ -222,16 +253,14 @@ export class CrossTenantAuthService {
             const valid = await this._verifyPassword(userRepo, user, password);
             if (!valid) return null;
 
-            // Optional cedula validation: when provided, verify against personas table.
-            // This prevents a user whose username collides across tenants from accidentally
-            // gaining access to the wrong institution's data.
-            if (cedula) {
-                const cedulaMatch = await this._verifyCedula(entry.client, user, cedula);
-                if (!cedulaMatch) return null;
-            }
-
             await this._enrichWithInstitution(user, instRepo);
-            return this._buildMatch(entry, user);
+
+            // Fetch the persona's cedula hash so _resolveMatches can verify identity
+            const cedulaHash = await this._fetchCedulaHash(entry.client, user);
+
+            const match = this._buildMatch(entry, user);
+            match._cedulaHash = cedulaHash; // attached for cross-tenant identity check
+            return match;
         } catch (e) {
             console.warn(`[CrossTenantAuth] Probe failed for ${entry.id}: ${e.message}`);
             return null;
@@ -239,25 +268,19 @@ export class CrossTenantAuthService {
     }
 
     /**
-     * Verifies that the provided cedula belongs to the persona linked to `user`
-     * in this tenant's `personas` table.
-     * @returns {Promise<boolean>}
+     * Fetches the cedula hash (identificacion_original) of the persona linked to `user`.
+     * Used to verify that multiple tenant matches belong to the same physical person.
+     * @returns {Promise<string|null>}
      */
-    async _verifyCedula(client, user, cedula) {
+    async _fetchCedulaHash(client, user) {
         try {
-            const personaRepo = new SupabasePersonaRepository(client);
-            // The persona is linked via usuarios.persona_id OR personas.user_id
-            // Try finding by person identification
-            const persona = await personaRepo.findByIdentificacion(cedula);
-            if (!persona) return false;
-            // Verify the persona belongs to this user (via persona_id on user or user_id on persona)
             const personaId = user.persona_id ?? user.personas?.id ?? user.persona?.id ?? null;
-            if (personaId && persona.id === personaId) return true;
-            // Fallback: check if persona has same institution as user's persona
-            return false;
+            if (!personaId) return null;
+            const personaRepo = new SupabasePersonaRepository(client);
+            const persona = await personaRepo.findById(personaId);
+            return persona?.identificacion_original ?? null;
         } catch {
-            // Non-fatal: if persona lookup fails, don't block login
-            return true;
+            return null;
         }
     }
 
@@ -278,7 +301,12 @@ export class CrossTenantAuthService {
             }
 
             await this._enrichWithInstitution(user, instRepo);
-            return { ...this._buildMatch(entry, user), isNewUser: false };
+
+            // Fetch cedula hash so _resolveMatches can verify identity across tenants
+            const cedulaHash = await this._fetchCedulaHash(entry.client, user);
+            const match = { ...this._buildMatch(entry, user), isNewUser: false };
+            match._cedulaHash = cedulaHash;
+            return match;
         } catch (e) {
             console.warn(`[CrossTenantAuth] Google probe failed for ${entry.id}: ${e.message}`);
             return null;

@@ -18,8 +18,8 @@ export const registerSchema = Joi.object({
         'any.required': 'La contraseña es requerida',
     }),
     tenantId: Joi.string().max(64).allow(null, '').optional(),
-    tenantIds: Joi.array().items(Joi.string().max(64)).min(1).optional(),
-    personaId: Joi.number().integer().positive().optional(),
+    tenantIds: Joi.array().items(Joi.string().max(64)).min(1).allow(null).optional(),
+    personaId: Joi.number().integer().positive().allow(null).optional(),
     persona: Joi.object({
         nombre: Joi.string().allow('').optional(),
         nombres: Joi.string().allow('').optional(),
@@ -31,7 +31,7 @@ export const registerSchema = Joi.object({
         telefono: Joi.string().allow('').optional(),
         fecha_nacimiento: Joi.string().allow('', null).optional(),
         institucion_id: Joi.number().integer().positive().allow(null).optional(),
-    }).optional(),
+    }).allow(null).optional(),
 });
 
 export const loginSchema = Joi.object({
@@ -40,6 +40,9 @@ export const loginSchema = Joi.object({
     }),
     password: Joi.string().required().messages({
         'any.required': 'La contraseña es requerida',
+    }),
+    cedula: Joi.string().allow('', null).optional().messages({
+        'string.base': 'La cédula debe ser texto',
     }),
 });
 
