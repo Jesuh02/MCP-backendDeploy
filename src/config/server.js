@@ -16,8 +16,17 @@ export function createApp() {
     }));
     app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+    const ALLOWED_ORIGINS = [
+        'https://coursevwebfrontend1.jdavidherazo.workers.dev',
+        // Agrega aquí otros orígenes de confianza
+    ];
+
     app.use((req, res, next) => {
-        res.header('Access-Control-Allow-Origin', '*');
+        const origin = req.headers.origin;
+        if (origin && ALLOWED_ORIGINS.includes(origin)) {
+            res.header('Access-Control-Allow-Origin', origin);
+            res.header('Vary', 'Origin');
+        }
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
         res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-MCP-Client, X-MCP-Request-Id');
         if (req.method === 'OPTIONS') return res.sendStatus(204);
