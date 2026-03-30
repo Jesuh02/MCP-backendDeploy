@@ -1,4 +1,5 @@
 import express from 'express';
+import helmet from 'helmet';
 import { networkInterfaces } from 'os';
 import { createContainer } from './container.js';
 import { createRouter } from '../interfaces/routes/index.js';
@@ -9,6 +10,12 @@ import { idempotencyGuard } from '../shared/middleware/IdempotencyMiddleware.js'
 
 export function createApp() {
     const app = express();
+
+    // Security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, etc.)
+    // crossOriginResourcePolicy desactivado para no colisionar con el CORS manual de abajo.
+    app.use(helmet({
+        crossOriginResourcePolicy: false,
+    }));
 
     app.use(express.json({
         limit: '5mb',
