@@ -25,6 +25,20 @@ export function errorHandler(err, req, res, _next) {
         logger.error('Error:', logPayload);
     }
 
+    // Error de tamaño de payload (body-parser) — debe ir antes de AppError
+    if (err.type === 'entity.too.large') {
+        return res.status(413).json({
+            success: false,
+            error: {
+                code: 'PAYLOAD_TOO_LARGE',
+                message: 'El cuerpo de la petición excede el tamaño máximo permitido',
+                statusCode: 413,
+                timestamp: new Date().toISOString(),
+                path: req.path,
+            },
+        });
+    }
+
     // AppError (errores operacionales controlados)
     if (err instanceof AppError || err.isOperational) {
         return res.status(err.statusCode || 500).json(
@@ -39,20 +53,6 @@ export function errorHandler(err, req, res, _next) {
                 },
             }
         );
-    }
-
-    // Error de tamaño de payload (body-parser)
-    if (err.type === 'entity.too.large') {
-        return res.status(413).json({
-            success: false,
-            error: {
-                code: 'PAYLOAD_TOO_LARGE',
-                message: 'El cuerpo de la petición excede el tamaño máximo permitido',
-                statusCode: 413,
-                timestamp: new Date().toISOString(),
-                path: req.path,
-            },
-        });
     }
 
     // Error de validación Joi
