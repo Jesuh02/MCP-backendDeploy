@@ -198,12 +198,22 @@ export class CrossTenantAuthService {
                     // Signal the UI to show the cedula field
                     return Result.ok({ needsCedula: true });
                 }
-                // Hash the plain cedula from the client before comparing to stored SHA-256 hashes
+                // Compare user-provided cedula against stored values.
+                // _cedulaHash can be: (a) numeric cedula string like "1006617028",
+                // (b) SHA-256 hash, or (c) legacy non-numeric value.
+                // Try direct digit match first, then SHA-256 hash match as fallback.
                 const cedulaDigits = String(cedula).replace(/\D/g, '').trim();
                 const hashedCedula = cedulaDigits
                     ? crypto.createHash('sha256').update(cedulaDigits).digest('hex')
                     : null;
-                const filtered = hashedCedula ? matches.filter(m => m._cedulaHash === hashedCedula) : [];
+                const filtered = matches.filter(m => {
+                    if (!m._cedulaHash) return false;
+                    // Direct numeric match (when _cedulaHash is the numeric cedula)
+                    if (cedulaDigits && m._cedulaHash === cedulaDigits) return true;
+                    // SHA-256 hash match (when _cedulaHash is a hash stored in identificacion_original)
+                    if (hashedCedula && m._cedulaHash === hashedCedula) return true;
+                    return false;
+                });
                 if (filtered.length === 0) {
                     return Result.fail(new UnauthorizedError(
                         'La cédula ingresada no corresponde a ninguna cuenta con estas credenciales.',
@@ -221,7 +231,12 @@ export class CrossTenantAuthService {
                 const hashedCedula = cedulaDigits
                     ? crypto.createHash('sha256').update(cedulaDigits).digest('hex')
                     : null;
-                const filtered = hashedCedula ? matches.filter(m => m._cedulaHash === hashedCedula) : [];
+                const filtered = matches.filter(m => {
+                    if (!m._cedulaHash) return false;
+                    if (cedulaDigits && m._cedulaHash === cedulaDigits) return true;
+                    if (hashedCedula && m._cedulaHash === hashedCedula) return true;
+                    return false;
+                });
                 matches = filtered.length > 0 ? filtered : [matches[0]];
             } else if (cedulaHashes.length === 0) {
                 // No cedula data at all in any tenant → auto-select first match.
@@ -296,7 +311,10 @@ export class CrossTenantAuthService {
     }
 
     /**
-     * Fetches the cedula hash (identificacion_original) of the persona linked to `user`.
+     * Fetches the cedula (identificacion) of the persona linked to `user`.
+     * Prefers the numeric `identificacion` field (the real cedula number) over
+     * `identificacion_original` which may contain a SHA-256 hash or a legacy
+     * non-numeric value like "jesus" or "jesus_duplicate_5".
      * Used to verify that multiple tenant matches belong to the same physical person.
      * @returns {Promise<string|null>}
      */
@@ -306,7 +324,14 @@ export class CrossTenantAuthService {
             if (!personaId) return null;
             const personaRepo = new SupabasePersonaRepository(client);
             const persona = await personaRepo.findById(personaId);
-            return persona?.identificacion_original ?? null;
+            if (!persona) return null;
+            // Prefer the numeric identificacion field (actual cedula number)
+            const identificacion = persona.identificacion;
+            if (identificacion && Number.isFinite(Number(identificacion)) && Number(identificacion) > 0) {
+                return String(identificacion);
+            }
+            // Fallback to identificacion_original (may be SHA-256 hash or legacy value)
+            return persona.identificacion_original ?? null;
         } catch {
             return null;
         }
