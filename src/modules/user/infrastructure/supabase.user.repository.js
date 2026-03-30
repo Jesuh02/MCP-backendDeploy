@@ -186,6 +186,7 @@ export class SupabaseUserRepository {
                     telefono: hashedTelefono || '',
                     direccion: '',
                     fecha_nacimiento: userData.persona.fecha_nacimiento || null,
+                    genero: userData.persona.genero || null,
                     ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
                 }).select().single();
                 if (pe) {

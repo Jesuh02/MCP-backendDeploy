@@ -227,13 +227,14 @@ export class CrossTenantAuthService {
 
         if (enriched.length === 1) {
             const { _payload, _cedulaHash, ...result } = enriched[0];
-            return Result.ok({ ...result, availableTenants: enriched.map(m => ({ id: m.tenant.id, name: m.tenant.name })) });
+            return Result.ok({ ...result, personaCedulaHash: _cedulaHash || null, availableTenants: enriched.map(m => ({ id: m.tenant.id, name: m.tenant.name })) });
         }
 
         return Result.ok({
             multipleMatches: true,
             matches: enriched.map(({ _payload, _cedulaHash, ...m }) => ({
                 ...m,
+                personaCedulaHash: _cedulaHash || null,
                 availableTenants: enriched.map(x => ({ id: x.tenant.id, name: x.tenant.name })),
             })),
         });

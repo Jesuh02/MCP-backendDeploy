@@ -93,11 +93,11 @@ export class LLMDomainService {
                     effectiveInstitutionName = explicitTenant.name;
                     effectiveTenantId = explicitTenant.id;
                     if (userId) {
-                        _tenantAskCache.set(userId, { tenantId: explicitTenant.id, askedAt: Date.now() });
+                        _tenantAskCache.set(`${tenantId || 'default'}:${userId}`, { tenantId: explicitTenant.id, askedAt: Date.now() });
                     }
                 } else {
                     // Check 24-hour cache
-                    const cached = userId ? _tenantAskCache.get(userId) : null;
+                    const cached = userId ? _tenantAskCache.get(`${tenantId || 'default'}:${userId}`) : null;
                     const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
                     if (cached && (Date.now() - cached.askedAt) < TWENTY_FOUR_HOURS) {
                         // Use the previously selected tenant
@@ -106,7 +106,7 @@ export class LLMDomainService {
                     } else {
                         // Must ask the user which institution to query
                         if (userId) {
-                            _tenantAskCache.set(userId, { tenantId: tenantId || userTenants[0].id, askedAt: Date.now() });
+                            _tenantAskCache.set(`${tenantId || 'default'}:${userId}`, { tenantId: tenantId || userTenants[0].id, askedAt: Date.now() });
                         }
                         const menuLines = userTenants.map((t, i) => `${i + 1}. *${t.name}*`).join('\n');
                         const askMsg = `🏫 Tienes acceso a múltiples instituciones. ¿De cuál deseas consultar la información?\n\n${menuLines}\n\nResponde con el número o el nombre de la institución y luego repite tu pregunta.`;
