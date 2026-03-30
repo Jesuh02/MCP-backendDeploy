@@ -11,10 +11,10 @@ export function createApp() {
     const app = express();
 
     app.use(express.json({
-        limit: '50mb',
+        limit: '5mb',
         verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); },
     }));
-    app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+    app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
     const ALLOWED_ORIGINS = [
         'https://coursevwebfrontend1.jdavidherazo.workers.dev',
