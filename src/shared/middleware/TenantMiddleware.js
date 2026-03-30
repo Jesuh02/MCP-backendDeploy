@@ -6,12 +6,13 @@
  *   2. X-Tenant-Id header override (chat views that let users switch institutions)
  *      Only honoured when the requested tenantId is listed in the JWT's availableTenants.
  *   3. Refresh token in the request body
- *   4. Falls back to 'qa-develop'
+ *   4. Request body tenantId / tenantIds[0] (unauthenticated endpoints like /auth/register)
+ *   5. Falls back to 'qa-develop'
  *
  * The resolved tenantId is stored in AsyncLocalStorage so the
  * tenant-aware Supabase Proxy routes DB queries transparently.
  */
-import { tenantContext, getTenantClient } from '../../config/tenantRegistry.js';
+import { tenantContext, getTenantClient, hasTenantClient } from '../../config/tenantRegistry.js';
 
 export function createTenantMiddleware(jwtAdapter) {
     return (req, _res, next) => {
@@ -38,6 +39,17 @@ export function createTenantMiddleware(jwtAdapter) {
                     if (Array.isArray(decoded.availableTenants)) availableTenants = decoded.availableTenants;
                 }
             } catch { /* use default */ }
+        }
+        // Unauthenticated endpoints (e.g. /auth/register) may carry tenantId in
+        // the request body. Use it so the AsyncLocalStorage context matches the
+        // tenant the auth controller will ultimately target.
+        else if (req.body) {
+            const bodyTenantId = (req.body.tenantIds && req.body.tenantIds.length > 0)
+                ? req.body.tenantIds[0]
+                : req.body.tenantId;
+            if (typeof bodyTenantId === 'string' && bodyTenantId.trim() && hasTenantClient(bodyTenantId.trim())) {
+                tenantId = bodyTenantId.trim();
+            }
         }
 
         // X-Tenant-Id override: allows chat views to switch the query institution

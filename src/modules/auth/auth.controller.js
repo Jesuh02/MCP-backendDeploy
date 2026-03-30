@@ -64,6 +64,9 @@ export class AuthController {
             } else {
                 // Single-tenant (existing behaviour)
                 const requestedTenant = rawIds[0] || null;
+                if (!requestedTenant) {
+                    console.warn('[AuthController] register called WITHOUT tenantId — user will be created in the default DB. Body keys:', Object.keys(value).join(', '));
+                }
                 const doRegister = () => this.authService.register({ ...value, tenantId: requestedTenant });
                 result = requestedTenant
                     ? await runInTenantContext(requestedTenant, doRegister)
