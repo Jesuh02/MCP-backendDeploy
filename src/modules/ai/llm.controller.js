@@ -72,7 +72,7 @@ export class LLMController {
             const resolvedTenantId = getCurrentTenantId() || req.user?.tenantId || 'qa-develop';
             const jwtAvailableTenants = Array.isArray(req.user?.availableTenants)
                 ? req.user.availableTenants
-                : (req.user?.tenantId ? [req.user.tenantId] : [resolvedTenantId]);
+                : (req.user?.tenantId ? [{ id: req.user.tenantId, name: req.user.tenantId }] : [{ id: resolvedTenantId, name: resolvedTenantId }]);
             const institutionName = TENANT_CONFIGS.find(t => t.id === resolvedTenantId)?.name ?? resolvedTenantId;
 
             const params = {
