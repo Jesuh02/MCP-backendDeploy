@@ -66,19 +66,31 @@ export class SupabasePersonaRepository {
     async create(personaData) {
         const cedula = resolveCedula(personaData);
         const cedulaHash = hashCedula(cedula);
+        const numericCedula = cedula ? Number(cedula) : null;
+        const identificacionValue = Number.isFinite(numericCedula) ? numericCedula : null;
+        console.log(`[PersonaRepo] Creating persona: cedula=${cedula}, numericCedula=${numericCedula}, isFinite=${Number.isFinite(numericCedula)}, identificacion=${identificacionValue}`);
         const payload = {
             nombres: personaData.nombres,
             apellidos: personaData.apellidos || '',
-            identificacion: cedula ? Number(cedula) : null,
+            identificacion: identificacionValue,
             identificacion_original: cedulaHash || null,
             telefono: personaData.telefono ? hashSensitive(personaData.telefono) : '',
             direccion: personaData.direccion ? hashSensitive(personaData.direccion) : '',
             fecha_nacimiento: personaData.fecha_nacimiento || null,
-            genero: personaData.genero || null,
             ...(personaData.institucion_id != null && { institucion_id: personaData.institucion_id }),
         };
         const { data, error } = await this.client.from('personas').insert(payload).select().single();
         if (error) throw new Error(`Error creando persona: ${error.message}`);
+        // Defensive: if identificacion was not stored, patch it now
+        if ((data.identificacion === null || data.identificacion === undefined) && cedula) {
+            const patchValue = Number(cedula);
+            if (Number.isFinite(patchValue)) {
+                console.warn(`[PersonaRepo] identificacion was NULL after insert for persona id=${data.id}, patching to ${patchValue}`);
+                const { error: patchErr } = await this.client.from('personas').update({ identificacion: patchValue }).eq('id', data.id);
+                if (!patchErr) data.identificacion = patchValue;
+                else console.error(`[PersonaRepo] Patch failed for persona id=${data.id}:`, patchErr.message);
+            }
+        }
         return data;
     }
 
@@ -94,7 +106,6 @@ export class SupabasePersonaRepository {
         if (personaData.telefono !== undefined) payload.telefono = personaData.telefono ? hashSensitive(personaData.telefono) : '';
         if (personaData.direccion !== undefined) payload.direccion = personaData.direccion ? hashSensitive(personaData.direccion) : '';
         if (personaData.fecha_nacimiento !== undefined) payload.fecha_nacimiento = personaData.fecha_nacimiento;
-        if (personaData.genero !== undefined) payload.genero = personaData.genero;
         if (personaData.institucion_id !== undefined) payload.institucion_id = personaData.institucion_id;
         const { data, error } = await this.client.from('personas').update(payload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando persona: ${error.message}`);

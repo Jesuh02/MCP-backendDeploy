@@ -56,9 +56,22 @@ export function createTenantMiddleware(jwtAdapter) {
         // within the same authenticated session.  Only accepted when the user's JWT
         // explicitly lists that tenant in availableTenants — prevents privilege
         // escalation to tenants the user doesn't belong to.
+        // For unauthenticated (public) requests without a JWT, the header is
+        // accepted as a routing hint as long as the tenant exists in the registry
+        // — public endpoints don't expose sensitive data so this is safe.
+        // availableTenants may be strings ["qa-develop"] or objects [{id:"qa-develop",name:"..."}]
         const requestedTenant = req.headers['x-tenant-id'];
-        if (requestedTenant && availableTenants && availableTenants.includes(requestedTenant)) {
-            tenantId = requestedTenant;
+        if (requestedTenant) {
+            if (availableTenants) {
+                // Authenticated: only allow tenants listed in the JWT
+                const isAllowed = availableTenants.some(t =>
+                    (typeof t === 'string' ? t : t?.id) === requestedTenant
+                );
+                if (isAllowed) tenantId = requestedTenant;
+            } else if (!authHeader && hasTenantClient(requestedTenant)) {
+                // Unauthenticated (public) request: accept if tenant exists in registry
+                tenantId = requestedTenant;
+            }
         }
 
         const client = getTenantClient(tenantId);

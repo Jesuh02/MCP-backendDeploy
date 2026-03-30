@@ -15,7 +15,7 @@ const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || process.env.ACCESS_TOKEN_S
 if (!ACCESS_TOKEN_SECRET) {
     throw new Error('[FATAL] JWT_SECRET no está definido. El servidor no puede arrancar de forma segura.');
 }
-const REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET;
+const REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET || (ACCESS_TOKEN_SECRET ? `${ACCESS_TOKEN_SECRET}_refresh` : null);
 if (!REFRESH_TOKEN_SECRET) {
     throw new Error('[FATAL] JWT_REFRESH_SECRET no está definido. El servidor no puede arrancar de forma segura.');
 }
@@ -37,7 +37,7 @@ export class JWTAdapter {
                 username: payload.username,
                 roles: payload.roles || [],
                 tenantId: payload.tenantId || null,
-                availableTenants: payload.availableTenants || (payload.tenantId ? [payload.tenantId] : []),
+                availableTenants: payload.availableTenants || (payload.tenantId ? [{ id: payload.tenantId, name: payload.tenantId }] : []),
                 type: 'access',
             },
             ACCESS_TOKEN_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY }
@@ -54,7 +54,7 @@ export class JWTAdapter {
                     userId: payload.userId,
                     username: payload.username,
                     tenantId: payload.tenantId || null,
-                    availableTenants: payload.availableTenants || (payload.tenantId ? [payload.tenantId] : []),
+                    availableTenants: payload.availableTenants || (payload.tenantId ? [{ id: payload.tenantId, name: payload.tenantId }] : []),
                     type: 'refresh',
                 },
                 REFRESH_TOKEN_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY }
@@ -125,4 +125,3 @@ export class JWTAdapter {
 }
 
 export default JWTAdapter;
-

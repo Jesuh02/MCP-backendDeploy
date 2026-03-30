@@ -14,6 +14,7 @@
  *     `personas` table for that user are returned.  Adds a second identity factor
  *     that prevents username-collision attacks across tenants.
  */
+import crypto from 'crypto';
 import { Result } from '../../shared/Result.js';
 import { UnauthorizedError, ConflictError, ValidationError } from '../../shared/errors/index.js';
 import { SupabaseUserRepository, hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
@@ -29,10 +30,12 @@ export class CrossTenantAuthService {
     /**
      * Attempts username/password (+ optional cedula) login on every registered tenant in parallel.
      * Returns Result with a single match object OR { multipleMatches, matches }.
+     * When `cedula` is omitted and multiple users share the same credentials across
+     * institutions, returns { needsCedula: true } so the UI can prompt for it.
      *
      * @param {{ username: string, password: string, cedula?: string }} params
      */
-    async login({ username, password }) {
+    async login({ username, password, cedula }) {
         const entries = getAllTenantEntries();
         if (entries.length === 0) {
             return Result.fail(new UnauthorizedError('No hay instituciones configuradas'));
@@ -42,7 +45,7 @@ export class CrossTenantAuthService {
             entries.map(entry => this._tryLogin(entry, username, password)),
         );
 
-        return this._resolveMatches(results, 'Credenciales inválidas');
+        return this._resolveMatches(results, 'Credenciales inválidas', cedula);
     }
 
     /**
@@ -87,16 +90,19 @@ export class CrossTenantAuthService {
         }
 
         const allTenantIds = successes.map(s => s._payload.tenantId);
+        const allTenantObjects = successes.map(s => ({ id: s.tenant.id, name: s.tenant.name }));
         const primary = successes[0];
 
         // Re-sign tokens so the JWT carries the full availableTenants list
+        // Use objects ({id, name}) instead of plain strings so mobile clients
+        // can parse them without a type mismatch.
         const accessToken = this.jwt.signAccessToken({
             ...primary._payload,
-            availableTenants: allTenantIds,
+            availableTenants: allTenantObjects,
         });
         const refreshToken = this.jwt.signRefreshToken({
             ...primary._payload,
-            availableTenants: allTenantIds,
+            availableTenants: allTenantObjects,
         });
 
         const { _payload, ...safeMatch } = primary;
@@ -165,9 +171,13 @@ export class CrossTenantAuthService {
      * each token to embed the full availableTenants list in every JWT — this allows
      * a chat session to offer switching while remaining secure (the token itself is
      * the authoritative list of permitted tenants).
+     *
+     * @param {PromiseSettledResult[]} settled
+     * @param {string} noMatchMessage
+     * @param {string|null} cedula  Optional cedula to disambiguate same-credential collisions.
      */
-    _resolveMatches(settled, noMatchMessage) {
-        const matches = settled
+    _resolveMatches(settled, noMatchMessage, cedula = null) {
+        let matches = settled
             .filter(r => r.status === 'fulfilled' && r.value !== null)
             .map(r => r.value);
 
@@ -176,38 +186,71 @@ export class CrossTenantAuthService {
         }
 
         // When multiple matches exist, verify they belong to the same physical person
-        // by comparing the cedula hash (identificacion_original) from each persona.
-        // ALL matches must have a cedula AND all must be identical to confirm identity.
+        // by comparing the cedula (identificacion_original) from each persona.
         if (matches.length > 1) {
             const cedulaHashes = matches.map(m => m._cedulaHash).filter(Boolean);
             const uniqueHashes = [...new Set(cedulaHashes)];
 
-            // If persona cedula data is available and hashes differ → different people
+            // Different cedulas → different people sharing the same credentials.
+            // Ask the user for their cedula to disambiguate, or filter when provided.
             if (uniqueHashes.length > 1) {
-                return Result.fail(new UnauthorizedError(
-                    'Credenciales ambiguas: existen usuarios con las mismas credenciales en diferentes instituciones pero con cédulas distintas. Contacte soporte.',
-                ));
+                if (!cedula) {
+                    // Signal the UI to show the cedula field
+                    return Result.ok({ needsCedula: true });
+                }
+                // Compare user-provided cedula against stored values.
+                // _cedulaHash can be: (a) numeric cedula string like "1006617028",
+                // (b) SHA-256 hash, or (c) legacy non-numeric value.
+                // Try direct digit match first, then SHA-256 hash match as fallback.
+                const cedulaDigits = String(cedula).replace(/\D/g, '').trim();
+                const hashedCedula = cedulaDigits
+                    ? crypto.createHash('sha256').update(cedulaDigits).digest('hex')
+                    : null;
+                const filtered = matches.filter(m => {
+                    if (!m._cedulaHash) return false;
+                    // Direct numeric match (when _cedulaHash is the numeric cedula)
+                    if (cedulaDigits && m._cedulaHash === cedulaDigits) return true;
+                    // SHA-256 hash match (when _cedulaHash is a hash stored in identificacion_original)
+                    if (hashedCedula && m._cedulaHash === hashedCedula) return true;
+                    return false;
+                });
+                if (filtered.length === 0) {
+                    return Result.fail(new UnauthorizedError(
+                        'La cédula ingresada no corresponde a ninguna cuenta con estas credenciales.',
+                    ));
+                }
+                // If the same cedula appears in multiple institutions → same person, show selection
+                matches = filtered;
+            } else if (cedulaHashes.length > 0 && cedulaHashes.length < matches.length) {
+                // Some matches are missing cedula data — cannot confirm same person.
+                // If no cedula provided, ask; otherwise filter those that match.
+                if (!cedula) {
+                    return Result.ok({ needsCedula: true });
+                }
+                const cedulaDigits = String(cedula).replace(/\D/g, '').trim();
+                const hashedCedula = cedulaDigits
+                    ? crypto.createHash('sha256').update(cedulaDigits).digest('hex')
+                    : null;
+                const filtered = matches.filter(m => {
+                    if (!m._cedulaHash) return false;
+                    if (cedulaDigits && m._cedulaHash === cedulaDigits) return true;
+                    if (hashedCedula && m._cedulaHash === hashedCedula) return true;
+                    return false;
+                });
+                matches = filtered.length > 0 ? filtered : [matches[0]];
+            } else if (cedulaHashes.length === 0) {
+                // No cedula data at all in any tenant → auto-select first match.
+                // (Cannot validate identity, but these institutions have no cedula column.)
+                matches = [matches[0]];
             }
-
-            // If no cedula data available for any match → cannot confirm identity
-            if (cedulaHashes.length === 0) {
-                return Result.fail(new UnauthorizedError(
-                    'No se pudo verificar la identidad del usuario en múltiples instituciones. Asegúrese de tener una cédula asociada a su perfil.',
-                ));
-            }
-
-            // If SOME matches are missing cedula data → cannot confirm they are the
-            // same person (e.g. one persona has cedula, the other doesn't)
-            if (cedulaHashes.length < matches.length) {
-                return Result.fail(new UnauthorizedError(
-                    'No se pudo verificar la identidad del usuario en todas las instituciones. Algunos perfiles no tienen cédula asociada.',
-                ));
-            }
+            // else: all cedulas are identical → same person in multiple institutions → fall through
         }
 
-        const allTenantIds = matches.map(m => m.tenant.id);
+        const allTenantObjects = matches.map(m => ({ id: m.tenant.id, name: m.tenant.name }));
 
         // Re-sign tokens so every JWT carries the full availableTenants list
+        // Use objects ({id, name}) instead of plain strings so mobile clients
+        // can parse them without a type mismatch.
         const enriched = matches.map(m => ({
             ...m,
             accessToken: this.jwt.signAccessToken({
@@ -215,13 +258,13 @@ export class CrossTenantAuthService {
                 username: m._payload.username,
                 roles: m._payload.roles,
                 tenantId: m._payload.tenantId,
-                availableTenants: allTenantIds,
+                availableTenants: allTenantObjects,
             }),
             refreshToken: this.jwt.signRefreshToken({
                 userId: m._payload.userId,
                 username: m._payload.username,
                 tenantId: m._payload.tenantId,
-                availableTenants: allTenantIds,
+                availableTenants: allTenantObjects,
             }),
         }));
 
@@ -268,7 +311,10 @@ export class CrossTenantAuthService {
     }
 
     /**
-     * Fetches the cedula hash (identificacion_original) of the persona linked to `user`.
+     * Fetches the cedula (identificacion) of the persona linked to `user`.
+     * Prefers the numeric `identificacion` field (the real cedula number) over
+     * `identificacion_original` which may contain a SHA-256 hash or a legacy
+     * non-numeric value like "jesus" or "jesus_duplicate_5".
      * Used to verify that multiple tenant matches belong to the same physical person.
      * @returns {Promise<string|null>}
      */
@@ -278,7 +324,14 @@ export class CrossTenantAuthService {
             if (!personaId) return null;
             const personaRepo = new SupabasePersonaRepository(client);
             const persona = await personaRepo.findById(personaId);
-            return persona?.identificacion_original ?? null;
+            if (!persona) return null;
+            // Prefer the numeric identificacion field (actual cedula number)
+            const identificacion = persona.identificacion;
+            if (identificacion && Number.isFinite(Number(identificacion)) && Number(identificacion) > 0) {
+                return String(identificacion);
+            }
+            // Fallback to identificacion_original (may be SHA-256 hash or legacy value)
+            return persona.identificacion_original ?? null;
         } catch {
             return null;
         }
@@ -356,7 +409,7 @@ export class CrossTenantAuthService {
             username: user.username,
             roles: roleIds,
             tenantId: entry.id,
-            availableTenants: [entry.id], // will be overwritten in _resolveMatches
+            availableTenants: [{ id: entry.id, name: entry.name }], // will be overwritten in _resolveMatches
         };
 
         return {

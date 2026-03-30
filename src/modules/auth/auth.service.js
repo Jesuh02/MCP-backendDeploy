@@ -117,7 +117,8 @@ export class AuthService {
         // Asegurar que roles sean IDs numéricos para comparación correcta en requireRoles
         const roleIds = (user.roles || []).map(r => Number(r.id || r.rol_id)).filter(id => Number.isInteger(id) && id > 0);
         const effectiveTenant = tenantId || 'qa-develop';
-        const payload = { userId: user.id, username: user.username, roles: roleIds, tenantId: effectiveTenant, availableTenants: [effectiveTenant] };
+        const tenantName = effectiveTenant; // name not available here; mobile decode handles id-only
+        const payload = { userId: user.id, username: user.username, roles: roleIds, tenantId: effectiveTenant, availableTenants: [{ id: effectiveTenant, name: tenantName }] };
         return {
             accessToken: this.jwt.signAccessToken(payload),
             refreshToken: this.jwt.signRefreshToken(payload),

@@ -164,12 +164,20 @@ export class SupabaseUserRepository {
                 const existingCedulaHash = hashCedula(cedulaDigits);
                 const { data: existing } = await this.client
                     .from('personas')
-                    .select('id')
+                    .select('id, identificacion')
                     .eq('identificacion_original', existingCedulaHash)
                     .maybeSingle();
                 if (existing) {
                     console.log(`[UserRepo] Reusing existing persona id=${existing.id} for cedula ${cedulaDigits}`);
                     personaId = existing.id;
+                    // Fix: if the existing persona has no numeric identificacion, patch it now
+                    if (existing.identificacion === null || existing.identificacion === undefined) {
+                        const numericId = Number(cedulaDigits);
+                        if (Number.isFinite(numericId)) {
+                            await this.client.from('personas').update({ identificacion: numericId }).eq('id', existing.id);
+                            console.log(`[UserRepo] Patched identificacion=${numericId} on persona id=${existing.id}`);
+                        }
+                    }
                 }
             }
 
@@ -178,10 +186,13 @@ export class SupabaseUserRepository {
                 const hashedTelefono = userData.persona.telefono
                     ? crypto.createHash('sha256').update(String(userData.persona.telefono).trim()).digest('hex')
                     : null;
+                const numericCedula = cedulaDigits ? Number(cedulaDigits) : null;
+                const identificacionValue = Number.isFinite(numericCedula) ? numericCedula : null;
+                console.log(`[UserRepo] Creating persona: cedulaDigits=${cedulaDigits}, numericCedula=${numericCedula}, isFinite=${Number.isFinite(numericCedula)}, identificacion=${identificacionValue}`);
                 const { data: p, error: pe } = await this.client.from('personas').insert({
                     nombres: userData.persona.nombres || userData.persona.nombre || '',
                     apellidos: userData.persona.apellidos || userData.persona.apellido || '',
-                    identificacion: cedulaDigits ? Number(cedulaDigits) : null,
+                    identificacion: identificacionValue,
                     identificacion_original: hashedCedula || null,
                     telefono: hashedTelefono || '',
                     direccion: '',
@@ -191,6 +202,16 @@ export class SupabaseUserRepository {
                 if (pe) {
                     console.error('[UserRepo] Error creando persona:', pe.message, pe.details, pe.hint);
                     throw new Error(`Error creando persona: ${pe.message}`);
+                }
+                // Defensive: if identificacion was not stored, patch it now
+                if ((p.identificacion === null || p.identificacion === undefined) && cedulaDigits) {
+                    const patchValue = Number(cedulaDigits);
+                    if (Number.isFinite(patchValue)) {
+                        console.warn(`[UserRepo] identificacion was NULL after insert for persona id=${p.id}, patching to ${patchValue}`);
+                        const { error: patchErr } = await this.client.from('personas').update({ identificacion: patchValue }).eq('id', p.id);
+                        if (!patchErr) p.identificacion = patchValue;
+                        else console.error(`[UserRepo] Patch failed for persona id=${p.id}:`, patchErr.message);
+                    }
                 }
                 personaId = p.id;
             }
