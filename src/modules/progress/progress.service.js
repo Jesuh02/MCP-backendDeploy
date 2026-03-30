@@ -19,18 +19,34 @@ export class ProgressDomainService {
     }
 
     async getByUserAndCourse(userId, courseId) {
-        const [storedProgress, gradedTasks, storedSubjectProgress] = await Promise.all([
+        const [storedProgressResult, gradedTasksResult, storedSubjectProgressResult] = await Promise.allSettled([
             this.progressRepo.findByUserAndCourse(userId, courseId),
             this._buildGradedTasksWithSubject(userId, courseId),
             this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId),
         ]);
 
-        let progress = storedProgress;
-        let subjectProgress = storedSubjectProgress;
+        if (storedProgressResult.status === 'rejected') {
+            console.error(`[ProgressService] Error loading stored progress for user ${userId} in course ${courseId}:`, storedProgressResult.reason?.message || storedProgressResult.reason);
+        }
+        if (gradedTasksResult.status === 'rejected') {
+            console.error(`[ProgressService] Error loading graded tasks for user ${userId} in course ${courseId}:`, gradedTasksResult.reason?.message || gradedTasksResult.reason);
+        }
+        if (storedSubjectProgressResult.status === 'rejected') {
+            console.error(`[ProgressService] Error loading subject progress for user ${userId} in course ${courseId}:`, storedSubjectProgressResult.reason?.message || storedSubjectProgressResult.reason);
+        }
+
+        let progress = storedProgressResult.status === 'fulfilled' ? storedProgressResult.value : null;
+        let subjectProgress = storedSubjectProgressResult.status === 'fulfilled' ? storedSubjectProgressResult.value : [];
+        const gradedTasks = gradedTasksResult.status === 'fulfilled' ? gradedTasksResult.value : [];
 
         if (!progress && this.taskRepo && this.submissionRepo) {
-            progress = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
-            subjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
+            try {
+                progress = await this._recalculateAndUpsertUserCourseProgress(userId, courseId);
+                const refreshedSubjectProgress = await this.progressRepo.findSubjectProgressByUserAndCourse(userId, courseId);
+                subjectProgress = Array.isArray(refreshedSubjectProgress) ? refreshedSubjectProgress : [];
+            } catch (error) {
+                console.error(`[ProgressService] Error recalculating progress for user ${userId} in course ${courseId}:`, error?.message || error);
+            }
         } else {
             progress = progress || this._buildEmptyCourseProgress(userId, courseId);
             if (progress && this.taskRepo && this.submissionRepo) {
@@ -38,6 +54,7 @@ export class ProgressDomainService {
             }
         }
 
+        progress = progress || this._buildEmptyCourseProgress(userId, courseId);
         return Result.ok({...progress, gradedTasks, subjectProgress });
     }
 
@@ -522,8 +539,12 @@ export class ProgressDomainService {
         const graded = await this.submissionRepo.getGradedByUserAndCourse(userId, courseId);
         let subjectsById = new Map();
         if (this.subjectRepo && typeof this.subjectRepo.findByCourse === 'function') {
-            const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
-            subjectsById = new Map(subjects.map(s => [s.id, s]));
+            try {
+                const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
+                subjectsById = new Map((subjects || []).map(s => [s.id, s]));
+            } catch (error) {
+                console.error(`[ProgressService] Error loading subjects for graded tasks in course ${courseId}:`, error?.message || error);
+            }
         }
         return graded.map(sub => {
             const subjectId = sub.tasks?.topics?.materia_id || sub.tasks?.topics?.subject_id || null;
@@ -633,7 +654,13 @@ export class ProgressDomainService {
 
     async _recalculateSubjectsForUserCourse(userId, courseId) {
         if (!this.subjectRepo || !this.taskRepo || !this.submissionRepo) return;
-        const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
+        let subjects = [];
+        try {
+            subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
+        } catch (error) {
+            console.error(`[ProgressService] Error loading subjects for course ${courseId} while recalculating progress:`, error?.message || error);
+            return;
+        }
         if (!subjects?.length) return;
 
         const results = await Promise.allSettled(
