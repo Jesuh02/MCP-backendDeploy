@@ -7,16 +7,16 @@
  *      Only honoured when the requested tenantId is listed in the JWT's availableTenants.
  *   3. Refresh token in the request body
  *   4. Request body tenantId / tenantIds[0] (unauthenticated endpoints like /auth/register)
- *   5. Falls back to 'qa-develop'
+ *   5. Falls back to the server's primary tenant (from TenantRegistry)
  *
  * The resolved tenantId is stored in AsyncLocalStorage so the
  * tenant-aware Supabase Proxy routes DB queries transparently.
  */
-import { tenantContext, getTenantClient, hasTenantClient } from '../../config/tenantRegistry.js';
+import { tenantContext, getTenantClient, hasTenantClient, getPrimaryTenantId } from '../../config/tenantRegistry.js';
 
 export function createTenantMiddleware(jwtAdapter) {
     return (req, _res, next) => {
-        let tenantId = 'qa-develop';
+        let tenantId = getPrimaryTenantId();
         let availableTenants = null;
 
         // Try Bearer token first (most common: authenticated requests)
