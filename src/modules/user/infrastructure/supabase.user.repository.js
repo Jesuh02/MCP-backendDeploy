@@ -181,12 +181,11 @@ export class SupabaseUserRepository {
                 const { data: p, error: pe } = await this.client.from('personas').insert({
                     nombres: userData.persona.nombres || userData.persona.nombre || '',
                     apellidos: userData.persona.apellidos || userData.persona.apellido || '',
-                    identificacion: null,
+                    identificacion: cedulaDigits ? Number(cedulaDigits) : null,
                     identificacion_original: hashedCedula || null,
                     telefono: hashedTelefono || '',
                     direccion: '',
                     fecha_nacimiento: userData.persona.fecha_nacimiento || null,
-                    genero: userData.persona.genero || null,
                     ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
                 }).select().single();
                 if (pe) {
