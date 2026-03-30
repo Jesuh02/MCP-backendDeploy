@@ -66,15 +66,15 @@ export class SupabasePersonaRepository {
     async create(personaData) {
         const cedula = resolveCedula(personaData);
         const cedulaHash = hashCedula(cedula);
+        const numericCedula = cedula ? Number(cedula) : null;
         const payload = {
             nombres: personaData.nombres,
             apellidos: personaData.apellidos || '',
-            identificacion: cedula ? Number(cedula) : null,
+            identificacion: Number.isFinite(numericCedula) ? numericCedula : null,
             identificacion_original: cedulaHash || null,
             telefono: personaData.telefono ? hashSensitive(personaData.telefono) : '',
             direccion: personaData.direccion ? hashSensitive(personaData.direccion) : '',
             fecha_nacimiento: personaData.fecha_nacimiento || null,
-            genero: personaData.genero || null,
             ...(personaData.institucion_id != null && { institucion_id: personaData.institucion_id }),
         };
         const { data, error } = await this.client.from('personas').insert(payload).select().single();
@@ -94,7 +94,6 @@ export class SupabasePersonaRepository {
         if (personaData.telefono !== undefined) payload.telefono = personaData.telefono ? hashSensitive(personaData.telefono) : '';
         if (personaData.direccion !== undefined) payload.direccion = personaData.direccion ? hashSensitive(personaData.direccion) : '';
         if (personaData.fecha_nacimiento !== undefined) payload.fecha_nacimiento = personaData.fecha_nacimiento;
-        if (personaData.genero !== undefined) payload.genero = personaData.genero;
         if (personaData.institucion_id !== undefined) payload.institucion_id = personaData.institucion_id;
         const { data, error } = await this.client.from('personas').update(payload).eq('id', id).select().single();
         if (error) throw new Error(`Error actualizando persona: ${error.message}`);
