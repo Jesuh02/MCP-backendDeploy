@@ -522,6 +522,15 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                             `Filtra SIEMPRE usando:\n` +
                             `  WHERE creator_user_id IN ${userIdResolution}\n` +
                             `  O: WHERE user_id IN ${userIdResolution}\n\n` +
+                            `⚠️ TABLA subscriptions: SOLO tiene subscriber_id y creator_id. NO tiene course_id.\n` +
+                            `NUNCA uses subscriptions para contar estudiantes por curso.\n` +
+                            `Para estudiantes por curso, usa SIEMPRE progreso_curso.\n\n` +
+                            `CONSULTA DE REFERENCIA — CONTAR ESTUDIANTES POR CURSO:\n` +
+                            `  SELECT c.title AS curso, COUNT(DISTINCT pc.usuario_estudiante) AS estudiantes\n` +
+                            `  FROM courses c\n` +
+                            `  LEFT JOIN progreso_curso pc ON pc.curso_id = c.id\n` +
+                            `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                            `  GROUP BY c.title ORDER BY c.title;\n\n` +
                             `CONSULTA DE REFERENCIA — TUS ESTUDIANTES:\n` +
                             `  SELECT u.username AS estudiante, c.title AS curso,\n` +
                             `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
@@ -538,6 +547,19 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                             `Cuando el usuario pregunte por "mis cursos", "mis estudiantes" o datos propios, filtra usando:\n` +
                             `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
                             `  O con JOIN: JOIN usuarios creador ON c.creator_user_id = creador.id WHERE creador.username = '${safeUsername || 'N/A'}'\n\n` +
+                            `⚠️ TABLA subscriptions: SOLO tiene subscriber_id y creator_id. NO tiene course_id.\n` +
+                            `NUNCA uses subscriptions para contar estudiantes por curso — da resultados incorrectos (cross-join).\n` +
+                            `Para contar estudiantes por curso, usa SIEMPRE progreso_curso.\n\n` +
+                            `CONSULTA DE REFERENCIA — CONTAR ESTUDIANTES POR CURSO:\n` +
+                            `  SELECT c.title AS curso, COUNT(DISTINCT pc.usuario_estudiante) AS estudiantes\n` +
+                            `  FROM courses c\n` +
+                            `  LEFT JOIN progreso_curso pc ON pc.curso_id = c.id\n` +
+                            `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                            `  GROUP BY c.title ORDER BY c.title;\n\n` +
+                            `CONSULTA DE REFERENCIA — TOTAL DE ESTUDIANTES ÚNICOS:\n` +
+                            `  SELECT COUNT(DISTINCT pc.usuario_estudiante) AS total_estudiantes\n` +
+                            `  FROM progreso_curso pc\n` +
+                            `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution});\n\n` +
                             `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES:\n` +
                             `  SELECT u.username AS estudiante, c.title AS curso,\n` +
                             `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
@@ -590,6 +612,12 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                         `  (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n\n` +
                         `SUBQUERY DE ALUMNOS ACCESIBLES (úsala siempre para filtrar estudiantes):\n` +
                         `  (SELECT DISTINCT pc.usuario_estudiante FROM progreso_curso pc WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution}))\n\n` +
+                        `CONSULTA DE REFERENCIA — CONTAR ESTUDIANTES POR CURSO:\n` +
+                        `  SELECT c.title AS curso, COUNT(DISTINCT pc.usuario_estudiante) AS estudiantes\n` +
+                        `  FROM courses c\n` +
+                        `  LEFT JOIN progreso_curso pc ON pc.curso_id = c.id\n` +
+                        `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                        `  GROUP BY c.title ORDER BY c.title;\n\n` +
                         `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES (adapta según la pregunta):\n` +
                         `  SELECT u.username AS estudiante, c.title AS curso,\n` +
                         `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
@@ -599,6 +627,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                         `  JOIN courses c ON pc.curso_id = c.id\n` +
                         `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
                         `  ORDER BY c.title, u.username;\n\n` +
+
                         `REGLAS DE FILTRADO OBLIGATORIAS (aplican a TODAS las queries sin excepción):\n` +
                         `1. Consultas de progreso → usar tabla progreso_curso, filtrar por curso_id IN (subquery de cursos accesibles).\n` +
                         `2. Consultas de entregas (task_submissions) → filtrar por student_id IN (subquery de alumnos accesibles).\n` +
@@ -678,8 +707,15 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
                             const mcp = new MCPService();
                             const toolResult = await mcp.executeMCPTool(toolName, toolArgs, { fromWhatsApp, scopedUserId: userId });
                             // Append tool result to system prompt to allow the model to continue reasoning
-                            const toolResultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
-                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools });
+                            let toolResultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+                            // Truncate very large tool results to prevent token overflow
+                            if (toolResultStr.length > 12000) {
+                                toolResultStr = toolResultStr.substring(0, 12000) + '\n... (resultados truncados por longitud)';
+                            }
+                            // If query_database returned data successfully, don't pass tools so the LLM formulates a text response
+                            const gotData = toolName === 'query_database' && toolResult && (toolResult.success || toolResult.results);
+                            const nextTools = gotData ? [] : tools;
+                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools: nextTools });
                         } catch (execErr) {
                             const errStr = String(execErr && (execErr.message || execErr));
                             response = await this.llm.chat(systemPrompt + `\n\n[TOOL_ERROR name=${toolName}]\n${errStr}`, fullPrompt, { model, tools });
