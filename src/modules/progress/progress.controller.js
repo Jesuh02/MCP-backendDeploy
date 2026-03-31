@@ -262,6 +262,14 @@ export class ProgressController {
         } catch (err) { next(err); }
     };
 
+    repairProgressStatuses = async(req, res, next) => {
+        try {
+            const result = await this.progressService.repairProgressStatuses();
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     // ─── Enrollment request / approval ────────────────────────────────────────
 
     requestEnrollment = async(req, res, next) => {

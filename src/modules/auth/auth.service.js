@@ -1,6 +1,7 @@
 import { Result } from '../../shared/Result.js';
 import { UnauthorizedError, ConflictError, ValidationError, NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 import { hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
+import { getCurrentTenantId, getPrimaryTenantId } from '../../config/tenantRegistry.js';
 
 export class AuthService {
     constructor({ userRepository, jwtAdapter, institucionRepository }) {
@@ -33,7 +34,7 @@ export class AuthService {
         }
 
         await this._enrichWithInstitution(user);
-        const tokens = this._generateTokens(user, tenantId || 'qa-develop');
+        const tokens = this._generateTokens(user, tenantId);
         return Result.ok({ user: this._safeUser(user), ...tokens });
     }
     async login({ username, password }) {
@@ -83,7 +84,7 @@ export class AuthService {
         }
 
         await this._enrichWithInstitution(user);
-        const tokens = this._generateTokens(user);
+        const tokens = this._generateTokens(user, getCurrentTenantId() || getPrimaryTenantId());
         return Result.ok({ user: this._safeUser(user), ...tokens });
     }
 
@@ -113,7 +114,8 @@ export class AuthService {
         return Result.ok({ message: 'Contraseña actualizada' });
     }
 
-    _generateTokens(user, tenantId = 'qa-develop') {
+    _generateTokens(user, tenantId) {
+        if (!tenantId) tenantId = getCurrentTenantId() || getPrimaryTenantId() || 'qa-develop';
         // Asegurar que roles sean IDs numéricos para comparación correcta en requireRoles
         const roleIds = (user.roles || []).map(r => Number(r.id || r.rol_id)).filter(id => Number.isInteger(id) && id > 0);
         const effectiveTenant = tenantId || 'qa-develop';
