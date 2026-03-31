@@ -540,7 +540,12 @@ export class ReinforcementDomainService {
         const diffLabel = (difficulty || 'HARD').toUpperCase();
         const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount);
         const topicHint = topicName
-            ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Analiza el dominio (matemáticas, programación, idiomas, etc.) y elige los tipos de ejercicio más adecuados para ese dominio.`
+            ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Analiza el dominio (matemáticas, SQL, programación, idiomas, ciencias, etc.) y elige los tipos de ejercicio MÁS AVANZADOS posibles para ese dominio.`
+            : '';
+
+        // Complexity enforcement added to the user prompt for HARD difficulty
+        const hardEnforcement = diffLabel === 'HARD'
+            ? `\n\n⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA OBLIGATORIA:\n- Identifica el dominio central del material (ej: SQL, álgebra, algoritmos, física, idioma).\n- Cada ejercicio fill_in_blank debe presentar un problema real no trivial: ecuaciones, consultas con JOINs/CTEs, algoritmos recursivos, problemas multi-fórmula, gramática avanzada.\n- Si el material habla de sumas, el fill_in_blank HARD debe ser una ecuación o sistema de ecuaciones — NUNCA "X + Y = ___" con números simples.\n- Si el material habla de SQL, el fill_in_blank HARD debe requerir completar un JOIN múltiple, window function o CTE — NUNCA un SELECT simple.\n- Si un ejercicio se puede resolver en menos de 5 segundos de pensamiento, NO es suficientemente difícil para nivel HARD. RECHÁZALO y genera uno más complejo.\n- Los distractores en multiple_choice deben ser respuestas que un estudiante intermedio elegiría por error — errores conceptuales plausibles, no disparates obvios.`
             : '';
 
         // Accumulate unique questions across iterations
@@ -568,7 +573,7 @@ export class ReinforcementDomainService {
             // Ask for a minimum of 5 questions per iteration to maximize dedup yield
             const requestCount = Math.min(Math.max(remaining + 2, 5), 10);
 
-            const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}\n\nGenera EXACTAMENTE ${requestCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales (cálculos, completar código, etc.), no solo preguntas teóricas. Si el tema involucra operaciones, cálculos o completar algo, usa fill_in_blank para que el estudiante practique. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
+            const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}${hardEnforcement}\n\nGenera EXACTAMENTE ${requestCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales y complejos. Cada ejercicio debe exigir razonamiento genuino acorde al nivel ${diffLabel}. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
 
             // Step 3: Call LLM (temperature increases on retries to encourage variety)
             const llmStartMs = Date.now();
@@ -655,10 +660,58 @@ export class ReinforcementDomainService {
 
         const difficultyInstructions = {
             EASY: `NIVEL INTRODUCTORIO: ejercicios de comprensión y práctica básica. Operaciones simples, conceptos fundamentales. Usa "¿Por qué?", "¿Para qué?", "¿Qué pasaría si...?" para preguntas; ejercicios directos y sencillos para práctica.`,
-            INTERMEDIATE: `NIVEL INTERMEDIO: ejercicios de análisis y aplicación. Escenarios prácticos, resolución de problemas contextualizados. El estudiante debe ANALIZAR, DECIDIR y APLICAR conocimientos.`,
-            HARD: `NIVEL MÁXIMO: ejercicios de evaluación y síntesis. Escenarios complejos, problemas multi-paso. Taxonomía de Bloom: Aplicar, Analizar, Evaluar, Crear. Opciones sutilmente plausibles en preguntas; ejercicios que requieren razonamiento profundo.`,
+            INTERMEDIATE: `NIVEL INTERMEDIO: ejercicios de análisis y aplicación. Escenarios prácticos multi-paso, resolución de problemas contextualizados. El estudiante debe ANALIZAR, DECIDIR y APLICAR conocimientos en situaciones con 2-3 variables o pasos de razonamiento.`,
+            HARD: `NIVEL EXPERTO — COMPLEJIDAD MÁXIMA ABSOLUTA:
+PROHIBIDO TERMINANTEMENTE generar ejercicios simples o de un solo paso. CADA ejercicio debe exigir razonamiento profundo, múltiples pasos y dominio avanzado del área.
+- MATEMÁTICAS: Álgebra no lineal, sistemas de ecuaciones, cálculo diferencial/integral, estadística inferencial, optimización. PROHIBIDAS operaciones aritméticas puras (sumas, restas simples). Los fill_in_blank deben resolver ecuaciones, derivadas, integrales, o series.
+- SQL/BASES DE DATOS: Obligatorio usar JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK), CTEs (WITH), GROUP BY con HAVING, agregaciones anidadas. PROHIBIDAS consultas SELECT simples sin JOIN.
+- PROGRAMACIÓN: Algoritmos de ordenamiento/búsqueda, complejidad O(n), recursión, patrones de diseño, estructuras de datos avanzadas (árboles, grafos, heaps). PROHIBIDOS ejercicios de sintaxis básica o "Hello World".
+- FÍSICA/QUÍMICA: Problemas que requieren 3+ fórmulas encadenadas, conversiones de unidades múltiples, análisis de sistemas complejos. PROHIBIDOS cálculos de F=ma con un solo paso.
+- IDIOMAS: Gramática avanzada (subjuntivo, condicionales perfectos, inversión), análisis de registro, pragmática, traducción de textos técnicos con matices.
+- CUALQUIER OTRO DOMINIO: Llévalo a su expresión práctica más avanzada y compleja. Un ejercicio de HARD debe ser lo que un profesional o estudiante avanzado consideraría desafiante.`,
             FREE: `Genera ejercicios variados que cubran TODO el contenido. Mezcla niveles: comprensión, análisis, aplicación y creación.`,
         };
+
+        // Domain-specific complexity rules conditioned on difficulty
+        const hardComplexityOverrides = difficulty === 'HARD' ? `
+══════════════════════════════════════════════════
+REGLAS DE COMPLEJIDAD MÁXIMA PARA NIVEL HARD
+══════════════════════════════════════════════════
+DETECTA el dominio del material y aplica estas reglas SIN EXCEPCIÓN:
+
+▸ MATEMÁTICAS / CÁLCULO:
+  - fill_in_blank: ecuaciones cuadráticas (x²+5x-6=0, x=___), derivadas (d/dx[x³·ln(x)] = ___), integrales definidas, optimización (máximo/mínimo), sistemas 2×2 o 3×3.
+  - ordering: pasos completos de demostración matemática o resolución de ecuaciones complejas.
+  - multiple_choice: análisis de comportamiento de funciones, convergencia de series, interpretación gráfica de derivadas.
+  - EJEMPLO fill_in_blank CORRECTO: { question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x")=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). f(3)=27-54+27+2=2." }
+  - PROHIBIDO: "Resuelve: 234 + 567 = ___" o cualquier aritmética pura.
+
+▸ SQL / BASES DE DATOS:
+  - fill_in_blank: completar CTEs, cláusulas WINDOW, subconsultas correlacionadas, GROUP BY + HAVING complejos.
+  - ordering: pasos de optimización de consulta, diseño de índices, plan de ejecución.
+  - multiple_choice: análisis de planes de ejecución, normalización avanzada (3NF vs BCNF), estrategias de indexación, transacciones ACID, aislamiento.
+  - EJEMPLO fill_in_blank CORRECTO: { question: "Completa la función de ventana para calcular el salario acumulado por departamento ordenado por fecha:\nSELECT nombre, departamento, salario,\n  ___(salario) OVER (PARTITION BY departamento ORDER BY fecha_contratacion) AS salario_acum\nFROM empleados;", correctAnswer: "SUM", hint: "Función de agregado que suma progresivamente", explanation: "SUM() OVER(PARTITION BY ... ORDER BY ...) calcula una suma acumulada (running total) dentro de cada partición, reiniciándose por departamento." }
+  - PROHIBIDO: "SELECT * FROM tabla WHERE id = ___" o cualquier consulta trivial sin JOIN.
+
+▸ PROGRAMACIÓN:
+  - fill_in_blank: completar algoritmos recursivos, implementar funciones de complejidad O(n log n), resolver casos de recursión mutua, completar implementaciones de estructuras de datos.
+  - ordering: pasos de un algoritmo complejo (QuickSort, BFS/DFS, programación dinámica).
+  - multiple_choice: analizar complejidad temporal/espacial de un fragmento de código dado, identificar patrones de diseño, razonar sobre condiciones de carrera o deadlocks.
+  - EJEMPLO fill_in_blank CORRECTO: { question: "Completa la implementación de búsqueda binaria recursiva:\nfunction binarySearch(arr, target, lo, hi) {\n  if (lo > hi) return -1;\n  const mid = Math.floor((lo + hi) / 2);\n  if (arr[mid] === target) return mid;\n  if (arr[mid] < target) return binarySearch(arr, target, ___, hi);\n  return binarySearch(arr, target, lo, mid - 1);\n}", correctAnswer: "mid + 1", hint: "Si el elemento del medio es menor, busca en la mitad derecha", explanation: "Si arr[mid] < target, el objetivo está en [mid+1, hi]. Pasar lo=mid+1 descarta la mitad izquierda ya revisada." }
+
+▸ FÍSICA / QUÍMICA:
+  - fill_in_blank: problemas donde se encadenan 3+ fórmulas, análisis de circuitos RC/RL, equilibrio químico con Kp/Kc, termodinámica (ΔG=ΔH-TΔS).
+  - ordering: pasos de análisis de un sistema físico complejo o reacción en varias etapas.
+  - multiple_choice: interpretación de diagramas de fases, análisis de errores experimentales, predicción de comportamiento de sistemas.
+
+▸ IDIOMAS (inglés, francés, etc.):
+  - fill_in_blank: subjuntivo presente/pasado, condicionales mixtos (3rd conditional rewrite), voz pasiva en tiempos perfectos, verbos modales perfectos (should have, must have).
+  - ordering: reordenar párrafos argumentativos, reconstruir secuencia de eventos en voz pasiva.
+  - multiple_choice: análisis de registro formal/informal, corrección de errores sutiles en párrafos técnicos.
+
+REGLA UNIVERSAL HARD: Si puedes describir el ejercicio en una línea simple ("suma X+Y", "SELECT * FROM tabla", "¿Qué hace console.log?"), NO es suficientemente complejo. El enunciado del ejercicio HARD debe presentar un escenario real, un fragmento de código no trivial, o una expresión matemática que requiera análisis.
+══════════════════════════════════════════════════
+` : '';
 
         const exerciseTypeInstructions = `
 TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
@@ -669,48 +722,43 @@ TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
 2. "fill_in_blank" — Ejercicio PRÁCTICO donde el estudiante resuelve y escribe la respuesta.
    OBLIGATORIO para: cálculos matemáticos, resolver operaciones, completar código, completar frases, traducciones.
    Campos: { type: "fill_in_blank", question (usa "___" para marcar el espacio), correctAnswer (string), hint (pista opcional), explanation }
-   Ejemplos por dominio:
-   - Matemáticas/Suma: { type: "fill_in_blank", question: "Resuelve: 24 + 18 = ___", correctAnswer: "42", hint: "Suma las unidades primero: 4+8=12, lleva 1", explanation: "24 + 18 = 42. Se suman unidades (4+8=12, se escribe 2 y se lleva 1) y luego decenas (2+1+1=4)." }
-   - Matemáticas/Multiplicación: { type: "fill_in_blank", question: "Resuelve: 15 × 3 = ___", correctAnswer: "45", hint: "Multiplica paso a paso", explanation: "15 × 3 = 45" }
-   - Programación: { type: "fill_in_blank", question: "Completa: console.___(\"Hola\")", correctAnswer: "log", hint: "Método para imprimir en consola", explanation: "console.log() imprime mensajes en la consola" }
-   - Inglés: { type: "fill_in_blank", question: "Complete: She ___ (go) to school yesterday.", correctAnswer: "went", hint: "Past simple del verbo go", explanation: "El pasado simple de 'go' es 'went'" }
-   - Física: { type: "fill_in_blank", question: "Si F = m × a, y m = 5kg, a = 3m/s², entonces F = ___ N", correctAnswer: "15", hint: "Multiplica masa por aceleración", explanation: "F = 5 × 3 = 15 N" }
+   Ejemplos por dominio (nivel HARD):
+   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Resuelve el sistema: 3x + 2y = 12 y 5x - y = 7. El valor de x es ___", correctAnswer: "2", hint: "Despeja y de la segunda ecuación y sustituye en la primera", explanation: "De 5x-y=7 → y=5x-7. Sustituyendo: 3x+2(5x-7)=12 → 13x=26 → x=2, y=3." }
+   - SQL: { type: "fill_in_blank", question: "Completa para obtener el segundo salario más alto:\nSELECT MAX(salario) FROM empleados WHERE salario < (___ SELECT MAX(salario) FROM empleados);", correctAnswer: "SELECT MAX(salario) FROM empleados WHERE salario <", hint: "Subconsulta que obtiene el máximo excluyendo el anterior", explanation: "La subconsulta interna obtiene el salario máximo global. La externa busca el máximo que sea menor que ese." }
+   - Programación: { type: "fill_in_blank", question: "¿Cuál es la complejidad temporal de este código?\nfor(let i=0;i<n;i++) for(let j=i;j<n;j++) ops++;\nRespuesta: O(___)", correctAnswer: "n²", hint: "El bucle interno itera n-i veces para cada i", explanation: "La suma de i desde 0 a n-1 de (n-i) = n(n+1)/2 ≈ O(n²)." }
+   - Física: { type: "fill_in_blank", question: "Un proyectil se lanza a 30° con v₀=40m/s. Ignorando fricción, su alcance máximo horizontal R = v₀²·sin(2θ)/g = ___ m (g=10m/s²)", correctAnswer: "138.56", hint: "sin(60°)≈0.866, R=1600·0.866/10", explanation: "R = (40²·sin(60°))/10 = (1600·0.866)/10 ≈ 138.56 m" }
 
 3. "ordering" — Ordenar elementos en la secuencia correcta.
-   Ideal para: pasos de un algoritmo, líneas de código, procesos, cronología, pasos de resolución.
+   Ideal para: pasos de un algoritmo, líneas de código, procesos complejos, pasos de demostración.
    Campos: { type: "ordering", question, items (array desordenado), correctOrder (array de índices del orden correcto), explanation }
-   Ejemplo: { type: "ordering", question: "Ordena los pasos para resolver 234 + 178", items: ["Obtener resultado: 412", "Sumar unidades: 4+8=12, escribir 2, llevar 1", "Sumar centenas: 2+1+1=4", "Sumar decenas: 3+7+1=11, escribir 1, llevar 1"], correctOrder: [1, 3, 2, 0], explanation: "Se suman de derecha a izquierda: unidades, decenas y centenas, llevando cuando sea necesario." }
+   Ejemplo HARD: { type: "ordering", question: "Ordena los pasos de QuickSort para el arreglo [3,1,4,1,5]", items: ["Seleccionar pivote (ej: 3)", "Particionar: elementos < pivote a la izquierda, > a la derecha", "Llamar recursivamente a QuickSort en sub-arreglo izquierdo", "Llamar recursivamente a QuickSort en sub-arreglo derecho", "Combinar los sub-arreglos ordenados con el pivote en medio"], correctOrder: [0, 1, 2, 3, 4], explanation: "QuickSort: selecciona pivote, particiona O(n), aplica recursión en cada mitad, combina. Complejidad promedio O(n log n), peor caso O(n²)." }
 
-DECISIÓN INTELIGENTE DE TIPOS — PRIORIZA EJERCICIOS PRÁCTICOS:
-- PRIMERO identifica el DOMINIO del tema/tarea (matemáticas, programación, idiomas, ciencias, etc.)
-- SEGUNDO decide qué tipos de ejercicios MIDEN MEJOR la competencia del estudiante en ese dominio.
-- PRINCIPIO CLAVE: Si el tema involucra HACER (calcular, resolver, programar, escribir), usa "fill_in_blank" para que el estudiante HAGA, no solo elija respuestas.
+DECISIÓN INTELIGENTE DE TIPOS — PRIORIZA EJERCICIOS PRÁCTICOS COMPLEJOS:
+- PRIMERO identifica el DOMINIO del tema/tarea (matemáticas, SQL, programación, idiomas, ciencias, etc.)
+- SEGUNDO lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS COMPLEJA según el nivel de dificultad.
+- PRINCIPIO CLAVE: Si el tema involucra HACER (calcular, resolver, programar, escribir), usa "fill_in_blank" para que el estudiante HAGA, no solo elija respuestas — y que lo que haga sea realmente complejo.
 
-REGLAS POR DOMINIO:
-- MATEMÁTICAS (suma, resta, multiplicación, división, álgebra, cálculo): MÍNIMO 5 de ${targetCount} deben ser "fill_in_blank" con operaciones reales para resolver. Los números deben variar según la dificultad: EASY (1 dígito: 3+5), INTERMEDIATE (2 dígitos: 47+38), HARD (3+ dígitos o multi-paso: 234+567+89). Incluye 1-2 "ordering" para pasos de resolución.
-- PROGRAMACIÓN: MÍNIMO 4 "fill_in_blank" para completar código, 2 "ordering" para secuencias de código, resto "multiple_choice" para conceptos.
-- IDIOMAS (inglés, francés, etc.): MÍNIMO 4 "fill_in_blank" para gramática/vocabulario/traducción, resto "multiple_choice" para comprensión lectora.
-- CIENCIAS (física, química, biología): MÍNIMO 3 "fill_in_blank" para cálculos y fórmulas, 1 "ordering" para procesos, resto "multiple_choice".
-- HISTORIA, SOCIALES: 2-3 "ordering" para cronología, resto "multiple_choice" para análisis.
-- OTROS DOMINIOS: MÍNIMO 3 "fill_in_blank", 1-2 "ordering", resto "multiple_choice".
+REGLAS POR DOMINIO (aplica la versión del nivel seleccionado):
+- MATEMÁTICAS: MÍNIMO 5 de ${targetCount} deben ser "fill_in_blank". EASY: aritmética básica. INTERMEDIATE: álgebra lineal, porcentajes compuestos. HARD: ecuaciones cuadráticas, sistemas, derivadas, integrales — NUNCA sumas simples.
+- SQL/BASES DE DATOS: MÍNIMO 4 "fill_in_blank". EASY: SELECTs con WHERE. INTERMEDIATE: JOINs simples, GROUP BY. HARD: CTEs, window functions, subconsultas correlacionadas, optimización — NUNCA SELECTs sin JOIN.
+- PROGRAMACIÓN: MÍNIMO 4 "fill_in_blank" para completar código, 2 "ordering" para algoritmos, resto "multiple_choice" para análisis de complejidad. HARD: algoritmos avanzados, nunca sintaxis básica.
+- IDIOMAS: MÍNIMO 4 "fill_in_blank" para gramática avanzada/traducción técnica, resto "multiple_choice" para análisis pragmático.
+- CIENCIAS (física, química, biología): MÍNIMO 3 "fill_in_blank" con problemas multi-fórmula, 1 "ordering" para procesos, resto "multiple_choice" con análisis de escenarios.
+- HISTORIA, SOCIALES: 2-3 "ordering" para causalidad histórica compleja, resto "multiple_choice" para análisis crítico comparativo.
+- OTROS DOMINIOS: MÍNIMO 3 "fill_in_blank" de resolución práctica, 1-2 "ordering", resto "multiple_choice" con escenarios de toma de decisiones.
 
 REGLAS DE CALIDAD:
 - Los ejercicios fill_in_blank deben tener UNA sola respuesta correcta clara y verificable.
-- Para ordering, provee entre 3 y 6 items.
-- VARÍA la dificultad dentro de los ejercicios: empieza simple y sube gradualmente.
-- Contextualiza: usa escenarios de la vida real cuando sea posible.
+- Para ordering, provee entre 4 y 6 items con secuencias no triviales.
+- NO varíes la dificultad internamente en un set HARD — mantén la complejidad máxima en TODOS los ejercicios.
+- Contextualiza: usa escenarios reales del mundo profesional, no de aula básica.
 
 REGLA CRÍTICA DE LONGITUD EN OPCIONES (multiple_choice) — ANTI-SESGO DE LONGITUD:
 - TODAS las opciones DEBEN tener longitud MUY SIMILAR (máximo 15% de diferencia en caracteres entre la más corta y la más larga).
 - La respuesta correcta NUNCA debe ser más larga, más detallada ni más elaborada que las incorrectas.
 - Si la respuesta correcta necesita ser específica, haz que TODAS las opciones sean IGUALMENTE específicas y detalladas.
-- PROHIBIDO ABSOLUTO: opciones cortas como distractores y la correcta larga/detallada. El estudiante NO debe poder adivinar por longitud.
+- PROHIBIDO ABSOLUTO: opciones cortas como distractores y la correcta larga/detallada.
 - TÉCNICA OBLIGATORIA: Escribe PRIMERO la respuesta correcta con el nivel de detalle necesario. Luego escribe CADA distractor con el MISMO nivel de detalle, la MISMA estructura gramatical y longitud SIMILAR.
-- Si la correcta tiene una explicación causal ("porque...", "ya que...", "debido a..."), TODAS las opciones deben tener explicaciones causales de longitud similar.
-- Si la correcta es corta (ej: un número o una palabra), TODAS las opciones deben ser igual de cortas.
-- Ejemplo MALO: ["2", "15", "42, porque se suman las unidades primero y luego las decenas", "8"] ← la correcta es obvia por ser más larga.
-- Ejemplo BUENO: ["34, sumando primero 16 más 18", "42, sumando primero 24 más 18", "38, sumando primero 20 más 18", "46, sumando primero 28 más 18"] ← todas con la misma estructura y longitud.
-- Ejemplo BUENO (corto): ["34", "42", "38", "46"] ← todas cortas e iguales.
 - VERIFICACIÓN: Antes de finalizar cada pregunta multiple_choice, CUENTA los caracteres de cada opción. Si alguna difiere más de 15% del promedio, REESCRIBE las opciones.
 
 DISTRIBUCIÓN OBLIGATORIA DE TIPOS:
@@ -718,12 +766,13 @@ DISTRIBUCIÓN OBLIGATORIA DE TIPOS:
 - NUNCA generes SOLO preguntas "multiple_choice". La variedad es OBLIGATORIA.
 `;
 
-        return `Eres un profesor experto diseñando ${targetCount} ejercicios de evaluación inteligente.
+        return `Eres un profesor experto de nivel universitario/profesional diseñando ${targetCount} ejercicios de evaluación.
 ${difficultyInstructions[difficulty] || difficultyInstructions.HARD}
 ${groundingRule}
+${hardComplexityOverrides}
 ${exerciseTypeInstructions}
-PROHIBIDO ejercicios de memorización pura. El estudiante debe PENSAR y APLICAR conocimientos.
-La explicación debe ser clara y educativa, enseñando el procedimiento de resolución paso a paso.
+PROHIBIDO ejercicios de memorización pura o de un solo paso trivial. El estudiante debe RAZONAR, ANALIZAR y CONSTRUIR soluciones complejas.
+La explicación debe ser detallada y educativa, mostrando el procedimiento completo de resolución.
 REGLA ANTI-SESGO: En preguntas de opción múltiple, TODAS las opciones DEBEN tener la MISMA longitud y estructura. Escribe PRIMERO la correcta, luego iguala CADA distractor en largo y detalle. La respuesta correcta NUNCA debe ser la más larga. VERIFICA contando caracteres.
 FORMATO: JSON array con los campos según el type de cada ejercicio.`;
     }
