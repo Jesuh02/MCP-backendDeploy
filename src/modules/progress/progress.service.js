@@ -618,6 +618,19 @@ export class ProgressDomainService {
             status,
         });
 
+        // Auto-issue certificate in `certificates` table when status reaches 'Ganado' (no DB trigger)
+        if (this._isProgressWon(persisted) && !persisted?.certificateIssuedAt) {
+            try {
+                const withCert = await this.progressRepo.updateCertificate(userId, courseId, {
+                    certificateIssuedAt: new Date().toISOString(),
+                });
+                await this._recalculateSubjectsForUserCourse(userId, courseId);
+                return withCert || persisted;
+            } catch (certErr) {
+                console.error(`[ProgressService] Auto-cert failed for user=${userId} course=${courseId}:`, certErr?.message);
+            }
+        }
+
         await this._recalculateSubjectsForUserCourse(userId, courseId);
 
         return persisted || {
