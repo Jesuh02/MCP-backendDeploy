@@ -403,6 +403,25 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
 | Responder sin entender            | Imposible responder sin comprender           |`;
             }
 
+            // 2.7. HARD difficulty complexity enforcement for reinforcement requests
+            if (this._isReinforcementRequest(prompt) && String(difficulty || '').toUpperCase() === 'HARD') {
+                systemPrompt += `\n\n═══ ENFORCEMENT NIVEL HARD — COMPLEJIDAD MÁXIMA OBLIGATORIA ═══
+PASO OBLIGATORIO: Antes de generar CUALQUIER ejercicio, analiza el dominio del material (matemáticas, SQL, programación, física, idiomas, etc.) y llévalo a su EXPRESIÓN PRÁCTICA MÁS AVANZADA.
+
+REGLAS INQUEBRANTABLES PARA NIVEL HARD:
+1. PROHIBIDO ejercicios de un solo paso o una sola operación. CADA ejercicio debe requerir MÍNIMO 3 pasos de razonamiento encadenados.
+2. PROHIBIDO aritmética simple (sumas, restas, multiplicaciones con 1-3 cifras). Si el tema es "sumas", genera: sumatorias Σ, series geométricas, sumas de Riemann, sumas de matrices, o sumas dentro de sistemas de ecuaciones.
+3. PROHIBIDO SQL sin JOINs, subconsultas o funciones de ventana. TODO ejercicio SQL HARD debe involucrar ≥2 tablas.
+4. PROHIBIDO ejercicios de sintaxis básica de programación. HARD = algoritmos avanzados, recursión, grafos, programación dinámica, análisis de complejidad.
+5. PROHIBIDO definiciones puras ("¿Qué es X?"). El estudiante debe APLICAR, ANALIZAR o EVALUAR, nunca solo recordar.
+6. PROHIBIDO preguntas de un solo concepto aislado. Cada ejercicio debe COMBINAR 2+ conceptos del material.
+
+REGLA DE ESCALADO: Identifica el concepto central del material y pregúntate "¿Cuál es la versión más compleja y profesional de aplicar este conocimiento?" — genera a ESE nivel.
+
+AUTO-VALIDACIÓN: Si un ejercicio puede resolverse en <30 segundos → DESCÁRTALO y genera uno más complejo.
+═══════════════════════════════════════════════════════════`;
+            }
+
             // 3. Build user prompt with file content if available
             let fullPrompt = prompt;
             if (resolvedFileContent) {
