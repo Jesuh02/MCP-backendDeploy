@@ -539,13 +539,19 @@ export class ReinforcementDomainService {
         const contextBlock = this._buildContextBlock(topicName, ctx.topic?.description, taskName, ctx.task?.description, ragContent, ctx.ragFiles || []);
         const diffLabel = (difficulty || 'HARD').toUpperCase();
         const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount);
+
+        // Step 2b: Detect domain to enforce topic boundary and prevent cross-domain contamination
+        const domain = this._inferDomain(topicName, taskName, ragContent);
+        const domainLockBlock = this._buildDomainLockBlock(domain, topicName, taskName);
+        console.log(`🎯 [ReinforcementService] Detected domain: ${domain} (topic='${topicName}', task='${taskName}')`);
+
         const topicHint = topicName
-            ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Analiza el dominio (matemáticas, SQL, programación, idiomas, ciencias, etc.) y elige los tipos de ejercicio MÁS AVANZADOS posibles para ese dominio.`
-            : '';
+            ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Dominio detectado: ${domain}. TODOS los ejercicios son EXCLUSIVAMENTE de ese dominio. Lleva el dominio a su EXPRESIÓN MÁS COMPLEJA Y AVANZADA.\n\n${domainLockBlock}`
+            : `\n${domainLockBlock}`;
 
         // Complexity enforcement added to the user prompt for HARD difficulty
         const hardEnforcement = diffLabel === 'HARD'
-            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: Identifica el DOMINIO CENTRAL del material (matemáticas, SQL, programación, física, idiomas, etc.).\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado.\n\nREGLAS INQUEBRANTABLES:\n- Si el tema es SUMAS: genera sumas de 7+ dígitos (ej: 1023232+12213123), sumas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de series. NUNCA sumas tipo "24+18" o "234+567".\n- Si el tema es MATEMÁTICAS: ecuaciones cuadráticas, sistemas 2x2 o 3x3, derivadas, integrales definidas. NUNCA ecuaciones lineales simples.\n- Si el tema es SQL: JOINs múltiples + subconsultas + window functions + CTEs. NUNCA SELECT simple sin JOIN.\n- Si el tema es PROGRAMACIÓN: algoritmos avanzados (recursión, grafos, DP, complejidad). NUNCA sintaxis básica.\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional posible.\n\nTEST: Si un ejercicio se resuelve en <30 segundos → DESCÁRTALO y genera uno más complejo.\nEJEMPLOS de complejidad mínima aceptable HARD:\n- Sumas: 1,023,232 + 12,213,456 + 987,654 = ___\n- Álgebra: sistema 3x+2y=12, 5x-y=7, resolver x e y\n- SQL: WITH cte AS (...) SELECT ... JOIN ... WHERE ... GROUP BY ... HAVING\n- Programación: implementar búsqueda binaria, analizar complejidad O(n log n)`
+            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: El dominio YA FUE DETERMINADO: ${domain}. NO cambies de dominio.\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado del dominio ${domain}.\n\nREGLAS INQUEBRANTABLES PARA DOMINIO ${domain}:\n${domain === 'MATH' ? '- SUMAS: genera sumas de 7+ dígitos (ej: 1,023,232 + 12,213,456 + 987,654 = ___), sumas encadenadas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de matrices, series aritméticas/geométricas. NUNCA sumas de 1-3 dígitos. NUNCA algoritmos de programación (Kahan, etc.).' : ''}\n${domain === 'MATH' ? '- ÁLGEBRA: ecuaciones cuadráticas, sistemas de ecuaciones, derivadas, integrales definidas. NUNCA ecuaciones lineales de un solo paso.' : ''}\n${domain === 'SQL' ? '- JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK, ROW_NUMBER), CTEs (WITH), GROUP BY con HAVING. NUNCA SELECT simple sin JOIN.' : ''}\n${domain === 'PROGRAMMING' ? '- Algoritmos con análisis de complejidad O(n log n), recursión con memoización, programación dinámica, grafos. NUNCA sintaxis básica ni Hello World.' : ''}\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional.\n\nTEST DE COMPLEJIDAD: Si un ejercicio se resuelve en <30 segundos de pensamiento activo → DESCÁRTALO y genera uno más complejo.`
             : '';
 
         // Accumulate unique questions across iterations
@@ -598,9 +604,9 @@ export class ReinforcementDomainService {
 
             // Server-side complexity filter: reject trivial exercises in HARD mode
             const filtered = diffLabel === 'HARD' ? deduped.filter(q => {
-                const trivial = this._isExerciseTrivialForHard(q);
+                const trivial = this._isExerciseTrivialForHard(q, domain);
                 if (trivial) {
-                    console.warn(`[ReinforcementService] HARD filter rejected trivial exercise: "${q.question.substring(0, 80)}..."`);
+                    console.warn(`[ReinforcementService] HARD filter rejected trivial/off-domain exercise: "${q.question.substring(0, 80)}..."`);
                 }
                 return !trivial;
             }) : deduped;
@@ -662,6 +668,149 @@ export class ReinforcementDomainService {
             if (ragFiles.length > 0) block += `Archivos fuente: ${ragFiles.join(', ')}\n`;
         }
         return block;
+    }
+
+    /**
+     * Infers the primary domain from topic/task name and RAG content.
+     * Returns a normalized domain key used for domain-lock enforcement.
+     * @private
+     */
+    _inferDomain(topicName = '', taskName = '', ragContent = '') {
+        // Topic/task name is the STRONGEST signal — weight it much higher than RAG
+        const topicText = `${topicName} ${taskName}`.toLowerCase();
+        // RAG content may contain off-topic examples; only use first 1500 chars as weak signal
+        const ragSample = ragContent.substring(0, 1500).toLowerCase();
+
+        const DOMAIN_KEYWORDS = {
+            MATH: {
+                strong: ['suma', 'sumas', 'adición', 'sustracción', 'resta', 'multiplicación', 'división',
+                    'aritmética', 'álgebra', 'cálculo', 'calculo', 'ecuación', 'ecuaciones', 'matemática',
+                    'matemáticas', 'trigonometría', 'geometría', 'fracción', 'decimal', 'porcentaje',
+                    'integral', 'derivada', 'límite', 'serie', 'sumatoria', 'logaritmo', 'exponente',
+                    'polinomio', 'matriz', 'vector', 'probabilidad', 'estadística', 'binomial'],
+                weak: ['número', 'números', 'operación', 'resultado', 'calcular', 'resolver'],
+            },
+            SQL: {
+                strong: ['sql', 'select', 'query', 'base de datos', 'database', 'postgresql', 'mysql',
+                    'supabase', 'joins', 'subconsulta', 'stored procedure', 'trigger', 'índice', 'índices'],
+                weak: ['tabla', 'tablas', 'consulta', 'registro', 'campo'],
+            },
+            PROGRAMMING: {
+                strong: ['programación', 'programming', 'algoritmo', 'algoritmos', 'javascript', 'python',
+                    'java', 'typescript', 'c++', 'c#', 'kotlin', 'swift', 'react', 'vue', 'angular',
+                    'api', 'frontend', 'backend', 'fullstack', 'recursión', 'poo', 'oop', 'clase',
+                    'función', 'variable', 'estructura de datos', 'grafo', 'árbol binario'],
+                weak: ['código', 'función', 'objeto', 'método', 'loop', 'ciclo'],
+            },
+            PHYSICS: {
+                strong: ['física', 'physics', 'fuerza', 'energía', 'velocidad', 'aceleración', 'mecánica',
+                    'termodinámica', 'óptica', 'electromagnetismo', 'ondas', 'newton', 'joule', 'watt'],
+                weak: ['masa', 'tiempo', 'distancia', 'potencia'],
+            },
+            CHEMISTRY: {
+                strong: ['química', 'chemistry', 'reacción', 'mol', 'átomo', 'molécula', 'concentración',
+                    'ph', 'oxidación', 'reducción', 'estequiometría', 'enlace', 'tabla periódica'],
+                weak: ['elemento', 'compuesto', 'mezcla', 'solución'],
+            },
+            LANGUAGE: {
+                strong: ['inglés', 'español', 'francés', 'alemán', 'idioma', 'gramática', 'vocabulario',
+                    'conjugación', 'sintaxis', 'semántica', 'escritura', 'comprensión lectora', 'redacción',
+                    'ortografía', 'puntuación', 'subjuntivo', 'condicional'],
+                weak: ['verbo', 'sustantivo', 'adjetivo', 'adverbio', 'preposición'],
+            },
+            HISTORY: {
+                strong: ['historia', 'history', 'guerra', 'revolución', 'siglo', 'época', 'civilización',
+                    'independencia', 'colonización', 'monarquía', 'república', 'imperio', 'tratado',
+                    'movimiento social', 'dictadura'],
+                weak: ['año', 'período', 'personaje', 'país', 'evento'],
+            },
+            ACCOUNTING: {
+                strong: ['contabilidad', 'accounting', 'balance', 'debe', 'haber', 'activo', 'pasivo',
+                    'patrimonio', 'asiento', 'estado financiero', 'flujo de caja', 'depreciación',
+                    'amortización', 'auditoría', 'finanzas', 'presupuesto', 'tributación'],
+                weak: ['cuenta', 'ingreso', 'egreso', 'gasto', 'capital'],
+            },
+            BIOLOGY: {
+                strong: ['biología', 'biology', 'célula', 'adn', 'proteína', 'genética', 'evolución',
+                    'ecosistema', 'mitosis', 'meiosis', 'fotosíntesis', 'respiración celular', 'tejido'],
+                weak: ['organismo', 'especie', 'gen', 'cromosoma'],
+            },
+        };
+
+        const scores = {};
+        for (const [domain, kw] of Object.entries(DOMAIN_KEYWORDS)) {
+            let score = 0;
+            // Strong match in topic name → very high weight (10 pts each)
+            score += kw.strong.filter(k => topicText.includes(k)).length * 10;
+            // Weak match in topic name → medium weight (4 pts each)
+            score += kw.weak.filter(k => topicText.includes(k)).length * 4;
+            // Strong match in RAG sample → low weight (1 pt each)
+            score += kw.strong.filter(k => ragSample.includes(k)).length * 1;
+            scores[domain] = score;
+        }
+
+        const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+        const [bestDomain, bestScore] = sorted[0];
+        const [secondDomain, secondScore] = sorted[1] || ['GENERAL', 0];
+
+        // Only declare a domain if the best score is meaningfully higher than the second
+        if (bestScore === 0) return 'GENERAL';
+        // If MATH scores highest, return MATH even if score is 10 (one keyword match)
+        return bestScore >= 4 ? bestDomain : 'GENERAL';
+    }
+
+    /**
+     * Builds a hard domain-lock instruction block that prohibits off-domain questions.
+     * @private
+     */
+    _buildDomainLockBlock(domain, topicName, taskName) {
+        const DOMAIN_LABELS = {
+            MATH: 'MATEMÁTICAS / ARITMÉTICA',
+            SQL: 'SQL / BASES DE DATOS',
+            PROGRAMMING: 'PROGRAMACIÓN / ALGORITMOS',
+            PHYSICS: 'FÍSICA',
+            CHEMISTRY: 'QUÍMICA',
+            LANGUAGE: 'IDIOMAS / LENGUAJE',
+            HISTORY: 'HISTORIA / CIENCIAS SOCIALES',
+            ACCOUNTING: 'CONTABILIDAD / FINANZAS',
+            BIOLOGY: 'BIOLOGÍA / CIENCIAS NATURALES',
+            GENERAL: 'CONOCIMIENTO GENERAL (según el material)',
+        };
+
+        const FORBIDDEN_DOMAINS = {
+            MATH: 'SQL, programación (Python/JS/Java/etc.), algoritmos de software, bases de datos, historia, idiomas. ESPECIALMENTE prohibido: algoritmos como Kahan, búsqueda binaria, QuickSort, BFS, DFS o cualquier pseudocódigo de programación.',
+            SQL: 'matemáticas puras, física, química, historia, idiomas, código de programación que no sea SQL',
+            PROGRAMMING: 'historia, idiomas básicos, ciencias puras sin relación al código',
+            PHYSICS: 'programación, SQL, historia, idiomas, contabilidad, biología',
+            CHEMISTRY: 'programación, SQL, historia, idiomas, matemáticas sin relación a la química',
+            LANGUAGE: 'programación, SQL, matemáticas, física, química, biología',
+            HISTORY: 'programación, SQL, matemáticas, física, química, biología',
+            ACCOUNTING: 'programación, física, química, historia, idiomas',
+            BIOLOGY: 'programación, SQL, historia, idiomas, contabilidad',
+            GENERAL: '(ningún dominio específico prohibido — sigue el tema del material)',
+        };
+
+        const label = DOMAIN_LABELS[domain] || domain;
+        const forbidden = FORBIDDEN_DOMAINS[domain] || '';
+        const topicCtx = topicName ? `"${topicName}"${taskName ? ` → Tarea: "${taskName}"` : ''}` : '(ver material adjunto)';
+
+        return `
+🔒🔒🔒 BLOQUEO ABSOLUTO DE DOMINIO — REGLA NO NEGOCIABLE 🔒🔒🔒
+
+El material de estudio pertenece EXCLUSIVAMENTE al dominio: ██ ${label} ██
+Tema activo: ${topicCtx}
+
+▶ TODOS los ejercicios deben pertenecer al dominio: ${label}
+▶ PROHIBICIÓN TOTAL de ejercicios sobre: ${forbidden}
+
+⚠️ ADVERTENCIA CRÍTICA: Si el material de referencia contiene ejemplos de ${forbidden} como contexto o analogía, IGNÓRALOS completamente para la generación de ejercicios. Solo genera ejercicios del dominio ${label}.
+
+VERIFICACIÓN OBLIGATORIA antes de cada ejercicio:
+  → Pregunta: "¿Este ejercicio es sobre ${label}?"
+  → Si la respuesta es NO → DESCARTA el ejercicio y genera uno correcto del dominio ${label}.
+  → Si el ejercicio menciona código, algoritmos de software, SQL, o lenguajes de programación y el dominio es MATH → DESCARTA y reemplaza.
+
+🔒🔒🔒 FIN BLOQUEO DE DOMINIO 🔒🔒🔒`.trim();
     }
 
     /** @private Build system prompt based on difficulty */
@@ -947,13 +1096,40 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         });
     }
 
-    _isExerciseTrivialForHard(q) {
+    _isExerciseTrivialForHard(q, domain = 'GENERAL') {
         const text = (q.question || '').toLowerCase();
-        const answer = String(q.correct_answer || '').toLowerCase();
+        const answer = String(q.correct_answer || q.correctAnswer || '').toLowerCase();
         const allText = text + ' ' + answer;
 
-        // 1. Simple arithmetic: "digit op digit" without complex context
-        if (/^\s*¿?(cuánto|calcula|resuelve|resultado)\b/.test(text)) {
+        // 0. Cross-domain contamination check — reject questions from the wrong domain
+        if (domain === 'MATH') {
+            // Programming/SQL signals are forbidden in a MATH topic
+            const programmingSignals = [
+                'select ', ' from ', ' where ', ' join ', 'function(', 'function (', '() {', '() =>',
+                'algorithm', 'class ', 'new class', '= new ', 'api ', '\.push(', '\.pop(', '\.map(',
+                'const ', 'let ', 'var ', 'def ', 'import ', 'console.log', 'system.out',
+                'kahan', 'binary search', 'quicksort', 'mergesort', 'heapsort', 'bfs', 'dfs',
+                'dijkstra', 'memoization', 'dynamic programming', 'programación dinámica',
+                'recursion', 'recursive', 'recursivo', 'linked list', 'graph ', ' grafo',
+                'hash map', 'hashmap', 'stack overflow', 'time complexity', 'space complexity',
+                'big-o', 'o(n)', 'o(log', 'pseudocódigo', 'pseudocode', 'sintaxis de', 'punto flotante de doble'
+            ];
+            if (programmingSignals.some(s => text.includes(s))) {
+                return true; // Reject: programming/SQL question in a MATH topic
+            }
+        }
+
+        if (domain === 'SQL') {
+            // Pure math/science questions are off-domain for SQL topics
+            const mathOnlySignals = [/\b\d+\s*[+\-*\/]\s*\d+\s*=\s*___/, /calcula\s+la\s+(integral|derivada|sumatoria)/i];
+            if (mathOnlySignals.some(r => r.test(text))) return true;
+        }
+
+        // 1. Simple arithmetic: reject if ALL numbers have < 5 digits in MATH domain
+        if (domain === 'MATH' && /^\s*¿?(cuánto|calcula|resuelve|resultado)\b/.test(text)) {
+            const numbers = text.match(/\d+/g) || [];
+            if (numbers.length >= 2 && numbers.every(n => n.length < 5)) return true;
+        } else if (/^\s*¿?(cuánto|calcula|resuelve|resultado)\b/.test(text)) {
             const numbers = text.match(/\d+/g) || [];
             if (numbers.length >= 2 && numbers.every(n => n.length < 5)) return true;
         }
