@@ -29,6 +29,15 @@ export function initSocketServer(httpServer) {
             if (courseId) socket.leave(`course:${courseId}`);
         });
 
+        // Client joins a per-user room to receive personal notifications in real-time
+        socket.on('join:user', (userId) => {
+            if (userId) socket.join(`user:${userId}`);
+        });
+
+        socket.on('leave:user', (userId) => {
+            if (userId) socket.leave(`user:${userId}`);
+        });
+
         // Client joins a per-user chat room to receive real-time chat messages
         socket.on('join:chat', ({ userId, origin }) => {
             if (userId && origin) socket.join(`chat:${userId}:${origin}`);
