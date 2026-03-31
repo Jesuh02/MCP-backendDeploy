@@ -539,6 +539,51 @@ export class SupabaseProgressRepository {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    //  REPARACIÓN DE ESTADOS INCORRECTOS
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Encuentra y corrige registros en progreso_curso donde el estado no coincide con la nota:
+     *  - promedio >= 6 pero estado != 'Ganado'  → actualiza a 'Ganado'
+     *  - promedio <  6 pero estado  = 'Ganado'  → actualiza a 'Perdido'
+     * Retorna array de { userId, courseId, oldStatus, newStatus }.
+     */
+    async repairWrongProgressStatuses() {
+        const { data: rows, error } = await this.client
+            .from(this._courseProgressTable())
+            .select('id, usuario_estudiante, curso_id, promedio, calificacion_ponderada, estado');
+        if (error || !rows?.length) return [];
+
+        const toFix = rows.filter(r => {
+            const grade = Number(r.promedio ?? r.calificacion_ponderada ?? 0);
+            const correctStatus = grade >= 6 ? 'Ganado' : 'Perdido';
+            return r.estado !== correctStatus;
+        });
+
+        if (!toFix.length) return [];
+
+        const repaired = [];
+        for (const r of toFix) {
+            const grade = Number(r.promedio ?? r.calificacion_ponderada ?? 0);
+            const newStatus = grade >= 6 ? 'Ganado' : 'Perdido';
+            const { error: updErr } = await this.client
+                .from(this._courseProgressTable())
+                .update({ estado: newStatus, ultima_calculada_en: new Date().toISOString() })
+                .eq('id', r.id);
+            if (!updErr) {
+                repaired.push({
+                    userId: r.usuario_estudiante,
+                    courseId: r.curso_id,
+                    oldStatus: r.estado,
+                    newStatus,
+                    averageGrade: grade,
+                });
+            }
+        }
+        return repaired;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     //  CERTIFICADOS  (tabla: certificates)
     // ═══════════════════════════════════════════════════════════════
 
