@@ -403,23 +403,19 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
 | Responder sin entender            | Imposible responder sin comprender           |`;
             }
 
-            // 2.7. HARD difficulty complexity enforcement for reinforcement requests
-            if (this._isReinforcementRequest(prompt) && String(difficulty || '').toUpperCase() === 'HARD') {
-                systemPrompt += `\n\n═══ ENFORCEMENT NIVEL HARD — COMPLEJIDAD MÁXIMA OBLIGATORIA ═══
-PASO OBLIGATORIO: Antes de generar CUALQUIER ejercicio, analiza el dominio del material (matemáticas, SQL, programación, física, idiomas, etc.) y llévalo a su EXPRESIÓN PRÁCTICA MÁS AVANZADA.
+            // 2.7. HARD difficulty complexity enforcement for reinforcement
+            if (String(difficulty || '').toUpperCase() === 'HARD' && this._isReinforcementRequest(prompt)) {
+                systemPrompt += `\n\n═══ ENFORCEMENT DE COMPLEJIDAD HARD ═══
+ERES un evaluador de nivel universitario avanzado / profesional.
+Reglas OBLIGATORIAS para TODOS los ejercicios:
 
-REGLAS INQUEBRANTABLES PARA NIVEL HARD:
-1. PROHIBIDO ejercicios de un solo paso o una sola operación. CADA ejercicio debe requerir MÍNIMO 3 pasos de razonamiento encadenados.
-2. PROHIBIDO aritmética simple (sumas, restas, multiplicaciones con 1-3 cifras). Si el tema es "sumas", genera: sumatorias Σ, series geométricas, sumas de Riemann, sumas de matrices, o sumas dentro de sistemas de ecuaciones.
-3. PROHIBIDO SQL sin JOINs, subconsultas o funciones de ventana. TODO ejercicio SQL HARD debe involucrar ≥2 tablas.
-4. PROHIBIDO ejercicios de sintaxis básica de programación. HARD = algoritmos avanzados, recursión, grafos, programación dinámica, análisis de complejidad.
-5. PROHIBIDO definiciones puras ("¿Qué es X?"). El estudiante debe APLICAR, ANALIZAR o EVALUAR, nunca solo recordar.
-6. PROHIBIDO preguntas de un solo concepto aislado. Cada ejercicio debe COMBINAR 2+ conceptos del material.
+1. MATEMÁTICAS/ARITMÉTICA: Los números deben tener MÍNIMO 7 dígitos. Ejemplo válido: 1,023,232 + 12,213,456. Ejemplo PROHIBIDO: 24+18, 5×3.
+2. SQL: OBLIGATORIO incluir JOINs, subqueries, window functions (OVER/PARTITION BY), CTEs o HAVING. SELECT simple sin JOIN está PROHIBIDO.
+3. PROGRAMACIÓN: Exigir algoritmos (búsqueda binaria, grafos, recursión, DP), NO ejercicios de sintaxis básica como console.log o print.
+4. CONCEPTOS: NO preguntar "¿Qué es X?" → preguntar "¿Qué implicaciones tiene X cuando se combina con Y en el contexto Z?"
+5. TODOS los ejercicios deben requerir razonamiento multi-paso. Si se puede responder de memoria o en 1 paso, es DEMASIADO FÁCIL.
 
-REGLA DE ESCALADO: Identifica el concepto central del material y pregúntate "¿Cuál es la versión más compleja y profesional de aplicar este conocimiento?" — genera a ESE nivel.
-
-AUTO-VALIDACIÓN: Si un ejercicio puede resolverse en <30 segundos → DESCÁRTALO y genera uno más complejo.
-═══════════════════════════════════════════════════════════`;
+Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejidad.`;
             }
 
             // 3. Build user prompt with file content if available
@@ -541,6 +537,15 @@ AUTO-VALIDACIÓN: Si un ejercicio puede resolverse en <30 segundos → DESCÁRTA
                             `Filtra SIEMPRE usando:\n` +
                             `  WHERE creator_user_id IN ${userIdResolution}\n` +
                             `  O: WHERE user_id IN ${userIdResolution}\n\n` +
+                            `⚠️ TABLA subscriptions: SOLO tiene subscriber_id y creator_id. NO tiene course_id.\n` +
+                            `NUNCA uses subscriptions para contar estudiantes por curso.\n` +
+                            `Para estudiantes por curso, usa SIEMPRE progreso_curso.\n\n` +
+                            `CONSULTA DE REFERENCIA — CONTAR ESTUDIANTES POR CURSO:\n` +
+                            `  SELECT c.title AS curso, COUNT(DISTINCT pc.usuario_estudiante) AS estudiantes\n` +
+                            `  FROM courses c\n` +
+                            `  LEFT JOIN progreso_curso pc ON pc.curso_id = c.id\n` +
+                            `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                            `  GROUP BY c.title ORDER BY c.title;\n\n` +
                             `CONSULTA DE REFERENCIA — TUS ESTUDIANTES:\n` +
                             `  SELECT u.username AS estudiante, c.title AS curso,\n` +
                             `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
@@ -557,6 +562,19 @@ AUTO-VALIDACIÓN: Si un ejercicio puede resolverse en <30 segundos → DESCÁRTA
                             `Cuando el usuario pregunte por "mis cursos", "mis estudiantes" o datos propios, filtra usando:\n` +
                             `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
                             `  O con JOIN: JOIN usuarios creador ON c.creator_user_id = creador.id WHERE creador.username = '${safeUsername || 'N/A'}'\n\n` +
+                            `⚠️ TABLA subscriptions: SOLO tiene subscriber_id y creator_id. NO tiene course_id.\n` +
+                            `NUNCA uses subscriptions para contar estudiantes por curso — da resultados incorrectos (cross-join).\n` +
+                            `Para contar estudiantes por curso, usa SIEMPRE progreso_curso.\n\n` +
+                            `CONSULTA DE REFERENCIA — CONTAR ESTUDIANTES POR CURSO:\n` +
+                            `  SELECT c.title AS curso, COUNT(DISTINCT pc.usuario_estudiante) AS estudiantes\n` +
+                            `  FROM courses c\n` +
+                            `  LEFT JOIN progreso_curso pc ON pc.curso_id = c.id\n` +
+                            `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                            `  GROUP BY c.title ORDER BY c.title;\n\n` +
+                            `CONSULTA DE REFERENCIA — TOTAL DE ESTUDIANTES ÚNICOS:\n` +
+                            `  SELECT COUNT(DISTINCT pc.usuario_estudiante) AS total_estudiantes\n` +
+                            `  FROM progreso_curso pc\n` +
+                            `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution});\n\n` +
                             `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES:\n` +
                             `  SELECT u.username AS estudiante, c.title AS curso,\n` +
                             `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
@@ -609,6 +627,12 @@ AUTO-VALIDACIÓN: Si un ejercicio puede resolverse en <30 segundos → DESCÁRTA
                         `  (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n\n` +
                         `SUBQUERY DE ALUMNOS ACCESIBLES (úsala siempre para filtrar estudiantes):\n` +
                         `  (SELECT DISTINCT pc.usuario_estudiante FROM progreso_curso pc WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution}))\n\n` +
+                        `CONSULTA DE REFERENCIA — CONTAR ESTUDIANTES POR CURSO:\n` +
+                        `  SELECT c.title AS curso, COUNT(DISTINCT pc.usuario_estudiante) AS estudiantes\n` +
+                        `  FROM courses c\n` +
+                        `  LEFT JOIN progreso_curso pc ON pc.curso_id = c.id\n` +
+                        `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                        `  GROUP BY c.title ORDER BY c.title;\n\n` +
                         `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES (adapta según la pregunta):\n` +
                         `  SELECT u.username AS estudiante, c.title AS curso,\n` +
                         `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
@@ -618,6 +642,7 @@ AUTO-VALIDACIÓN: Si un ejercicio puede resolverse en <30 segundos → DESCÁRTA
                         `  JOIN courses c ON pc.curso_id = c.id\n` +
                         `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
                         `  ORDER BY c.title, u.username;\n\n` +
+
                         `REGLAS DE FILTRADO OBLIGATORIAS (aplican a TODAS las queries sin excepción):\n` +
                         `1. Consultas de progreso → usar tabla progreso_curso, filtrar por curso_id IN (subquery de cursos accesibles).\n` +
                         `2. Consultas de entregas (task_submissions) → filtrar por student_id IN (subquery de alumnos accesibles).\n` +
@@ -697,8 +722,15 @@ AUTO-VALIDACIÓN: Si un ejercicio puede resolverse en <30 segundos → DESCÁRTA
                             const mcp = new MCPService();
                             const toolResult = await mcp.executeMCPTool(toolName, toolArgs, { fromWhatsApp, scopedUserId: userId });
                             // Append tool result to system prompt to allow the model to continue reasoning
-                            const toolResultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
-                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools });
+                            let toolResultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+                            // Truncate very large tool results to prevent token overflow
+                            if (toolResultStr.length > 12000) {
+                                toolResultStr = toolResultStr.substring(0, 12000) + '\n... (resultados truncados por longitud)';
+                            }
+                            // If query_database returned data successfully, don't pass tools so the LLM formulates a text response
+                            const gotData = toolName === 'query_database' && toolResult && (toolResult.success || toolResult.results);
+                            const nextTools = gotData ? [] : tools;
+                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools: nextTools });
                         } catch (execErr) {
                             const errStr = String(execErr && (execErr.message || execErr));
                             response = await this.llm.chat(systemPrompt + `\n\n[TOOL_ERROR name=${toolName}]\n${errStr}`, fullPrompt, { model, tools });

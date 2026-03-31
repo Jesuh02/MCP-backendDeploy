@@ -545,7 +545,7 @@ export class ReinforcementDomainService {
 
         // Complexity enforcement added to the user prompt for HARD difficulty
         const hardEnforcement = diffLabel === 'HARD'
-            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: Identifica el DOMINIO CENTRAL del material proporcionado (matemáticas, SQL, programación, física, idiomas, etc.).\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado.\n\nREGLAS INQUEBRANTABLES:\n- PROHIBIDO ABSOLUTO: operaciones aritméticas simples (sumas/restas/multiplicaciones de 1-3 cifras). Si el tema es "sumas", genera: sumatorias con notación sigma ∑, sumas de series geométricas/aritméticas, sumas de Riemann, sumas de matrices, o sumas dentro de sistemas de ecuaciones.\n- PROHIBIDO ABSOLUTO: consultas SQL sin JOINs, sin subconsultas o sin funciones de ventana. TODO ejercicio SQL HARD debe involucrar ≥2 tablas.\n- PROHIBIDO ABSOLUTO: código que solo use if/else, for simple, o impresión por consola. Los ejercicios de programación HARD deben involucrar algoritmos no triviales (recursión, grafos, programación dinámica, complejidad).\n- PROHIBIDO ABSOLUTO: preguntas de definición pura ("¿Qué es X?"). El estudiante debe APLICAR, ANALIZAR o EVALUAR.\n\nTEST DE COMPLEJIDAD OBLIGATORIO: Para CADA ejercicio, pregúntate: "¿Un estudiante promedio podría resolverlo en menos de 30 segundos?" Si la respuesta es SÍ → DESCARTA ese ejercicio y genera uno sustancialmente más complejo.\n\nEJEMPLOS DE COMPLEJIDAD MÍNIMA ACEPTABLE EN HARD:\n- Matemáticas: resolver sistema 3×3, hallar extremos de f(x)=x⁴-4x³+6x², calcular integral definida\n- SQL: WITH cte AS (...) SELECT ... FROM ... JOIN ... WHERE ... GROUP BY ... HAVING ... ORDER BY\n- Programación: implementar Dijkstra, resolver con programación dinámica, analizar complejidad de algoritmo dado\n- Física: problema con 3+ ecuaciones encadenadas (cinemática+dinámica+energía)\n\nLos distractores en multiple_choice deben ser errores conceptuales PLAUSIBLES que un estudiante intermedio cometería — nunca disparates obvios.`
+            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: Identifica el DOMINIO CENTRAL del material (matemáticas, SQL, programación, física, idiomas, etc.).\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado.\n\nREGLAS INQUEBRANTABLES:\n- Si el tema es SUMAS: genera sumas de 7+ dígitos (ej: 1023232+12213123), sumas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de series. NUNCA sumas tipo "24+18" o "234+567".\n- Si el tema es MATEMÁTICAS: ecuaciones cuadráticas, sistemas 2x2 o 3x3, derivadas, integrales definidas. NUNCA ecuaciones lineales simples.\n- Si el tema es SQL: JOINs múltiples + subconsultas + window functions + CTEs. NUNCA SELECT simple sin JOIN.\n- Si el tema es PROGRAMACIÓN: algoritmos avanzados (recursión, grafos, DP, complejidad). NUNCA sintaxis básica.\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional posible.\n\nTEST: Si un ejercicio se resuelve en <30 segundos → DESCÁRTALO y genera uno más complejo.\nEJEMPLOS de complejidad mínima aceptable HARD:\n- Sumas: 1,023,232 + 12,213,456 + 987,654 = ___\n- Álgebra: sistema 3x+2y=12, 5x-y=7, resolver x e y\n- SQL: WITH cte AS (...) SELECT ... JOIN ... WHERE ... GROUP BY ... HAVING\n- Programación: implementar búsqueda binaria, analizar complejidad O(n log n)`
             : '';
 
         // Accumulate unique questions across iterations
@@ -673,33 +673,33 @@ export class ReinforcementDomainService {
             INTERMEDIATE: `NIVEL INTERMEDIO: ejercicios de análisis y aplicación. Escenarios prácticos multi-paso, resolución de problemas contextualizados. El estudiante debe ANALIZAR, DECIDIR y APLICAR conocimientos en situaciones con 2-3 variables o pasos de razonamiento.`,
             HARD: `NIVEL EXPERTO — COMPLEJIDAD MÁXIMA ABSOLUTA (NO NEGOCIABLE):
 
-═══ PASO 0 OBLIGATORIO: ANÁLISIS DE DOMINIO ═══
-ANTES de generar cualquier ejercicio, analiza el contenido RAG e identifica:
-1. El DOMINIO CENTRAL del tema (matemáticas, SQL, programación, física, idiomas, historia, etc.)
-2. Los CONCEPTOS MÁS AVANZADOS presentes en el material
-3. La EXPRESIÓN PRÁCTICA MÁS COMPLEJA posible de esos conceptos
-Luego genera TODOS los ejercicios al nivel de complejidad máxima de ese dominio.
+══ PASO 0 OBLIGATORIO: ANÁLISIS DE DOMINIO ══
+ANTES de generar cualquier ejercicio:
+1. Identifica el DOMINIO CENTRAL del material (matemáticas, SQL, programación, física, idiomas, contabilidad, etc.)
+2. Identifica los CONCEPTOS MÁS AVANZADOS presentes en el material
+3. Lleva esos conceptos a su EXPRESIÓN PRÁCTICA MÁS COMPLEJA posible
+TODOS los ejercicios deben estar al nivel de complejidad máxima de ese dominio.
 
-═══ REGLA ABSOLUTA: CERO EJERCICIOS TRIVIALES ═══
-Si un ejercicio puede resolverse en menos de 30 segundos de pensamiento activo, DESCÁRTALO y genera uno más complejo.
-Si un ejercicio involucra solo UNA operación, UN paso, o UNA consulta simple → es INACEPTABLE para HARD.
+══ REGLA ABSOLUTA: CERO EJERCICIOS TRIVIALES ══
+Si un ejercicio puede resolverse en menos de 30 segundos de pensamiento activo → DESCÁRTALO.
+Si un ejercicio involucra solo UNA operación, UN paso, o UNA consulta simple → es INACEPTABLE.
 CADA ejercicio HARD debe requerir MÍNIMO 3 pasos de razonamiento encadenados.
 
-PROHIBIDO TERMINANTEMENTE generar ejercicios simples o de un solo paso. CADA ejercicio debe exigir razonamiento profundo, múltiples pasos y dominio avanzado del área.
-- MATEMÁTICAS: Álgebra no lineal, sistemas de ecuaciones, cálculo diferencial/integral, estadística inferencial, optimización. PROHIBIDAS operaciones aritméticas puras (sumas, restas, multiplicaciones simples con 1-2 cifras). Los fill_in_blank deben resolver ecuaciones cuadráticas, sistemas, derivadas, integrales, series, probabilidad combinada, o matrices. Si el tema es "sumas", el ejercicio HARD debe ser: sumas de series infinitas, sumas de Riemann, sumatorias con notación sigma, sumas de matrices 3×3, o problemas donde las sumas son parte de un sistema de ecuaciones. NUNCA "2+3=___" ni "234+567=___".
-- SQL/BASES DE DATOS: Obligatorio usar JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK, ROW_NUMBER, LAG, LEAD), CTEs recursivos (WITH RECURSIVE), GROUP BY con HAVING, agregaciones anidadas, CASE WHEN complejos. PROHIBIDAS consultas SELECT simples sin JOIN. Un fill_in_blank de SQL HARD debe completar una subconsulta correlacionada o una window function, NUNCA un WHERE simple.
-- PROGRAMACIÓN: Algoritmos de ordenamiento/búsqueda con análisis de complejidad, recursión con memoización, programación dinámica, grafos (BFS/DFS/Dijkstra), patrones de diseño GoF, concurrencia, estructuras de datos avanzadas (árboles AVL, tries, heaps). PROHIBIDOS ejercicios de sintaxis básica, "Hello World", o bucles for simples.
-- FÍSICA/QUÍMICA: Problemas que requieren 3+ fórmulas encadenadas, conversiones de unidades múltiples, análisis de sistemas acoplados, termodinámica de procesos reales, circuitos RC/RL/RLC, equilibrio químico multi-etapa. PROHIBIDOS cálculos de F=ma de un solo paso.
-- IDIOMAS: Gramática avanzada (subjuntivo compuesto, condicionales mixtos tipo 3, inversión estilística, voz pasiva en tiempos perfectos), análisis de registro formal/informal, pragmática del discurso, traducción de textos técnicos preservando matices.
-- CONTABILIDAD/FINANZAS: Asientos compuestos multi-cuenta, análisis de ratios financieros encadenados, consolidación, flujo de caja descontado, valoración por múltiplos.
-- CUALQUIER OTRO DOMINIO: Identifica el concepto central y llévalo a su EXPRESIÓN PRÁCTICA MÁS COMPLEJA. Pregúntate: "¿Un profesional con 5 años de experiencia encontraría este ejercicio desafiante?" Si la respuesta es NO, hazlo más difícil.
+REGLAS POR DOMINIO (OBLIGATORIAS):
+- MATEMÁTICAS: Usa números GRANDES y operaciones COMPUESTAS. Si el tema es sumas, genera sumas de 7+ dígitos (ej: 1023232 + 12213123), sumas encadenadas de 4+ números, sumas con decimales extensos, sumatorias con notación Σ, sumas de series geométricas/aritméticas, sumas de matrices. PROHIBIDO: sumas de 1-3 dígitos como "24+18" o "234+567". Para álgebra: sistemas de ecuaciones, ecuaciones cuadráticas, derivadas, integrales. PROHIBIDO: ecuaciones lineales de un paso.
+- SQL/BASES DE DATOS: JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK, ROW_NUMBER, LAG, LEAD), CTEs (WITH/WITH RECURSIVE), GROUP BY con HAVING, CASE WHEN anidados. PROHIBIDO: SELECT simple, WHERE sin JOIN, consultas de una sola tabla.
+- PROGRAMACIÓN: Algoritmos con análisis de complejidad O(n log n), recursión con memoización, programación dinámica, grafos (BFS/DFS/Dijkstra), patrones de diseño, concurrencia. PROHIBIDO: sintaxis básica, Hello World, bucles for simples, console.log.
+- FÍSICA/QUÍMICA: Problemas con 3+ fórmulas encadenadas, circuitos RC/RL/RLC, termodinámica de procesos reales, equilibrio químico multi-etapa. PROHIBIDO: F=ma de un solo paso, conversiones simples.
+- IDIOMAS: Gramática avanzada (subjuntivo compuesto, condicionales mixtos tipo 3, inversión estilística), análisis pragmático, traducción técnica. PROHIBIDO: present simple, vocabulario básico.
+- CONTABILIDAD/FINANZAS: Asientos compuestos multi-cuenta, análisis de ratios encadenados, flujo de caja descontado. PROHIBIDO: asientos simples de una cuenta.
+- CUALQUIER OTRO DOMINIO: Identifica el concepto central y pregúntate: "¿Un profesional con 5 años de experiencia encontraría este ejercicio desafiante?" Si NO → hazlo más complejo.
 
-═══ AUTO-VALIDACIÓN OBLIGATORIA ANTES DE INCLUIR CADA EJERCICIO ═══
-Antes de incluir cada ejercicio en el JSON, verifica:
-✓ ¿Requiere 3+ pasos de razonamiento? Si NO → RECHAZAR y regenerar.
+══ AUTO-VALIDACIÓN OBLIGATORIA ══
+Antes de incluir CADA ejercicio en el JSON, verifica:
+✓ ¿Requiere 3+ pasos de razonamiento? Si NO → RECHAZAR.
 ✓ ¿Un estudiante de primer semestre podría resolverlo en 10 segundos? Si SÍ → RECHAZAR.
 ✓ ¿Involucra solo una operación/concepto aislado? Si SÍ → RECHAZAR.
-✓ ¿Es del nivel más avanzado posible dentro del dominio del material? Si NO → escalar complejidad.`,
+✓ ¿Es del nivel más avanzado posible dentro del dominio? Si NO → escalar complejidad.`,
             FREE: `Genera ejercicios variados que cubran TODO el contenido. Mezcla niveles: comprensión, análisis, aplicación y creación.`,
         };
 
@@ -771,36 +771,43 @@ TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
 2. "fill_in_blank" — Ejercicio PRÁCTICO donde el estudiante resuelve y escribe la respuesta.
    OBLIGATORIO para: cálculos matemáticos, resolver operaciones, completar código, completar frases, traducciones.
    Campos: { type: "fill_in_blank", question (usa "___" para marcar el espacio), correctAnswer (string), hint (pista opcional), explanation }
-   Ejemplos por dominio (nivel HARD):
-   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Resuelve el sistema: 3x + 2y = 12 y 5x - y = 7. El valor de x es ___", correctAnswer: "2", hint: "Despeja y de la segunda ecuación y sustituye en la primera", explanation: "De 5x-y=7 → y=5x-7. Sustituyendo: 3x+2(5x-7)=12 → 13x=26 → x=2, y=3." }
-   - SQL: { type: "fill_in_blank", question: "Completa para obtener el segundo salario más alto:\nSELECT MAX(salario) FROM empleados WHERE salario < (___ SELECT MAX(salario) FROM empleados);", correctAnswer: "SELECT MAX(salario) FROM empleados WHERE salario <", hint: "Subconsulta que obtiene el máximo excluyendo el anterior", explanation: "La subconsulta interna obtiene el salario máximo global. La externa busca el máximo que sea menor que ese." }
-   - Programación: { type: "fill_in_blank", question: "¿Cuál es la complejidad temporal de este código?\nfor(let i=0;i<n;i++) for(let j=i;j<n;j++) ops++;\nRespuesta: O(___)", correctAnswer: "n²", hint: "El bucle interno itera n-i veces para cada i", explanation: "La suma de i desde 0 a n-1 de (n-i) = n(n+1)/2 ≈ O(n²)." }
-   - Física: { type: "fill_in_blank", question: "Un proyectil se lanza a 30° con v₀=40m/s. Ignorando fricción, su alcance máximo horizontal R = v₀²·sin(2θ)/g = ___ m (g=10m/s²)", correctAnswer: "138.56", hint: "sin(60°)≈0.866, R=1600·0.866/10", explanation: "R = (40²·sin(60°))/10 = (1600·0.866)/10 ≈ 138.56 m" }
+   Ejemplos por dominio y dificultad:
+   EASY:
+   - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 24 + 18 = ___", correctAnswer: "42", hint: "Suma las unidades primero", explanation: "24 + 18 = 42" }
+   INTERMEDIATE:
+   - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 4,827 + 3,695 = ___", correctAnswer: "8522", hint: "Suma columna por columna con acarreo", explanation: "7+5=12 (lleva 1), 2+9+1=12 (lleva 1), 8+6+1=15 (lleva 1), 4+3+1=8. Resultado: 8,522" }
+   HARD (COMPLEJIDAD MÁXIMA — los ejemplos para HARD son los que debes seguir):
+   - Matemáticas/Suma: { type: "fill_in_blank", question: "Resuelve la siguiente suma de números grandes: 1,023,232 + 12,213,456 + 987,654 = ___", correctAnswer: "14224342", hint: "Suma columna por columna de derecha a izquierda, llevando acarreos", explanation: "Alineando por posición: 1,023,232 + 12,213,456 + 987,654 = 14,224,342. Se suman las unidades (2+6+4=12, lleva 1), decenas (3+5+5+1=14, lleva 1), centenas (2+4+6+1=13, lleva 1), etc." }
+   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el valor de x donde ocurre el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x)=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). f(3)=27-54+27+2=2." }
+   - SQL: { type: "fill_in_blank", question: "Completa la función de ventana para calcular el salario acumulado por departamento:\nSELECT nombre, departamento, salario,\n  ___(salario) OVER (PARTITION BY departamento ORDER BY fecha_contratacion) AS salario_acum\nFROM empleados;", correctAnswer: "SUM", hint: "Función de agregado que suma progresivamente", explanation: "SUM() OVER(PARTITION BY ... ORDER BY ...) calcula una suma acumulada (running total) dentro de cada partición." }
+   - Programación: { type: "fill_in_blank", question: "Completa la búsqueda binaria recursiva:\nfunction binarySearch(arr, target, lo, hi) {\n  if (lo > hi) return -1;\n  const mid = Math.floor((lo + hi) / 2);\n  if (arr[mid] === target) return mid;\n  if (arr[mid] < target) return binarySearch(arr, target, ___, hi);\n  return binarySearch(arr, target, lo, mid - 1);\n}", correctAnswer: "mid + 1", hint: "Si el elemento del medio es menor, busca en la mitad derecha", explanation: "Si arr[mid] < target, el objetivo está en [mid+1, hi]. Pasar lo=mid+1 descarta la mitad izquierda." }
+   - Física: { type: "fill_in_blank", question: "Un proyectil se lanza a 30° con v₀=40m/s. Su alcance horizontal R = v₀²·sin(2θ)/g = ___ m (g=10m/s², sin(60°)≈0.866)", correctAnswer: "138.56", hint: "R=1600·0.866/10", explanation: "R = (40²·sin(60°))/10 = (1600·0.866)/10 ≈ 138.56 m" }
 
 3. "ordering" — Ordenar elementos en la secuencia correcta.
    Ideal para: pasos de un algoritmo, líneas de código, procesos complejos, pasos de demostración.
    Campos: { type: "ordering", question, items (array desordenado), correctOrder (array de índices del orden correcto), explanation }
-   Ejemplo HARD: { type: "ordering", question: "Ordena los pasos de QuickSort para el arreglo [3,1,4,1,5]", items: ["Seleccionar pivote (ej: 3)", "Particionar: elementos < pivote a la izquierda, > a la derecha", "Llamar recursivamente a QuickSort en sub-arreglo izquierdo", "Llamar recursivamente a QuickSort en sub-arreglo derecho", "Combinar los sub-arreglos ordenados con el pivote en medio"], correctOrder: [0, 1, 2, 3, 4], explanation: "QuickSort: selecciona pivote, particiona O(n), aplica recursión en cada mitad, combina. Complejidad promedio O(n log n), peor caso O(n²)." }
+   Ejemplo EASY: { type: "ordering", question: "Ordena los pasos para resolver 234 + 178", items: ["Obtener resultado: 412", "Sumar unidades: 4+8=12, escribir 2, llevar 1", "Sumar centenas: 2+1+1=4", "Sumar decenas: 3+7+1=11, escribir 1, llevar 1"], correctOrder: [1, 3, 2, 0], explanation: "Se suman de derecha a izquierda." }
+   Ejemplo HARD: { type: "ordering", question: "Ordena los pasos de QuickSort para el arreglo [3,8,1,5,2,7]", items: ["Seleccionar pivote (ej: 5)", "Particionar: [3,1,2] [5] [8,7]", "Recursión izquierda: [1,2,3]", "Recursión derecha: [7,8]", "Combinar: [1,2,3,5,7,8]"], correctOrder: [0, 1, 2, 3, 4], explanation: "QuickSort: selecciona pivote, particiona O(n), aplica recursión en cada mitad. Complejidad promedio O(n log n)." }
 
-DECISIÓN INTELIGENTE DE TIPOS — PRIORIZA EJERCICIOS PRÁCTICOS COMPLEJOS:
-- PRIMERO identifica el DOMINIO del tema/tarea (matemáticas, SQL, programación, idiomas, ciencias, etc.)
-- SEGUNDO lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS COMPLEJA según el nivel de dificultad.
-- PRINCIPIO CLAVE: Si el tema involucra HACER (calcular, resolver, programar, escribir), usa "fill_in_blank" para que el estudiante HAGA, no solo elija respuestas — y que lo que haga sea realmente complejo.
+DECISIÓN INTELIGENTE DE TIPOS — PRIORIZA EJERCICIOS PRÁCTICOS:
+- PRIMERO identifica el DOMINIO del tema/tarea (matemáticas, programación, idiomas, ciencias, etc.)
+- SEGUNDO decide qué tipos de ejercicios MIDEN MEJOR la competencia del estudiante en ese dominio.
+- PRINCIPIO CLAVE: Si el tema involucra HACER (calcular, resolver, programar, escribir), usa "fill_in_blank" para que el estudiante HAGA, no solo elija respuestas.
 
-REGLAS POR DOMINIO (aplica la versión del nivel seleccionado):
-- MATEMÁTICAS: MÍNIMO 5 de ${targetCount} deben ser "fill_in_blank". EASY: aritmética básica. INTERMEDIATE: álgebra lineal, porcentajes compuestos. HARD: ecuaciones cuadráticas, sistemas, derivadas, integrales — NUNCA sumas simples.
-- SQL/BASES DE DATOS: MÍNIMO 4 "fill_in_blank". EASY: SELECTs con WHERE. INTERMEDIATE: JOINs simples, GROUP BY. HARD: CTEs, window functions, subconsultas correlacionadas, optimización — NUNCA SELECTs sin JOIN.
-- PROGRAMACIÓN: MÍNIMO 4 "fill_in_blank" para completar código, 2 "ordering" para algoritmos, resto "multiple_choice" para análisis de complejidad. HARD: algoritmos avanzados, nunca sintaxis básica.
-- IDIOMAS: MÍNIMO 4 "fill_in_blank" para gramática avanzada/traducción técnica, resto "multiple_choice" para análisis pragmático.
-- CIENCIAS (física, química, biología): MÍNIMO 3 "fill_in_blank" con problemas multi-fórmula, 1 "ordering" para procesos, resto "multiple_choice" con análisis de escenarios.
-- HISTORIA, SOCIALES: 2-3 "ordering" para causalidad histórica compleja, resto "multiple_choice" para análisis crítico comparativo.
-- OTROS DOMINIOS: MÍNIMO 3 "fill_in_blank" de resolución práctica, 1-2 "ordering", resto "multiple_choice" con escenarios de toma de decisiones.
+REGLAS POR DOMINIO (AJUSTA COMPLEJIDAD según dificultad seleccionada):
+- MATEMÁTICAS: MÍNIMO 5 de ${targetCount} deben ser "fill_in_blank". Escala de complejidad: EASY (1-2 dígitos: 3+5), INTERMEDIATE (3-4 dígitos: 4827+3695), HARD (7+ dígitos, 3+ operandos, operaciones mezcladas: 1023232+12213456+987654, o sumatorias Σ, series, sistemas de ecuaciones, derivadas, integrales). PROHIBIDO EN HARD: sumas de menos de 5 dígitos o de solo 2 números simples.
+- SQL/BASES DE DATOS: MÍNIMO 4 "fill_in_blank". EASY: SELECTs con WHERE. INTERMEDIATE: JOINs simples, GROUP BY. HARD: CTEs, window functions, subconsultas correlacionadas — NUNCA SELECTs sin JOIN.
+- PROGRAMACIÓN: MÍNIMO 4 "fill_in_blank" para completar código, 2 "ordering" para algoritmos. HARD: algoritmos avanzados (recursión, grafos, programación dinámica), análisis de complejidad. NUNCA sintaxis básica.
+- IDIOMAS: MÍNIMO 4 "fill_in_blank". HARD: gramática avanzada (subjuntivo, condicionales mixtos), traducción técnica. NUNCA vocabulario básico.
+- CIENCIAS: MÍNIMO 3 "fill_in_blank" con problemas multi-fórmula. HARD: 3+ ecuaciones encadenadas. NUNCA cálculos de un solo paso.
+- HISTORIA, SOCIALES: 2-3 "ordering" para causalidad compleja, resto "multiple_choice" para análisis crítico.
+- OTROS DOMINIOS: MÍNIMO 3 "fill_in_blank", 1-2 "ordering". HARD: Lleva el tema a su expresión práctica más compleja y profesional.
 
 REGLAS DE CALIDAD:
 - Los ejercicios fill_in_blank deben tener UNA sola respuesta correcta clara y verificable.
 - Para ordering, provee entre 4 y 6 items con secuencias no triviales.
 - NO varíes la dificultad internamente en un set HARD — mantén la complejidad máxima en TODOS los ejercicios.
-- Contextualiza: usa escenarios reales del mundo profesional, no de aula básica.
+- Contextualiza: en HARD usa escenarios del mundo profesional, no de aula básica.
 
 REGLA CRÍTICA DE LONGITUD EN OPCIONES (multiple_choice) — ANTI-SESGO DE LONGITUD:
 - TODAS las opciones DEBEN tener longitud MUY SIMILAR (máximo 15% de diferencia en caracteres entre la más corta y la más larga).
@@ -995,50 +1002,37 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         });
     }
 
-    /**
-     * @private Detect if an exercise is too trivial for HARD difficulty.
-     * Checks for simple arithmetic, single-step queries, basic syntax, etc.
-     * Returns true if the exercise should be REJECTED.
-     */
     _isExerciseTrivialForHard(q) {
         const text = (q.question || '').toLowerCase();
-        const type = q.type || 'multiple_choice';
+        const answer = String(q.correct_answer || '').toLowerCase();
+        const allText = text + ' ' + answer;
 
-        // Pattern 1: Simple arithmetic operations (e.g., "2 + 3 = ___", "456 + 789", "cuanto es 5 × 3")
-        // Match patterns like digit(s) + operator + digit(s) without advanced math context
-        const simpleArithmeticPattern = /^(?:resuelve|calcula|cuanto es|cu[aá]nto es|resultado de|suma|resta|multiplica|divide)[:\s]*\d{1,5}\s*[+\-×÷*/]\s*\d{1,5}\s*[=]?\s*[_]*\s*$/i;
-        if (simpleArithmeticPattern.test(text.trim())) return true;
-
-        // Pattern 2: Very short question without code/formula (likely trivial)
-        const hasCode = /```|function|def |class |SELECT|FROM|WHERE|JOIN|const |let |var |import |for\s*\(|while\s*\(|if\s*\(/.test(q.question);
-        const hasMathSymbols = /[∑∫∂Δ√∞≥≤±σμλπ²³⁴∇]|x\^|x²|f\(x\)|f'\(|d\/dx|\bsin\b|\bcos\b|\btan\b|\blog\b|\bln\b|matrix|determinante|eigenv|sistema.*ecuacion/i.test(q.question);
-        const hasFormula = /=\s*___|\b\w+\s*[+\-*/^]\s*\w+\s*[+\-*/^]\s*\w+/.test(q.question); // at least 2 operations chained
-
-        if (type === 'fill_in_blank') {
-            // For fill_in_blank: question should be substantial
-            const wordCount = q.question.split(/\s+/).length;
-            // If the question is very short AND has no code/math, it's likely trivial
-            if (wordCount < 12 && !hasCode && !hasMathSymbols && !hasFormula) return true;
-
-            // Check if correctAnswer is just a simple number (likely trivial arithmetic)
-            const answer = String(q.correctAnswer || '').trim();
-            const isSimpleNumber = /^\d{1,4}$/.test(answer);
-            if (isSimpleNumber && !hasCode && !hasMathSymbols && wordCount < 20) return true;
+        // 1. Simple arithmetic: "digit op digit" without complex context
+        if (/^\s*¿?(cuánto|calcula|resuelve|resultado)\b/.test(text)) {
+            const numbers = text.match(/\d+/g) || [];
+            if (numbers.length >= 2 && numbers.every(n => n.length < 5)) return true;
         }
 
-        // Pattern 3: SQL exercises without JOINs, subqueries, or window functions
-        if (type === 'fill_in_blank' && /sql|select|from|tabla|consulta|query/i.test(text)) {
-            const fullText = q.question.toUpperCase();
-            const hasJoin = /\bJOIN\b/.test(fullText);
-            const hasSubquery = /\(.*SELECT.*\)/.test(fullText);
-            const hasWindow = /\bOVER\s*\(/.test(fullText);
-            const hasCTE = /\bWITH\b/.test(fullText);
-            const hasHaving = /\bHAVING\b/.test(fullText);
-            if (!hasJoin && !hasSubquery && !hasWindow && !hasCTE && !hasHaving) return true;
+        // 2. Very short fill_in_blank without code/math
+        if (q.type === 'fill_in_blank') {
+            const wordCount = text.split(/\s+/).length;
+            if (wordCount < 12 && !/[=<>{}()\[\]|&;]/.test(text) && !/\d{5,}/.test(text)) return true;
         }
 
-        // Pattern 4: Questions that are pure definitions ("¿Qué es X?", "Define X")
-        if (/^[¿?]?\s*(qu[eé] es|define|defin[ae]|c[oó]mo se llama|cu[aá]l es la definici[oó]n|qu[eé] significa)\s/i.test(text)) return true;
+        // 3. Simple numeric answers (1-4 digits) without math/code context
+        if (/^\d{1,4}$/.test(answer.trim()) && !/[∫∑σ√π]/.test(text) && !/\b(select|from|where|function|class|algorithm)\b/i.test(text)) {
+            const numbers = text.match(/\d+/g) || [];
+            if (numbers.every(n => n.length < 5)) return true;
+        }
+
+        // 4. SQL without JOINs, subqueries, window functions, CTEs, or HAVING
+        if (/\b(select|sql|consulta|query)\b/i.test(allText)) {
+            const hasComplexSQL = /\b(join|subquer|window|over\s*\(|partition\s+by|cte|with\s+\w+\s+as|having|union|intersect|except|lateral|cross\s+apply)\b/i.test(allText);
+            if (!hasComplexSQL && /\bselect\b/i.test(allText)) return true;
+        }
+
+        // 5. Pure definition questions
+        if (/^¿?(qué es|what is|define|definición de|concepto de)\b/i.test(text.trim())) return true;
 
         return false;
     }

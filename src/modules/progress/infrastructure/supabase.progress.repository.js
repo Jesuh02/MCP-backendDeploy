@@ -267,22 +267,23 @@ export class SupabaseProgressRepository {
             ...(!isSubjectLevel && progressData.enrollment_status ? { enrollment_status: progressData.enrollment_status } : {}),
         };
 
-        // Manual upsert: check existence first to avoid relying on a DB unique constraint
-        let existsQuery = this.client
+        // Manual upsert: avoid relying on DB unique constraint (ON CONFLICT) which may not exist.
+        let findQuery = this.client
             .from(tableName)
             .select('id')
             .eq('usuario_estudiante', progressData.userId)
             .eq('curso_id', progressData.courseId);
-        if (isSubjectLevel) existsQuery = existsQuery.eq('materia_id', Number(progressData.subjectId));
-        const { data: existing } = await existsQuery.maybeSingle();
+        if (isSubjectLevel) findQuery = findQuery.eq('materia_id', Number(progressData.subjectId));
+        const { data: existing } = await findQuery.maybeSingle();
 
         let data, error;
         if (existing?.id) {
-            let updateQuery = this.client
+            ({ data, error } = await this.client
                 .from(tableName)
                 .update(payload)
-                .eq('id', existing.id);
-            ({ data, error } = await updateQuery.select().single());
+                .eq('id', existing.id)
+                .select()
+                .single());
         } else {
             ({ data, error } = await this.client
                 .from(tableName)
@@ -538,6 +539,51 @@ export class SupabaseProgressRepository {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    //  REPARACIÓN DE ESTADOS INCORRECTOS
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Encuentra y corrige registros en progreso_curso donde el estado no coincide con la nota:
+     *  - promedio >= 6 pero estado != 'Ganado'  → actualiza a 'Ganado'
+     *  - promedio <  6 pero estado  = 'Ganado'  → actualiza a 'Perdido'
+     * Retorna array de { userId, courseId, oldStatus, newStatus }.
+     */
+    async repairWrongProgressStatuses() {
+        const { data: rows, error } = await this.client
+            .from(this._courseProgressTable())
+            .select('id, usuario_estudiante, curso_id, promedio, calificacion_ponderada, estado');
+        if (error || !rows?.length) return [];
+
+        const toFix = rows.filter(r => {
+            const grade = Number(r.promedio ?? r.calificacion_ponderada ?? 0);
+            const correctStatus = grade >= 6 ? 'Ganado' : 'Perdido';
+            return r.estado !== correctStatus;
+        });
+
+        if (!toFix.length) return [];
+
+        const repaired = [];
+        for (const r of toFix) {
+            const grade = Number(r.promedio ?? r.calificacion_ponderada ?? 0);
+            const newStatus = grade >= 6 ? 'Ganado' : 'Perdido';
+            const { error: updErr } = await this.client
+                .from(this._courseProgressTable())
+                .update({ estado: newStatus, ultima_calculada_en: new Date().toISOString() })
+                .eq('id', r.id);
+            if (!updErr) {
+                repaired.push({
+                    userId: r.usuario_estudiante,
+                    courseId: r.curso_id,
+                    oldStatus: r.estado,
+                    newStatus,
+                    averageGrade: grade,
+                });
+            }
+        }
+        return repaired;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     //  CERTIFICADOS  (tabla: certificates)
     // ═══════════════════════════════════════════════════════════════
 
@@ -670,11 +716,23 @@ export class SupabaseProgressRepository {
             if (syntheticUrl) payload.storage_path = syntheticUrl;
         }
 
-        const { data: cert, error } = await this.client
-            .from('certificates')
-            .upsert(payload, { onConflict: 'user_id,course_id' })
-            .select()
-            .single();
+        // Manual insert-or-update: avoid ON CONFLICT which requires a DB unique constraint.
+        let cert, error;
+        if (existingCert) {
+            ({ data: cert, error } = await this.client
+                .from('certificates')
+                .update(payload)
+                .eq('user_id', userId)
+                .eq('course_id', courseId)
+                .select()
+                .single());
+        } else {
+            ({ data: cert, error } = await this.client
+                .from('certificates')
+                .insert(payload)
+                .select()
+                .single());
+        }
         if (error) {
             // El trigger fn_check_certificate_ganado puede estar apuntando a la tabla
             // renombrada 'progreso_estudiante' (ahora es 'progreso_curso').
@@ -1112,23 +1170,51 @@ export class SupabaseProgressRepository {
 
     async upsertPreEnrollment(userId, courseId, status = 'pending', reviewedBy = null) {
         const now = new Date().toISOString();
-        const payload = {
-            user_id:      userId,
-            course_id:    courseId,
-            status,
-            requested_at: now,
-        };
-        if (status === 'approved') {
-            payload.reviewed_at = now;
-            if (reviewedBy) payload.reviewed_by = reviewedBy;
+        
+        // 🛡️ Defensive approach: Find existing record first
+        // This works whether or not the UNIQUE constraint exists
+        const existing = await this.findPreEnrollment(userId, courseId);
+        
+        if (existing) {
+            // UPDATE existing record
+            const updatePayload = { status };
+            if (status === 'approved') {
+                updatePayload.reviewed_at = now;
+                if (reviewedBy) updatePayload.reviewed_by = reviewedBy;
+            }
+            
+            const { data, error } = await this.client
+                .from('pre_enrollments')
+                .update(updatePayload)
+                .eq('user_id', userId)
+                .eq('course_id', courseId)
+                .select()
+                .single();
+            
+            if (error) throw new Error(error.message);
+            return this._mapPreEnrollmentRecord(data);
+        } else {
+            // INSERT new record
+            const insertPayload = {
+                user_id:      userId,
+                course_id:    courseId,
+                status,
+                requested_at: now,
+            };
+            if (status === 'approved') {
+                insertPayload.reviewed_at = now;
+                if (reviewedBy) insertPayload.reviewed_by = reviewedBy;
+            }
+            
+            const { data, error } = await this.client
+                .from('pre_enrollments')
+                .insert(insertPayload)
+                .select()
+                .single();
+            
+            if (error) throw new Error(error.message);
+            return this._mapPreEnrollmentRecord(data);
         }
-        const { data, error } = await this.client
-            .from('pre_enrollments')
-            .upsert(payload, { onConflict: 'user_id,course_id' })
-            .select()
-            .single();
-        if (error) throw new Error(error.message);
-        return this._mapPreEnrollmentRecord(data);
     }
 
     /**
