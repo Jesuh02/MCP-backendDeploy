@@ -140,13 +140,14 @@ export class ReinforcementController {
             const taskId = req.body.taskId || req.body.task_id ? parseInt(req.body.taskId || req.body.task_id) : null;
             const difficulty = req.body.difficulty || 'HARD';
             const targetCount = parseInt(req.body.targetCount) || 10;
+            const forceFresh = req.body.forceFresh === true || req.body.forceFresh === 'true';
 
             if (!userId) return next(new ValidationError('userId is required'));
             if (!courseId) return next(new ValidationError('courseId is required'));
 
-            console.log(`🚀 [ReinforcementController] generateQuestions: userId=${userId}, courseId=${courseId}, topicId=${topicId}, taskId=${taskId}, difficulty=${difficulty}, target=${targetCount}`);
+            console.log(`🚀 [ReinforcementController] generateQuestions: userId=${userId}, courseId=${courseId}, topicId=${topicId}, taskId=${taskId}, difficulty=${difficulty}, target=${targetCount}, forceFresh=${forceFresh}`);
 
-            const result = await this.reinforcementService.generateQuestions(userId, courseId, topicId, taskId, difficulty, targetCount);
+            const result = await this.reinforcementService.generateQuestions(userId, courseId, topicId, taskId, difficulty, targetCount, forceFresh);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

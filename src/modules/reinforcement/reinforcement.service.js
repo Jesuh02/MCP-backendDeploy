@@ -430,14 +430,18 @@ export class ReinforcementDomainService {
      * 3. Return questions immediately
      * 4. Save with embeddings in background (non-blocking)
      */
-    async generateQuestions(userId, courseId, topicId, taskId, difficulty, targetCount = 10) {
-        // 1. Check cache first
-        const cached = this.questionCache.get(userId, courseId, topicId, taskId, difficulty);
-        if (cached && cached.length > 0) {
-            console.log(`⚡ [ReinforcementService] generateQuestions: serving ${cached.length} from cache`);
+    async generateQuestions(userId, courseId, topicId, taskId, difficulty, targetCount = 10, forceFresh = false) {
+        // 1. Check cache first unless the caller explicitly forces a new generation.
+        if (forceFresh) {
             this.questionCache.delete(userId, courseId, topicId, taskId, difficulty);
-            this._backgroundSave(userId, courseId, topicId, taskId, cached).catch(() => {});
-            return Result.ok({ questions: cached, count: cached.length, source: 'cache' });
+        } else {
+            const cached = this.questionCache.get(userId, courseId, topicId, taskId, difficulty);
+            if (cached && cached.length > 0) {
+                console.log(`⚡ [ReinforcementService] generateQuestions: serving ${cached.length} from cache`);
+                this.questionCache.delete(userId, courseId, topicId, taskId, difficulty);
+                this._backgroundSave(userId, courseId, topicId, taskId, cached).catch(() => {});
+                return Result.ok({ questions: cached, count: cached.length, source: 'cache' });
+            }
         }
 
         if (!this.llmPort || !this.learningContextService) {
@@ -446,7 +450,7 @@ export class ReinforcementDomainService {
 
         // 2. Dedup: si ya hay un LLM call en vuelo para esta misma clave, reutilizar
         const flightKey = `${userId}:${courseId}:${topicId || 0}:${taskId || 0}:${(difficulty || 'HARD').toUpperCase()}`;
-        if (this._inFlight.has(flightKey)) {
+        if (!forceFresh && this._inFlight.has(flightKey)) {
             console.log(`🔄 [ReinforcementService] Reusing in-flight LLM call for key=${flightKey}`);
             try {
                 const questions = await this._inFlight.get(flightKey);
