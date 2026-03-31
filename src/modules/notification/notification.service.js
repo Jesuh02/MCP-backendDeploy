@@ -270,7 +270,12 @@ export class NotificationDomainService {
         if (!this._isEmailAvailable()) return Result.fail(new Error('Servicio de email no disponible'));
         const user = await this.userRepo.findById(userId);
         if (!user?.email) return Result.fail(new Error('Usuario sin email'));
-        const sent = await this.email.sendEmail({ to: user.email, subject, html, text });
+        const email = String(user.email).trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            console.warn(`[NotificationService] Email inválido para userId ${userId}: "${email}" — omitiendo envío`);
+            return Result.fail(new Error(`Email inválido: ${email}`));
+        }
+        const sent = await this.email.sendEmail({ to: email, subject, html, text });
         return Result.ok({ sent });
     }
 

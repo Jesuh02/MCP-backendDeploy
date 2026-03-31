@@ -1,6 +1,7 @@
 import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 import { generateGradeEmailHTML, generateGenericEmailHTML } from '../../templates/emailTemplates.js';
+import { getIO } from '../../config/socketServer.js';
 
 export class SubmissionDomainService {
     constructor({ submissionRepository, taskRepository, progressRepository, progressService, notificationService, courseService, topicService, subjectService, userService, fileStoragePort, collaboratorService }) {
@@ -234,16 +235,11 @@ export class SubmissionDomainService {
         const student = studentResult.getValue();
         const studentEmail = student.email || student.email_address;
 
-        if (!studentEmail) {
-            console.warn(`[SubmissionDomainService] Student ${studentId} has no email address`);
-            return;
-        }
-
         // Obtener datos de la tarea
         const task = await this.taskRepo.findById(taskId);
         if (!task) return;
 
-        // Obtener datos del usuario que calificó (quien es el teacher/admin)
+        // Obtener datos del instructor que calificó
         let graderUsername = 'Instructor';
         if (graderId) {
             const graderResult = await this.userService.getById(graderId);
@@ -252,12 +248,52 @@ export class SubmissionDomainService {
             }
         }
 
-        // Generar HTML del email
         const studentName = student.name || student.username || 'Estudiante';
         const taskName = task.title || task.name || 'Tarea sin título';
-        const htmlContent = generateGradeEmailHTML(studentName, taskName, grade, feedback, graderUsername);
 
-        // Enviar email
+        // ── 1. Notificación in-app (task_graded) ───────────────────────
+        const metadata = JSON.stringify({ taskId, grade, feedback: feedback || null, gradedBy: graderUsername });
+        let inAppNotif = null;
+        try {
+            const notifResult = await this.notificationService.send(studentId, {
+                title: `Tarea calificada: ${taskName}`,
+                message: `Tu entrega ha sido calificada con ${grade}/10 por ${graderUsername}.${feedback ? ` Retroalimentación: ${feedback}` : ''}`,
+                type: 'task_graded',
+                relatedId: Number(submission.id),
+                senderUsername: graderUsername,
+                metadata,
+                actorUserId: graderId || null,
+            });
+            if (notifResult?.isOk?.()) inAppNotif = notifResult.getValue();
+        } catch (err) {
+            console.warn('[SubmissionDomainService] Error enviando notificación in-app de calificación:', err.message);
+        }
+
+        // ── 2. Socket.io: emitir a la sala del usuario ─────────────────
+        try {
+            const io = getIO();
+            if (io) {
+                const payload = inAppNotif ?? {
+                    type: 'task_graded',
+                    title: `Tarea calificada: ${taskName}`,
+                    message: `Tu entrega ha sido calificada con ${grade}/10 por ${graderUsername}.`,
+                    relatedId: Number(submission.id),
+                    metadata,
+                    is_read: false,
+                    created_at: new Date().toISOString(),
+                };
+                io.to(`user:${studentId}`).emit('notification:new', payload);
+            }
+        } catch (err) {
+            console.warn('[SubmissionDomainService] Error emitiendo socket de calificación:', err.message);
+        }
+
+        // ── 3. Email al estudiante ─────────────────────────────────────
+        if (!studentEmail) {
+            console.warn(`[SubmissionDomainService] Student ${studentId} has no email address`);
+            return;
+        }
+        const htmlContent = generateGradeEmailHTML(studentName, taskName, grade, feedback, graderUsername);
         await this.notificationService.sendEmail(studentId, {
             subject: `📝 Tu tarea "${taskName}" ha sido calificada - Calificación: ${grade}`,
             html: htmlContent,
