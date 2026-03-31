@@ -403,6 +403,21 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
 | Responder sin entender            | Imposible responder sin comprender           |`;
             }
 
+            // 2.7. HARD difficulty complexity enforcement for reinforcement
+            if (String(difficulty || '').toUpperCase() === 'HARD' && this._isReinforcementRequest(prompt)) {
+                systemPrompt += `\n\n═══ ENFORCEMENT DE COMPLEJIDAD HARD ═══
+ERES un evaluador de nivel universitario avanzado / profesional.
+Reglas OBLIGATORIAS para TODOS los ejercicios:
+
+1. MATEMÁTICAS/ARITMÉTICA: Los números deben tener MÍNIMO 7 dígitos. Ejemplo válido: 1,023,232 + 12,213,456. Ejemplo PROHIBIDO: 24+18, 5×3.
+2. SQL: OBLIGATORIO incluir JOINs, subqueries, window functions (OVER/PARTITION BY), CTEs o HAVING. SELECT simple sin JOIN está PROHIBIDO.
+3. PROGRAMACIÓN: Exigir algoritmos (búsqueda binaria, grafos, recursión, DP), NO ejercicios de sintaxis básica como console.log o print.
+4. CONCEPTOS: NO preguntar "¿Qué es X?" → preguntar "¿Qué implicaciones tiene X cuando se combina con Y en el contexto Z?"
+5. TODOS los ejercicios deben requerir razonamiento multi-paso. Si se puede responder de memoria o en 1 paso, es DEMASIADO FÁCIL.
+
+Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejidad.`;
+            }
+
             // 3. Build user prompt with file content if available
             let fullPrompt = prompt;
             if (resolvedFileContent) {
