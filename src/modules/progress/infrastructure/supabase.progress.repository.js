@@ -261,6 +261,8 @@ export class SupabaseProgressRepository {
             calificacion_ponderada: averageGrade,
             porcentaje_progreso: progressData.progressPercentage || 0,
             ultima_calculada_en: new Date().toISOString(),
+            // Persist status ('Ganado'/'Perdido') — omitting this caused estado to never update in DB
+            ...(progressData.status ? { estado: progressData.status } : {}),
             ...(isSubjectLevel ? { materia_id: Number(progressData.subjectId) } : {}),
             ...(!isSubjectLevel && progressData.enrollment_status ? { enrollment_status: progressData.enrollment_status } : {}),
         };
