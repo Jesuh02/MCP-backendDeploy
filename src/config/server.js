@@ -1,4 +1,5 @@
 import express from 'express';
+import helmet from 'helmet';
 import { networkInterfaces } from 'os';
 import { createContainer } from './container.js';
 import { createRouter } from '../interfaces/routes/index.js';
@@ -10,11 +11,17 @@ import { idempotencyGuard } from '../shared/middleware/IdempotencyMiddleware.js'
 export function createApp() {
     const app = express();
 
+    // Security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, etc.)
+    // crossOriginResourcePolicy desactivado para no colisionar con el CORS manual de abajo.
+    app.use(helmet({
+        crossOriginResourcePolicy: false,
+    }));
+
     app.use(express.json({
-        limit: '50mb',
+        limit: '5mb',
         verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); },
     }));
-    app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+    app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
     const ALLOWED_ORIGINS = [
         'https://coursevwebfrontend1.jdavidherazo.workers.dev',
@@ -57,14 +64,14 @@ export function createApp() {
     app.use('/api/v1', errorHandler);
 
     mountLegacyRedirects(app, container);
-    mountHealthChecks(app);
+    mountHealthChecks(app, authMiddleware, requireRoles);
 
     app.use(errorHandler);
 
     return { app, container };
 }
 
-function mountHealthChecks(app) {
+function mountHealthChecks(app, authMiddleware, requireRoles) {
     const healthPayload = () => ({
         status: 'ok',
         version: '3.0.0',
@@ -77,11 +84,7 @@ function mountHealthChecks(app) {
     app.get('/health', (_req, res) => res.json(healthPayload()));
     app.get('/_health', (_req, res) => res.status(200).send('OK'));
 
-    app.get('/ping-debug', (req, res) => {
-        res.json({ ...healthPayload(), clientIp: req.ip, headers: req.headers });
-    });
-
-    app.get('/api/v1/diagnostics/quick', (_req, res) => {
+    app.get('/api/v1/diagnostics/quick', authMiddleware, requireRoles(3), (_req, res) => {
         res.json({
             success: true,
             timestamp: new Date().toISOString(),
