@@ -716,11 +716,23 @@ export class SupabaseProgressRepository {
             if (syntheticUrl) payload.storage_path = syntheticUrl;
         }
 
-        const { data: cert, error } = await this.client
-            .from('certificates')
-            .upsert(payload, { onConflict: 'user_id,course_id' })
-            .select()
-            .single();
+        // Manual insert-or-update: avoid ON CONFLICT which requires a DB unique constraint.
+        let cert, error;
+        if (existingCert) {
+            ({ data: cert, error } = await this.client
+                .from('certificates')
+                .update(payload)
+                .eq('user_id', userId)
+                .eq('course_id', courseId)
+                .select()
+                .single());
+        } else {
+            ({ data: cert, error } = await this.client
+                .from('certificates')
+                .insert(payload)
+                .select()
+                .single());
+        }
         if (error) {
             // El trigger fn_check_certificate_ganado puede estar apuntando a la tabla
             // renombrada 'progreso_estudiante' (ahora es 'progreso_curso').
