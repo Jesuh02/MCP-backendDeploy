@@ -25,6 +25,7 @@ export function progressRoutes({ progressController, requireRoles }) {
 
     router.get('/admin/certificates', requireRoles(3), progressController.getAllCertificates);
     router.post('/admin/certificates/bulk-issue', requireRoles(3), progressController.bulkIssueCertificatesAll);
+    router.post('/admin/repair-progress-status', requireRoles(3), progressController.repairProgressStatuses);
     router.get('/admin/subject-progress', requireRoles(2, 3), progressController.getAllSubjectProgress);
 
     // Admin: enrollment management (Matrícula tab)

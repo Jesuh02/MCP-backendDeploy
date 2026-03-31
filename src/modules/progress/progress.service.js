@@ -430,6 +430,40 @@ export class ProgressDomainService {
         return Result.ok(filtered);
     }
 
+    /**
+     * Admin: repara registros con estado incorrecto en progreso_curso
+     * (promedio >= 6 pero estado='Perdido', o viceversa) y emite certificados
+     * para los que cambian a 'Ganado'.
+     */
+    async repairProgressStatuses() {
+        if (typeof this.progressRepo.repairWrongProgressStatuses !== 'function') {
+            return Result.fail(new Error('repairWrongProgressStatuses no disponible en el repositorio'));
+        }
+
+        // 1. Corregir estados incorrectos en la BD
+        const repaired = await this.progressRepo.repairWrongProgressStatuses();
+
+        // 2. Emitir certificados para los que ahora son 'Ganado' y aún no tienen certificado
+        const nowWon = repaired.filter(r => r.newStatus === 'Ganado');
+        let certificatesIssued = 0;
+        for (const r of nowWon) {
+            try {
+                await this.progressRepo.updateCertificate(r.userId, r.courseId, {
+                    certificateIssuedAt: new Date().toISOString(),
+                });
+                certificatesIssued++;
+            } catch (certErr) {
+                console.error(`[ProgressService] repairProgressStatuses: cert failed user=${r.userId} course=${r.courseId}:`, certErr?.message);
+            }
+        }
+
+        return Result.ok({
+            repaired: repaired.length,
+            certificatesIssued,
+            details: repaired,
+        });
+    }
+
     async bulkIssueCertificatesGlobal() {
         const rows = await this.progressRepo.findAllWonProgress();
         const won = rows.filter(r => this._isProgressWon(r));
