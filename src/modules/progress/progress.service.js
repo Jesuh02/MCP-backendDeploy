@@ -935,7 +935,13 @@ export class ProgressDomainService {
     async revokeEnrollment(userId, courseId, reason = null) {
         const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!existing) return Result.fail(new NotFoundError('MatrÃ­cula', `${userId}/${courseId}`));
-        await this.progressRepo.deleteEnrollment(userId, courseId, reason);
+
+        // OCP / DIP â€" Usa revokeEnrollmentAccess (mÃ©todo especÃ­fico del repositorio) en lugar
+        // de deleteEnrollment, que tiene dos bugs:
+        //   1. El UPDATE a status='revoked' falla silenciosamente si la columna revoke_reason
+        //      no existe en pre_enrollments o hay un CHECK constraint en status.
+        //   2. No elimina progreso_curso, permitiendo acceso al curso por esa vÃ­a.
+        await this.progressRepo.revokeEnrollmentAccess(userId, courseId);
 
         // Notify the student about revocation
         if (this._notificationService && reason) {

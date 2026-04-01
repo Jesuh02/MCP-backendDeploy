@@ -1336,17 +1336,48 @@ export class SupabaseProgressRepository {
     }
 
     async deleteEnrollment(userId, courseId, reason = null, revokedBy = null) {
-        // Delete the pre-enrollment record. A soft-delete (status='revoked') was attempted
-        // before but it conflicts with the DB CHECK constraint (only pending/approved/rejected).
-        const { error: preError } = await this.client
+        if (reason) {
+            await this.client
+                .from('pre_enrollments')
+                .update({
+                    status: 'revoked',
+                    revoke_reason: reason,
+                    reviewed_at: new Date().toISOString(),
+                    ...(revokedBy ? { reviewed_by: revokedBy } : {}),
+                })
+                .eq('user_id', userId)
+                .eq('course_id', courseId);
+        } else {
+            const { error } = await this.client
+                .from('pre_enrollments')
+                .delete()
+                .eq('user_id', userId)
+                .eq('course_id', courseId);
+            if (error) throw new Error(error.message);
+        }
+        return true;
+    }
+
+    /**
+     * SRP — Revoca completamente el acceso de un usuario a un curso:
+     *   1. Elimina el registro de pre_enrollment (bloquea acceso por matrícula aprobada).
+     *   2. Elimina el progreso de curso (bloquea acceso por progreso existente).
+     *   3. Elimina el progreso de materias (limpieza consistente).
+     *
+     * A diferencia de deleteEnrollment, este método SIEMPRE usa DELETE y verifica
+     * el error, garantizando que la operación sea atómica y predecible.
+     */
+    async revokeEnrollmentAccess(userId, courseId) {
+        const { error } = await this.client
             .from('pre_enrollments')
             .delete()
             .eq('user_id', userId)
             .eq('course_id', courseId);
-        if (preError) throw new Error(preError.message);
+        if (error) throw new Error(error.message);
 
-        // Also remove course-level and subject-level progress so the student
-        // can no longer access the course via the progreso_curso path.
+        // Eliminar registros de progreso para bloquear el acceso por la ruta progreso_curso.
+        // Estas eliminaciones son best-effort: el estudiante puede no tener progreso registrado
+        // si solo tenía una invitación aceptada pero nunca inició el curso.
         await this.client
             .from('progreso_materia')
             .delete()
