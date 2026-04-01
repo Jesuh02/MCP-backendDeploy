@@ -4,6 +4,26 @@
 import Joi from 'joi';
 import { ValidationError } from '../../shared/errors/index.js';
 
+// ─── In-memory job store for polling-based generation ────────────────────────
+// Jobs are cleaned up after 30 minutes to prevent memory leaks.
+const _jobs = new Map();
+let _jobSeq = 0;
+
+function _createJob() {
+    const jobId = `rljob_${Date.now()}_${++_jobSeq}`;
+    _jobs.set(jobId, { status: 'pending', questions: null, error: null, createdAt: Date.now() });
+    return jobId;
+}
+
+function _cleanStaleJobs() {
+    const cutoff = Date.now() - 30 * 60 * 1000; // 30 min
+    for (const [id, job] of _jobs) {
+        if (job.createdAt < cutoff) _jobs.delete(id);
+    }
+}
+// Run cleanup every 10 minutes
+setInterval(_cleanStaleJobs, 10 * 60 * 1000).unref?.();
+
 const normalizeText = (value = '') => String(value).trim().toLowerCase().replace(/\s+/g, ' ');
 
 const questionItemSchema = Joi.object({
@@ -152,6 +172,76 @@ export class ReinforcementController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    /**
+     * POST /start-generation — Kick off async question generation, return a jobId immediately.
+     * The client then polls GET /poll-generation/:jobId until status === 'done'.
+     */
+    startGeneration = async(req, res, next) => {
+        try {
+            const userId = req.user?.userId || req.user?.id || parseInt(req.body.userId || req.body.user_id);
+            const courseId = parseInt(req.body.courseId || req.body.course_id);
+            const topicId = req.body.topicId || req.body.topic_id ? parseInt(req.body.topicId || req.body.topic_id) : null;
+            const taskId = req.body.taskId || req.body.task_id ? parseInt(req.body.taskId || req.body.task_id) : null;
+            const difficulty = req.body.difficulty || 'HARD';
+            const targetCount = parseInt(req.body.targetCount) || 10;
+            const forceFresh = req.body.forceFresh === true || req.body.forceFresh === 'true';
+
+            if (!userId) return next(new ValidationError('userId is required'));
+            if (!courseId) return next(new ValidationError('courseId is required'));
+
+            const jobId = _createJob();
+            console.log(`🚀 [ReinforcementController] startGeneration: jobId=${jobId}, userId=${userId}, courseId=${courseId}, topicId=${topicId}, taskId=${taskId}, difficulty=${difficulty}`);
+
+            // Fire-and-forget: generation runs in background
+            this.reinforcementService
+                .generateQuestions(userId, courseId, topicId, taskId, difficulty, targetCount, forceFresh)
+                .then(result => {
+                    const job = _jobs.get(jobId);
+                    if (!job) return; // job was cleaned up
+                    if (result.isFail()) {
+                        job.status = 'error';
+                        job.error = result.getError()?.message || result.getError() || 'Generation failed';
+                    } else {
+                        const data = result.getValue();
+                        job.status = 'done';
+                        job.questions = data.questions || [];
+                    }
+                })
+                .catch(err => {
+                    const job = _jobs.get(jobId);
+                    if (job) { job.status = 'error'; job.error = err.message || 'Generation failed'; }
+                    console.error(`[ReinforcementController] startGeneration job ${jobId} failed:`, err.message);
+                });
+
+            res.status(202).json({ success: true, data: { jobId } });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * GET /poll-generation/:jobId — Check status of an async generation job.
+     * Returns { status: 'pending'|'done'|'error', questions?, error? }
+     */
+    pollGeneration = async(req, res, next) => {
+        try {
+            const { jobId } = req.params;
+            if (!jobId) return next(new ValidationError('jobId is required'));
+
+            const job = _jobs.get(jobId);
+            if (!job) return res.status(404).json({ success: false, error: { message: 'Job not found or expired' } });
+
+            if (job.status === 'done') {
+                _jobs.delete(jobId); // clean up immediately once consumed
+                return res.json({ success: true, data: { status: 'done', questions: job.questions } });
+            }
+            if (job.status === 'error') {
+                _jobs.delete(jobId);
+                return res.status(500).json({ success: true, data: { status: 'error', error: job.error } });
+            }
+            res.json({ success: true, data: { status: 'pending' } });
+        } catch (err) { next(err); }
+    };
+
 
     saveSession = async(req, res, next) => {
         try {
