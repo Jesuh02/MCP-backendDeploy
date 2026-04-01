@@ -213,8 +213,12 @@ export class ReinforcementDomainService {
                         console.warn(`[ReinforcementService] Download error for ${fileName}: ${dlErr.message}`);
                     }
                 } else {
-                    // Body is plain text content
-                    textToIngest = body;
+                    // Body is plain text content — guard against binary/Office XML garbage
+                    if (this._looksLikeBinaryOrOfficeXml(body)) {
+                        console.warn(`[ReinforcementService] Skipping binary/Office-XML body for content_item ${item.id} (${fileName})`);
+                    } else {
+                        textToIngest = body;
+                    }
                 }
 
                 if (textToIngest && textToIngest.length >= 50) {
@@ -1283,6 +1287,26 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
     async getUserSessions(userId, pagination = {}) {
         const sessions = await this.reinforcementRepo.findByUser(userId, pagination);
         return Result.ok(sessions);
+    }
+
+    _looksLikeBinaryOrOfficeXml(text) {
+        if (!text || text.length < 50) return false;
+        const sample = text.substring(0, 2000);
+        if (sample.startsWith('PK\x03\x04') || sample.startsWith('PK')) return true;
+        const officeXmlPatterns = [
+            'schemas.openxmlformats.org', 'schemas.microsoft.com/office',
+            '<w:document', '<w:body', '<w:r>', '<w:p>', '<w:t>',
+            '<w:rPr>', '<w:pPr>', '<w:sz', '<w:rFonts',
+            'word/document.xml', 'word/_rels', '[Content_Types].xml', 'docProps/core.xml',
+        ];
+        const matchCount = officeXmlPatterns.filter(p => sample.includes(p)).length;
+        if (matchCount >= 2) return true;
+        const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F-\x9F]/g) || []).length;
+        if (controlChars > sample.length * 0.03) return true;
+        const lines = sample.split('\n');
+        const b64Lines = lines.filter(l => l.length > 100 && /^[A-Za-z0-9+/=]+$/.test(l.trim()));
+        if (b64Lines.length > 3) return true;
+        return false;
     }
 }
 export default ReinforcementDomainService;

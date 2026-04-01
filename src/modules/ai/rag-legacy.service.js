@@ -95,14 +95,41 @@ export class RAGService {
         try {
             // Safety guard: detect binary content passed as string (corrupted .docx/.pdf treated as text)
             if (typeof content === 'string' && (metadata.fileType === 'txt' || !metadata.fileType)) {
-                const sample = content.substring(0, 500);
-                const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F]/g) || []).length;
-                if (controlChars > sample.length * 0.05) {
+                const sample = content.substring(0, 2000);
+                const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F-\x9F]/g) || []).length;
+                if (controlChars > sample.length * 0.03) {
                     logger.warn(`⚠️ Binary content detected for "${metadata.fileName}" (${controlChars} control chars in sample). Rejecting ingestion.`);
                     return {
                         success: false,
                         chunksStored: 0,
                         error: 'Binary content detected — use appropriate document parser (mammoth for DOCX, pdf-parse for PDF)'
+                    };
+                }
+
+                // Detect Office XML garbage (DOCX/XLSX unpacked as text)
+                const officeXmlSignals = [
+                    'schemas.openxmlformats.org',
+                    'schemas.microsoft.com/office',
+                    '<w:document', '<w:body', '<w:r>', '<w:p>', '<w:t>',
+                    'word/document.xml', '[Content_Types].xml',
+                ];
+                const officeXmlHits = officeXmlSignals.filter(s => sample.includes(s)).length;
+                if (officeXmlHits >= 2) {
+                    logger.warn(`⚠️ Office XML content detected for "${metadata.fileName}" (${officeXmlHits} signals). Rejecting — needs mammoth parser.`);
+                    return {
+                        success: false,
+                        chunksStored: 0,
+                        error: 'Office XML content detected — .docx file was not properly parsed. Use mammoth to extract text first.'
+                    };
+                }
+
+                // Detect ZIP magic bytes (PK header — DOCX/XLSX/PPTX are ZIP containers)
+                if (sample.startsWith('PK\x03\x04') || sample.startsWith('PK')) {
+                    logger.warn(`⚠️ ZIP/DOCX binary detected for "${metadata.fileName}". Rejecting — needs mammoth parser.`);
+                    return {
+                        success: false,
+                        chunksStored: 0,
+                        error: 'ZIP/DOCX binary detected — file was not properly parsed. Use mammoth to extract text first.'
                     };
                 }
             }
@@ -129,6 +156,20 @@ export class RAGService {
 
             if (chunks.length === 0) {
                 return { success: false, chunksStored: 0, error: 'No valid chunks created' };
+            }
+
+            // Safety cap: a 36-line document should NOT produce 930 chunks.
+            // If chunks exceed a reasonable max, the content was likely not properly parsed
+            // (e.g., binary DOCX XML treated as text). Cap at MAX_CHUNKS_PER_DOCUMENT.
+            const MAX_CHUNKS_PER_DOCUMENT = 100;
+            if (chunks.length > MAX_CHUNKS_PER_DOCUMENT) {
+                const avgChunkLen = Math.round(extractedText.length / chunks.length);
+                logger.warn(
+                    `⚠️ Chunk explosion detected for "${metadata.fileName}": ${chunks.length} chunks ` +
+                    `(avg ${avgChunkLen} chars/chunk, total ${extractedText.length} chars). ` +
+                    `Capping at ${MAX_CHUNKS_PER_DOCUMENT}. This usually means binary/XML content was not properly parsed.`
+                );
+                chunks.length = MAX_CHUNKS_PER_DOCUMENT;
             }
 
             // Step 3: Delete existing chunks for this document (avoid duplicates)

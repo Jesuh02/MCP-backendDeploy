@@ -395,7 +395,12 @@ export class LearningContextService {
                         result.errors.push({ file: fileName, error: `Download: ${dlErr.message}` });
                     }
                 } else {
-                    // Body is plain text content
+                    // Body is plain text content — but verify it's not binary/DOCX garbage
+                    if (this._looksLikeBinaryOrOfficeXml(body)) {
+                        console.warn(`[LearningContextService] Skipping content_item ${item.id}: body looks like binary/Office XML, not plain text (${body.length} chars)`);
+                        result.errors.push({ file: fileName, error: 'Body contains binary/Office XML content — needs proper file parser' });
+                        return;
+                    }
                     textToIngest = body;
                 }
 
@@ -619,6 +624,46 @@ export class LearningContextService {
             console.warn('[LearningContextService] getHybridRagContent error (non-blocking):', error.message);
             return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0, reranked: false, rerankMethod: 'none', page: 0, totalPages: 0, totalChunks: 0 };
         }
+    }
+    /**
+     * Detects if a string looks like binary data, Office XML, or ZIP container content
+     * rather than legitimate plain text. Prevents ingesting DOCX/ZIP garbage as text.
+     * @private
+     * @param {string} text
+     * @returns {boolean}
+     */
+    _looksLikeBinaryOrOfficeXml(text) {
+        if (!text || text.length < 50) return false;
+
+        const sample = text.substring(0, 2000);
+
+        // 1. ZIP magic bytes (PK\x03\x04) — DOCX/XLSX/PPTX are ZIP containers
+        if (sample.startsWith('PK\x03\x04') || sample.startsWith('PK')) return true;
+
+        // 2. Office XML namespace tags
+        const officeXmlPatterns = [
+            'schemas.openxmlformats.org',
+            'schemas.microsoft.com/office',
+            '<w:document',  '<w:body',  '<w:r>',  '<w:p>',  '<w:t>',
+            '<w:rPr>',     '<w:pPr>',  '<w:sz',   '<w:rFonts',
+            'word/document.xml',
+            'word/_rels',
+            '[Content_Types].xml',
+            'docProps/core.xml',
+        ];
+        const matchCount = officeXmlPatterns.filter(p => sample.includes(p)).length;
+        if (matchCount >= 2) return true;
+
+        // 3. High ratio of non-printable / control characters (binary data decoded as UTF-8)
+        const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F-\x9F]/g) || []).length;
+        if (controlChars > sample.length * 0.03) return true;
+
+        // 4. Base64-encoded binary (long lines of only A-Za-z0-9+/= without spaces)
+        const lines = sample.split('\n');
+        const b64Lines = lines.filter(l => l.length > 100 && /^[A-Za-z0-9+/=]+$/.test(l.trim()));
+        if (b64Lines.length > 3) return true;
+
+        return false;
     }
 }
 
