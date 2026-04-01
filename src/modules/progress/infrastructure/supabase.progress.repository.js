@@ -1256,12 +1256,40 @@ export class SupabaseProgressRepository {
     }
 
     async findApprovedEnrollments() {
-        const { data, error } = await this.client
+        // 1. Pre-enrollments with status approved/revoked
+        const { data: preData, error } = await this.client
             .from('pre_enrollments')
             .select('user_id, course_id, status, requested_at, reviewed_at, revoke_reason')
             .in('status', ['approved', 'revoked'])
             .order('course_id', { ascending: true });
-        if (error || !data) return [];
+        const preRows = (!error && preData) ? preData : [];
+
+        // 2. Users with course progress but NO pre_enrollment record (direct enrollment)
+        const { data: progressRows } = await this.client
+            .from(SupabaseProgressRepository.COURSE_PROGRESS_TABLE)
+            .select('usuario_estudiante, curso_id');
+        const preKeys = new Set(preRows.map(r => `${r.user_id}-${r.course_id}`));
+        const seenProgress = new Set();
+        const directRows = [];
+        for (const p of (progressRows || [])) {
+            const uid = Number(p.usuario_estudiante);
+            const cid = Number(p.curso_id);
+            if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(cid) || cid <= 0) continue;
+            const key = `${uid}-${cid}`;
+            if (preKeys.has(key) || seenProgress.has(key)) continue;
+            seenProgress.add(key);
+            directRows.push({
+                user_id: uid,
+                course_id: cid,
+                status: 'approved',
+                requested_at: null,
+                reviewed_at: null,
+                revoke_reason: null,
+            });
+        }
+
+        const data = [...preRows, ...directRows];
+        if (data.length === 0) return [];
 
         const userIds   = [...new Set(data.map(r => Number(r.user_id)).filter(id => Number.isInteger(id) && id > 0))];
         const courseIds = [...new Set(data.map(r => Number(r.course_id)).filter(id => Number.isInteger(id) && id > 0))];
