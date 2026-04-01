@@ -5,9 +5,10 @@ import Joi from 'joi';
 import { ValidationError } from '../../shared/errors/index.js';
 
 // ─── In-memory job store for polling-based generation ────────────────────────
-// Jobs are cleaned up after 30 minutes to prevent memory leaks.
+// Jobs are cleaned up after 2 hours to allow long-running first-time ingestion.
 const _jobs = new Map();
 let _jobSeq = 0;
+const JOB_TTL_MS = 2 * 60 * 60 * 1000;
 
 function _createJob() {
     const jobId = `rljob_${Date.now()}_${++_jobSeq}`;
@@ -16,7 +17,7 @@ function _createJob() {
 }
 
 function _cleanStaleJobs() {
-    const cutoff = Date.now() - 30 * 60 * 1000; // 30 min
+    const cutoff = Date.now() - JOB_TTL_MS;
     for (const [id, job] of _jobs) {
         if (job.createdAt < cutoff) _jobs.delete(id);
     }
@@ -228,7 +229,15 @@ export class ReinforcementController {
             if (!jobId) return next(new ValidationError('jobId is required'));
 
             const job = _jobs.get(jobId);
-            if (!job) return res.status(404).json({ success: false, error: { message: 'Job not found or expired' } });
+            if (!job) {
+                return res.json({
+                    success: true,
+                    data: {
+                        status: 'error',
+                        error: 'La sesión de generación expiró o no existe. Intenta iniciar una nueva generación.',
+                    },
+                });
+            }
 
             if (job.status === 'done') {
                 _jobs.delete(jobId); // clean up immediately once consumed
@@ -236,7 +245,7 @@ export class ReinforcementController {
             }
             if (job.status === 'error') {
                 _jobs.delete(jobId);
-                return res.status(500).json({ success: true, data: { status: 'error', error: job.error } });
+                return res.json({ success: true, data: { status: 'error', error: job.error } });
             }
             res.json({ success: true, data: { status: 'pending' } });
         } catch (err) { next(err); }
