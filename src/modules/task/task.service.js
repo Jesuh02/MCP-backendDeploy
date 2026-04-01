@@ -116,7 +116,7 @@ export class TaskDomainService {
 
         if (!this.collaboratorRepo) return false;
         const isCollab = await this.collaboratorRepo.isCollaborator(requesterId, subject.course_id);
-        return Boolean(isCollab && !subject.created_by);
+        return Boolean(isCollab);
     }
 
     _dedupeTasks(tasks = []) {
