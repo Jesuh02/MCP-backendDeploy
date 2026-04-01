@@ -166,6 +166,16 @@ export class SubmissionDomainService {
         if (courseCreatorId && courseCreatorId !== data.userId) recipientIds.add(Number(courseCreatorId));
         if (subjectCreatorId && subjectCreatorId !== data.userId) recipientIds.add(Number(subjectCreatorId));
 
+        // Incluir colaboradores docentes del curso
+        if (this.collaboratorService) {
+            try {
+                const collaboratorUserIds = await this.collaboratorService.getCollaboratorUserIds(courseId);
+                for (const collabUserId of (collaboratorUserIds || [])) {
+                    if (Number(collabUserId) !== Number(data.userId)) recipientIds.add(Number(collabUserId));
+                }
+            } catch { /* silent */ }
+        }
+
         if (this.progressService && typeof this.progressService.getAllByCourse === 'function') {
             const progressResult = await this.progressService.getAllByCourse(courseId);
             if (progressResult.isOk()) {

@@ -129,6 +129,18 @@ export class SupabaseVectorStore extends IVectorStore {
      * @param {object} error - Supabase/Postgres error with details/message
      * @returns {string|null} - The column name (e.g., 'content_item_id') or null
      */
+    /**
+     * Remove characters PostgreSQL TEXT columns cannot store, specifically
+     * the null byte (\u0000) which causes error code 22P05.
+     * @param {string} text
+     * @returns {string}
+     */
+    _sanitizeText(text) {
+        if (typeof text !== 'string') return text;
+        // Replace null bytes and other unsupported Unicode escapes
+        return text.replace(/\u0000/g, '');
+    }
+
     _extractFailedFKField(error) {
         const msg = (error.details || error.message || '').toLowerCase();
         const fkColumns = ['content_item_id', 'task_id', 'topic_id', 'course_id'];
@@ -190,9 +202,9 @@ export class SupabaseVectorStore extends IVectorStore {
             const validatedFKs = await this._validateForeignKeys(metadata);
 
             const record = {
-                content,
+                content: this._sanitizeText(content),
                 embedding: `[${embedding.join(',')}]`, // Format for pgvector
-                metadata: JSON.stringify(metadata),
+                metadata: JSON.stringify(metadata).replace(/\u0000/g, ''),
                 course_id: validatedFKs.course_id,
                 topic_id: validatedFKs.topic_id,
                 task_id: validatedFKs.task_id,
@@ -295,31 +307,52 @@ export class SupabaseVectorStore extends IVectorStore {
     }
 
     /**
-     * Helper to migrate table dimensions
+     * Helper to migrate table dimensions.
+     * Uses separate atomic DDL statements (no DO blocks) to avoid
+     * compatibility issues with Supabase exec_sql/execute_sql RPCs.
      */
     async _migrateTableDimensions(newDim) {
-        // SQL to update column and recreation of search function
-        const sql = `
-            DO $$ 
-            BEGIN
-                -- 1. Alter column type (Force recreation if alter fails)
-                BEGIN
-                    ALTER TABLE rag_documents ALTER COLUMN embedding TYPE vector(${newDim});
-                EXCEPTION WHEN OTHERS THEN
-                    -- If alter fails (e.g. data exists and cannot be cast), we drop and recreate
-                    -- This results in loss of vector data but fixes the schema for new insertions
-                    RAISE NOTICE 'Standard ALTER failed, dropping and recreating column... %', SQLERRM;
-                    ALTER TABLE rag_documents DROP COLUMN IF EXISTS embedding;
-                    ALTER TABLE rag_documents ADD COLUMN embedding vector(${newDim});
-                END;
+        logger.info(`🔄 Migrating vector dimensions to ${newDim}...`);
 
-                -- 2. Add content_item_id if missing
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rag_documents' AND column_name = 'content_item_id') THEN
-                    ALTER TABLE rag_documents ADD COLUMN content_item_id bigint;
-                END IF;
-            END $$;
+        // Helper: try exec_sql then execute_sql, return true on success
+        const execSQL = async (sql, label) => {
+            const { error: e1 } = await this.supabase.client.rpc('exec_sql', { sql });
+            if (!e1) return true;
+            const { error: e2 } = await this.supabase.client.rpc('execute_sql', { query: sql });
+            if (!e2) return true;
+            logger.warn(`⚠️ ${label} failed: ${e2.message}`);
+            return false;
+        };
 
-            -- Recreate the function with new dimensions
+        // Step 1a: Try a direct ALTER TYPE first (works when no data or cast succeeds)
+        const altered = await execSQL(
+            `ALTER TABLE rag_documents ALTER COLUMN embedding TYPE vector(${newDim});`,
+            'ALTER COLUMN TYPE'
+        );
+
+        if (!altered) {
+            // Step 1b: Fallback — drop the column and re-add it with the correct dimension.
+            // This loses old vector data (already unusable due to dimension mismatch) but
+            // fixes the schema so new insertions can proceed.
+            await execSQL(
+                `ALTER TABLE rag_documents DROP COLUMN IF EXISTS embedding;`,
+                'DROP COLUMN embedding'
+            );
+            const added = await execSQL(
+                `ALTER TABLE rag_documents ADD COLUMN embedding vector(${newDim});`,
+                'ADD COLUMN embedding'
+            );
+            if (!added) throw new Error(`Migration failed: could not recreate embedding column as vector(${newDim})`);
+        }
+
+        // Step 2: Add content_item_id if missing (IF NOT EXISTS is valid plain DDL)
+        await execSQL(
+            `ALTER TABLE rag_documents ADD COLUMN IF NOT EXISTS content_item_id bigint;`,
+            'ADD COLUMN content_item_id'
+        );
+
+        // Step 3: Recreate the search function with the new dimension
+        const createFnSQL = `
             CREATE OR REPLACE FUNCTION match_rag_documents(
                 query_embedding vector(${newDim}),
                 match_threshold float DEFAULT 0.7,
@@ -347,23 +380,19 @@ export class SupabaseVectorStore extends IVectorStore {
                     AND (filter_topic_id IS NULL OR rd.topic_id = filter_topic_id)
                     AND (filter_task_id IS NULL OR rd.task_id = filter_task_id)
                     AND (filter_content_item_id IS NULL OR rd.content_item_id = filter_content_item_id)
+                    AND rd.embedding IS NOT NULL
                     AND 1 - (rd.embedding <=> query_embedding) > match_threshold
                 ORDER BY rd.embedding <=> query_embedding
                 LIMIT match_count;
             END;
             $$;
         `;
+        const fnCreated = await execSQL(createFnSQL, 'CREATE OR REPLACE FUNCTION match_rag_documents');
+        if (!fnCreated) {
+            logger.warn('⚠️ Could not recreate match_rag_documents function — search may still use old dimensions until manually updated in Supabase SQL Editor.');
+        }
 
-        logger.info(`🔄 Migrating vector dimensions to ${newDim}...`);
-
-        // Try both RPC methods commonly used
-        const { error: err1 } = await this.supabase.client.rpc('exec_sql', { sql });
-        if (!err1) return;
-
-        logger.warn('exec_sql failed, trying execute_sql...', err1.message);
-
-        const { error: err2 } = await this.supabase.client.rpc('execute_sql', { query: sql });
-        if (err2) throw new Error(`Migration failed: ${err2.message}`);
+        logger.info(`✅ Migration to vector(${newDim}) complete.`);
     }
 
     /**
@@ -380,9 +409,9 @@ export class SupabaseVectorStore extends IVectorStore {
             const { data, error } = await this.supabase.client
                 .from('rag_documents')
                 .insert([{
-                    content,
+                    content: this._sanitizeText(content),
                     embedding: embedding ? `[${embedding.join(',')}]` : null,
-                    metadata: JSON.stringify(metadata),
+                    metadata: JSON.stringify(metadata).replace(/\u0000/g, ''),
                     file_name: metadata.fileName || null,
                     file_type: metadata.fileType || metadata.originalFileType || null,
                     chunk_index: metadata.chunkIndex != null ? metadata.chunkIndex : 0,
@@ -402,9 +431,9 @@ export class SupabaseVectorStore extends IVectorStore {
                 const { data: lastData, error: lastError } = await this.supabase.client
                     .from('rag_documents')
                     .insert([{
-                        content,
+                        content: this._sanitizeText(content),
                         embedding: embedding ? `[${embedding.join(',')}]` : null,
-                        metadata: JSON.stringify(metadata),
+                        metadata: JSON.stringify(metadata).replace(/\u0000/g, ''),
                         file_name: metadata.fileName || null,
                         file_type: metadata.fileType || metadata.originalFileType || null,
                         chunk_index: metadata.chunkIndex != null ? metadata.chunkIndex : 0,
