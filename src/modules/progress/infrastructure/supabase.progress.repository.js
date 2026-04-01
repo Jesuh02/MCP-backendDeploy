@@ -1335,39 +1335,30 @@ export class SupabaseProgressRepository {
         });
     }
 
-    async findRevokedEnrollmentCourseIds(userId) {
-        const { data, error } = await this.client
-            .from('pre_enrollments')
-            .select('course_id')
-            .eq('user_id', userId)
-            .eq('status', 'revoked');
-        if (error || !data) return [];
-        return data
-            .map((row) => Number(row.course_id))
-            .filter((courseId) => Number.isInteger(courseId) && courseId > 0);
-    }
-
     async deleteEnrollment(userId, courseId, reason = null, revokedBy = null) {
-        if (reason) {
-            const { error } = await this.client
-                .from('pre_enrollments')
-                .update({
-                    status: 'revoked',
-                    revoke_reason: reason,
-                    reviewed_at: new Date().toISOString(),
-                    ...(revokedBy ? { reviewed_by: revokedBy } : {}),
-                })
-                .eq('user_id', userId)
-                .eq('course_id', courseId);
-            if (error) throw new Error(error.message);
-        } else {
-            const { error } = await this.client
-                .from('pre_enrollments')
-                .delete()
-                .eq('user_id', userId)
-                .eq('course_id', courseId);
-            if (error) throw new Error(error.message);
-        }
+        // Delete the pre-enrollment record. A soft-delete (status='revoked') was attempted
+        // before but it conflicts with the DB CHECK constraint (only pending/approved/rejected).
+        const { error: preError } = await this.client
+            .from('pre_enrollments')
+            .delete()
+            .eq('user_id', userId)
+            .eq('course_id', courseId);
+        if (preError) throw new Error(preError.message);
+
+        // Also remove course-level and subject-level progress so the student
+        // can no longer access the course via the progreso_curso path.
+        await this.client
+            .from('progreso_materia')
+            .delete()
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId);
+
+        await this.client
+            .from('progreso_curso')
+            .delete()
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId);
+
         return true;
     }
 
