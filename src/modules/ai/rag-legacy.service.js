@@ -93,6 +93,20 @@ export class RAGService {
         logger.info(`📥 Starting document ingestion: ${metadata.fileName || 'unknown'}`);
 
         try {
+            // Safety guard: detect binary content passed as string (corrupted .docx/.pdf treated as text)
+            if (typeof content === 'string' && (metadata.fileType === 'txt' || !metadata.fileType)) {
+                const sample = content.substring(0, 500);
+                const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F]/g) || []).length;
+                if (controlChars > sample.length * 0.05) {
+                    logger.warn(`⚠️ Binary content detected for "${metadata.fileName}" (${controlChars} control chars in sample). Rejecting ingestion.`);
+                    return {
+                        success: false,
+                        chunksStored: 0,
+                        error: 'Binary content detected — use appropriate document parser (mammoth for DOCX, pdf-parse for PDF)'
+                    };
+                }
+            }
+
             // Step 1: Extract text from document
             const extractedText = await this.documentProcessor.extractText(
                 content,

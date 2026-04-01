@@ -16,6 +16,8 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch (_) { pdfParse = null; }
+let mammoth;
+try { mammoth = require('mammoth'); } catch (_) { mammoth = null; }
 
 // ─── Semaphore: máximo de llamadas LLM simultáneas en todo el proceso ───────
 const MAX_CONCURRENT_LLM = 3;
@@ -154,19 +156,57 @@ export class ReinforcementDomainService {
                             continue;
                         }
 
-                        const nameLower = fileName.toLowerCase();
-                        const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+                        // Derive actual filename from URL path (item.title may lack extension)
+                        let urlFileName = fileName;
+                        try {
+                            const urlPath = new URL(body).pathname;
+                            const urlBase = decodeURIComponent(urlPath.split('/').pop() || '');
+                            if (urlBase && urlBase.includes('.')) urlFileName = urlBase;
+                        } catch (_) { /* keep original fileName */ }
+
+                        const nameLower = (urlFileName || fileName).toLowerCase();
+                        const ctLower = (fileData.contentType || '').toLowerCase();
+                        const isPdf = nameLower.endsWith('.pdf') || ctLower.includes('pdf');
+                        const isDocx = nameLower.endsWith('.docx') || nameLower.endsWith('.doc') ||
+                            ctLower.includes('wordprocessingml') ||
+                            ctLower.includes('openxmlformats') ||
+                            ctLower.includes('msword');
+
+                        // Magic-byte detection: if content is binary, check ZIP header (docx/xlsx/pptx are ZIP)
+                        const isDocxFinal = isDocx || (
+                            fileData.buffer &&
+                            fileData.buffer[0] === 0x50 && fileData.buffer[1] === 0x4B &&
+                            fileData.buffer[2] === 0x03 && fileData.buffer[3] === 0x04 &&
+                            !nameLower.endsWith('.xlsx') && !nameLower.endsWith('.pptx')
+                        );
 
                         if (isPdf && pdfParse) {
                             try {
-                                const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                const pdfBuffer = fileData.buffer || Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
                                 const pdfData = await pdfParse(pdfBuffer);
                                 textToIngest = pdfData.text;
                                 if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
                             } catch (pdfErr) {
                                 console.warn(`[ReinforcementService] PDF parse error for ${fileName}: ${pdfErr.message}`);
                             }
+                        } else if (isDocxFinal && mammoth) {
+                            try {
+                                const buffer = fileData.buffer || Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'binary');
+                                const docxResult = await mammoth.extractRawText({ buffer });
+                                textToIngest = docxResult.value;
+                                if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
+                                console.log(`[ReinforcementService] DOCX extracted ${textToIngest?.length ?? 0} chars from "${urlFileName}"`);
+                            } catch (docxErr) {
+                                console.warn(`[ReinforcementService] DOCX parse error for ${fileName}: ${docxErr.message}`);
+                            }
                         } else if (!fileData.isBase64) {
+                            // Safety guard: reject content that looks like binary garbage
+                            const sample = (fileData.content || '').substring(0, 500);
+                            const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F]/g) || []).length;
+                            if (controlChars > sample.length * 0.05) {
+                                console.warn(`[ReinforcementService] Skipping binary content disguised as text: ${urlFileName} (${controlChars} control chars)`);
+                                continue;
+                            }
                             textToIngest = fileData.content;
                         }
                     } catch (dlErr) {
@@ -848,7 +888,32 @@ Antes de incluir CADA ejercicio en el JSON, verifica:
 ✓ ¿Requiere 3+ pasos de razonamiento? Si NO → RECHAZAR.
 ✓ ¿Un estudiante de primer semestre podría resolverlo en 10 segundos? Si SÍ → RECHAZAR.
 ✓ ¿Involucra solo una operación/concepto aislado? Si SÍ → RECHAZAR.
-✓ ¿Es del nivel más avanzado posible dentro del dominio? Si NO → escalar complejidad.`,
+✓ ¿Es del nivel más avanzado posible dentro del dominio? Si NO → escalar complejidad.
+
+══ VERIFICACIÓN MATEMÁTICA RIGUROSA (OBLIGATORIA) ══
+⚠️ NO asumas que tu primer cálculo es correcto. DEBES hacer doble verificación:
+1. Realiza el cálculo paso a paso.
+2. VERIFICA el resultado repitiendo el cálculo con un método diferente (ej: suma en orden inverso, descomposición, etc.).
+3. Si el resultado de la verificación NO coincide → REHAZ el cálculo desde cero.
+4. Si el cálculo es demasiado complejo para tu ventana de contexto (>8 dígitos, >5 operandos), SIMPLIFICA los números pero AUMENTA la complejidad del razonamiento lógico (más pasos, conversiones, redondeo).
+5. PROHIBIDO generar respuestas con más de 8 dígitos significativos en fill_in_blank. Si el resultado natural tiene más, redondea y pide el resultado redondeado explícitamente.
+6. La explicación DEBE mostrar EXACTAMENTE los mismos pasos que producen el correctAnswer. Si hay discrepancia → la pregunta es INVÁLIDA.
+
+══ CALIDAD DE DISTRACTORES (multiple_choice) ══
+⚠️ NUNCA generes opciones con el mismo valor numérico o la misma explicación.
+Cada distractor DEBE representar un error conceptual plausible:
+- Error de acarreo (ej: olvidar llevar 1 en una suma)
+- Error de fórmula (ej: usar suma en vez de resta)
+- Error de redondeo (ej: redondear hacia arriba vs abajo)
+- Error de orden de operaciones (ej: sumar antes de multiplicar)
+Si NO puedes generar 3 distractores plausibles y DISTINTOS → convierte la pregunta a fill_in_blank.
+VERIFICACIÓN: Las 4 opciones DEBEN ser valores DIFERENTES entre sí. Si dos opciones son iguales → la pregunta es INVÁLIDA.
+
+══ PRECISION EN fill_in_blank ══
+- PROHIBIDO pedir respuestas con más de 2 decimales. Si el resultado tiene más decimales, pide explícitamente que redondeen (ej: "redondea a 2 decimales").
+- PROHIBIDO pedir números de más de 8 dígitos sin separadores. Si el resultado es grande, permite separadores o pide el resultado en notación simplificada.
+- La respuesta correcta (correctAnswer) NUNCA debe incluir separadores de miles (comas, puntos). Solo dígitos y opcionalmente un punto decimal.
+- "Difícil" NO significa "números más largos". Significa mayor PROFUNDIDAD COGNITIVA: más pasos, conversiones, análisis de casos, redondeo estratégico.`,
             FREE: `Genera ejercicios variados que cubran TODO el contenido. Mezcla niveles: comprensión, análisis, aplicación y creación.`,
         };
 
@@ -867,8 +932,8 @@ TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
    INTERMEDIATE:
    - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 4,827 + 3,695 = ___", correctAnswer: "8522", hint: "Suma columna por columna con acarreo", explanation: "7+5=12 (lleva 1), 2+9+1=12 (lleva 1), 8+6+1=15 (lleva 1), 4+3+1=8. Resultado: 8,522" }
    HARD (COMPLEJIDAD MÁXIMA — los ejemplos para HARD son los que debes seguir):
-   - Matemáticas/Suma: { type: "fill_in_blank", question: "Resuelve la siguiente suma de números grandes: 1,023,232 + 12,213,456 + 987,654 = ___", correctAnswer: "14224342", hint: "Suma columna por columna de derecha a izquierda, llevando acarreos", explanation: "Alineando por posición: 1,023,232 + 12,213,456 + 987,654 = 14,224,342. Se suman las unidades (2+6+4=12, lleva 1), decenas (3+5+5+1=14, lleva 1), centenas (2+4+6+1=13, lleva 1), etc." }
-   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el valor de x donde ocurre el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x)=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). f(3)=27-54+27+2=2." }
+   - Matemáticas/Suma: { type: "fill_in_blank", question: "Una empresa tiene 3 sucursales con ventas mensuales de $45,230, $78,945 y $63,120. Calcula el total de ventas y luego aplica un impuesto del 16%. ¿Cuál es el monto total con impuesto? (redondea a entero)", correctAnswer: "217422", hint: "Primero suma las 3 cantidades, luego multiplica por 1.16", explanation: "Paso 1: 45230 + 78945 + 63120 = 187295. Paso 2: 187295 × 1.16 = 217262.2 → redondeado: 217262. VERIFICACIÓN: 187295 × 0.16 = 29967.2, + 187295 = 217262." }
+   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el valor de x donde ocurre el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x)=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). VERIFICACIÓN: f''(x)=6x-12, f''(3)=6>0 confirma mínimo local. f(3)=27-54+27+2=2." }
    - SQL: { type: "fill_in_blank", question: "Completa la función de ventana para calcular el salario acumulado por departamento:\nSELECT nombre, departamento, salario,\n  ___(salario) OVER (PARTITION BY departamento ORDER BY fecha_contratacion) AS salario_acum\nFROM empleados;", correctAnswer: "SUM", hint: "Función de agregado que suma progresivamente", explanation: "SUM() OVER(PARTITION BY ... ORDER BY ...) calcula una suma acumulada (running total) dentro de cada partición." }
    - Programación: { type: "fill_in_blank", question: "Completa la búsqueda binaria recursiva:\nfunction binarySearch(arr, target, lo, hi) {\n  if (lo > hi) return -1;\n  const mid = Math.floor((lo + hi) / 2);\n  if (arr[mid] === target) return mid;\n  if (arr[mid] < target) return binarySearch(arr, target, ___, hi);\n  return binarySearch(arr, target, lo, mid - 1);\n}", correctAnswer: "mid + 1", hint: "Si el elemento del medio es menor, busca en la mitad derecha", explanation: "Si arr[mid] < target, el objetivo está en [mid+1, hi]. Pasar lo=mid+1 descarta la mitad izquierda." }
    - Física: { type: "fill_in_blank", question: "Un proyectil se lanza a 30° con v₀=40m/s. Su alcance horizontal R = v₀²·sin(2θ)/g = ___ m (g=10m/s², sin(60°)≈0.866)", correctAnswer: "138.56", hint: "R=1600·0.866/10", explanation: "R = (40²·sin(60°))/10 = (1600·0.866)/10 ≈ 138.56 m" }
@@ -934,8 +999,24 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
 
         switch (type) {
             case 'fill_in_blank': {
-                const correctAnswer = String(q.correctAnswer ?? q.correct_answer ?? '').trim();
+                let correctAnswer = String(q.correctAnswer ?? q.correct_answer ?? '').trim();
                 if (!correctAnswer) return null;
+
+                // Normalize numeric answers: strip thousand separators, limit decimals
+                const numericClean = correctAnswer.replace(/,/g, '').replace(/\s/g, '');
+                const numericVal = Number(numericClean);
+                if (Number.isFinite(numericVal) && /^-?\d/.test(numericClean)) {
+                    // Strip thousand separators from correct answer (always store as plain digits)
+                    correctAnswer = numericClean;
+                    // Limit to max 2 decimal places
+                    if (correctAnswer.includes('.')) {
+                        const parts = correctAnswer.split('.');
+                        if (parts[1] && parts[1].length > 2) {
+                            correctAnswer = String(Math.round(numericVal * 100) / 100);
+                        }
+                    }
+                }
+
                 return {
                     type: 'fill_in_blank',
                     question: q.question.trim(),
@@ -997,6 +1078,27 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                                 options[correctIndex] = options[correctIndex].substring(0, lastSpace).trim();
                             }
                         }
+                    }
+                }
+
+                // Anti-duplicate-options: reject if options are not all unique
+                const uniqueOpts = new Set(options.map(o => o.toLowerCase().replace(/[^a-záéíóúñü0-9]/g, '').trim()));
+                if (uniqueOpts.size < options.length) {
+                    console.warn(`[ReinforcementService] Duplicate options detected in: "${q.question.substring(0, 60)}..." — rejecting question`);
+                    return null;
+                }
+
+                // Anti-duplicate numeric options: for numeric-looking options, compare values
+                const numericOpts = options.map(o => {
+                    const cleaned = o.replace(/[^0-9.\-]/g, '');
+                    const n = Number(cleaned);
+                    return cleaned && Number.isFinite(n) ? n : null;
+                });
+                if (numericOpts.every(n => n !== null)) {
+                    const uniqueNums = new Set(numericOpts);
+                    if (uniqueNums.size < numericOpts.length) {
+                        console.warn(`[ReinforcementService] Duplicate numeric option values in: "${q.question.substring(0, 60)}..." — rejecting question`);
+                        return null;
                     }
                 }
 

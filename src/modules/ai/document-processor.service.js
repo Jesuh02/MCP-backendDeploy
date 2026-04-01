@@ -18,6 +18,14 @@ try {
     console.warn("⚠️ pdf-parse not available, PDF processing will be limited");
 }
 
+// Lazy load mammoth for DOCX extraction
+let mammoth = null;
+try {
+    mammoth = require('mammoth');
+} catch (e) {
+    console.warn("⚠️ mammoth not available, DOCX processing will be skipped");
+}
+
 export class DocumentProcessor extends IDocumentProcessor {
     constructor(options = {}) {
         super();
@@ -38,6 +46,9 @@ export class DocumentProcessor extends IDocumentProcessor {
         switch (type) {
             case 'pdf':
                 return this._extractFromPDF(content);
+            case 'docx':
+            case 'doc':
+                return this._extractFromDocx(content);
             case 'txt':
             case 'sql':
             case 'js':
@@ -112,6 +123,42 @@ export class DocumentProcessor extends IDocumentProcessor {
             return this._cleanText(data.text);
         } catch (error) {
             console.error('❌ PDF extraction error:', error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * Extract plain text from a DOCX file using mammoth.
+     * Handles both Buffer input and base64-encoded strings.
+     * @param {Buffer|string} content - DOCX binary content or base64 string
+     * @returns {Promise<string>} - Extracted plain text
+     */
+    async _extractFromDocx(content) {
+        if (!mammoth) {
+            throw new Error('DOCX parsing not available. Install mammoth: npm install mammoth');
+        }
+        try {
+            let buffer = content;
+            if (typeof content === 'string') {
+                // Accept both base64-encoded and raw binary strings
+                buffer = Buffer.from(content, 'base64');
+                // Verify it starts with the ZIP magic bytes (PK = 0x50 0x4B) used by OOXML/docx
+                if (buffer[0] !== 0x50 || buffer[1] !== 0x4B) {
+                    // Maybe it was passed as a raw binary string — retry with 'binary'
+                    buffer = Buffer.from(content, 'binary');
+                }
+            }
+
+            const result = await mammoth.extractRawText({ buffer });
+            if (result.messages && result.messages.length > 0) {
+                result.messages.forEach(m => m.type === 'error' && console.warn('mammoth warning:', m.message));
+            }
+            if (!result.value || result.value.trim().length === 0) {
+                throw new Error('DOCX appears to be empty or could not be parsed');
+            }
+            return this._cleanText(result.value);
+        } catch (error) {
+            console.error('❌ DOCX extraction error:', error.message);
             throw error;
         }
     }
