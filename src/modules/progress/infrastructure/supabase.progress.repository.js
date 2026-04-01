@@ -337,7 +337,8 @@ export class SupabaseProgressRepository {
         const { data, error } = await this.client
             .from(this._courseProgressTable())
             .select('curso_id')
-            .eq('usuario_estudiante', userId);
+            .eq('usuario_estudiante', userId)
+            .neq('enrollment_status', 'revocado');
         if (error || !data) return [];
         return data.map(p => p.curso_id);
     }
@@ -360,7 +361,8 @@ export class SupabaseProgressRepository {
             .from(this._courseProgressTable())
             .select('id', { count: 'exact', head: true })
             .eq('usuario_estudiante', userId)
-            .eq('curso_id', courseId);
+            .eq('curso_id', courseId)
+            .neq('enrollment_status', 'revocado');
         return !error && count > 0;
     }
 
@@ -1365,26 +1367,54 @@ export class SupabaseProgressRepository {
     }
 
     async deleteEnrollment(userId, courseId, reason = null, revokedBy = null) {
-        if (reason) {
-            const { error } = await this.client
+        const now = new Date().toISOString();
+
+        // 1. Always soft-revoke in pre_enrollments (never hard-delete)
+        const revokePayload = {
+            status: 'revoked',
+            reviewed_at: now,
+            ...(revokedBy ? { reviewed_by: revokedBy } : {}),
+        };
+        if (reason) revokePayload.revoke_reason = reason;
+
+        let { error } = await this.client
+            .from('pre_enrollments')
+            .update(revokePayload)
+            .eq('user_id', userId)
+            .eq('course_id', courseId);
+
+        // Fallback: if revoke_reason column doesn't exist, retry without it
+        if (error && /revoke_reason|column/.test(error.message)) {
+            const { revoke_reason, ...fallbackPayload } = revokePayload;
+            const retry = await this.client
                 .from('pre_enrollments')
-                .update({
-                    status: 'revoked',
-                    revoke_reason: reason,
-                    reviewed_at: new Date().toISOString(),
-                    ...(revokedBy ? { reviewed_by: revokedBy } : {}),
-                })
+                .update(fallbackPayload)
                 .eq('user_id', userId)
                 .eq('course_id', courseId);
-            if (error) throw new Error(`Error revoking enrollment: ${error.message}`);
-        } else {
-            const { error } = await this.client
-                .from('pre_enrollments')
-                .delete()
-                .eq('user_id', userId)
-                .eq('course_id', courseId);
-            if (error) throw new Error(error.message);
+            error = retry.error;
         }
+        if (error) throw new Error(`Error revoking enrollment: ${error.message}`);
+
+        // 2. Also mark enrollment_status = 'revocado' in progreso_curso
+        await this.client
+            .from(this._courseProgressTable())
+            .update({ enrollment_status: 'revocado', ultima_calculada_en: now })
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId);
+
+        return true;
+    }
+
+    /**
+     * Restores enrollment_status to 'activo' in progreso_curso when an admin re-approves.
+     */
+    async restoreEnrollmentInProgress(userId, courseId) {
+        const now = new Date().toISOString();
+        await this.client
+            .from(this._courseProgressTable())
+            .update({ enrollment_status: 'activo', ultima_calculada_en: now })
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId);
         return true;
     }
 

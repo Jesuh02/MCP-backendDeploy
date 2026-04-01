@@ -931,29 +931,60 @@ export class ProgressDomainService {
 
     /**
      * Admin: revoke a user's enrollment (remove course access).
+     * Updates both pre_enrollments (status='revoked') and progreso_curso (enrollment_status='revocado').
+     * Sends in-app notification AND email to the student.
      */
     async revokeEnrollment(userId, courseId, reason = null) {
-        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
-        if (!existing) return Result.fail(new NotFoundError('MatrÃ­cula', `${userId}/${courseId}`));
+        let existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+        // Handle "direct enrollment" users (have progreso_curso but no pre_enrollment record)
+        if (!existing) {
+            try {
+                existing = await this.progressRepo.upsertPreEnrollment(userId, courseId, 'approved');
+            } catch (_) { /* ignore – proceed to revoke even if upsert fails */ }
+            if (!existing) return Result.fail(new NotFoundError('Matr\u00edcula', `${userId}/${courseId}`));
+        }
         await this.progressRepo.deleteEnrollment(userId, courseId, reason);
 
-        // Notify the student about revocation
-        if (this._notificationService && reason) {
+        // Resolve course name for notifications
+        let courseName = 'un curso';
+        if (this.courseRepo) {
             try {
-                let courseName = 'un curso';
-                if (this.courseRepo) {
-                    const course = await this.courseRepo.findById(courseId);
-                    if (course?.title) courseName = course.title;
-                }
+                const course = await this.courseRepo.findById(courseId);
+                if (course?.title) courseName = course.title;
+            } catch (_) { /* ignore */ }
+        }
+
+        // Notify the student about revocation (in-app + email)
+        if (this._notificationService) {
+            const reasonText = reason || 'Sin motivo especificado';
+            try {
                 await this._notificationService.send(userId, {
-                    title: 'Se te quitÃ³ el acceso',
-                    message: `Tu acceso a "${courseName}" fue revocado. Motivo: ${reason}`,
+                    title: 'Se te quitó el acceso',
+                    message: `Tu acceso a "${courseName}" fue revocado. Motivo: ${reasonText}`,
                     type: 'enrollment_revoked',
                     relatedId: courseId,
-                    metadata: { courseId, courseName, reason },
+                    metadata: { courseId, courseName, reason: reasonText },
                 });
             } catch (err) {
                 console.error('[ProgressService] Error sending revoke notification:', err?.message);
+            }
+
+            // Send email notification
+            try {
+                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
+                const html = generateGenericEmailHTML(
+                    'Acceso al curso revocado',
+                    `Tu acceso al curso "${courseName}" ha sido revocado.\n\nMotivo: ${reasonText}\n\nSi crees que es un error, contacta al administrador del curso.`,
+                    'enrollment_revoked',
+                    null
+                );
+                await this._notificationService.sendEmail(userId, {
+                    subject: `Tu acceso a "${courseName}" fue revocado – CourseV`,
+                    html,
+                    text: `Tu acceso al curso "${courseName}" fue revocado. Motivo: ${reasonText}. Si crees que es un error, contacta al administrador.`,
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending revoke email:', err?.message);
             }
         }
 
@@ -962,12 +993,20 @@ export class ProgressDomainService {
 
     /**
      * Admin: restore a previously revoked enrollment (re-approve).
+     * Restores both pre_enrollments (status='approved') and progreso_curso (enrollment_status='activo').
      */
     async restoreEnrollment(userId, courseId) {
         const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
-        if (!existing) return Result.fail(new NotFoundError('MatrÃ­cula', `${userId}/${courseId}`));
+        if (!existing) return Result.fail(new NotFoundError('Matr\u00edcula', `${userId}/${courseId}`));
 
         const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
+
+        // Also restore enrollment_status in progreso_curso
+        try {
+            await this.progressRepo.restoreEnrollmentInProgress(userId, courseId);
+        } catch (err) {
+            console.error('[ProgressService] Error restoring progreso_curso enrollment_status:', err?.message);
+        }
 
         // Notify the student about restoration
         if (this._notificationService) {
