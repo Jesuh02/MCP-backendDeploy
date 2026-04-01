@@ -301,10 +301,11 @@ export class LearningContextService {
                 return result;
             }
 
-            // Lazily create R2 adapter only when needed for URL downloads
+            // Process a small batch concurrently to reduce first-time latency
+            const CONCURRENT_INGESTIONS = Math.min(3, ingestableItems.length);
             let r2Service = null;
 
-            for (const item of ingestableItems) {
+            const processItem = async(item) => {
                 const body = (item.body || '').trim();
                 const fileName = item.title || `content_item_${item.id}`;
                 const isUrl = body.startsWith('http://') || body.startsWith('https://');
@@ -318,7 +319,7 @@ export class LearningContextService {
                         const fileData = await r2Service.getSubmissionFileContent(body, fileName);
                         if (!fileData || !fileData.content) {
                             result.errors.push({ file: fileName, error: 'No content from download' });
-                            continue;
+                            return;
                         }
 
                         const nameLower = fileName.toLowerCase();
@@ -359,7 +360,19 @@ export class LearningContextService {
                         result.errors.push({ file: fileName, error: ingestErr.message });
                     }
                 }
-            }
+
+                return;
+            };
+
+            let queueIndex = 0;
+            const workers = Array.from({ length: CONCURRENT_INGESTIONS }, async() => {
+                while (queueIndex < ingestableItems.length) {
+                    const item = ingestableItems[queueIndex++];
+                    await processItem(item);
+                }
+            });
+
+            await Promise.all(workers);
 
             result.ingested = result.filesProcessed > 0;
             return result;
