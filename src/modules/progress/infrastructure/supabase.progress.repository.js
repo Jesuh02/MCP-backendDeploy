@@ -1258,8 +1258,8 @@ export class SupabaseProgressRepository {
     async findApprovedEnrollments() {
         const { data, error } = await this.client
             .from('pre_enrollments')
-            .select('user_id, course_id, status, requested_at, reviewed_at')
-            .eq('status', 'approved')
+            .select('user_id, course_id, status, requested_at, reviewed_at, revoke_reason')
+            .in('status', ['approved', 'revoked'])
             .order('course_id', { ascending: true });
         if (error || !data) return [];
 
@@ -1328,6 +1328,7 @@ export class SupabaseProgressRepository {
                     fullName:       persona ? `${persona.nombres || ''} ${persona.apellidos || ''}`.trim() || null : null,
                     identificacion: persona?.identificacion ?? null,
                     courseName:     course?.title || null,
+                    revokeReason:   row.revoke_reason || null,
                 }),
                 subjects: subjectsByCourse.get(cid) || [],
                 blockedSubjectIds: [...blockedSet],
@@ -1337,7 +1338,7 @@ export class SupabaseProgressRepository {
 
     async deleteEnrollment(userId, courseId, reason = null, revokedBy = null) {
         if (reason) {
-            await this.client
+            const { error } = await this.client
                 .from('pre_enrollments')
                 .update({
                     status: 'revoked',
@@ -1347,6 +1348,7 @@ export class SupabaseProgressRepository {
                 })
                 .eq('user_id', userId)
                 .eq('course_id', courseId);
+            if (error) throw new Error(`Error revoking enrollment: ${error.message}`);
         } else {
             const { error } = await this.client
                 .from('pre_enrollments')

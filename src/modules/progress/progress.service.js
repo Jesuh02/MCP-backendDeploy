@@ -960,6 +960,38 @@ export class ProgressDomainService {
         return Result.ok({ message: 'Acceso al curso revocado', reason });
     }
 
+    /**
+     * Admin: restore a previously revoked enrollment (re-approve).
+     */
+    async restoreEnrollment(userId, courseId) {
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+        if (!existing) return Result.fail(new NotFoundError('MatrÃ­cula', `${userId}/${courseId}`));
+
+        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
+
+        // Notify the student about restoration
+        if (this._notificationService) {
+            try {
+                let courseName = 'un curso';
+                if (this.courseRepo) {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                }
+                await this._notificationService.send(userId, {
+                    title: 'Acceso restaurado',
+                    message: `Tu acceso a "${courseName}" ha sido restaurado. ¡Ya puedes acceder nuevamente!`,
+                    type: 'enrollment_approved',
+                    relatedId: courseId,
+                    metadata: { courseId, courseName },
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending restore notification:', err?.message);
+            }
+        }
+
+        return Result.ok({ ...updated, message: 'Acceso al curso restaurado' });
+    }
+
     // â”€â”€â”€ Subject Access Blocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
