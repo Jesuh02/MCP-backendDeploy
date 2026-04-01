@@ -82,7 +82,8 @@ export class LearningContextService {
             const effectiveSessionIndex = sessionIndex ?? Math.floor(existingQuestions.length / 10);
             const effectiveMode = this._resolveRetrievalMode(retrievalMode, query);
 
-            // Start ingestion (non-blocking) and RAG retrieval in parallel
+            // Start ingestion. If there are content items and no RAG content indexed yet,
+            // wait for ingestion before fetching RAG so the first generation has context.
             const ingestionPromise = this._ensureRagIngestion(courseId, topicId, taskId, contentItems);
 
             let ragData;
@@ -94,8 +95,25 @@ export class LearningContextService {
                     effectiveMode === 'hybrid' ? effectiveSessionIndex : null,
                     topicDetails, taskDetails
                 );
+                // First-time case: no RAG content yet but we have content to ingest.
+                // Wait for ingestion to finish then re-fetch so the LLM has real context.
+                if ((ragData.chunks || 0) === 0 && contentItems.length > 0) {
+                    console.log('[LearningContextService] No RAG content yet — waiting for ingestion before LLM call...');
+                    await ingestionPromise;
+                    ragData = await this._getHybridRagContent(
+                        courseId, topicId, taskId, searchQuery,
+                        effectiveMode === 'hybrid' ? effectiveSessionIndex : null,
+                        topicDetails, taskDetails
+                    );
+                    console.log(`[LearningContextService] Post-ingestion RAG fetch: chunks=${ragData.chunks}`);
+                }
             } else {
                 ragData = await this._getProgressiveRagContent(courseId, topicId, taskId, effectiveSessionIndex);
+                if ((ragData.chunks || 0) === 0 && contentItems.length > 0) {
+                    console.log('[LearningContextService] No RAG content yet — waiting for ingestion (progressive)...');
+                    await ingestionPromise;
+                    ragData = await this._getProgressiveRagContent(courseId, topicId, taskId, effectiveSessionIndex);
+                }
             }
 
             // ── 7. Construir respuesta estructurada ──
