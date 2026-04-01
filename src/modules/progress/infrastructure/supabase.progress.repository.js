@@ -1429,6 +1429,18 @@ export class SupabaseProgressRepository {
                 .eq('course_id', courseId);
             error = retry.error;
         }
+
+        // Fallback: if 'revoked' violates check constraint, use 'rejected' instead
+        if (error && /status_check|check constraint/i.test(error.message)) {
+            const fallbackPayload = { ...revokePayload, status: 'rejected' };
+            delete fallbackPayload.revoke_reason;
+            const retry = await this.client
+                .from('pre_enrollments')
+                .update(fallbackPayload)
+                .eq('user_id', userId)
+                .eq('course_id', courseId);
+            error = retry.error;
+        }
         if (error) throw new Error(`Error revoking enrollment: ${error.message}`);
 
         // 2. Also mark enrollment_status = 'revocado' in progreso_curso
