@@ -1214,6 +1214,10 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         const wordProblem = this._tryWordProblem(text);
         if (wordProblem !== null) return wordProblem;
 
+        // Strategy 3: Fallback — extract all numbers and try sum + percentage
+        const sumFallback = this._trySumFallback(text);
+        if (sumFallback !== null) return sumFallback;
+
         return null;
     }
 
@@ -1223,13 +1227,15 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
      * @private
      */
     _tryExplicitArithmetic(text) {
+        // Strip currency symbols so "$45,230 + $78,945" matches as arithmetic
+        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
         // Match chains: number op number [op number...] where op ∈ {+, -, ×, *, ÷, /}
         const numberPat = '\\d[\\d,]*\\.?\\d*';
         const opPat = '[+\\-×*÷/]';
         const exprRegex = new RegExp(
             `(${numberPat})\\s*(${opPat})\\s*(${numberPat}(?:\\s*${opPat}\\s*${numberPat})*)`, 'g'
         );
-        const match = exprRegex.exec(text);
+        const match = exprRegex.exec(cleaned);
         if (!match) return null;
 
         const expr = match[0];
@@ -1256,7 +1262,7 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         }
 
         // Check for follow-up operation in the remaining text
-        const afterExpr = text.substring(text.indexOf(match[0]) + match[0].length);
+        const afterExpr = cleaned.substring(cleaned.indexOf(match[0]) + match[0].length);
         const followUp = this._detectFollowUpOperation(afterExpr);
         if (followUp) {
             const prev = result;
@@ -1276,7 +1282,7 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         const lower = text.toLowerCase();
 
         // Must look like a sum/total problem
-        if (!/total|suma|calcula|acumulad|promedio|media/i.test(lower)) return null;
+        if (!/total|suma|calcula|acumulad|promedio|media|¿cuánto|cuántos|monto|resultado/i.test(lower)) return null;
 
         // Extract "data" numbers — numbers associated with labels (Nodo A: 12345, Sucursal: 9876, etc.)
         const dataNumbers = [];
@@ -1289,13 +1295,45 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
             if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
         }
 
-        // Pattern 2: if not enough labeled numbers, extract all "big" numbers (≥100)
+        // Pattern 1b: currency amounts — "$45,230", "$78,945.50"
         if (dataNumbers.length < 2) {
             dataNumbers.length = 0;
-            const allNums = text.match(/[\d,]+\.?\d*/g) || [];
+            const currencyPat = /\$\s?([\d,]+\.?\d*)/gi;
+            while ((m = currencyPat.exec(text)) !== null) {
+                const num = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 1) dataNumbers.push(num);
+            }
+        }
+
+        // Pattern 1c: "de" amounts — "ventas de 45,230", "valor de 78,945"
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const dePat = /(?:de|por|con|=)\s*\$?\s*([\d,]+\.?\d*)/gi;
+            while ((m = dePat.exec(text)) !== null) {
+                const num = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
+            }
+        }
+
+        // Pattern 2: if not enough, extract all significant numbers (≥10)
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            // Strip currency for clean extraction
+            const stripped = text.replace(/[$€¥£₡₿]\s*/g, '');
+            const allNums = stripped.match(/\d[\d,]*\.?\d*/g) || [];
+            // Collect percentages to exclude from data
+            const pctSet = new Set();
+            const pctRe = /([\d,.]+)\s*%/g;
+            let pm;
+            while ((pm = pctRe.exec(text)) !== null) {
+                pctSet.add(parseFloat(pm[1].replace(/,/g, '')));
+            }
             for (const raw of allNums) {
                 const num = parseFloat(raw.replace(/,/g, ''));
-                if (Number.isFinite(num) && num >= 100) dataNumbers.push(num);
+                if (!Number.isFinite(num) || num < 10) continue;
+                if (pctSet.has(num)) continue;                         // skip percentages
+                if (num >= 1900 && num <= 2100 && Number.isInteger(num)) continue; // skip years
+                dataNumbers.push(num);
             }
         }
 
@@ -1415,6 +1453,99 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         const match2 = text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i);
         if (match2) return parseInt(match2[1]);
         return null;
+    }
+
+    /**
+     * Fallback strategy: extract ALL significant numbers from the text,
+     * compute their sum, and optionally apply a percentage found in the text.
+     * More aggressive than _tryWordProblem — used as a last-resort catch-all.
+     * @private
+     */
+    _trySumFallback(text) {
+        const lower = text.toLowerCase();
+        // Only apply when the question clearly asks for a numeric result
+        if (!/(?:total|suma|calcula|resultado|¿cuánto|cuántos|monto|costo|precio|valor)/i.test(lower)) return null;
+
+        // Strip currency symbols for clean extraction
+        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
+
+        // Collect percentage values to exclude from data numbers
+        const pctValues = new Set();
+        const pctRe = /([\d,.]+)\s*%/g;
+        let pm;
+        while ((pm = pctRe.exec(text)) !== null) {
+            pctValues.add(parseFloat(pm[1].replace(/,/g, '')));
+        }
+
+        // Extract all numbers
+        const numRe = /\d[\d,]*\.?\d*/g;
+        let nm;
+        const candidates = [];
+        while ((nm = numRe.exec(cleaned)) !== null) {
+            const val = parseFloat(nm[0].replace(/,/g, ''));
+            if (!Number.isFinite(val)) continue;
+            if (pctValues.has(val)) continue;                                    // skip percentages
+            if (val <= 5) continue;                                              // skip tiny counts
+            if (val >= 1900 && val <= 2100 && Number.isInteger(val)) continue;   // skip years
+            candidates.push(val);
+        }
+
+        if (candidates.length < 2) return null;
+
+        // Separate data numbers from metadata by magnitude clustering
+        const sorted = [...candidates].sort((a, b) => a - b);
+        const largest = sorted[sorted.length - 1];
+        const dataNumbers = sorted.filter(n => n >= largest * 0.001 && n >= 10);
+        if (dataNumbers.length < 2) return null;
+
+        let result;
+        const steps = [];
+
+        if (/promedio|media\b/i.test(lower)) {
+            const sum = dataNumbers.reduce((a, b) => a + b, 0);
+            result = sum / dataNumbers.length;
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+        } else {
+            result = dataNumbers.reduce((a, b) => a + b, 0);
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+        }
+
+        // Apply percentage if present
+        if (pctValues.size > 0) {
+            const pct = [...pctValues][0];
+            if (Number.isFinite(pct) && pct > 0 && pct <= 200) {
+                const prev = result;
+                if (/descuento/i.test(lower)) {
+                    result *= (1 - pct / 100);
+                    steps.push(`Descuento ${pct}%: ${prev} × ${(1 - pct / 100)} = ${result}`);
+                } else if (/impuesto|iva|incremento|aumento|interés|recargo/i.test(lower)) {
+                    result *= (1 + pct / 100);
+                    steps.push(`+ ${pct}%: ${prev} × ${(1 + pct / 100)} = ${result}`);
+                }
+            }
+        }
+
+        // Look for a rate/cost multiplier
+        const ratePatterns = [
+            /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
+            /(?:costo|precio|tarifa|tasa|factor)\s+(?:de\s+(?:\w+\s+)*)?(?:de\s*)?\$?([\d,.]+)/i,
+        ];
+        for (const re of ratePatterns) {
+            const rm = text.match(re);
+            if (rm) {
+                const rate = parseFloat(rm[1].replace(/,/g, ''));
+                if (Number.isFinite(rate) && rate > 0 && rate < result) {
+                    const prev = result;
+                    result *= rate;
+                    steps.push(`Multiplicación: ${prev} × ${rate} = ${result}`);
+                    break;
+                }
+            }
+        }
+
+        if (steps.length === 0) return null;
+        return { value: result, steps };
     }
 
     /** @private Extract complete JSON objects from a potentially truncated array string */

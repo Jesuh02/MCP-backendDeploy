@@ -1375,17 +1375,21 @@ Responde de forma clara y constructiva.`;
         if (explicit !== null) return explicit;
         const wordProblem = this._tryMathWordProblem(text);
         if (wordProblem !== null) return wordProblem;
+        const sumFallback = this._tryMathSumFallback(text);
+        if (sumFallback !== null) return sumFallback;
         return null;
     }
 
     /** @private Parse and evaluate explicit arithmetic chains */
     _tryExplicitMathArithmetic(text) {
+        // Strip currency symbols so "$45,230 + $78,945" matches as arithmetic
+        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
         const numberPat = '\\d[\\d,]*\\.?\\d*';
         const opPat = '[+\\-×*÷/]';
         const exprRegex = new RegExp(
             `(${numberPat})\\s*(${opPat})\\s*(${numberPat}(?:\\s*${opPat}\\s*${numberPat})*)`, 'g'
         );
-        const match = exprRegex.exec(text);
+        const match = exprRegex.exec(cleaned);
         if (!match) return null;
         const tokens = match[0].split(/\s*([+\-×*÷/])\s*/).filter(t => t.trim());
         let result = parseFloat(tokens[0].replace(/,/g, ''));
@@ -1406,7 +1410,7 @@ Responde de forma clara y constructiva.`;
             steps.push(`${prev} ${op} ${num} = ${result}`);
         }
         // Follow-up operation
-        const after = text.substring(text.indexOf(match[0]) + match[0].length);
+        const after = cleaned.substring(cleaned.indexOf(match[0]) + match[0].length);
         const multMatch = after.match(/(?:multiplic[aá]r?\s+por|×|costo\s+(?:de\s+\w+\s+)*(?:de\s*)?\$?|precio\s+(?:de|por)\s*\$?)\s*([\d,.]+)/i);
         if (multMatch) {
             const factor = parseFloat(multMatch[1].replace(/,/g, ''));
@@ -1431,7 +1435,7 @@ Responde de forma clara y constructiva.`;
     /** @private Parse word problems with sum + rate/percentage */
     _tryMathWordProblem(text) {
         const lower = text.toLowerCase();
-        if (!/total|suma|calcula|acumulad|promedio|media/i.test(lower)) return null;
+        if (!/total|suma|calcula|acumulad|promedio|media|¿cuánto|cuántos|monto|resultado/i.test(lower)) return null;
         const dataNumbers = [];
         const labeledPattern = /(?:[a-zA-ZáéíóúñÁÉÍÓÚÑ][a-zA-ZáéíóúñÁÉÍÓÚÑ\s]*[:=]\s*\$?)([\d,]+\.?\d*)/gi;
         let m;
@@ -1439,12 +1443,41 @@ Responde de forma clara y constructiva.`;
             const num = parseFloat(m[1].replace(/,/g, ''));
             if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
         }
+        // Pattern 1b: currency amounts — "$45,230"
         if (dataNumbers.length < 2) {
             dataNumbers.length = 0;
-            const allNums = text.match(/[\d,]+\.?\d*/g) || [];
+            const currencyPat = /\$\s?([\d,]+\.?\d*)/gi;
+            while ((m = currencyPat.exec(text)) !== null) {
+                const num = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 1) dataNumbers.push(num);
+            }
+        }
+        // Pattern 1c: "de" amounts — "ventas de 45,230"
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const dePat = /(?:de|por|con|=)\s*\$?\s*([\d,]+\.?\d*)/gi;
+            while ((m = dePat.exec(text)) !== null) {
+                const num = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
+            }
+        }
+        // Pattern 2: all significant numbers (≥10)
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const stripped = text.replace(/[$€¥£₡₿]\s*/g, '');
+            const allNums = stripped.match(/\d[\d,]*\.?\d*/g) || [];
+            const pctSet = new Set();
+            const pctRe = /([\d,.]+)\s*%/g;
+            let pm;
+            while ((pm = pctRe.exec(text)) !== null) {
+                pctSet.add(parseFloat(pm[1].replace(/,/g, '')));
+            }
             for (const raw of allNums) {
                 const num = parseFloat(raw.replace(/,/g, ''));
-                if (Number.isFinite(num) && num >= 100) dataNumbers.push(num);
+                if (!Number.isFinite(num) || num < 10) continue;
+                if (pctSet.has(num)) continue;
+                if (num >= 1900 && num <= 2100 && Number.isInteger(num)) continue;
+                dataNumbers.push(num);
             }
         }
         if (dataNumbers.length < 2) return null;
@@ -1497,6 +1530,87 @@ Responde de forma clara y constructiva.`;
         const match2 = text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i);
         if (match2) return parseInt(match2[1]);
         return null;
+    }
+
+    /**
+     * Fallback: extract ALL significant numbers, compute sum + optional percentage.
+     * @private
+     */
+    _tryMathSumFallback(text) {
+        const lower = text.toLowerCase();
+        if (!/(?:total|suma|calcula|resultado|¿cuánto|cuántos|monto|costo|precio|valor)/i.test(lower)) return null;
+
+        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
+        const pctValues = new Set();
+        const pctRe = /([\d,.]+)\s*%/g;
+        let pm;
+        while ((pm = pctRe.exec(text)) !== null) {
+            pctValues.add(parseFloat(pm[1].replace(/,/g, '')));
+        }
+
+        const numRe = /\d[\d,]*\.?\d*/g;
+        let nm;
+        const candidates = [];
+        while ((nm = numRe.exec(cleaned)) !== null) {
+            const val = parseFloat(nm[0].replace(/,/g, ''));
+            if (!Number.isFinite(val)) continue;
+            if (pctValues.has(val)) continue;
+            if (val <= 5) continue;
+            if (val >= 1900 && val <= 2100 && Number.isInteger(val)) continue;
+            candidates.push(val);
+        }
+        if (candidates.length < 2) return null;
+
+        const sorted = [...candidates].sort((a, b) => a - b);
+        const largest = sorted[sorted.length - 1];
+        const dataNumbers = sorted.filter(n => n >= largest * 0.001 && n >= 10);
+        if (dataNumbers.length < 2) return null;
+
+        let result;
+        const steps = [];
+        if (/promedio|media\b/i.test(lower)) {
+            const sum = dataNumbers.reduce((a, b) => a + b, 0);
+            result = sum / dataNumbers.length;
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+        } else {
+            result = dataNumbers.reduce((a, b) => a + b, 0);
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+        }
+
+        if (pctValues.size > 0) {
+            const pct = [...pctValues][0];
+            if (Number.isFinite(pct) && pct > 0 && pct <= 200) {
+                const prev = result;
+                if (/descuento/i.test(lower)) {
+                    result *= (1 - pct / 100);
+                    steps.push(`Descuento ${pct}%: ${prev} × ${(1 - pct / 100)} = ${result}`);
+                } else if (/impuesto|iva|incremento|aumento|interés|recargo/i.test(lower)) {
+                    result *= (1 + pct / 100);
+                    steps.push(`+ ${pct}%: ${prev} × ${(1 + pct / 100)} = ${result}`);
+                }
+            }
+        }
+
+        const ratePatterns = [
+            /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
+            /(?:costo|precio|tarifa|tasa|factor)\s+(?:de\s+(?:\w+\s+)*)?(?:de\s*)?\$?([\d,.]+)/i,
+        ];
+        for (const re of ratePatterns) {
+            const rm = text.match(re);
+            if (rm) {
+                const rate = parseFloat(rm[1].replace(/,/g, ''));
+                if (Number.isFinite(rate) && rate > 0 && rate < result) {
+                    const prev = result;
+                    result *= rate;
+                    steps.push(`Multiplicación: ${prev} × ${rate} = ${result}`);
+                    break;
+                }
+            }
+        }
+
+        if (steps.length === 0) return null;
+        return { value: result, steps };
     }
 
     _normalizeQuizText(text = '') {
