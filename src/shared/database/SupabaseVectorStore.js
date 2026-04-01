@@ -25,6 +25,7 @@ export class SupabaseVectorStore extends IVectorStore {
         this.supabase = SupabaseService.getInstance();
         this.tableName = 'rag_documents';
         this._initialized = false;
+        this._dimensionMismatch = false; // true when migration failed — skip embedding on inserts
     }
 
     /**
@@ -203,7 +204,7 @@ export class SupabaseVectorStore extends IVectorStore {
 
             const record = {
                 content: this._sanitizeText(content),
-                embedding: `[${embedding.join(',')}]`, // Format for pgvector
+                embedding: this._dimensionMismatch ? null : `[${embedding.join(',')}]`, // Skip vector if dimension mismatch was detected
                 metadata: JSON.stringify(metadata).replace(/\u0000/g, ''),
                 course_id: validatedFKs.course_id,
                 topic_id: validatedFKs.topic_id,
@@ -228,19 +229,32 @@ export class SupabaseVectorStore extends IVectorStore {
                     logger.warn(`⚠️ Vector dimension mismatch detected: ${error.message}. Attempting auto-migration...`);
                     const targetDim = embedding.length;
 
-                    try {
-                        await this._migrateTableDimensions(targetDim);
-                        // Retry insertion after migration
-                        const retry = await this.supabase.client
-                            .from(this.tableName)
-                            .insert([record])
-                            .select();
-                        if (retry.error) throw retry.error;
-                        return retry.data[0];
-                    } catch (migrateError) {
-                        logger.error('❌ Auto-migration failed:', migrateError);
-                        // Fall through to throw/fallback
+                    if (!this._dimensionMismatch) {
+                        try {
+                            await this._migrateTableDimensions(targetDim);
+                            // Retry insertion after migration
+                            const retry = await this.supabase.client
+                                .from(this.tableName)
+                                .insert([record])
+                                .select();
+                            if (retry.error) throw retry.error;
+                            return retry.data[0];
+                        } catch (migrateError) {
+                            logger.error('❌ Auto-migration failed:', migrateError);
+                            this._dimensionMismatch = true;
+                        }
                     }
+
+                    // Migration failed or was already attempted — store content WITHOUT embedding
+                    // so the text is still available for text-based / JS-fallback search
+                    logger.warn('⚠️ Storing document WITHOUT embedding (dimension mismatch). Text content will still be usable.');
+                    const noEmbedRecord = { ...record, embedding: null };
+                    const fallback = await this.supabase.client
+                        .from(this.tableName)
+                        .insert([noEmbedRecord])
+                        .select();
+                    if (!fallback.error) return fallback.data[0];
+                    // If even this fails, fall through to FK/generic error handling
                 }
 
                 // HANDLE FOREIGN KEY VIOLATIONS (Code 23503)
@@ -324,6 +338,20 @@ export class SupabaseVectorStore extends IVectorStore {
             return false;
         };
 
+        // Step 0: Check if exec_sql / execute_sql RPCs even work with a simple probe
+        const probeOk = await execSQL('SELECT 1;', 'RPC probe');
+        if (!probeOk) {
+            this._dimensionMismatch = true;
+            logger.error(
+                `❌ Cannot execute SQL via RPC — exec_sql/execute_sql RPCs are not available in this Supabase project.\n` +
+                `   Please run the following SQL manually in Supabase SQL Editor:\n\n` +
+                `   ALTER TABLE rag_documents ALTER COLUMN embedding TYPE vector(${newDim});\n\n` +
+                `   -- Then recreate the search function:\n` +
+                `   -- (see migration SQL in docs/migration_chat_full_persistence.sql)\n`
+            );
+            throw new Error(`Migration failed: exec_sql/execute_sql RPCs unavailable. Run ALTER TABLE manually in Supabase SQL Editor.`);
+        }
+
         // Step 1a: Try a direct ALTER TYPE first (works when no data or cast succeeds)
         const altered = await execSQL(
             `ALTER TABLE rag_documents ALTER COLUMN embedding TYPE vector(${newDim});`,
@@ -406,11 +434,14 @@ export class SupabaseVectorStore extends IVectorStore {
             // searches, causing the system to return wrong content.
             const validatedFKs = await this._validateForeignKeys(metadata);
 
+            // If dimension mismatch was flagged, skip embedding to avoid repeated failures
+            const safeEmbedding = (this._dimensionMismatch || !embedding) ? null : `[${embedding.join(',')}]`;
+
             const { data, error } = await this.supabase.client
                 .from('rag_documents')
                 .insert([{
                     content: this._sanitizeText(content),
-                    embedding: embedding ? `[${embedding.join(',')}]` : null,
+                    embedding: safeEmbedding,
                     metadata: JSON.stringify(metadata).replace(/\u0000/g, ''),
                     file_name: metadata.fileName || null,
                     file_type: metadata.fileType || metadata.originalFileType || null,
@@ -426,13 +457,37 @@ export class SupabaseVectorStore extends IVectorStore {
                 .select();
 
             if (error) {
+                // Dimension mismatch even in fallback — try without embedding
+                if (!this._dimensionMismatch && error.message && (error.message.includes('dimensions') || error.message.includes('22000'))) {
+                    this._dimensionMismatch = true;
+                    logger.warn('⚠️ Dimension mismatch in fallback. Retrying without embedding...');
+                    const { data: noVecData, error: noVecErr } = await this.supabase.client
+                        .from('rag_documents')
+                        .insert([{
+                            content: this._sanitizeText(content),
+                            embedding: null,
+                            metadata: JSON.stringify(metadata).replace(/\u0000/g, ''),
+                            file_name: metadata.fileName || null,
+                            file_type: metadata.fileType || metadata.originalFileType || null,
+                            chunk_index: metadata.chunkIndex != null ? metadata.chunkIndex : 0,
+                            total_chunks: metadata.totalChunks != null ? metadata.totalChunks : 1,
+                            created_at: new Date().toISOString(),
+                            updated_at: new Date().toISOString(),
+                            course_id: validatedFKs.course_id,
+                            topic_id: validatedFKs.topic_id,
+                            task_id: validatedFKs.task_id,
+                            content_item_id: validatedFKs.content_item_id
+                        }])
+                        .select();
+                    if (!noVecErr) return noVecData[0];
+                }
                 // If FK validation passed but insert still fails, try with nullified FKs as absolute last resort
                 logger.warn(`⚠️ Fallback insert with validated FKs failed: ${error.message}. Trying with null FKs (last resort)...`);
                 const { data: lastData, error: lastError } = await this.supabase.client
                     .from('rag_documents')
                     .insert([{
                         content: this._sanitizeText(content),
-                        embedding: embedding ? `[${embedding.join(',')}]` : null,
+                        embedding: safeEmbedding,
                         metadata: JSON.stringify(metadata).replace(/\u0000/g, ''),
                         file_name: metadata.fileName || null,
                         file_type: metadata.fileType || metadata.originalFileType || null,
