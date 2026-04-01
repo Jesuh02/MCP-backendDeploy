@@ -369,6 +369,41 @@ export class ProgressController {
         } catch (err) { next(err); }
     };
 
+    setCourseEnrollmentStatus = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const courseId = parseInt(req.params.courseId);
+            if (!userId || isNaN(userId) || userId <= 0 || !courseId || isNaN(courseId) || courseId <= 0) {
+                return res.status(400).json({ success: false, error: 'userId and courseId must be positive integers' });
+            }
+            const status = req.body?.status;
+            if (!status || !['activo', 'inactivo'].includes(status)) {
+                return res.status(400).json({ success: false, error: 'status must be "activo" or "inactivo"' });
+            }
+            const result = await this.progressService.setCourseEnrollmentStatus(userId, courseId, status);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    setSubjectEnrollmentStatus = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.params.userId);
+            const courseId = parseInt(req.params.courseId);
+            const subjectId = parseInt(req.params.subjectId);
+            if (!userId || isNaN(userId) || userId <= 0 || !courseId || isNaN(courseId) || courseId <= 0 || !subjectId || isNaN(subjectId) || subjectId <= 0) {
+                return res.status(400).json({ success: false, error: 'userId, courseId and subjectId must be positive integers' });
+            }
+            const status = req.body?.status;
+            if (!status || !['activo', 'inactivo'].includes(status)) {
+                return res.status(400).json({ success: false, error: 'status must be "activo" or "inactivo"' });
+            }
+            const result = await this.progressService.setSubjectEnrollmentStatus(userId, courseId, subjectId, status);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     blockSubjectAccess = async(req, res, next) => {
         try {
             const { userId, courseId, subjectId, reason } = req.body || {};

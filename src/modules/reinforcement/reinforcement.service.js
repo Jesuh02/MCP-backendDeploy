@@ -1360,7 +1360,8 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
             /precio\s+(?:de|por|unitario|cada)?\s*\$?([\d,.]+)/i,
             /cada\s+\w+\s+(?:tiene\s+)?(?:un\s+)?(?:costo|precio|valor)\s+(?:de\s*)?\$?([\d,.]+)/i,
             /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
-            /(?:tasa|tarifa|factor)\s+(?:de)?\s*\$?([\d,.]+)/i,
+            /(?:tasa|tarifa|factor|coeficiente)\s+(?:de\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+            /(?:se\s+)?aplic[aá]\s+(?:un\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
             /\$\s*([\d,.]+)\s*(?:por|\/)\s*(?:cada|unidad|GB|kg|litro|km|hora)/i,
         ];
         for (const re of ratePatterns) {
@@ -1389,6 +1390,17 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                     result = result * (1 + pct / 100);
                     steps.push(`+ ${pct}%: ${prev} × ${1 + pct / 100} = ${result}`);
                 }
+            }
+        }
+
+        // Look for post-operation addition (e.g. "se agrega un tráfico de respaldo de 5,000,000.500")
+        const addMatch = text.match(/(?:se\s+)?(?:agrega[rn]?|añad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?)\s+(?:\S+\s+){0,8}?([\d,]+\.?\d*)/i);
+        if (addMatch) {
+            const addVal = parseFloat(addMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(addVal) && addVal > 0 && !dataNumbers.includes(addVal)) {
+                const prev = result;
+                result += addVal;
+                steps.push(`Adición: ${prev} + ${addVal} = ${result}`);
             }
         }
 
@@ -1529,7 +1541,8 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         // Look for a rate/cost multiplier
         const ratePatterns = [
             /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
-            /(?:costo|precio|tarifa|tasa|factor)\s+(?:de\s+(?:\w+\s+)*)?(?:de\s*)?\$?([\d,.]+)/i,
+            /(?:costo|precio|tarifa|tasa|factor|coeficiente)\s+(?:de\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+            /(?:se\s+)?aplic[aá]\s+(?:un\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
         ];
         for (const re of ratePatterns) {
             const rm = text.match(re);
@@ -1541,6 +1554,17 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                     steps.push(`Multiplicación: ${prev} × ${rate} = ${result}`);
                     break;
                 }
+            }
+        }
+
+        // Look for post-operation addition
+        const addMatchFb = text.match(/(?:se\s+)?(?:agrega[rn]?|añad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?)\s+(?:\S+\s+){0,8}?([\d,]+\.?\d*)/i);
+        if (addMatchFb) {
+            const addVal = parseFloat(addMatchFb[1].replace(/,/g, ''));
+            if (Number.isFinite(addVal) && addVal > 0 && !candidates.includes(addVal)) {
+                const prev = result;
+                result += addVal;
+                steps.push(`Adición: ${prev} + ${addVal} = ${result}`);
             }
         }
 
