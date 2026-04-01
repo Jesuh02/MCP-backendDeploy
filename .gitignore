@@ -105,3 +105,4 @@ scripts/test_incat_login.js
 scripts/cleanup_rag_and_questions.sql
 scripts/fix_pre_enrollments_unique_constraint.sql
 scripts/migration_fix_enrollment_blocks.sql
+docs/migration_subject_enrollment_status.sql

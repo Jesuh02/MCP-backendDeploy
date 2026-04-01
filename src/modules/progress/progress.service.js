@@ -1031,6 +1031,30 @@ export class ProgressDomainService {
         return Result.ok({ ...updated, message: 'Acceso al curso restaurado' });
     }
 
+    // --- Enrollment Status Toggle (activar / inactivar) ---
+
+    /**
+     * Admin: toggle enrollment_status for a course ('activo' <-> 'inactivo').
+     */
+    async setCourseEnrollmentStatus(userId, courseId, status) {
+        if (!['activo', 'inactivo'].includes(status)) {
+            return Result.fail(new ForbiddenError('Status must be "activo" or "inactivo"'));
+        }
+        await this.progressRepo.setCourseEnrollmentStatus(userId, courseId, status);
+        return Result.ok({ message: `Enrollment status del curso actualizado a '${status}'` });
+    }
+
+    /**
+     * Admin: toggle enrollment_status for a subject ('activo' <-> 'inactivo').
+     */
+    async setSubjectEnrollmentStatus(userId, courseId, subjectId, status) {
+        if (!['activo', 'inactivo'].includes(status)) {
+            return Result.fail(new ForbiddenError('Status must be "activo" or "inactivo"'));
+        }
+        await this.progressRepo.setSubjectEnrollmentStatus(userId, courseId, subjectId, status);
+        return Result.ok({ message: `Enrollment status de la materia actualizado a '${status}'` });
+    }
+
     // â”€â”€â”€ Subject Access Blocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**

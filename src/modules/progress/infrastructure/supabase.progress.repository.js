@@ -264,7 +264,7 @@ export class SupabaseProgressRepository {
             // Persist status ('Ganado'/'Perdido') — omitting this caused estado to never update in DB
             ...(progressData.status ? { estado: progressData.status } : {}),
             ...(isSubjectLevel ? { materia_id: Number(progressData.subjectId) } : {}),
-            ...(!isSubjectLevel && progressData.enrollment_status ? { enrollment_status: progressData.enrollment_status } : {}),
+            ...(progressData.enrollment_status ? { enrollment_status: progressData.enrollment_status } : {}),
         };
 
         // Manual upsert: avoid relying on DB unique constraint (ON CONFLICT) which may not exist.
@@ -1344,6 +1344,36 @@ export class SupabaseProgressRepository {
             }
         }
 
+        // Fetch enrollment_status from progreso_curso for each user-course
+        // Key: "userId-courseId" → enrollment_status
+        const courseEnrollStatusMap = new Map();
+        if (userIds.length > 0 && courseIds.length > 0) {
+            const { data: cpRows } = await this.client
+                .from(this._courseProgressTable())
+                .select('usuario_estudiante, curso_id, enrollment_status')
+                .in('usuario_estudiante', userIds)
+                .in('curso_id', courseIds);
+            for (const r of (cpRows || [])) {
+                courseEnrollStatusMap.set(`${Number(r.usuario_estudiante)}-${Number(r.curso_id)}`, r.enrollment_status || 'activo');
+            }
+        }
+
+        // Fetch enrollment_status from progreso_materia for each user-course-subject
+        // Key: "userId-subjectId" → enrollment_status
+        const subjectEnrollStatusMap = new Map();
+        if (userIds.length > 0 && courseIds.length > 0) {
+            const { data: spRows } = await this.client
+                .from(this._subjectProgressTable())
+                .select('usuario_estudiante, curso_id, materia_id, enrollment_status')
+                .in('usuario_estudiante', userIds)
+                .in('curso_id', courseIds);
+            for (const r of (spRows || [])) {
+                if (r.materia_id) {
+                    subjectEnrollStatusMap.set(`${Number(r.usuario_estudiante)}-${Number(r.materia_id)}`, r.enrollment_status || 'activo');
+                }
+            }
+        }
+
         return data.map(row => {
             const user    = usersById.get(Number(row.user_id)) || null;
             const persona = user?.persona_id ? personasById.get(Number(user.persona_id)) || null : null;
@@ -1351,6 +1381,11 @@ export class SupabaseProgressRepository {
             const uid     = Number(row.user_id);
             const cid     = Number(row.course_id);
             const blockedSet = blockedByUserCourse.get(`${uid}-${cid}`) || new Set();
+            const courseEnrollmentStatus = courseEnrollStatusMap.get(`${uid}-${cid}`) || 'activo';
+            const subjects = (subjectsByCourse.get(cid) || []).map(s => ({
+                ...s,
+                enrollmentStatus: subjectEnrollStatusMap.get(`${uid}-${s.id}`) || 'activo',
+            }));
             return {
                 ...this._mapPreEnrollmentRecord(row, {
                     username:       user?.username || null,
@@ -1360,7 +1395,8 @@ export class SupabaseProgressRepository {
                     courseName:     course?.title || null,
                     revokeReason:   row.revoke_reason || null,
                 }),
-                subjects: subjectsByCourse.get(cid) || [],
+                courseEnrollmentStatus,
+                subjects,
                 blockedSubjectIds: [...blockedSet],
             };
         });
@@ -1415,6 +1451,41 @@ export class SupabaseProgressRepository {
             .update({ enrollment_status: 'activo', ultima_calculada_en: now })
             .eq('usuario_estudiante', userId)
             .eq('curso_id', courseId);
+        return true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  ENROLLMENT STATUS TOGGLE (activar / inactivar curso o materia)
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Set enrollment_status for a course-level progress record.
+     * @param {'activo'|'inactivo'} status
+     */
+    async setCourseEnrollmentStatus(userId, courseId, status) {
+        const now = new Date().toISOString();
+        const { error } = await this.client
+            .from(this._courseProgressTable())
+            .update({ enrollment_status: status, ultima_calculada_en: now })
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId);
+        if (error) throw new Error(error.message);
+        return true;
+    }
+
+    /**
+     * Set enrollment_status for a subject-level progress record.
+     * @param {'activo'|'inactivo'} status
+     */
+    async setSubjectEnrollmentStatus(userId, courseId, subjectId, status) {
+        const now = new Date().toISOString();
+        const { error } = await this.client
+            .from(this._subjectProgressTable())
+            .update({ enrollment_status: status, ultima_calculada_en: now })
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId)
+            .eq('materia_id', Number(subjectId));
+        if (error) throw new Error(error.message);
         return true;
     }
 
