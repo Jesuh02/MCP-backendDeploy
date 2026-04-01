@@ -131,17 +131,25 @@ export class CourseDomainService {
         };
 
         if (includeEnrollmentCourses && this.progressRepo) {
-            const [progressCourseIds, approvedEnrollmentCourseIds] = await Promise.all([
+            const [progressCourseIds, approvedEnrollmentCourseIds, revokedCourseIds] = await Promise.all([
                 typeof this.progressRepo.findEnrolledCourseIds === 'function'
                     ? this.progressRepo.findEnrolledCourseIds(numericUserId)
                     : Promise.resolve([]),
                 typeof this.progressRepo.findApprovedEnrollmentCourseIds === 'function'
                     ? this.progressRepo.findApprovedEnrollmentCourseIds(numericUserId)
                     : Promise.resolve([]),
+                typeof this.progressRepo.findRevokedEnrollmentCourseIds === 'function'
+                    ? this.progressRepo.findRevokedEnrollmentCourseIds(numericUserId)
+                    : Promise.resolve([]),
             ]);
 
+            const revokedSet = new Set((revokedCourseIds || []).map(Number));
+
             for (const courseId of approvedEnrollmentCourseIds || []) pushCourseId(courseId);
-            for (const courseId of progressCourseIds || []) pushCourseId(courseId);
+            // Exclude from progreso_curso any course whose enrollment was explicitly revoked
+            for (const courseId of progressCourseIds || []) {
+                if (!revokedSet.has(Number(courseId))) pushCourseId(courseId);
+            }
         }
 
         if (includeCollaboratorCourses && this.collaboratorRepo && typeof this.collaboratorRepo.findByUser === 'function') {
