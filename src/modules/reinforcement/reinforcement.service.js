@@ -1117,6 +1117,306 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MATH VERIFICATION — Programmatic answer validation
+    // LLMs are notoriously unreliable at multi-digit arithmetic.
+    // These methods recompute the answer using JavaScript and fix errors.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Verifies and fixes math in a generated question by recomputing the answer
+     * programmatically. Returns the corrected question, or null to reject it.
+     * @private
+     */
+    _verifyMathAnswer(q) {
+        if (!q) return q;
+        const text = q.question;
+        const lower = (text || '').toLowerCase();
+
+        // Only verify questions that involve numeric computation
+        const mathSignals = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|¿cuánto|cuántos|cuántas|promedio|media|porcentaje/i;
+        const hasSignificantNumbers = /\d{3,}/.test(text.replace(/,/g, ''));
+        if (!mathSignals.test(lower) && !hasSignificantNumbers) return q;
+
+        try {
+            const result = this._computeExpectedAnswer(text);
+            if (result === null) return q; // Can't reliably compute — pass through
+
+            const requestedDecimals = this._extractRequestedDecimals(text);
+            let finalAnswer = result.value;
+            if (requestedDecimals !== null) {
+                finalAnswer = parseFloat(finalAnswer.toFixed(requestedDecimals));
+            } else if (!Number.isInteger(finalAnswer)) {
+                finalAnswer = parseFloat(finalAnswer.toFixed(2));
+            }
+
+            if (q.type === 'fill_in_blank') {
+                const currentAnswer = parseFloat(String(q.correctAnswer).replace(/,/g, ''));
+                if (!Number.isFinite(currentAnswer)) return q;
+
+                const tolerance = Math.max(Math.abs(finalAnswer) * 0.001, 0.01);
+                if (Math.abs(currentAnswer - finalAnswer) > tolerance) {
+                    console.warn(`🔧 [MathVerify] CORRECTED fill_in_blank: "${text.substring(0, 100)}..." LLM="${q.correctAnswer}" → Correct="${finalAnswer}"`);
+                    q.correctAnswer = String(finalAnswer);
+                    q.explanation = `${result.steps.join('. ')}. Resultado final: ${finalAnswer}.`;
+                }
+            } else if (q.type === 'multiple_choice') {
+                // Parse numeric value from each option
+                const optionValues = q.options.map(opt => {
+                    const nums = opt.match(/[\d,]+\.?\d*/g);
+                    if (!nums) return NaN;
+                    const parsed = nums.map(n => parseFloat(n.replace(/,/g, ''))).filter(Number.isFinite);
+                    return parsed.length > 0 ? parsed.reduce((a, b) => Math.abs(a) > Math.abs(b) ? a : b) : NaN;
+                });
+
+                let closestIdx = -1;
+                let closestDiff = Infinity;
+                for (let i = 0; i < optionValues.length; i++) {
+                    if (!Number.isFinite(optionValues[i])) continue;
+                    const diff = Math.abs(optionValues[i] - finalAnswer);
+                    if (diff < closestDiff) {
+                        closestDiff = diff;
+                        closestIdx = i;
+                    }
+                }
+
+                const tolerance = Math.max(Math.abs(finalAnswer) * 0.001, 0.01);
+                if (closestIdx >= 0 && closestDiff <= tolerance) {
+                    if (closestIdx !== q.correctIndex) {
+                        console.warn(`🔧 [MathVerify] CORRECTED multiple_choice: "${text.substring(0, 100)}..." correctIndex ${q.correctIndex}→${closestIdx} (computed=${finalAnswer})`);
+                        q.correctIndex = closestIdx;
+                        q.explanation = `${result.steps.join('. ')}. Resultado final: ${finalAnswer}.`;
+                    }
+                } else {
+                    // No option matches the computed answer — reject the question
+                    console.warn(`🔧 [MathVerify] REJECTED multiple_choice: "${text.substring(0, 100)}..." No option ≈ computed=${finalAnswer} (opts: ${optionValues.join(', ')})`);
+                    return null;
+                }
+            }
+        } catch (err) {
+            // Non-blocking: if verification fails, let the question through unchanged
+            console.warn(`[MathVerify] Error (non-blocking): ${err.message}`);
+        }
+        return q;
+    }
+
+    /**
+     * Attempt to compute the expected math answer from question text.
+     * Returns { value: number, steps: string[] } or null.
+     * @private
+     */
+    _computeExpectedAnswer(text) {
+        // Strategy 1: Explicit inline arithmetic (e.g. "12,345 + 9,876 + ...")
+        const explicit = this._tryExplicitArithmetic(text);
+        if (explicit !== null) return explicit;
+
+        // Strategy 2: Word problem — sum data numbers, apply rate/percentage
+        const wordProblem = this._tryWordProblem(text);
+        if (wordProblem !== null) return wordProblem;
+
+        return null;
+    }
+
+    /**
+     * Parse and evaluate explicit arithmetic: "12,345,678.45 + 9,876,543.21 + ..."
+     * Supports +, -, ×, *, ÷, /
+     * @private
+     */
+    _tryExplicitArithmetic(text) {
+        // Match chains: number op number [op number...] where op ∈ {+, -, ×, *, ÷, /}
+        const numberPat = '\\d[\\d,]*\\.?\\d*';
+        const opPat = '[+\\-×*÷/]';
+        const exprRegex = new RegExp(
+            `(${numberPat})\\s*(${opPat})\\s*(${numberPat}(?:\\s*${opPat}\\s*${numberPat})*)`, 'g'
+        );
+        const match = exprRegex.exec(text);
+        if (!match) return null;
+
+        const expr = match[0];
+        const tokens = expr.split(/\s*([+\-×*÷/])\s*/).filter(t => t.trim());
+
+        let result = parseFloat(tokens[0].replace(/,/g, ''));
+        if (!Number.isFinite(result)) return null;
+
+        const steps = [];
+        for (let i = 1; i < tokens.length; i += 2) {
+            const op = tokens[i];
+            const num = parseFloat((tokens[i + 1] || '').replace(/,/g, ''));
+            if (!Number.isFinite(num)) return null;
+
+            const prev = result;
+            switch (op) {
+                case '+': result += num; break;
+                case '-': result -= num; break;
+                case '×': case '*': result *= num; break;
+                case '÷': case '/': if (num === 0) return null; result /= num; break;
+                default: return null;
+            }
+            steps.push(`${prev} ${op} ${num} = ${result}`);
+        }
+
+        // Check for follow-up operation in the remaining text
+        const afterExpr = text.substring(text.indexOf(match[0]) + match[0].length);
+        const followUp = this._detectFollowUpOperation(afterExpr);
+        if (followUp) {
+            const prev = result;
+            result = followUp.apply(result);
+            steps.push(followUp.describe(prev, result));
+        }
+
+        return { value: result, steps };
+    }
+
+    /**
+     * Parse word problems: extract data numbers, detect operations (sum, multiply).
+     * Handles "calcula el total de X, Y, Z. Luego multiplica por W" patterns.
+     * @private
+     */
+    _tryWordProblem(text) {
+        const lower = text.toLowerCase();
+
+        // Must look like a sum/total problem
+        if (!/total|suma|calcula|acumulad|promedio|media/i.test(lower)) return null;
+
+        // Extract "data" numbers — numbers associated with labels (Nodo A: 12345, Sucursal: 9876, etc.)
+        const dataNumbers = [];
+        // Pattern 1: labeled numbers — "Label: $12,345,678.45"
+        // Note: use [a-zA-Z...] instead of \w to avoid matching digits in the label
+        const labeledPattern = /(?:[a-zA-ZáéíóúñÁÉÍÓÚÑ][a-zA-ZáéíóúñÁÉÍÓÚÑ\s]*[:=]\s*\$?)([\d,]+\.?\d*)/gi;
+        let m;
+        while ((m = labeledPattern.exec(text)) !== null) {
+            const num = parseFloat(m[1].replace(/,/g, ''));
+            if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
+        }
+
+        // Pattern 2: if not enough labeled numbers, extract all "big" numbers (≥100)
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const allNums = text.match(/[\d,]+\.?\d*/g) || [];
+            for (const raw of allNums) {
+                const num = parseFloat(raw.replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 100) dataNumbers.push(num);
+            }
+        }
+
+        if (dataNumbers.length < 2) return null;
+
+        // Detect the primary aggregation
+        let result;
+        const steps = [];
+
+        if (/promedio|media\b/i.test(lower)) {
+            const sum = dataNumbers.reduce((a, b) => a + b, 0);
+            result = sum / dataNumbers.length;
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+        } else {
+            // Default: sum
+            result = dataNumbers.reduce((a, b) => a + b, 0);
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+        }
+
+        // Look for a rate/cost multiplier
+        const ratePatterns = [
+            /costo\s+(?:de\s+(?:procesamiento|producción|envío|operación|mantenimiento))?\s*(?:de|es|por|=)?\s*\$?([\d,.]+)/i,
+            /precio\s+(?:de|por|unitario|cada)?\s*\$?([\d,.]+)/i,
+            /cada\s+\w+\s+(?:tiene\s+)?(?:un\s+)?(?:costo|precio|valor)\s+(?:de\s*)?\$?([\d,.]+)/i,
+            /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
+            /(?:tasa|tarifa|factor)\s+(?:de)?\s*\$?([\d,.]+)/i,
+            /\$\s*([\d,.]+)\s*(?:por|\/)\s*(?:cada|unidad|GB|kg|litro|km|hora)/i,
+        ];
+        for (const re of ratePatterns) {
+            const rm = text.match(re);
+            if (rm) {
+                const rate = parseFloat(rm[1].replace(/,/g, ''));
+                if (Number.isFinite(rate) && rate > 0 && rate < result) {
+                    const prev = result;
+                    result = result * rate;
+                    steps.push(`Costo/Multiplicación: ${prev} × ${rate} = ${result}`);
+                    break;
+                }
+            }
+        }
+
+        // Look for percentage (impuesto, descuento, incremento)
+        const pctMatch = text.match(/(?:impuesto|descuento|incremento|aumento|IVA|ISR|interés)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        if (pctMatch) {
+            const pct = parseFloat(pctMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(pct) && pct > 0 && pct <= 200) {
+                const prev = result;
+                if (/descuento/i.test(pctMatch[0])) {
+                    result = result * (1 - pct / 100);
+                    steps.push(`Descuento ${pct}%: ${prev} × ${1 - pct / 100} = ${result}`);
+                } else {
+                    result = result * (1 + pct / 100);
+                    steps.push(`+ ${pct}%: ${prev} × ${1 + pct / 100} = ${result}`);
+                }
+            }
+        }
+
+        // Only return if we performed at least a sum
+        if (steps.length === 0) return null;
+        return { value: result, steps };
+    }
+
+    /**
+     * Detect a follow-up operation in text after an explicit expression.
+     * e.g., "... multiply by 0.0375" or "aplica impuesto del 16%"
+     * @private
+     */
+    _detectFollowUpOperation(text) {
+        if (!text) return null;
+
+        // Multiplication: "multiply by X", "× X", "costo de $X"
+        const multPatterns = [
+            /(?:multiplic[aá]r?\s+por|×)\s*\$?([\d,.]+)/i,
+            /(?:costo|precio|tarifa|tasa)\s+(?:de\s+(?:\w+\s+)*)?(?:de\s*)?\$?([\d,.]+)/i,
+            /cada\s+\w+\s+.*?\$?([\d,.]+)/i,
+        ];
+        for (const re of multPatterns) {
+            const m = text.match(re);
+            if (m) {
+                const factor = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(factor) && factor > 0) {
+                    return {
+                        apply: (v) => v * factor,
+                        describe: (prev, result) => `Multiplicación: ${prev} × ${factor} = ${result}`,
+                    };
+                }
+            }
+        }
+
+        // Percentage
+        const pctMatch = text.match(/(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        if (pctMatch) {
+            const pct = parseFloat(pctMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(pct) && pct > 0) {
+                const isDiscount = /descuento/i.test(pctMatch[0]);
+                const factor = isDiscount ? (1 - pct / 100) : (1 + pct / 100);
+                return {
+                    apply: (v) => v * factor,
+                    describe: (prev, result) => `${isDiscount ? 'Descuento' : 'Incremento'} ${pct}%: ${prev} × ${factor} = ${result}`,
+                };
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract the requested number of decimal places from the question text.
+     * e.g., "redondea a 2 decimales" → 2
+     * @private
+     */
+    _extractRequestedDecimals(text) {
+        const match = text.match(/redonde[ao].*?(\d+)\s*decimal/i);
+        if (match) return parseInt(match[1]);
+        // Also detect "a X cifras decimales"
+        const match2 = text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i);
+        if (match2) return parseInt(match2[1]);
+        return null;
+    }
+
     /** @private Extract complete JSON objects from a potentially truncated array string */
     _extractObjectsFromBrokenArray(jsonStr) {
         const results = [];
@@ -1159,7 +1459,11 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
             try {
                 const parsed = JSON.parse(content.substring(start, end + 1));
                 if (Array.isArray(parsed)) {
-                    const normalized = parsed.map(q => this._normalizeQuestion(q)).filter(Boolean);
+                    const normalized = parsed
+                        .map(q => this._normalizeQuestion(q))
+                        .filter(Boolean)
+                        .map(q => this._verifyMathAnswer(q))
+                        .filter(Boolean);
                     if (normalized.length > 0) return normalized;
                 }
             } catch (_) { /* fall through to repair */ }
@@ -1170,7 +1474,11 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         const searchIn = start !== -1 ? content.substring(start) : content;
         const objects = this._extractObjectsFromBrokenArray(searchIn);
         if (objects.length > 0) {
-            const normalized = objects.map(q => this._normalizeQuestion(q)).filter(Boolean);
+            const normalized = objects
+                .map(q => this._normalizeQuestion(q))
+                .filter(Boolean)
+                .map(q => this._verifyMathAnswer(q))
+                .filter(Boolean);
             if (normalized.length > 0) {
                 console.log(`[ReinforcementService] Repair recovered ${normalized.length} questions from broken JSON`);
                 return normalized;
