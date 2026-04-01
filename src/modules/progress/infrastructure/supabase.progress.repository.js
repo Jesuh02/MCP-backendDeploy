@@ -1335,9 +1335,21 @@ export class SupabaseProgressRepository {
         });
     }
 
+    async findRevokedEnrollmentCourseIds(userId) {
+        const { data, error } = await this.client
+            .from('pre_enrollments')
+            .select('course_id')
+            .eq('user_id', userId)
+            .eq('status', 'revoked');
+        if (error || !data) return [];
+        return data
+            .map((row) => Number(row.course_id))
+            .filter((courseId) => Number.isInteger(courseId) && courseId > 0);
+    }
+
     async deleteEnrollment(userId, courseId, reason = null, revokedBy = null) {
         if (reason) {
-            await this.client
+            const { error } = await this.client
                 .from('pre_enrollments')
                 .update({
                     status: 'revoked',
@@ -1347,6 +1359,7 @@ export class SupabaseProgressRepository {
                 })
                 .eq('user_id', userId)
                 .eq('course_id', courseId);
+            if (error) throw new Error(error.message);
         } else {
             const { error } = await this.client
                 .from('pre_enrollments')
