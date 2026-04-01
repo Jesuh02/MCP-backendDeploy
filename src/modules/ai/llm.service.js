@@ -1294,7 +1294,209 @@ Responde de forma clara y constructiva.`;
             }
         }
 
-        return sanitized;
+        // Math verification: recompute arithmetic answers programmatically
+        return sanitized.map(q => this._verifyMathAnswer(q)).filter(Boolean);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MATH VERIFICATION — Programmatic answer validation for quiz questions
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Verifies and fixes math in a quiz question by recomputing the answer
+     * programmatically. Returns the corrected question, or null to reject.
+     * @private
+     */
+    _verifyMathAnswer(q) {
+        if (!q) return q;
+        const text = q.question;
+        const lower = (text || '').toLowerCase();
+
+        const mathSignals = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|¿cuánto|cuántos|cuántas|promedio|media|porcentaje/i;
+        const hasSignificantNumbers = /\d{3,}/.test(text.replace(/,/g, ''));
+        if (!mathSignals.test(lower) && !hasSignificantNumbers) return q;
+
+        try {
+            const result = this._computeExpectedMathAnswer(text);
+            if (result === null) return q;
+
+            const requestedDecimals = this._extractRequestedDecimals(text);
+            let finalAnswer = result.value;
+            if (requestedDecimals !== null) {
+                finalAnswer = parseFloat(finalAnswer.toFixed(requestedDecimals));
+            } else if (!Number.isInteger(finalAnswer)) {
+                finalAnswer = parseFloat(finalAnswer.toFixed(2));
+            }
+
+            if (q.type === 'fill_in_blank') {
+                const currentAnswer = parseFloat(String(q.correctAnswer).replace(/,/g, ''));
+                if (!Number.isFinite(currentAnswer)) return q;
+                const tolerance = Math.max(Math.abs(finalAnswer) * 0.001, 0.01);
+                if (Math.abs(currentAnswer - finalAnswer) > tolerance) {
+                    console.warn(`🔧 [LLM MathVerify] CORRECTED fill_in_blank: LLM="${q.correctAnswer}" → Correct="${finalAnswer}"`);
+                    q.correctAnswer = String(finalAnswer);
+                    q.explanation = `${result.steps.join('. ')}. Resultado final: ${finalAnswer}.`;
+                }
+            } else if (q.type === 'multiple_choice') {
+                const optionValues = q.options.map(opt => {
+                    const nums = opt.match(/[\d,]+\.?\d*/g);
+                    if (!nums) return NaN;
+                    const parsed = nums.map(n => parseFloat(n.replace(/,/g, ''))).filter(Number.isFinite);
+                    return parsed.length > 0 ? parsed.reduce((a, b) => Math.abs(a) > Math.abs(b) ? a : b) : NaN;
+                });
+                let closestIdx = -1;
+                let closestDiff = Infinity;
+                for (let i = 0; i < optionValues.length; i++) {
+                    if (!Number.isFinite(optionValues[i])) continue;
+                    const diff = Math.abs(optionValues[i] - finalAnswer);
+                    if (diff < closestDiff) { closestDiff = diff; closestIdx = i; }
+                }
+                const tolerance = Math.max(Math.abs(finalAnswer) * 0.001, 0.01);
+                if (closestIdx >= 0 && closestDiff <= tolerance) {
+                    if (closestIdx !== q.correctIndex) {
+                        console.warn(`🔧 [LLM MathVerify] CORRECTED multiple_choice: index ${q.correctIndex}→${closestIdx} (computed=${finalAnswer})`);
+                        q.correctIndex = closestIdx;
+                        q.explanation = `${result.steps.join('. ')}. Resultado final: ${finalAnswer}.`;
+                    }
+                } else {
+                    console.warn(`🔧 [LLM MathVerify] REJECTED: No option ≈ computed=${finalAnswer}`);
+                    return null;
+                }
+            }
+        } catch (err) {
+            console.warn(`[LLM MathVerify] Error (non-blocking): ${err.message}`);
+        }
+        return q;
+    }
+
+    /** @private */
+    _computeExpectedMathAnswer(text) {
+        const explicit = this._tryExplicitMathArithmetic(text);
+        if (explicit !== null) return explicit;
+        const wordProblem = this._tryMathWordProblem(text);
+        if (wordProblem !== null) return wordProblem;
+        return null;
+    }
+
+    /** @private Parse and evaluate explicit arithmetic chains */
+    _tryExplicitMathArithmetic(text) {
+        const numberPat = '\\d[\\d,]*\\.?\\d*';
+        const opPat = '[+\\-×*÷/]';
+        const exprRegex = new RegExp(
+            `(${numberPat})\\s*(${opPat})\\s*(${numberPat}(?:\\s*${opPat}\\s*${numberPat})*)`, 'g'
+        );
+        const match = exprRegex.exec(text);
+        if (!match) return null;
+        const tokens = match[0].split(/\s*([+\-×*÷/])\s*/).filter(t => t.trim());
+        let result = parseFloat(tokens[0].replace(/,/g, ''));
+        if (!Number.isFinite(result)) return null;
+        const steps = [];
+        for (let i = 1; i < tokens.length; i += 2) {
+            const op = tokens[i];
+            const num = parseFloat((tokens[i + 1] || '').replace(/,/g, ''));
+            if (!Number.isFinite(num)) return null;
+            const prev = result;
+            switch (op) {
+                case '+': result += num; break;
+                case '-': result -= num; break;
+                case '×': case '*': result *= num; break;
+                case '÷': case '/': if (num === 0) return null; result /= num; break;
+                default: return null;
+            }
+            steps.push(`${prev} ${op} ${num} = ${result}`);
+        }
+        // Follow-up operation
+        const after = text.substring(text.indexOf(match[0]) + match[0].length);
+        const multMatch = after.match(/(?:multiplic[aá]r?\s+por|×|costo\s+(?:de\s+\w+\s+)*(?:de\s*)?\$?|precio\s+(?:de|por)\s*\$?)\s*([\d,.]+)/i);
+        if (multMatch) {
+            const factor = parseFloat(multMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(factor) && factor > 0) {
+                const prev = result; result *= factor;
+                steps.push(`${prev} × ${factor} = ${result}`);
+            }
+        }
+        const pctMatch = after.match(/(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        if (pctMatch) {
+            const pct = parseFloat(pctMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(pct) && pct > 0) {
+                const prev = result;
+                const factor = /descuento/i.test(pctMatch[0]) ? (1 - pct / 100) : (1 + pct / 100);
+                result *= factor;
+                steps.push(`${prev} × ${factor} = ${result}`);
+            }
+        }
+        return { value: result, steps };
+    }
+
+    /** @private Parse word problems with sum + rate/percentage */
+    _tryMathWordProblem(text) {
+        const lower = text.toLowerCase();
+        if (!/total|suma|calcula|acumulad|promedio|media/i.test(lower)) return null;
+        const dataNumbers = [];
+        const labeledPattern = /(?:[a-zA-ZáéíóúñÁÉÍÓÚÑ][a-zA-ZáéíóúñÁÉÍÓÚÑ\s]*[:=]\s*\$?)([\d,]+\.?\d*)/gi;
+        let m;
+        while ((m = labeledPattern.exec(text)) !== null) {
+            const num = parseFloat(m[1].replace(/,/g, ''));
+            if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
+        }
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const allNums = text.match(/[\d,]+\.?\d*/g) || [];
+            for (const raw of allNums) {
+                const num = parseFloat(raw.replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 100) dataNumbers.push(num);
+            }
+        }
+        if (dataNumbers.length < 2) return null;
+        const steps = [];
+        let result;
+        if (/promedio|media\b/i.test(lower)) {
+            const sum = dataNumbers.reduce((a, b) => a + b, 0);
+            result = sum / dataNumbers.length;
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+        } else {
+            result = dataNumbers.reduce((a, b) => a + b, 0);
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+        }
+        const ratePatterns = [
+            /costo\s+(?:de\s+(?:procesamiento|producción|envío|operación|mantenimiento))?\s*(?:de|es|por|=)?\s*\$?([\d,.]+)/i,
+            /precio\s+(?:de|por|unitario|cada)?\s*\$?([\d,.]+)/i,
+            /cada\s+\w+\s+(?:tiene\s+)?(?:un\s+)?(?:costo|precio|valor)\s+(?:de\s*)?\$?([\d,.]+)/i,
+            /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
+        ];
+        for (const re of ratePatterns) {
+            const rm = text.match(re);
+            if (rm) {
+                const rate = parseFloat(rm[1].replace(/,/g, ''));
+                if (Number.isFinite(rate) && rate > 0 && rate < result) {
+                    const prev = result; result = result * rate;
+                    steps.push(`${prev} × ${rate} = ${result}`);
+                    break;
+                }
+            }
+        }
+        const pctMatch = text.match(/(?:impuesto|descuento|incremento|aumento|IVA|ISR)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        if (pctMatch) {
+            const pct = parseFloat(pctMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(pct) && pct > 0 && pct <= 200) {
+                const prev = result;
+                const factor = /descuento/i.test(pctMatch[0]) ? (1 - pct / 100) : (1 + pct / 100);
+                result *= factor;
+                steps.push(`${prev} × ${factor} = ${result}`);
+            }
+        }
+        if (steps.length === 0) return null;
+        return { value: result, steps };
+    }
+
+    /** @private */
+    _extractRequestedDecimals(text) {
+        const match = text.match(/redonde[ao].*?(\d+)\s*decimal/i);
+        if (match) return parseInt(match[1]);
+        const match2 = text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i);
+        if (match2) return parseInt(match2[1]);
+        return null;
     }
 
     _normalizeQuizText(text = '') {
