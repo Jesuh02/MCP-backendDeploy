@@ -1364,10 +1364,42 @@ export class SupabaseProgressRepository {
 
     async blockSubjectAccess(userId, courseId, subjectId, reason, blockedBy = null) {
         const now = new Date().toISOString();
-        // course_id omitted: it is a transitive dependency (subject_id → subjects.course_id)
+
+        // Check if a record already exists (regardless of is_active) to avoid
+        // relying on ON CONFLICT which requires a unique constraint in the DB.
+        const { data: existing, error: selectError } = await this.client
+            .from('subject_access_blocks')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('subject_id', subjectId)
+            .maybeSingle();
+
+        if (selectError) throw new Error(selectError.message);
+
+        if (existing) {
+            // Update existing row
+            const { data, error } = await this.client
+                .from('subject_access_blocks')
+                .update({
+                    reason,
+                    is_active: true,
+                    blocked_at: now,
+                    updated_at: now,
+                    unblocked_at: null,
+                    unblocked_by: null,
+                    ...(blockedBy ? { blocked_by: blockedBy, updated_by: blockedBy } : {}),
+                })
+                .eq('id', existing.id)
+                .select()
+                .single();
+            if (error) throw new Error(error.message);
+            return data;
+        }
+
+        // Insert new row
         const { data, error } = await this.client
             .from('subject_access_blocks')
-            .upsert({
+            .insert({
                 user_id: userId,
                 subject_id: subjectId,
                 reason,
@@ -1377,7 +1409,7 @@ export class SupabaseProgressRepository {
                 unblocked_at: null,
                 unblocked_by: null,
                 ...(blockedBy ? { blocked_by: blockedBy, updated_by: blockedBy } : {}),
-            }, { onConflict: 'user_id,subject_id' })
+            })
             .select()
             .single();
         if (error) throw new Error(error.message);
