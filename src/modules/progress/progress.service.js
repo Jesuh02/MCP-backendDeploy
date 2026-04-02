@@ -1008,23 +1008,44 @@ export class ProgressDomainService {
             console.error('[ProgressService] Error restoring progreso_curso enrollment_status:', err?.message);
         }
 
-        // Notify the student about restoration
+        // Notify the student about restoration (in-app + push + email)
         if (this._notificationService) {
-            try {
-                let courseName = 'un curso';
-                if (this.courseRepo) {
+            let courseName = 'un curso';
+            if (this.courseRepo) {
+                try {
                     const course = await this.courseRepo.findById(courseId);
                     if (course?.title) courseName = course.title;
-                }
+                } catch (_) { /* ignore */ }
+            }
+
+            try {
                 await this._notificationService.send(userId, {
                     title: 'Acceso restaurado',
                     message: `Tu acceso a "${courseName}" ha sido restaurado. ¡Ya puedes acceder nuevamente!`,
-                    type: 'enrollment_approved',
+                    type: 'enrollment_restored',
                     relatedId: courseId,
                     metadata: { courseId, courseName },
                 });
             } catch (err) {
                 console.error('[ProgressService] Error sending restore notification:', err?.message);
+            }
+
+            // Send email notification
+            try {
+                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
+                const html = generateGenericEmailHTML(
+                    'Acceso al curso restaurado',
+                    `Tu acceso al curso "${courseName}" ha sido restaurado.\n\n¡Ya puedes acceder nuevamente a todo el contenido del curso!`,
+                    'enrollment_restored',
+                    null
+                );
+                await this._notificationService.sendEmail(userId, {
+                    subject: `Tu acceso a "${courseName}" fue restaurado – CourseV`,
+                    html,
+                    text: `Tu acceso al curso "${courseName}" ha sido restaurado. ¡Ya puedes acceder nuevamente!`,
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending restore email:', err?.message);
             }
         }
 
@@ -1041,6 +1062,47 @@ export class ProgressDomainService {
             return Result.fail(new ForbiddenError('Status must be "activo" or "inactivo"'));
         }
         await this.progressRepo.setCourseEnrollmentStatus(userId, courseId, status);
+
+        // Notify the student when course access is reactivated
+        if (status === 'activo' && this._notificationService) {
+            let courseName = 'un curso';
+            if (this.courseRepo) {
+                try {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                } catch (_) { /* ignore */ }
+            }
+
+            try {
+                await this._notificationService.send(userId, {
+                    title: 'Acceso al curso reactivado',
+                    message: `Tu acceso al curso "${courseName}" ha sido reactivado. ¡Ya puedes acceder nuevamente!`,
+                    type: 'enrollment_restored',
+                    relatedId: courseId,
+                    metadata: { courseId, courseName },
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending course reactivation notification:', err?.message);
+            }
+
+            try {
+                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
+                const html = generateGenericEmailHTML(
+                    'Acceso al curso reactivado',
+                    `Tu acceso al curso "${courseName}" ha sido reactivado.\n\n¡Ya puedes acceder nuevamente!`,
+                    'enrollment_restored',
+                    null
+                );
+                await this._notificationService.sendEmail(userId, {
+                    subject: `Tu acceso a "${courseName}" fue reactivado – CourseV`,
+                    html,
+                    text: `Tu acceso al curso "${courseName}" ha sido reactivado. ¡Ya puedes acceder nuevamente!`,
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending course reactivation email:', err?.message);
+            }
+        }
+
         return Result.ok({ message: `Enrollment status del curso actualizado a '${status}'` });
     }
 
@@ -1052,6 +1114,54 @@ export class ProgressDomainService {
             return Result.fail(new ForbiddenError('Status must be "activo" or "inactivo"'));
         }
         await this.progressRepo.setSubjectEnrollmentStatus(userId, courseId, subjectId, status);
+
+        // Notify the student when subject access is reactivated
+        if (status === 'activo' && this._notificationService) {
+            let subjectName = 'una materia';
+            let courseName = 'un curso';
+            if (this.subjectRepo) {
+                try {
+                    const subject = await this.subjectRepo.findById(subjectId);
+                    if (subject?.name) subjectName = subject.name;
+                } catch (_) { /* ignore */ }
+            }
+            if (this.courseRepo) {
+                try {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                } catch (_) { /* ignore */ }
+            }
+
+            try {
+                await this._notificationService.send(userId, {
+                    title: 'Acceso a materia reactivado',
+                    message: `Tu acceso a la materia "${subjectName}" ha sido reactivado. ¡Ya puedes acceder nuevamente!`,
+                    type: 'subject_access_unblocked',
+                    relatedId: subjectId,
+                    metadata: { subjectId, subjectName, courseId, courseName },
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending subject reactivation notification:', err?.message);
+            }
+
+            try {
+                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
+                const html = generateGenericEmailHTML(
+                    'Acceso a materia reactivado',
+                    `Tu acceso a la materia "${subjectName}" del curso "${courseName}" ha sido reactivado.\n\n¡Ya puedes acceder nuevamente!`,
+                    'subject_access_unblocked',
+                    null
+                );
+                await this._notificationService.sendEmail(userId, {
+                    subject: `Tu acceso a "${subjectName}" fue reactivado – CourseV`,
+                    html,
+                    text: `Tu acceso a la materia "${subjectName}" del curso "${courseName}" ha sido reactivado. ¡Ya puedes acceder nuevamente!`,
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending subject reactivation email:', err?.message);
+            }
+        }
+
         return Result.ok({ message: `Enrollment status de la materia actualizado a '${status}'` });
     }
 
@@ -1109,6 +1219,59 @@ export class ProgressDomainService {
                 await this.progressRepo.setSubjectEnrollmentStatus(userId, courseId, subjectId, 'activo');
             } catch (err) {
                 console.error('[ProgressService] Error restoring subject enrollment_status to activo:', err?.message);
+            }
+        }
+
+        // Notify the student that subject access was restored (in-app + push + email)
+        if (this._notificationService) {
+            try {
+                let subjectName = 'una materia';
+                let courseName = 'un curso';
+                if (this.subjectRepo) {
+                    const subject = await this.subjectRepo.findById(subjectId);
+                    if (subject?.name) subjectName = subject.name;
+                }
+                if (this.courseRepo && courseId) {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                }
+                await this._notificationService.send(userId, {
+                    title: 'Acceso restaurado',
+                    message: `Tu acceso a la materia "${subjectName}" ha sido restaurado. ¡Ya puedes acceder nuevamente!`,
+                    type: 'subject_access_unblocked',
+                    relatedId: subjectId,
+                    metadata: { subjectId, subjectName, courseId, courseName },
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending subject unblock notification:', err?.message);
+            }
+
+            // Send email notification
+            try {
+                let subjectName = 'una materia';
+                let courseName = 'un curso';
+                if (this.subjectRepo) {
+                    const subject = await this.subjectRepo.findById(subjectId);
+                    if (subject?.name) subjectName = subject.name;
+                }
+                if (this.courseRepo && courseId) {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                }
+                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
+                const html = generateGenericEmailHTML(
+                    'Acceso a materia restaurado',
+                    `Tu acceso a la materia "${subjectName}" del curso "${courseName}" ha sido restaurado.\n\n¡Ya puedes acceder nuevamente!`,
+                    'subject_access_unblocked',
+                    null
+                );
+                await this._notificationService.sendEmail(userId, {
+                    subject: `Tu acceso a "${subjectName}" fue restaurado – CourseV`,
+                    html,
+                    text: `Tu acceso a la materia "${subjectName}" del curso "${courseName}" ha sido restaurado. ¡Ya puedes acceder nuevamente!`,
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending subject unblock email:', err?.message);
             }
         }
 
