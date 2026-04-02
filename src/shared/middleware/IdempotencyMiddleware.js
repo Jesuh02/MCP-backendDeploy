@@ -117,8 +117,15 @@ export function idempotencyGuard(req, res, next) {
     res.json = (body) => {
         const entry = recentRequests.get(hash);
         if (entry) {
-            entry.response = body;
-            entry.statusCode = res.statusCode;
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+                // Solo cachear respuestas exitosas — las respuestas de error (401, 403, 5xx)
+                // no se deben cachear para permitir reintentos con token refrescado.
+                entry.response = body;
+                entry.statusCode = res.statusCode;
+            } else {
+                // Eliminar la entrada para que el reintento (con token refrescado) pase normalmente
+                recentRequests.delete(hash);
+            }
         }
         return originalJson(body);
     };
