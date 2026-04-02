@@ -439,7 +439,7 @@ export class SupabaseProgressRepository {
         // 1. Base query
         let query = this.client
             .from(this._subjectProgressTable())
-            .select('usuario_estudiante, curso_id, materia_id, tareas_completadas, tareas_totales, promedio, calificacion_ponderada, porcentaje_progreso, ultima_calculada_en')
+            .select('usuario_estudiante, curso_id, materia_id, tareas_completadas, tareas_totales, promedio, calificacion_ponderada, porcentaje_progreso, ultima_calculada_en, enrollment_status')
             .order('curso_id')
             .order('materia_id')
             .order('usuario_estudiante');
@@ -536,6 +536,7 @@ export class SupabaseProgressRepository {
                 averageGrade:    grade !== null ? Number(grade) : null,
                 progressPercentage: pct,
                 lastActivityAt:  r.ultima_calculada_en || null,
+                enrollmentStatus: r.enrollment_status ?? 'activo',
             };
         });
     }
