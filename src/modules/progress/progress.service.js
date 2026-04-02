@@ -1066,6 +1066,13 @@ export class ProgressDomainService {
         }
         const block = await this.progressRepo.blockSubjectAccess(userId, courseId, subjectId, reason.trim(), blockedBy);
 
+        // Also set enrollment_status = 'inactivo' in progreso_materia
+        try {
+            await this.progressRepo.setSubjectEnrollmentStatus(userId, courseId, subjectId, 'inactivo');
+        } catch (err) {
+            console.error('[ProgressService] Error setting subject enrollment_status to inactivo:', err?.message);
+        }
+
         // Notify the student
         if (this._notificationService) {
             try {
@@ -1091,9 +1098,20 @@ export class ProgressDomainService {
 
     /**
      * Admin: unblock a user's access to a specific subject.
+     * @param {number|null} courseId - required to restore enrollment_status in progreso_materia
      */
-    async unblockSubjectAccess(userId, subjectId) {
+    async unblockSubjectAccess(userId, subjectId, courseId = null) {
         await this.progressRepo.unblockSubjectAccess(userId, subjectId);
+
+        // Restore enrollment_status = 'activo' in progreso_materia when courseId is known
+        if (courseId) {
+            try {
+                await this.progressRepo.setSubjectEnrollmentStatus(userId, courseId, subjectId, 'activo');
+            } catch (err) {
+                console.error('[ProgressService] Error restoring subject enrollment_status to activo:', err?.message);
+            }
+        }
+
         return Result.ok({ message: 'Acceso a la materia restaurado' });
     }
 

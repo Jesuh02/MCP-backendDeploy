@@ -430,7 +430,9 @@ export class ProgressController {
             if (!userId || !subjectId || isNaN(userId) || isNaN(subjectId)) {
                 return res.status(400).json({ success: false, error: 'userId and subjectId must be positive integers' });
             }
-            const result = await this.progressService.unblockSubjectAccess(userId, subjectId);
+            // courseId is optional — when provided, enrollment_status in progreso_materia is restored
+            const courseId = req.query.courseId ? parseInt(req.query.courseId) : null;
+            const result = await this.progressService.unblockSubjectAccess(userId, subjectId, courseId && !isNaN(courseId) && courseId > 0 ? courseId : null);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
