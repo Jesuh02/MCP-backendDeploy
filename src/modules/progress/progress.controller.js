@@ -432,7 +432,8 @@ export class ProgressController {
             }
             // courseId is optional — when provided, enrollment_status in progreso_materia is restored
             const courseId = req.query.courseId ? parseInt(req.query.courseId) : null;
-            const result = await this.progressService.unblockSubjectAccess(userId, subjectId, courseId && !isNaN(courseId) && courseId > 0 ? courseId : null);
+            const unblockedBy = req.user?.userId || null;
+            const result = await this.progressService.unblockSubjectAccess(userId, subjectId, courseId && !isNaN(courseId) && courseId > 0 ? courseId : null, unblockedBy);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
