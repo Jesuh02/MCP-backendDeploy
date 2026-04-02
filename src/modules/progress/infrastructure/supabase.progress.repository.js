@@ -1265,7 +1265,24 @@ export class SupabaseProgressRepository {
             .select('user_id, course_id, status, requested_at, reviewed_at, revoke_reason')
             .in('status', ['approved', 'revoked'])
             .order('course_id', { ascending: true });
-        const preRows = (!error && preData) ? preData : [];
+        // Deduplicate preRows by user_id+course_id: prefer 'approved' over 'revoked',
+        // and among same-status rows keep the most recently reviewed one.
+        const preRowsRaw = (!error && preData) ? preData : [];
+        const preRowsByKey = new Map();
+        for (const r of preRowsRaw) {
+            const key = `${r.user_id}-${r.course_id}`;
+            const existing = preRowsByKey.get(key);
+            if (!existing) { preRowsByKey.set(key, r); continue; }
+            // Prefer 'approved' status; among equals prefer the latest reviewed_at
+            const existingIsApproved = existing.status === 'approved';
+            const newIsApproved = r.status === 'approved';
+            if (newIsApproved && !existingIsApproved) { preRowsByKey.set(key, r); continue; }
+            if (existingIsApproved && !newIsApproved) continue;
+            const existingTime = existing.reviewed_at ? new Date(existing.reviewed_at).getTime() : 0;
+            const newTime = r.reviewed_at ? new Date(r.reviewed_at).getTime() : 0;
+            if (newTime > existingTime) preRowsByKey.set(key, r);
+        }
+        const preRows = Array.from(preRowsByKey.values());
 
         // 2. Users with course progress but NO pre_enrollment record (direct enrollment)
         const { data: progressRows } = await this.client
@@ -1360,7 +1377,7 @@ export class SupabaseProgressRepository {
         }
 
         // Fetch enrollment_status from progreso_materia for each user-course-subject
-        // Key: "userId-subjectId" → enrollment_status
+        // Key: "userId-courseId-subjectId" → enrollment_status (courseId prevents cross-course bleed)
         const subjectEnrollStatusMap = new Map();
         if (userIds.length > 0 && courseIds.length > 0) {
             const { data: spRows } = await this.client
@@ -1370,7 +1387,7 @@ export class SupabaseProgressRepository {
                 .in('curso_id', courseIds);
             for (const r of (spRows || [])) {
                 if (r.materia_id) {
-                    subjectEnrollStatusMap.set(`${Number(r.usuario_estudiante)}-${Number(r.materia_id)}`, r.enrollment_status || 'activo');
+                    subjectEnrollStatusMap.set(`${Number(r.usuario_estudiante)}-${Number(r.curso_id)}-${Number(r.materia_id)}`, r.enrollment_status || 'activo');
                 }
             }
         }
@@ -1385,7 +1402,7 @@ export class SupabaseProgressRepository {
             const courseEnrollmentStatus = courseEnrollStatusMap.get(`${uid}-${cid}`) || 'activo';
             const subjects = (subjectsByCourse.get(cid) || []).map(s => ({
                 ...s,
-                enrollmentStatus: subjectEnrollStatusMap.get(`${uid}-${s.id}`) || 'activo',
+                enrollmentStatus: subjectEnrollStatusMap.get(`${uid}-${cid}-${s.id}`) || 'activo',
             }));
             return {
                 ...this._mapPreEnrollmentRecord(row, {
