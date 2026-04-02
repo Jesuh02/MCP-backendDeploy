@@ -46,6 +46,15 @@ export function initSocketServer(httpServer) {
         socket.on('leave:chat', ({ userId, origin }) => {
             if (userId && origin) socket.leave(`chat:${userId}:${origin}`);
         });
+
+        // Client joins a global video feed room to receive real-time video events
+        socket.on('join:videos', () => {
+            socket.join('videos');
+        });
+
+        socket.on('leave:videos', () => {
+            socket.leave('videos');
+        });
     });
 
     return io;
