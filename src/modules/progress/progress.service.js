@@ -1100,8 +1100,8 @@ export class ProgressDomainService {
      * Admin: unblock a user's access to a specific subject.
      * @param {number|null} courseId - required to restore enrollment_status in progreso_materia
      */
-    async unblockSubjectAccess(userId, subjectId, courseId = null) {
-        await this.progressRepo.unblockSubjectAccess(userId, subjectId);
+    async unblockSubjectAccess(userId, subjectId, courseId = null, unblockedBy = null) {
+        await this.progressRepo.unblockSubjectAccess(userId, subjectId, unblockedBy);
 
         // Restore enrollment_status = 'activo' in progreso_materia when courseId is known
         if (courseId) {
