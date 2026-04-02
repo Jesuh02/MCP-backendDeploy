@@ -1646,14 +1646,72 @@ export class SupabaseProgressRepository {
     async findAllSubjectAccessBlocks() {
         const { data, error } = await this.client
             .from('v_subject_access_blocks')
-            .select('user_id, course_id, subject_id')
+            .select('*')
             .eq('is_active', true);
-        if (error || !data) return [];
-        return data.map(b => ({
-            userId: Number(b.user_id),
-            courseId: Number(b.course_id),
-            subjectId: Number(b.subject_id),
-        }));
+        if (error || !data || data.length === 0) return [];
+
+        const userIds = [...new Set(data.map(b => Number(b.user_id)).filter(Boolean))];
+        const subjectIds = [...new Set(data.map(b => Number(b.subject_id)).filter(Boolean))];
+        const courseIds = [...new Set(data.map(b => Number(b.course_id)).filter(Boolean))];
+        const blockedByIds = [...new Set(data.map(b => Number(b.blocked_by)).filter(Boolean))];
+        const allUserIds = [...new Set([...userIds, ...blockedByIds])];
+
+        // Batch-fetch users + personas
+        const usersById = new Map();
+        const personasById = new Map();
+        if (allUserIds.length) {
+            const { data: users } = await this.client
+                .from('usuarios').select('id, username, avatar, persona_id').in('id', allUserIds);
+            const personaIds = [];
+            for (const u of (users || [])) {
+                usersById.set(Number(u.id), u);
+                if (u.persona_id) personaIds.push(u.persona_id);
+            }
+            if (personaIds.length) {
+                const { data: personas } = await this.client
+                    .from('personas').select('id, nombres, apellidos, identificacion').in('id', [...new Set(personaIds)]);
+                for (const p of (personas || [])) personasById.set(Number(p.id), p);
+            }
+        }
+
+        // Batch-fetch subjects
+        const subjectsById = new Map();
+        if (subjectIds.length) {
+            const { data: subjects } = await this.client
+                .from('subjects').select('id, name, course_id').in('id', subjectIds);
+            for (const s of (subjects || [])) subjectsById.set(Number(s.id), s);
+        }
+
+        // Batch-fetch courses
+        const coursesById = new Map();
+        if (courseIds.length) {
+            const { data: courses } = await this.client
+                .from('courses').select('id, title').in('id', courseIds);
+            for (const c of (courses || [])) coursesById.set(Number(c.id), c);
+        }
+
+        return data.map(b => {
+            const user = usersById.get(Number(b.user_id));
+            const persona = user?.persona_id ? personasById.get(Number(user.persona_id)) : null;
+            const subject = subjectsById.get(Number(b.subject_id));
+            const course = coursesById.get(Number(b.course_id));
+            const blockedByUser = b.blocked_by ? usersById.get(Number(b.blocked_by)) : null;
+            const fullName = persona ? `${persona.nombres || ''} ${persona.apellidos || ''}`.trim() : null;
+            return {
+                userId: Number(b.user_id),
+                courseId: Number(b.course_id),
+                subjectId: Number(b.subject_id),
+                reason: b.reason || null,
+                blockedAt: b.blocked_at || null,
+                blockedBy: b.blocked_by ? Number(b.blocked_by) : null,
+                blockedByUsername: blockedByUser?.username || null,
+                username: user?.username || null,
+                avatar: user?.avatar || null,
+                fullName: fullName || null,
+                subjectName: subject?.name || null,
+                courseName: course?.title || null,
+            };
+        });
     }
 
     async findRevokedEnrollment(userId, courseId) {
