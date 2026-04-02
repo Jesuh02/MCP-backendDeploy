@@ -1610,7 +1610,9 @@ export class SupabaseProgressRepository {
     async unblockSubjectAccess(userId, subjectId, unblockedBy = null) {
         const now = new Date().toISOString();
         // Soft-delete: mark as inactive and record unblock audit fields.
-        // Only target the currently active block to avoid touching already-inactive rows.
+        // Update ALL rows for this user+subject unconditionally — this handles inconsistent
+        // records where is_active=true but unblocked_at IS NOT NULL, and also covers the case
+        // where is_active was not set correctly by a previous failed update.
         const updatePayload = {
             is_active: false,
             unblocked_at: now,
@@ -1622,30 +1624,16 @@ export class SupabaseProgressRepository {
             .update(updatePayload)
             .eq('user_id', userId)
             .eq('subject_id', subjectId)
-            .eq('is_active', true)
             .select('id, is_active');
         if (error) throw new Error(error.message);
 
-        // Verify the update actually set is_active=false
-        if (!data || data.length === 0) {
-            // No active block found — could be already unblocked or RLS restriction.
-            // Fallback: force-update ALL rows for this user+subject (covers inconsistent records).
-            console.warn(`[unblockSubjectAccess] No active block found for user_id=${userId}, subject_id=${subjectId}. Forcing update on all matching rows.`);
-            const { error: fallbackError } = await this.client
-                .from('subject_access_blocks')
-                .update(updatePayload)
-                .eq('user_id', userId)
-                .eq('subject_id', subjectId);
-            if (fallbackError) console.error(`[unblockSubjectAccess] Fallback update failed:`, fallbackError.message);
-        } else if (data[0].is_active !== false) {
-            // Defensive: if is_active didn't flip, something is preventing the update.
-            // Retry with a direct single-row update by id.
+        if (data && data.length > 0 && data[0].is_active !== false) {
+            // Defensive: if is_active didn't flip (e.g. column-level restriction), retry by id.
             console.warn(`[unblockSubjectAccess] is_active still true after UPDATE for user_id=${userId}, subject_id=${subjectId}. Retrying by id=${data[0].id}.`);
             const { error: retryError } = await this.client
                 .from('subject_access_blocks')
                 .update(updatePayload)
-                .eq('id', data[0].id)
-                .select('id, is_active');
+                .eq('id', data[0].id);
             if (retryError) console.error(`[unblockSubjectAccess] Retry failed:`, retryError.message);
         }
         return true;
