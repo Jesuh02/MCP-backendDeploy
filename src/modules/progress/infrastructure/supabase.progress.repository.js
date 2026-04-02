@@ -1338,11 +1338,11 @@ export class SupabaseProgressRepository {
             coursesById = new Map((courses || []).map(c => [Number(c.id), c]));
 
             const { data: subjects } = await this.client
-                .from('subjects').select('id, name, course_id').in('course_id', courseIds);
+                .from('subjects').select('id, name, course_id, thumbnail_url').in('course_id', courseIds);
             for (const s of (subjects || [])) {
                 const cid = Number(s.course_id);
                 if (!subjectsByCourse.has(cid)) subjectsByCourse.set(cid, []);
-                subjectsByCourse.get(cid).push({ id: s.id, name: s.name });
+                subjectsByCourse.get(cid).push({ id: s.id, name: s.name, thumbnailUrl: s.thumbnail_url || null });
             }
         }
 
