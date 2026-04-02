@@ -1488,17 +1488,42 @@ export class SupabaseProgressRepository {
 
     /**
      * Set enrollment_status for a subject-level progress record.
+     * If no row exists yet for (userId, courseId, subjectId), inserts one so the
+     * UPDATE doesn't silently affect 0 rows.
      * @param {'activo'|'inactivo'} status
      */
     async setSubjectEnrollmentStatus(userId, courseId, subjectId, status) {
         const now = new Date().toISOString();
-        const { error } = await this.client
+        const sid = Number(subjectId);
+
+        // Try the UPDATE first (most common path: row already exists)
+        const { error: updateError, count } = await this.client
             .from(this._subjectProgressTable())
-            .update({ enrollment_status: status, ultima_calculada_en: now })
+            .update({ enrollment_status: status, ultima_calculada_en: now }, { count: 'exact' })
             .eq('usuario_estudiante', userId)
             .eq('curso_id', courseId)
-            .eq('materia_id', Number(subjectId));
-        if (error) throw new Error(error.message);
+            .eq('materia_id', sid);
+
+        if (updateError) throw new Error(updateError.message);
+
+        // If 0 rows were updated the record doesn't exist yet — create a minimal placeholder
+        if (count === 0) {
+            const { error: insertError } = await this.client
+                .from(this._subjectProgressTable())
+                .insert({
+                    usuario_estudiante: userId,
+                    curso_id: courseId,
+                    materia_id: sid,
+                    enrollment_status: status,
+                    tareas_completadas: 0,
+                    tareas_totales: 0,
+                    porcentaje_progreso: 0,
+                    estado: 'Perdido',
+                    ultima_calculada_en: now,
+                });
+            if (insertError) throw new Error(insertError.message);
+        }
+
         return true;
     }
 
