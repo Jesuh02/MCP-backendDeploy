@@ -2,10 +2,11 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class SubjectDomainService {
-    constructor({ subjectRepository, courseRepository, collaboratorRepository }) {
+    constructor({ subjectRepository, courseRepository, collaboratorRepository, progressRepository }) {
         this.subjectRepo = subjectRepository;
         this.courseRepo = courseRepository;
         this.collaboratorRepo = collaboratorRepository || null;
+        this.progressRepo = progressRepository || null;
         this.cacheTtlMs = 60000;
         this.courseCache = new Map();
         this.subjectCache = new Map();
@@ -75,18 +76,30 @@ export class SubjectDomainService {
 
     async getByCourse(courseId, requesterId) {
         const subjects = await this._getSubjectsByCourse(courseId);
+        let result = subjects;
         if (requesterId) {
             const course = await this._getCourse(courseId);
             const isCourseOwner = course && Number(course.creator_user_id) === Number(requesterId);
             if (!isCourseOwner) {
                 const isCollab = this.collaboratorRepo && await this.collaboratorRepo.isCollaborator(requesterId, courseId);
                 if (isCollab) {
-                    const filtered = subjects.filter(s => s.created_by && Number(s.created_by) === Number(requesterId));
-                    return Result.ok(filtered);
+                    result = subjects.filter(s => s.created_by && Number(s.created_by) === Number(requesterId));
+                    return Result.ok(result);
+                }
+            }
+            // Annotate per-user blocks via subject_access_blocks
+            if (this.progressRepo) {
+                const blocks = await this.progressRepo.findSubjectAccessBlocksByUserAndCourse(requesterId, courseId);
+                if (blocks.length) {
+                    const blockedMap = new Map(blocks.map(b => [Number(b.subject_id), b.reason || null]));
+                    result = result.map(s => blockedMap.has(s.id)
+                        ? { ...s, blocked: true, blockReason: blockedMap.get(s.id) }
+                        : s
+                    );
                 }
             }
         }
-        return Result.ok(subjects);
+        return Result.ok(result);
     }
 
     async getById(id) {
