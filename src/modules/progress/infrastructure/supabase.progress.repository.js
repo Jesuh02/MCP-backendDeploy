@@ -1354,7 +1354,8 @@ export class SupabaseProgressRepository {
                 .from('v_subject_access_blocks')
                 .select('user_id, course_id, subject_id')
                 .in('user_id', userIds)
-                .eq('is_active', true);
+                .eq('is_active', true)
+                .is('unblocked_at', null);
             for (const b of (blocks || [])) {
                 const key = `${Number(b.user_id)}-${Number(b.course_id)}`;
                 if (!blockedByUserCourse.has(key)) blockedByUserCourse.set(key, new Set());
@@ -1604,8 +1605,9 @@ export class SupabaseProgressRepository {
 
     async unblockSubjectAccess(userId, subjectId, unblockedBy = null) {
         const now = new Date().toISOString();
-        // Soft-delete: mark as inactive and record unblock audit fields
-        const { error } = await this.client
+        // Soft-delete: mark as inactive and record unblock audit fields.
+        // Use .select() to verify the update actually applied (RLS can silently skip rows).
+        const { data, error } = await this.client
             .from('subject_access_blocks')
             .update({
                 is_active: false,
@@ -1614,8 +1616,24 @@ export class SupabaseProgressRepository {
                 ...(unblockedBy ? { unblocked_by: unblockedBy, updated_by: unblockedBy } : {}),
             })
             .eq('user_id', userId)
-            .eq('subject_id', subjectId);
+            .eq('subject_id', subjectId)
+            .select('id, is_active');
         if (error) throw new Error(error.message);
+
+        // Verify the update actually set is_active=false
+        if (!data || data.length === 0) {
+            console.warn(`[unblockSubjectAccess] UPDATE returned no rows for user_id=${userId}, subject_id=${subjectId}. Possible RLS restriction.`);
+        } else if (data[0].is_active !== false) {
+            // Defensive: if is_active didn't flip, something is preventing the update.
+            // Retry with a direct single-row update by id.
+            console.warn(`[unblockSubjectAccess] is_active still true after UPDATE for user_id=${userId}, subject_id=${subjectId}. Retrying by id=${data[0].id}.`);
+            const { error: retryError } = await this.client
+                .from('subject_access_blocks')
+                .update({ is_active: false, unblocked_at: now, updated_at: now, ...(unblockedBy ? { unblocked_by: unblockedBy, updated_by: unblockedBy } : {}) })
+                .eq('id', data[0].id)
+                .select('id, is_active');
+            if (retryError) console.error(`[unblockSubjectAccess] Retry failed:`, retryError.message);
+        }
         return true;
     }
 
@@ -1626,6 +1644,7 @@ export class SupabaseProgressRepository {
             .eq('user_id', userId)
             .eq('subject_id', subjectId)
             .eq('is_active', true)
+            .is('unblocked_at', null)
             .maybeSingle();
         if (error || !data) return null;
         return data;
@@ -1638,7 +1657,8 @@ export class SupabaseProgressRepository {
             .select('*')
             .eq('user_id', userId)
             .eq('course_id', courseId)
-            .eq('is_active', true);
+            .eq('is_active', true)
+            .is('unblocked_at', null);
         if (error || !data) return [];
         return data;
     }
@@ -1647,7 +1667,8 @@ export class SupabaseProgressRepository {
         const { data, error } = await this.client
             .from('v_subject_access_blocks')
             .select('*')
-            .eq('is_active', true);
+            .eq('is_active', true)
+            .is('unblocked_at', null);
         if (error || !data || data.length === 0) return [];
 
         const userIds = [...new Set(data.map(b => Number(b.user_id)).filter(Boolean))];
