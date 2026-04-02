@@ -1403,7 +1403,11 @@ export class SupabaseProgressRepository {
             const courseEnrollmentStatus = courseEnrollStatusMap.get(`${uid}-${cid}`) || 'activo';
             const subjects = (subjectsByCourse.get(cid) || []).map(s => ({
                 ...s,
-                enrollmentStatus: subjectEnrollStatusMap.get(`${uid}-${cid}-${s.id}`) || 'activo',
+                // Congruencia: si la materia está bloqueada (is_active=true en subject_access_blocks),
+                // forzar enrollment_status='inactivo' independientemente de lo que diga progreso_materia
+                enrollmentStatus: blockedSet.has(s.id)
+                    ? 'inactivo'
+                    : (subjectEnrollStatusMap.get(`${uid}-${cid}-${s.id}`) || 'activo'),
             }));
             return {
                 ...this._mapPreEnrollmentRecord(row, {
@@ -1606,30 +1610,40 @@ export class SupabaseProgressRepository {
     async unblockSubjectAccess(userId, subjectId, unblockedBy = null) {
         const now = new Date().toISOString();
         // Soft-delete: mark as inactive and record unblock audit fields.
-        // Use .select() to verify the update actually applied (RLS can silently skip rows).
+        // Only target the currently active block to avoid touching already-inactive rows.
+        const updatePayload = {
+            is_active: false,
+            unblocked_at: now,
+            updated_at: now,
+            ...(unblockedBy ? { unblocked_by: unblockedBy, updated_by: unblockedBy } : {}),
+        };
         const { data, error } = await this.client
             .from('subject_access_blocks')
-            .update({
-                is_active: false,
-                unblocked_at: now,
-                updated_at: now,
-                ...(unblockedBy ? { unblocked_by: unblockedBy, updated_by: unblockedBy } : {}),
-            })
+            .update(updatePayload)
             .eq('user_id', userId)
             .eq('subject_id', subjectId)
+            .eq('is_active', true)
             .select('id, is_active');
         if (error) throw new Error(error.message);
 
         // Verify the update actually set is_active=false
         if (!data || data.length === 0) {
-            console.warn(`[unblockSubjectAccess] UPDATE returned no rows for user_id=${userId}, subject_id=${subjectId}. Possible RLS restriction.`);
+            // No active block found — could be already unblocked or RLS restriction.
+            // Fallback: force-update ALL rows for this user+subject (covers inconsistent records).
+            console.warn(`[unblockSubjectAccess] No active block found for user_id=${userId}, subject_id=${subjectId}. Forcing update on all matching rows.`);
+            const { error: fallbackError } = await this.client
+                .from('subject_access_blocks')
+                .update(updatePayload)
+                .eq('user_id', userId)
+                .eq('subject_id', subjectId);
+            if (fallbackError) console.error(`[unblockSubjectAccess] Fallback update failed:`, fallbackError.message);
         } else if (data[0].is_active !== false) {
             // Defensive: if is_active didn't flip, something is preventing the update.
             // Retry with a direct single-row update by id.
             console.warn(`[unblockSubjectAccess] is_active still true after UPDATE for user_id=${userId}, subject_id=${subjectId}. Retrying by id=${data[0].id}.`);
             const { error: retryError } = await this.client
                 .from('subject_access_blocks')
-                .update({ is_active: false, unblocked_at: now, updated_at: now, ...(unblockedBy ? { unblocked_by: unblockedBy, updated_by: unblockedBy } : {}) })
+                .update(updatePayload)
                 .eq('id', data[0].id)
                 .select('id, is_active');
             if (retryError) console.error(`[unblockSubjectAccess] Retry failed:`, retryError.message);
