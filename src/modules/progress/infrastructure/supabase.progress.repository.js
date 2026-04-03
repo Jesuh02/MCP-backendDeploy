@@ -162,6 +162,7 @@ export class SupabaseProgressRepository {
             progressPercentage: row.porcentaje_progreso,
             status: row.estado,
             enrollment_status: row.enrollment_status ?? 'activo',
+            createdBy: row.created_by ?? null,
             lastActivityAt: row.ultima_calculada_en,
             certificateIssuedAt: cert?.issued_at || null,
             certificateUrl: cert?.storage_path || null,
@@ -265,6 +266,7 @@ export class SupabaseProgressRepository {
             ...(progressData.status ? { estado: progressData.status } : {}),
             ...(isSubjectLevel ? { materia_id: Number(progressData.subjectId) } : {}),
             ...(progressData.enrollment_status ? { enrollment_status: progressData.enrollment_status } : {}),
+            ...(isSubjectLevel && progressData.createdBy ? { created_by: progressData.createdBy } : {}),
         };
 
         // Manual upsert: avoid relying on DB unique constraint (ON CONFLICT) which may not exist.
@@ -439,7 +441,7 @@ export class SupabaseProgressRepository {
         // 1. Base query
         let query = this.client
             .from(this._subjectProgressTable())
-            .select('usuario_estudiante, curso_id, materia_id, tareas_completadas, tareas_totales, promedio, calificacion_ponderada, porcentaje_progreso, ultima_calculada_en, enrollment_status')
+            .select('usuario_estudiante, curso_id, materia_id, tareas_completadas, tareas_totales, promedio, calificacion_ponderada, porcentaje_progreso, ultima_calculada_en, enrollment_status, created_by')
             .order('curso_id')
             .order('materia_id')
             .order('usuario_estudiante');
@@ -537,6 +539,7 @@ export class SupabaseProgressRepository {
                 progressPercentage: pct,
                 lastActivityAt:  r.ultima_calculada_en || null,
                 enrollmentStatus: r.enrollment_status ?? 'activo',
+                createdBy:       r.created_by || null,
             };
         });
     }
