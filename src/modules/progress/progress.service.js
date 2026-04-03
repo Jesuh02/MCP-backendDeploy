@@ -983,6 +983,16 @@ export class ProgressDomainService {
         return Result.ok({ message: 'Acceso al curso revocado', reason });
     }
 
+    async setCourseEnrollmentStatus(userId, courseId, status) {
+        await this.progressRepo.setCourseEnrollmentStatus(userId, courseId, status);
+        return Result.ok({ message: 'Estado de matricula actualizado', userId, courseId, status });
+    }
+
+    async setSubjectEnrollmentStatus(userId, courseId, subjectId, status) {
+        await this.progressRepo.setSubjectEnrollmentStatus(userId, courseId, subjectId, status);
+        return Result.ok({ message: 'Estado de matricula de materia actualizado', userId, courseId, subjectId, status });
+    }
+
     // â”€â”€â”€ Subject Access Blocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
