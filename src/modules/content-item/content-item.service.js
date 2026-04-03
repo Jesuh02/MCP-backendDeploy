@@ -71,19 +71,30 @@ export class ContentItemDomainService {
 
     async create(data, requesterId, currentUser = null) {
         if (requesterId) {
-            const topic = await this._getTopicByItemData(data);
-            const subject = await this._getSubjectByTopic(topic);
-            const canManage = await this._canManageSubject(requesterId, subject);
-            if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para crear contenido en esta materia'));
+            try {
+                const topic = await this._getTopicByItemData(data);
+                const subject = await this._getSubjectByTopic(topic);
+                const canManage = await this._canManageSubject(requesterId, subject);
+                if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para crear contenido en esta materia'));
+            } catch (authErr) {
+                // Si la cadena de autorización falla por un error inesperado,
+                // denegar el acceso en lugar de crear sin verificar.
+                console.error('[ContentItemService.create] Auth chain error:', authErr?.message || authErr);
+                return Result.fail(new ForbiddenError('No se pudo verificar permisos para crear contenido'));
+            }
             data.createdBy = requesterId;
             data.creatorUsuarioId = data.creatorUsuarioId || requesterId;
             data.creatorUsername = data.creatorUsername || currentUser?.username || null;
         }
 
-        // Check for duplicate before inserting
-        const existing = await this.contentRepo.findDuplicate(data);
-        if (existing) {
-            return Result.ok(existing);
+        // Check for duplicate before inserting (best-effort, never blocks creation)
+        try {
+            const existing = await this.contentRepo.findDuplicate(data);
+            if (existing) {
+                return Result.ok(existing);
+            }
+        } catch (dupErr) {
+            console.warn('[ContentItemService.create] findDuplicate failed, proceeding with insert:', dupErr?.message);
         }
         const created = await this.contentRepo.create(data);
         return Result.ok(created);
