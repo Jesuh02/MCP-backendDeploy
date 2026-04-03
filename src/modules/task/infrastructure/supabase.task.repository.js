@@ -161,8 +161,12 @@ export class SupabaseTaskRepository {
         // 3. Delete task submissions
         await this.client.from('task_submissions').delete().eq('task_id', id);
 
-        // 4. Delete question sessions referencing this task
+            // 4. Delete question sessions referencing this task
         await this.client.from('question_sessions').delete().eq('task_id', id);
+
+        // 4b. Delete reinforcement data tied to this task
+        await this.client.from('reinforcement_question_history').delete().eq('task_id', id);
+        await this.client.from('reinforcement_results').delete().eq('task_id', id);
 
         // 5. Delete the task
         const { error } = await this.client.from('tasks').delete().eq('id', id);
