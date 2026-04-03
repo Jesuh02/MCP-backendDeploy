@@ -260,6 +260,11 @@ export class LLMDomainService {
             // 2. Build system prompt with context
             let systemPrompt = 'Eres un asistente educativo experto. Responde de manera clara, precisa y útil.';
 
+            // ── Inject user identity so the LLM always knows who it is talking to ──
+            if (username) {
+                systemPrompt += `\n\nUSUARIO ACTUAL: ${username}. Dirígete al usuario por su nombre cuando sea apropiado.`;
+            }
+
             // ── Inject institution context so the LLM always knows which tenant it serves ──
             if (effectiveInstitutionName) {
                 systemPrompt += `\n\nINSTITUCIÓN ACTIVA: ${effectiveInstitutionName}. ` +

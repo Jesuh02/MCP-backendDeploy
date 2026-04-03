@@ -84,8 +84,9 @@ export class LLMController {
                 fileUri: value.fileUri || value.file_uri,
                 studentId: value.studentId || value.student_id,
                 userId: req.user?.userId || value.userId,
-                // Authenticated username from JWT — used for course ownership lookup
-                username: req.user?.username || null,
+                // Authenticated username from JWT — used for course ownership lookup.
+                // Fall back to body-supplied username (for Android/web clients).
+                username: req.user?.username || value.username || null,
                 submissionId: value.submissionId,
                 taskId: value.taskId,
                 topicId: value.topicId || value.topic_id,

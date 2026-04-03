@@ -1356,7 +1356,8 @@ export class WhatsAppDomainService {
 
             // Always instruct the model not to grade tasks when queries come from
             // WhatsApp. This channel is for open-ended Q&A only.
-            promptToSend = `Por favor responde como un asistente general. NO califiques tareas ni asumas el rol de evaluador.\n\n${promptToSend}`;
+            const usernameTag = user?.username ? `[Usuario: ${user.username}] ` : '';
+            promptToSend = `${usernameTag}Por favor responde como un asistente general. NO califiques tareas ni asumas el rol de evaluador.\n\n${promptToSend}`;
 
             // For administrators we always engage the Business Intelligence persona
             // that mirrors the behaviour of DatabaseQueryFragment.kt.  This means every
