@@ -26,7 +26,7 @@ export class StorageDomainService {
         if (buffer.length > MAX_FILE_SIZE) {
             return Result.fail(new ValidationError(`Archivo excede el límite de ${MAX_FILE_SIZE / (1024 * 1024)} MB`));
         }
-        const publicUrl = await this.storage.uploadFile(buffer, key, contentType);
+        const publicUrl = await this.storage.uploadFile(buffer, key, contentType, buffer.length);
         return Result.ok({ publicUrl, key });
     }
 
