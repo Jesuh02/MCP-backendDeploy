@@ -98,6 +98,10 @@ export class SupabaseTopicRepository {
             await this.client.from('task_submissions').delete().in('task_id', taskIds);
             await this.client.from('question_sessions').delete().in('task_id', taskIds);
 
+            // 5b. Delete reinforcement data tied to those tasks
+            await this.client.from('reinforcement_question_history').delete().in('task_id', taskIds);
+            await this.client.from('reinforcement_results').delete().in('task_id', taskIds);
+
             // 6. Delete the tasks
             await this.client.from('tasks').delete().eq('topic_id', id);
         }
@@ -110,6 +114,10 @@ export class SupabaseTopicRepository {
                 .in('content_item_id', topicItems.map(i => i.id));
             await this.client.from('content_items').delete().eq('topic_id', id);
         }
+
+        // 7b. Delete reinforcement data tied directly to this topic
+        await this.client.from('reinforcement_question_history').delete().eq('topic_id', id);
+        await this.client.from('reinforcement_results').delete().eq('topic_id', id);
 
         // 8. Delete the topic
         const { error } = await this.client.from('topics').delete().eq('id', id);
@@ -125,6 +133,10 @@ export class SupabaseTopicRepository {
 
         // 2. Detach tasks from this topic (preserve them)
         await this.client.from('tasks').update({ topic_id: null }).eq('topic_id', id);
+
+        // 2b. Detach reinforcement data from this topic (preserve them)
+        await this.client.from('reinforcement_question_history').update({ topic_id: null }).eq('topic_id', id);
+        await this.client.from('reinforcement_results').update({ topic_id: null }).eq('topic_id', id);
 
         // 3. Delete content items directly under this topic (no task)
         const { data: topicItems } = await this.client
