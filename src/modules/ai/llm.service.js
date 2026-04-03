@@ -258,7 +258,19 @@ export class LLMDomainService {
             }
 
             // 2. Build system prompt with context
-            let systemPrompt = 'Eres un asistente educativo experto. Responde de manera clara, precisa y útil.';
+            let systemPrompt = 'Eres un asistente educativo experto y también un asistente de conocimiento general. Responde de manera clara, precisa y útil. Puedes responder tanto preguntas sobre la plataforma educativa y sus datos como preguntas de conocimiento general (historia, ciencia, cultura, etc.).';
+
+            // ── Inject user identity so the LLM always knows who it is talking to ──
+            if (username) {
+                systemPrompt += `\n\nUSUARIO ACTUAL: ${username}. Dirígete al usuario por su nombre cuando sea apropiado.`;
+            }
+
+            systemPrompt += `\n\nREGLA DE PREGUNTAS GENERALES:\n- Si el usuario hace una pregunta de conocimiento general (historia, ciencia, matemáticas, cultura, idiomas, etc.) que NO requiere datos de la base de datos, responde directamente con tu conocimiento. NO uses herramientas de base de datos para este tipo de preguntas.\n- Solo usa las herramientas de base de datos cuando el usuario pregunte sobre datos de la plataforma (estudiantes, cursos, progreso, entregas, etc.).\n- Ejemplo de pregunta general: "¿Cuáles fueron los aportes de Marie Curie en física?" → Responde directamente.\n- Ejemplo de pregunta de datos: "¿Cuántos estudiantes tengo?" → Usa la herramienta query_database.`;
+
+            // ── Inject user identity so the LLM always knows who it is talking to ──
+            if (username) {
+                systemPrompt += `\n\nUSUARIO ACTUAL: ${username}. Dirígete al usuario por su nombre cuando sea apropiado.`;
+            }
 
             // ── Inject institution context so the LLM always knows which tenant it serves ──
             if (effectiveInstitutionName) {
@@ -472,9 +484,16 @@ Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejid
             // ── Detect if the prompt needs MCP database tools ──
             // Broad detection: table names (Spanish & English), counting, records,
             // general data queries, student progress patterns, and explicit tool requests.
-            const DB_TABLE_NAMES = /\b(usuarios|courses|cursos|videos|subjects|materias|topics|temas|tasks|tareas|task_submissions|entregas|submissions|subscriptions|suscripciones|transactions|transacciones|notifications|notificaciones|progreso_curso|progreso|collaborators|colaboradores|personas)\b/i;
-            const DB_QUERY_PATTERNS = /query[_ ]database|consulta de business inteli?gencia|usa ['"]?query_database['"]?|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n|cu[aá]nto|cu[aá]ntas|cu[aá]ntos|registros|total de|contar|conteo|cantidad|estad[ií]stica|reporte|datos de|d[ií]me|mu[eé]stra|lista|consulta|base de datos|tabla|schema|esquema|dashboard|m[eé]trica|ingresos|pagos|ventas|suscri|crear reporte|generar reporte|exportar/i;
-            let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || (DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc)));
+            const DB_TABLE_NAMES = /\b(usuarios|courses|cursos|videos|subjects|materias|topics|temas|tasks|tareas|task_submissions|entregas|submissions|subscriptions|suscripciones|transactions|transacciones|notifications|notificaciones|progreso_curso|progreso_materia|progreso|collaborators|colaboradores|personas|reinforcement_results|refuerzo|pr[aá]ctica)\b/i;
+            const DB_QUERY_PATTERNS = /query[_ ]database|consulta de business inteli?gencia|usa ['"]?query_database['"]?|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n|cu[aá]nto|cu[aá]ntas|cu[aá]ntos|registros|total de|contar|conteo|cantidad|estad[ií]stica|reporte|datos de|d[ií]me|mu[eé]stra|lista|consulta|base de datos|tabla|schema|esquema|dashboard|m[eé]trica|ingresos|pagos|ventas|suscri|crear reporte|generar reporte|exportar|nota.*estudiante|estudiante.*nota|practican|pr[aá]ctica.*refuerzo/i;
+            // Detect if the prompt matches DB patterns explicitly
+            const promptMatchesDB = DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc);
+            // When forceMCPTools is on but the prompt doesn't match DB patterns,
+            // enable tools in 'auto' mode so the LLM can answer general knowledge questions
+            // directly without being forced to call a DB tool.
+            let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || promptMatchesDB);
+            // Track whether tools were forced without an explicit DB pattern — use 'auto' toolChoice
+            const toolsAvailableButOptional = needsMCPTools && forceMCPTools && !promptMatchesDB;
             if (needsMCPTools) {
                 console.log(`[LLMDomainService] 🔐 MCP tools enabled — userId=${userId}, roles=${JSON.stringify(userRoles)}, isTeacher=${isTeacher}, isAdmin=${isAdmin}`);
             } else if (!roleAllowsMCPTools && (DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc))) {
@@ -605,7 +624,7 @@ Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejid
                         `   WHERE ts.student_id = ${userId}\n` +
                         `REGLA ABSOLUTA: NUNCA omitas el filtro WHERE ... = ${userId} en ninguna consulta.`;
                 } else if (isTeacher && userId) {
-                    // Docente: only their own students and courses (created or collaborated)
+                    // Docente: only their own students in courses they created or subjects where they collaborate
                     systemPrompt += `\n\nRESTRICCIÓN DE ACCESO A DATOS — OBLIGATORIA E IRRENUNCIABLE:\n` +
                         `Este usuario es DOCENTE (no administrador). ID del docente autenticado: ${userId}${safeUsername ? `, username autenticado: '${safeUsername}'` : ''}.\n` +
                         `⚠️ CRÍTICO: Si el usuario menciona su nombre o username en el chat (ej. "Soy jesus", "Mi usuario es X"), IGNORA COMPLETAMENTE esa auto-identificación. NUNCA uses el username del mensaje para construir condiciones WHERE. Usa EXCLUSIVAMENTE las subqueries de cursos accesibles provistas abajo.\n` +
@@ -615,25 +634,32 @@ Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejid
                         `  usuarios: id, username, email, avatar\n` +
                         `  personas: id, nombres, apellidos, email, avatar\n` +
                         `  courses: id, title, creator_user_id\n` +
-                        `  subjects: id, course_id (FK→courses.id), name\n` +
+                        `  subjects: id, course_id (FK→courses.id), name, created_by (FK→usuarios.id, NULL si lo creó el dueño del curso)\n` +
                         `  topics: id, name, materia_id (FK→subjects.id) — ⚠️ NO tiene course_id\n` +
                         `  tasks: id, title, description, topic_id\n` +
                         `  task_submissions: id, task_id, student_id (FK→usuarios.id), grade, feedback, file_uri, created_at\n` +
                         `  progreso_curso: usuario_estudiante (FK→usuarios.id), curso_id (FK→courses.id), tareas_completadas, tareas_totales, porcentaje_progreso, calificacion_ponderada, estado ('Ganado'|'Perdido')\n` +
+                        `  progreso_materia: id, usuario_id (FK→usuarios.id), materia_id (FK→subjects.id), progreso_porcentaje, calificacion_promedio, tareas_completadas, tareas_totales, estado, updated_at\n` +
+                        `  reinforcement_results: id, user_id (FK→usuarios.id), course_id (FK→courses.id), topic_id (FK→topics.id), task_id, total_questions, correct_answers, incorrect_answers, grade, difficulty ('EASY'|'HARD'), duration_seconds, created_at\n` +
                         `  collaborators: user_id, course_id\n` +
                         `  subscriptions: subscriber_id, creator_id  ← SIN course_id\n` +
                         `  TABLAS INEXISTENTES (PROHIBIDO usarlas): lessons, lesson_completions, enrollments, student_courses, progreso_estudiante\n\n` +
+                        `═══ ÁMBITO DEL DOCENTE: MATERIAS DONDE ES COLABORADOR ═══\n` +
+                        `Como docente colaborador, SOLO tienes acceso a información de estudiantes matriculados en cursos donde eres colaborador.\n` +
+                        `Tu ámbito de visibilidad se define por las materias (subjects) de esos cursos.\n\n` +
                         `SUBQUERY DE CURSOS ACCESIBLES (úsala siempre para filtrar por curso):\n` +
                         `  (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n\n` +
+                        `SUBQUERY DE MATERIAS ACCESIBLES (úsala para filtrar por materia/subject):\n` +
+                        `  (SELECT s.id FROM subjects s WHERE s.course_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution}))\n\n` +
                         `SUBQUERY DE ALUMNOS ACCESIBLES (úsala siempre para filtrar estudiantes):\n` +
                         `  (SELECT DISTINCT pc.usuario_estudiante FROM progreso_curso pc WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution}))\n\n` +
                         `CONSULTA DE REFERENCIA — CONTAR ESTUDIANTES POR CURSO:\n` +
                         `  SELECT c.title AS curso, COUNT(DISTINCT pc.usuario_estudiante) AS estudiantes\n` +
                         `  FROM courses c\n` +
                         `  LEFT JOIN progreso_curso pc ON pc.curso_id = c.id\n` +
-                        `  WHERE c.creator_user_id IN ${userIdResolution}\n` +
+                        `  WHERE c.id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
                         `  GROUP BY c.title ORDER BY c.title;\n\n` +
-                        `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES (adapta según la pregunta):\n` +
+                        `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES POR CURSO (adapta según la pregunta):\n` +
                         `  SELECT u.username AS estudiante, c.title AS curso,\n` +
                         `         pc.tareas_completadas, pc.tareas_totales, pc.porcentaje_progreso,\n` +
                         `         pc.calificacion_ponderada AS promedio, pc.estado\n` +
@@ -642,16 +668,52 @@ Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejid
                         `  JOIN courses c ON pc.curso_id = c.id\n` +
                         `  WHERE pc.curso_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
                         `  ORDER BY c.title, u.username;\n\n` +
+                        `CONSULTA DE REFERENCIA — PROGRESO DE ESTUDIANTES POR MATERIA (progreso_materia):\n` +
+                        `  SELECT u.username AS estudiante, s.name AS materia, c.title AS curso,\n` +
+                        `         pm.progreso_porcentaje, pm.calificacion_promedio, pm.tareas_completadas,\n` +
+                        `         pm.tareas_totales, pm.estado\n` +
+                        `  FROM progreso_materia pm\n` +
+                        `  JOIN usuarios u ON pm.usuario_id = u.id\n` +
+                        `  JOIN subjects s ON pm.materia_id = s.id\n` +
+                        `  JOIN courses c ON s.course_id = c.id\n` +
+                        `  WHERE pm.materia_id IN (SELECT s2.id FROM subjects s2 WHERE s2.course_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution}))\n` +
+                        `  ORDER BY c.title, s.name, u.username;\n\n` +
+                        `CONSULTA DE REFERENCIA — NOTAS/CALIFICACIONES DE TAREAS DE TUS ESTUDIANTES:\n` +
+                        `  SELECT u.username AS estudiante, t.title AS tarea, tp.name AS tema,\n` +
+                        `         s.name AS materia, c.title AS curso,\n` +
+                        `         ts.grade AS nota, t.max_grade AS nota_maxima, ts.feedback, ts.created_at\n` +
+                        `  FROM task_submissions ts\n` +
+                        `  JOIN usuarios u ON ts.student_id = u.id\n` +
+                        `  JOIN tasks t ON ts.task_id = t.id\n` +
+                        `  JOIN topics tp ON t.topic_id = tp.id\n` +
+                        `  JOIN subjects s ON tp.materia_id = s.id\n` +
+                        `  JOIN courses c ON s.course_id = c.id\n` +
+                        `  WHERE s.course_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
+                        `  ORDER BY c.title, s.name, t.title, u.username;\n\n` +
+                        `CONSULTA DE REFERENCIA — PRÁCTICA DE REFUERZO (reinforcement_results) DE TUS ESTUDIANTES:\n` +
+                        `  SELECT u.username AS estudiante, c.title AS curso, tp.name AS tema,\n` +
+                        `         rr.total_questions AS preguntas_totales, rr.correct_answers AS respuestas_correctas,\n` +
+                        `         rr.incorrect_answers AS respuestas_incorrectas, rr.grade AS nota,\n` +
+                        `         rr.difficulty AS dificultad, rr.duration_seconds AS duracion_segundos,\n` +
+                        `         rr.created_at AS fecha\n` +
+                        `  FROM reinforcement_results rr\n` +
+                        `  JOIN usuarios u ON rr.user_id = u.id\n` +
+                        `  JOIN courses c ON rr.course_id = c.id\n` +
+                        `  LEFT JOIN topics tp ON rr.topic_id = tp.id\n` +
+                        `  WHERE rr.course_id IN (SELECT id FROM courses WHERE creator_user_id IN ${userIdResolution} UNION SELECT course_id FROM collaborators WHERE user_id IN ${userIdResolution})\n` +
+                        `  ORDER BY c.title, u.username, rr.created_at DESC;\n\n` +
 
                         `REGLAS DE FILTRADO OBLIGATORIAS (aplican a TODAS las queries sin excepción):\n` +
-                        `1. Consultas de progreso → usar tabla progreso_curso, filtrar por curso_id IN (subquery de cursos accesibles).\n` +
-                        `2. Consultas de entregas (task_submissions) → filtrar por student_id IN (subquery de alumnos accesibles).\n` +
-                        `3. Consultas de cursos → filtrar por id IN (subquery de cursos accesibles).\n` +
-                        `4. PROHIBIDO devolver datos de estudiantes o cursos de otros docentes.\n` +
-                        `5. PROHIBIDO omitir estos filtros en cualquier consulta SQL.\n` +
-                        `6. PROHIBIDO usar tablas que no existen: lessons, lesson_completions, enrollments, student_courses, progreso_estudiante.\n` +
-                        `7. Si el usuario solicita ver "todos" los estudiantes o cursos, aplica igualmente los filtros — solo muestra los suyos.\n` +
-                        `8. PROHIBIDO usar auth.uid() — causa errores de tipo. Usa las subqueries provistas.`;
+                        `1. Consultas de progreso por curso → usar tabla progreso_curso, filtrar por curso_id IN (subquery de cursos accesibles).\n` +
+                        `2. Consultas de progreso por materia → usar tabla progreso_materia, filtrar por materia_id IN (subquery de materias accesibles).\n` +
+                        `3. Consultas de entregas (task_submissions) → filtrar por tasks que pertenezcan a topics de materias accesibles via la cadena tasks→topics→subjects.\n` +
+                        `4. Consultas de práctica/refuerzo (reinforcement_results) → filtrar por course_id IN (subquery de cursos accesibles).\n` +
+                        `5. Consultas de cursos → filtrar por id IN (subquery de cursos accesibles).\n` +
+                        `6. PROHIBIDO devolver datos de estudiantes o cursos de otros docentes.\n` +
+                        `7. PROHIBIDO omitir estos filtros en cualquier consulta SQL.\n` +
+                        `8. PROHIBIDO usar tablas que no existen: lessons, lesson_completions, enrollments, student_courses, progreso_estudiante.\n` +
+                        `9. Si el usuario solicita ver "todos" los estudiantes o cursos, aplica igualmente los filtros — solo muestra los suyos.\n` +
+                        `10. PROHIBIDO usar auth.uid() — causa errores de tipo. Usa las subqueries provistas.`;
                 }
                 // ────────────────────────────────────────────────────────────────────
             }
@@ -690,10 +752,11 @@ Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejid
             let response = await this.llm.chat(systemPrompt, fullPrompt, {
                 model,
                 tools,
-                // When MCP tools are needed, force the model to call at least one tool on the
-                // first turn. This prevents DeepSeek from answering "la tabla X no existe" from
-                // training knowledge instead of actually querying the database.
-                toolChoice: needsMCPTools ? 'required' : 'auto',
+                // When MCP tools are needed AND the prompt explicitly matches DB patterns,
+                // force the model to call at least one tool on the first turn.
+                // When tools are available but optional (general knowledge question from
+                // admin/teacher), use 'auto' so the LLM can answer directly without DB.
+                toolChoice: needsMCPTools ? (toolsAvailableButOptional ? 'auto' : 'required') : 'auto',
             });
 
             // If the model returned tool_calls, execute them using MCPService and feed results back.
@@ -1294,7 +1357,347 @@ Responde de forma clara y constructiva.`;
             }
         }
 
-        return sanitized;
+        // Math verification: recompute arithmetic answers programmatically
+        return sanitized.map(q => this._verifyMathAnswer(q)).filter(Boolean);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MATH VERIFICATION — Programmatic answer validation for quiz questions
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Verifies and fixes math in a quiz question by recomputing the answer
+     * programmatically. Returns the corrected question, or null to reject.
+     * @private
+     */
+    _verifyMathAnswer(q) {
+        if (!q) return q;
+        const text = q.question;
+        const lower = (text || '').toLowerCase();
+
+        const mathSignals = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|¿cuánto|cuántos|cuántas|promedio|media|porcentaje/i;
+        const hasSignificantNumbers = /\d{3,}/.test(text.replace(/,/g, ''));
+        if (!mathSignals.test(lower) && !hasSignificantNumbers) return q;
+
+        try {
+            const result = this._computeExpectedMathAnswer(text);
+            if (result === null) return q;
+
+            const requestedDecimals = this._extractRequestedDecimals(text);
+            let finalAnswer = result.value;
+            if (requestedDecimals !== null) {
+                finalAnswer = parseFloat(finalAnswer.toFixed(requestedDecimals));
+            } else if (!Number.isInteger(finalAnswer)) {
+                finalAnswer = parseFloat(finalAnswer.toFixed(2));
+            }
+
+            if (q.type === 'fill_in_blank') {
+                const currentAnswer = parseFloat(String(q.correctAnswer).replace(/,/g, ''));
+                if (!Number.isFinite(currentAnswer)) return q;
+                const tolerance = Math.max(Math.abs(finalAnswer) * 0.001, 0.01);
+                if (Math.abs(currentAnswer - finalAnswer) > tolerance) {
+                    console.warn(`🔧 [LLM MathVerify] CORRECTED fill_in_blank: LLM="${q.correctAnswer}" → Correct="${finalAnswer}"`);
+                    q.correctAnswer = String(finalAnswer);
+                    q.explanation = `${result.steps.join('. ')}. Resultado final: ${finalAnswer}.`;
+                }
+            } else if (q.type === 'multiple_choice') {
+                const optionValues = q.options.map(opt => {
+                    const nums = opt.match(/[\d,]+\.?\d*/g);
+                    if (!nums) return NaN;
+                    const parsed = nums.map(n => parseFloat(n.replace(/,/g, ''))).filter(Number.isFinite);
+                    return parsed.length > 0 ? parsed.reduce((a, b) => Math.abs(a) > Math.abs(b) ? a : b) : NaN;
+                });
+                let closestIdx = -1;
+                let closestDiff = Infinity;
+                for (let i = 0; i < optionValues.length; i++) {
+                    if (!Number.isFinite(optionValues[i])) continue;
+                    const diff = Math.abs(optionValues[i] - finalAnswer);
+                    if (diff < closestDiff) { closestDiff = diff; closestIdx = i; }
+                }
+                const tolerance = Math.max(Math.abs(finalAnswer) * 0.001, 0.01);
+                if (closestIdx >= 0 && closestDiff <= tolerance) {
+                    if (closestIdx !== q.correctIndex) {
+                        console.warn(`🔧 [LLM MathVerify] CORRECTED multiple_choice: index ${q.correctIndex}→${closestIdx} (computed=${finalAnswer})`);
+                        q.correctIndex = closestIdx;
+                        q.explanation = `${result.steps.join('. ')}. Resultado final: ${finalAnswer}.`;
+                    }
+                } else {
+                    console.warn(`🔧 [LLM MathVerify] REJECTED: No option ≈ computed=${finalAnswer}`);
+                    return null;
+                }
+            }
+        } catch (err) {
+            console.warn(`[LLM MathVerify] Error (non-blocking): ${err.message}`);
+        }
+        return q;
+    }
+
+    /** @private */
+    _computeExpectedMathAnswer(text) {
+        const explicit = this._tryExplicitMathArithmetic(text);
+        if (explicit !== null) return explicit;
+        const wordProblem = this._tryMathWordProblem(text);
+        if (wordProblem !== null) return wordProblem;
+        const sumFallback = this._tryMathSumFallback(text);
+        if (sumFallback !== null) return sumFallback;
+        return null;
+    }
+
+    /** @private Parse and evaluate explicit arithmetic chains */
+    _tryExplicitMathArithmetic(text) {
+        // Strip currency symbols so "$45,230 + $78,945" matches as arithmetic
+        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
+        const numberPat = '\\d[\\d,]*\\.?\\d*';
+        const opPat = '[+\\-×*÷/]';
+        const exprRegex = new RegExp(
+            `(${numberPat})\\s*(${opPat})\\s*(${numberPat}(?:\\s*${opPat}\\s*${numberPat})*)`, 'g'
+        );
+        const match = exprRegex.exec(cleaned);
+        if (!match) return null;
+        const tokens = match[0].split(/\s*([+\-×*÷/])\s*/).filter(t => t.trim());
+        let result = parseFloat(tokens[0].replace(/,/g, ''));
+        if (!Number.isFinite(result)) return null;
+        const steps = [];
+        for (let i = 1; i < tokens.length; i += 2) {
+            const op = tokens[i];
+            const num = parseFloat((tokens[i + 1] || '').replace(/,/g, ''));
+            if (!Number.isFinite(num)) return null;
+            const prev = result;
+            switch (op) {
+                case '+': result += num; break;
+                case '-': result -= num; break;
+                case '×': case '*': result *= num; break;
+                case '÷': case '/': if (num === 0) return null; result /= num; break;
+                default: return null;
+            }
+            steps.push(`${prev} ${op} ${num} = ${result}`);
+        }
+        // Follow-up operation
+        const after = cleaned.substring(cleaned.indexOf(match[0]) + match[0].length);
+        const multMatch = after.match(/(?:multiplic[aá]r?\s+por|×|costo\s+(?:de\s+\w+\s+)*(?:de\s*)?\$?|precio\s+(?:de|por)\s*\$?)\s*([\d,.]+)/i);
+        if (multMatch) {
+            const factor = parseFloat(multMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(factor) && factor > 0) {
+                const prev = result; result *= factor;
+                steps.push(`${prev} × ${factor} = ${result}`);
+            }
+        }
+        const pctMatch = after.match(/(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        if (pctMatch) {
+            const pct = parseFloat(pctMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(pct) && pct > 0) {
+                const prev = result;
+                const factor = /descuento/i.test(pctMatch[0]) ? (1 - pct / 100) : (1 + pct / 100);
+                result *= factor;
+                steps.push(`${prev} × ${factor} = ${result}`);
+            }
+        }
+        return { value: result, steps };
+    }
+
+    /** @private Parse word problems with sum + rate/percentage */
+    _tryMathWordProblem(text) {
+        const lower = text.toLowerCase();
+        if (!/total|suma|calcula|acumulad|promedio|media|¿cuánto|cuántos|monto|resultado/i.test(lower)) return null;
+        const dataNumbers = [];
+        const labeledPattern = /(?:[a-zA-ZáéíóúñÁÉÍÓÚÑ][a-zA-ZáéíóúñÁÉÍÓÚÑ\s]*[:=]\s*\$?)([\d,]+\.?\d*)/gi;
+        let m;
+        while ((m = labeledPattern.exec(text)) !== null) {
+            const num = parseFloat(m[1].replace(/,/g, ''));
+            if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
+        }
+        // Pattern 1b: currency amounts — "$45,230"
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const currencyPat = /\$\s?([\d,]+\.?\d*)/gi;
+            while ((m = currencyPat.exec(text)) !== null) {
+                const num = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 1) dataNumbers.push(num);
+            }
+        }
+        // Pattern 1c: "de" amounts — "ventas de 45,230"
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const dePat = /(?:de|por|con|=)\s*\$?\s*([\d,]+\.?\d*)/gi;
+            while ((m = dePat.exec(text)) !== null) {
+                const num = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
+            }
+        }
+        // Pattern 2: all significant numbers (≥10)
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const stripped = text.replace(/[$€¥£₡₿]\s*/g, '');
+            const allNums = stripped.match(/\d[\d,]*\.?\d*/g) || [];
+            const pctSet = new Set();
+            const pctRe = /([\d,.]+)\s*%/g;
+            let pm;
+            while ((pm = pctRe.exec(text)) !== null) {
+                pctSet.add(parseFloat(pm[1].replace(/,/g, '')));
+            }
+            for (const raw of allNums) {
+                const num = parseFloat(raw.replace(/,/g, ''));
+                if (!Number.isFinite(num) || num < 10) continue;
+                if (pctSet.has(num)) continue;
+                if (num >= 1900 && num <= 2100 && Number.isInteger(num)) continue;
+                dataNumbers.push(num);
+            }
+        }
+        if (dataNumbers.length < 2) return null;
+        const steps = [];
+        let result;
+        if (/promedio|media\b/i.test(lower)) {
+            const sum = dataNumbers.reduce((a, b) => a + b, 0);
+            result = sum / dataNumbers.length;
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+        } else {
+            result = dataNumbers.reduce((a, b) => a + b, 0);
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+        }
+        const ratePatterns = [
+            /costo\s+(?:de\s+(?:procesamiento|producción|envío|operación|mantenimiento))?\s*(?:de|es|por|=)?\s*\$?([\d,.]+)/i,
+            /precio\s+(?:de|por|unitario|cada)?\s*\$?([\d,.]+)/i,
+            /cada\s+\w+\s+(?:tiene\s+)?(?:un\s+)?(?:costo|precio|valor)\s+(?:de\s*)?\$?([\d,.]+)/i,
+            /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
+            /(?:tasa|tarifa|factor|coeficiente)\s+(?:de\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+            /(?:se\s+)?aplic[aá]\s+(?:un\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+        ];
+        for (const re of ratePatterns) {
+            const rm = text.match(re);
+            if (rm) {
+                const rate = parseFloat(rm[1].replace(/,/g, ''));
+                if (Number.isFinite(rate) && rate > 0 && rate < result) {
+                    const prev = result; result = result * rate;
+                    steps.push(`${prev} × ${rate} = ${result}`);
+                    break;
+                }
+            }
+        }
+        const pctMatch = text.match(/(?:impuesto|descuento|incremento|aumento|IVA|ISR)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        if (pctMatch) {
+            const pct = parseFloat(pctMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(pct) && pct > 0 && pct <= 200) {
+                const prev = result;
+                const factor = /descuento/i.test(pctMatch[0]) ? (1 - pct / 100) : (1 + pct / 100);
+                result *= factor;
+                steps.push(`${prev} × ${factor} = ${result}`);
+            }
+        }
+        // Post-operation addition (e.g. "se agrega un tráfico de respaldo de 5,000,000.500")
+        const addMatch = text.match(/(?:se\s+)?(?:agrega[rn]?|añad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?)\s+(?:\S+\s+){0,8}?([\d,]+\.?\d*)/i);
+        if (addMatch) {
+            const addVal = parseFloat(addMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(addVal) && addVal > 0 && !dataNumbers.includes(addVal)) {
+                const prev = result;
+                result += addVal;
+                steps.push(`Adición: ${prev} + ${addVal} = ${result}`);
+            }
+        }
+        if (steps.length === 0) return null;
+        return { value: result, steps };
+    }
+
+    /** @private */
+    _extractRequestedDecimals(text) {
+        const match = text.match(/redonde[ao].*?(\d+)\s*decimal/i);
+        if (match) return parseInt(match[1]);
+        const match2 = text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i);
+        if (match2) return parseInt(match2[1]);
+        return null;
+    }
+
+    /**
+     * Fallback: extract ALL significant numbers, compute sum + optional percentage.
+     * @private
+     */
+    _tryMathSumFallback(text) {
+        const lower = text.toLowerCase();
+        if (!/(?:total|suma|calcula|resultado|¿cuánto|cuántos|monto|costo|precio|valor)/i.test(lower)) return null;
+
+        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
+        const pctValues = new Set();
+        const pctRe = /([\d,.]+)\s*%/g;
+        let pm;
+        while ((pm = pctRe.exec(text)) !== null) {
+            pctValues.add(parseFloat(pm[1].replace(/,/g, '')));
+        }
+
+        const numRe = /\d[\d,]*\.?\d*/g;
+        let nm;
+        const candidates = [];
+        while ((nm = numRe.exec(cleaned)) !== null) {
+            const val = parseFloat(nm[0].replace(/,/g, ''));
+            if (!Number.isFinite(val)) continue;
+            if (pctValues.has(val)) continue;
+            if (val <= 5) continue;
+            if (val >= 1900 && val <= 2100 && Number.isInteger(val)) continue;
+            candidates.push(val);
+        }
+        if (candidates.length < 2) return null;
+
+        const sorted = [...candidates].sort((a, b) => a - b);
+        const largest = sorted[sorted.length - 1];
+        const dataNumbers = sorted.filter(n => n >= largest * 0.001 && n >= 10);
+        if (dataNumbers.length < 2) return null;
+
+        let result;
+        const steps = [];
+        if (/promedio|media\b/i.test(lower)) {
+            const sum = dataNumbers.reduce((a, b) => a + b, 0);
+            result = sum / dataNumbers.length;
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+        } else {
+            result = dataNumbers.reduce((a, b) => a + b, 0);
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+        }
+
+        if (pctValues.size > 0) {
+            const pct = [...pctValues][0];
+            if (Number.isFinite(pct) && pct > 0 && pct <= 200) {
+                const prev = result;
+                if (/descuento/i.test(lower)) {
+                    result *= (1 - pct / 100);
+                    steps.push(`Descuento ${pct}%: ${prev} × ${(1 - pct / 100)} = ${result}`);
+                } else if (/impuesto|iva|incremento|aumento|interés|recargo/i.test(lower)) {
+                    result *= (1 + pct / 100);
+                    steps.push(`+ ${pct}%: ${prev} × ${(1 + pct / 100)} = ${result}`);
+                }
+            }
+        }
+
+        const ratePatterns = [
+            /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
+            /(?:costo|precio|tarifa|tasa|factor|coeficiente)\s+(?:de\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+            /(?:se\s+)?aplic[aá]\s+(?:un\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+        ];
+        for (const re of ratePatterns) {
+            const rm = text.match(re);
+            if (rm) {
+                const rate = parseFloat(rm[1].replace(/,/g, ''));
+                if (Number.isFinite(rate) && rate > 0 && rate < result) {
+                    const prev = result;
+                    result *= rate;
+                    steps.push(`Multiplicación: ${prev} × ${rate} = ${result}`);
+                    break;
+                }
+            }
+        }
+
+        // Post-operation addition
+        const addMatchFb = text.match(/(?:se\s+)?(?:agrega[rn]?|añad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?)\s+(?:\S+\s+){0,8}?([\d,]+\.?\d*)/i);
+        if (addMatchFb) {
+            const addVal = parseFloat(addMatchFb[1].replace(/,/g, ''));
+            if (Number.isFinite(addVal) && addVal > 0 && !candidates.includes(addVal)) {
+                const prev = result;
+                result += addVal;
+                steps.push(`Adición: ${prev} + ${addVal} = ${result}`);
+            }
+        }
+
+        if (steps.length === 0) return null;
+        return { value: result, steps };
     }
 
     _normalizeQuizText(text = '') {

@@ -271,7 +271,7 @@ export function createContainer() {
     });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
-    const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
+    const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, progressRepository: progressRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo, topicRepository: topicRepo, taskRepository: taskRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
     const collaboratorService = new CollaboratorDomainService({ collaboratorRepository: collaboratorRepo, courseRepository: courseRepo });
     const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo, subjectRepository: subjectRepo, collaboratorRepository: collaboratorRepo });

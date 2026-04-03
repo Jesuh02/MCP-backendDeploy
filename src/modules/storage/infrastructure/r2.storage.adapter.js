@@ -199,11 +199,18 @@ export class R2StorageAdapter {
         for await (const chunk of res.Body) { chunks.push(chunk); }
         const buffer = Buffer.concat(chunks);
 
-        const isText = contentType.includes('text') ||
+        // Explicitly exclude binary Office formats whose MIME type contains 'xml'
+        // (e.g. application/vnd.openxmlformats-officedocument.wordprocessingml.document)
+        const isBinaryOffice = contentType.includes('openxmlformats') ||
+            contentType.includes('msword') ||
+            contentType.includes('vnd.ms-');
+        const isText = !isBinaryOffice && (
+            contentType.includes('text') ||
             contentType.includes('json') ||
             contentType.includes('javascript') ||
             contentType.includes('xml') ||
-            this.isTextFile(key);
+            this.isTextFile(key)
+        );
 
         return {
             content: isText ? buffer.toString('utf-8') : buffer.toString('base64'),
@@ -321,10 +328,15 @@ export class R2StorageAdapter {
 
         const buffer = Buffer.from(response.data);
         const contentType = response.headers['content-type'] || 'application/octet-stream';
-        const isText = contentType.includes('text') || this.isTextFile(fileName);
+        // Exclude binary Office formats even if content-type contains text-like substrings
+        const isBinaryOffice = contentType.includes('openxmlformats') ||
+            contentType.includes('msword') ||
+            contentType.includes('vnd.ms-');
+        const isText = !isBinaryOffice && (contentType.includes('text') || this.isTextFile(fileName));
 
         return {
             content: isText ? buffer.toString('utf-8') : buffer.toString('base64'),
+            buffer,
             contentType,
             size: buffer.length,
             isBase64: !isText,

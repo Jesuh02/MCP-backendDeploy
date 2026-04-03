@@ -18,6 +18,14 @@ try {
     console.warn("⚠️ pdf-parse not available, PDF processing will be limited");
 }
 
+// Lazy load mammoth for DOCX extraction
+let mammoth = null;
+try {
+    mammoth = require('mammoth');
+} catch (e) {
+    console.warn("⚠️ mammoth not available, DOCX processing will be skipped");
+}
+
 export class DocumentProcessor extends IDocumentProcessor {
     constructor(options = {}) {
         super();
@@ -35,9 +43,29 @@ export class DocumentProcessor extends IDocumentProcessor {
     async extractText(content, fileType) {
         const type = (fileType || '').toLowerCase().replace('.', '');
 
+        // Auto-detect DOCX/ZIP binary content mislabeled as 'txt' or unknown
+        if ((type === 'txt' || type === '' || type === 'unknown') && content) {
+            const detected = this._detectBinaryFormat(content);
+            if (detected === 'docx') {
+                console.log('[DocumentProcessor] Auto-detected DOCX content mislabeled as txt — routing to DOCX extractor');
+                return this._extractFromDocx(content);
+            }
+            if (detected === 'pdf') {
+                console.log('[DocumentProcessor] Auto-detected PDF content mislabeled as txt — routing to PDF extractor');
+                return this._extractFromPDF(content);
+            }
+            if (detected === 'office_xml_garbage') {
+                console.warn('[DocumentProcessor] Detected Office XML garbage content — rejecting');
+                throw new Error('Content is Office XML garbage (unpacked DOCX). Use mammoth to extract text from the original .docx file.');
+            }
+        }
+
         switch (type) {
             case 'pdf':
                 return this._extractFromPDF(content);
+            case 'docx':
+            case 'doc':
+                return this._extractFromDocx(content);
             case 'txt':
             case 'sql':
             case 'js':
@@ -117,6 +145,42 @@ export class DocumentProcessor extends IDocumentProcessor {
     }
 
     /**
+     * Extract plain text from a DOCX file using mammoth.
+     * Handles both Buffer input and base64-encoded strings.
+     * @param {Buffer|string} content - DOCX binary content or base64 string
+     * @returns {Promise<string>} - Extracted plain text
+     */
+    async _extractFromDocx(content) {
+        if (!mammoth) {
+            throw new Error('DOCX parsing not available. Install mammoth: npm install mammoth');
+        }
+        try {
+            let buffer = content;
+            if (typeof content === 'string') {
+                // Accept both base64-encoded and raw binary strings
+                buffer = Buffer.from(content, 'base64');
+                // Verify it starts with the ZIP magic bytes (PK = 0x50 0x4B) used by OOXML/docx
+                if (buffer[0] !== 0x50 || buffer[1] !== 0x4B) {
+                    // Maybe it was passed as a raw binary string — retry with 'binary'
+                    buffer = Buffer.from(content, 'binary');
+                }
+            }
+
+            const result = await mammoth.extractRawText({ buffer });
+            if (result.messages && result.messages.length > 0) {
+                result.messages.forEach(m => m.type === 'error' && console.warn('mammoth warning:', m.message));
+            }
+            if (!result.value || result.value.trim().length === 0) {
+                throw new Error('DOCX appears to be empty or could not be parsed');
+            }
+            return this._cleanText(result.value);
+        } catch (error) {
+            console.error('❌ DOCX extraction error:', error.message);
+            throw error;
+        }
+    }
+
+    /**
      * Extract text from plain text content
      * @param {Buffer|string} content - Text content
      * @returns {Promise<string>} - Cleaned text
@@ -127,6 +191,54 @@ export class DocumentProcessor extends IDocumentProcessor {
             text = content.toString('utf-8');
         }
         return this._cleanText(text);
+    }
+
+    /**
+     * Detect if content is binary (DOCX/PDF) mislabeled as text.
+     * Checks magic bytes, Office XML patterns, and control character density.
+     * @param {Buffer|string} content
+     * @returns {string|null} - 'docx', 'pdf', 'office_xml_garbage', or null
+     * @private
+     */
+    _detectBinaryFormat(content) {
+        if (!content) return null;
+
+        // Check Buffer magic bytes
+        if (Buffer.isBuffer(content)) {
+            if (content.length >= 4) {
+                // ZIP magic (PK\x03\x04) — DOCX/XLSX/PPTX
+                if (content[0] === 0x50 && content[1] === 0x4B && content[2] === 0x03 && content[3] === 0x04) {
+                    return 'docx';
+                }
+                // PDF magic (%PDF)
+                if (content[0] === 0x25 && content[1] === 0x50 && content[2] === 0x44 && content[3] === 0x46) {
+                    return 'pdf';
+                }
+            }
+            return null;
+        }
+
+        // Check string content
+        if (typeof content === 'string' && content.length >= 10) {
+            const sample = content.substring(0, 2000);
+
+            // ZIP magic as string
+            if (sample.startsWith('PK\x03\x04') || sample.startsWith('PK')) return 'docx';
+            // PDF magic as string
+            if (sample.startsWith('%PDF')) return 'pdf';
+
+            // Office XML namespace patterns (unpacked DOCX treated as text)
+            const officeXmlSignals = [
+                'schemas.openxmlformats.org',
+                'schemas.microsoft.com/office',
+                '<w:document', '<w:body', '<w:r>', '<w:p>', '<w:t>',
+                'word/document.xml', '[Content_Types].xml', 'docProps/core.xml',
+            ];
+            const hits = officeXmlSignals.filter(s => sample.includes(s)).length;
+            if (hits >= 2) return 'office_xml_garbage';
+        }
+
+        return null;
     }
 
     /**

@@ -2,6 +2,7 @@ import { createVideoSchema, updateVideoSchema, uploadVideoMetadataSchema } from 
 import { ValidationError } from '../../shared/errors/index.js';
 import { parsePagination, buildPaginatedResponse } from '../../shared/pagination.js';
 import { unlink } from 'fs/promises';
+import { getIO } from '../../config/socketServer.js';
 
 export class VideoController {
     constructor({ videoService }) {
@@ -78,7 +79,10 @@ export class VideoController {
             value.userId = req.user.userId;
             const result = await this.videoService.create(value);
             if (result.isFail()) return next(result.getError());
-            res.status(201).json({ success: true, data: result.getValue() });
+            const created = result.getValue();
+            const io = getIO();
+            if (io) io.to('videos').emit('video:created', created);
+            res.status(201).json({ success: true, data: created });
         } catch (err) { next(err); }
     };
 
@@ -88,14 +92,20 @@ export class VideoController {
             if (error) return next(ValidationError.fromJoi(error));
             const result = await this.videoService.update(parseInt(req.params.id), value, req.user.userId);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const updated = result.getValue();
+            const io = getIO();
+            if (io) io.to('videos').emit('video:updated', updated);
+            res.json({ success: true, data: updated });
         } catch (err) { next(err); }
     };
 
     delete = async(req, res, next) => {
         try {
-            const result = await this.videoService.delete(parseInt(req.params.id), req.user.userId);
+            const deletedId = parseInt(req.params.id);
+            const result = await this.videoService.delete(deletedId, req.user.userId);
             if (result.isFail()) return next(result.getError());
+            const io = getIO();
+            if (io) io.to('videos').emit('video:deleted', { id: deletedId });
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
@@ -240,7 +250,10 @@ export class VideoController {
             await cleanupTempFiles();
 
             if (result.isFail()) return next(result.getError());
-            res.status(201).json({ success: true, data: result.getValue() });
+            const uploaded = result.getValue();
+            const io = getIO();
+            if (io) io.to('videos').emit('video:created', uploaded);
+            res.status(201).json({ success: true, data: uploaded });
         } catch (err) {
             await cleanupTempFiles();
             next(err);

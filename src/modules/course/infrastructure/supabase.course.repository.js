@@ -126,8 +126,11 @@ export class SupabaseCourseRepository {
         // 3. Certificates issued for this course
         await this.client.from('certificates').delete().eq('course_id', id);
 
-        // 4. Subject access blocks
-        await this.client.from('subject_access_blocks').delete().eq('course_id', id);
+        // 4. Subject access blocks (table has no course_id — resolve via subjects)
+        const { data: sabSubjects } = await this.client.from('subjects').select('id').eq('course_id', id);
+        if (sabSubjects?.length) {
+            await this.client.from('subject_access_blocks').delete().in('subject_id', sabSubjects.map(s => s.id));
+        }
 
         // 5. Reinforcement results
         await this.client.from('reinforcement_results').delete().eq('course_id', id);

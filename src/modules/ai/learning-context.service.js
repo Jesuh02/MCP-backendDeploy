@@ -21,6 +21,8 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch (_) { pdfParse = null; }
+let mammoth;
+try { mammoth = require('mammoth'); } catch (_) { mammoth = null; }
 
 export class LearningContextService {
     /**
@@ -82,7 +84,8 @@ export class LearningContextService {
             const effectiveSessionIndex = sessionIndex ?? Math.floor(existingQuestions.length / 10);
             const effectiveMode = this._resolveRetrievalMode(retrievalMode, query);
 
-            // Start ingestion (non-blocking) and RAG retrieval in parallel
+            // Start ingestion. If there are content items and no RAG content indexed yet,
+            // wait for ingestion before fetching RAG so the first generation has context.
             const ingestionPromise = this._ensureRagIngestion(courseId, topicId, taskId, contentItems);
 
             let ragData;
@@ -94,8 +97,25 @@ export class LearningContextService {
                     effectiveMode === 'hybrid' ? effectiveSessionIndex : null,
                     topicDetails, taskDetails
                 );
+                // First-time case: no RAG content yet but we have content to ingest.
+                // Wait for ingestion to finish then re-fetch so the LLM has real context.
+                if ((ragData.chunks || 0) === 0 && contentItems.length > 0) {
+                    console.log('[LearningContextService] No RAG content yet — waiting for ingestion before LLM call...');
+                    await ingestionPromise;
+                    ragData = await this._getHybridRagContent(
+                        courseId, topicId, taskId, searchQuery,
+                        effectiveMode === 'hybrid' ? effectiveSessionIndex : null,
+                        topicDetails, taskDetails
+                    );
+                    console.log(`[LearningContextService] Post-ingestion RAG fetch: chunks=${ragData.chunks}`);
+                }
             } else {
                 ragData = await this._getProgressiveRagContent(courseId, topicId, taskId, effectiveSessionIndex);
+                if ((ragData.chunks || 0) === 0 && contentItems.length > 0) {
+                    console.log('[LearningContextService] No RAG content yet — waiting for ingestion (progressive)...');
+                    await ingestionPromise;
+                    ragData = await this._getProgressiveRagContent(courseId, topicId, taskId, effectiveSessionIndex);
+                }
             }
 
             // ── 7. Construir respuesta estructurada ──
@@ -283,10 +303,11 @@ export class LearningContextService {
                 return result;
             }
 
-            // Lazily create R2 adapter only when needed for URL downloads
+            // Process a small batch concurrently to reduce first-time latency
+            const CONCURRENT_INGESTIONS = Math.min(3, ingestableItems.length);
             let r2Service = null;
 
-            for (const item of ingestableItems) {
+            const processItem = async(item) => {
                 const body = (item.body || '').trim();
                 const fileName = item.title || `content_item_${item.id}`;
                 const isUrl = body.startsWith('http://') || body.startsWith('https://');
@@ -300,29 +321,86 @@ export class LearningContextService {
                         const fileData = await r2Service.getSubmissionFileContent(body, fileName);
                         if (!fileData || !fileData.content) {
                             result.errors.push({ file: fileName, error: 'No content from download' });
-                            continue;
+                            return;
                         }
 
-                        const nameLower = fileName.toLowerCase();
-                        const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+                        // Derive actual filename from URL path (item.title may lack extension)
+                        let urlFileName = fileName;
+                        try {
+                            const urlPath = new URL(body).pathname;
+                            const urlBase = decodeURIComponent(urlPath.split('/').pop() || '');
+                            if (urlBase && urlBase.includes('.')) urlFileName = urlBase;
+                        } catch (_) { /* keep original fileName */ }
+
+                        const nameLower = (urlFileName || fileName).toLowerCase();
+                        const ctLower = (fileData.contentType || '').toLowerCase();
+                        const isPdf = nameLower.endsWith('.pdf') || ctLower.includes('pdf');
+                        const isDocx = nameLower.endsWith('.docx') || nameLower.endsWith('.doc') ||
+                            ctLower.includes('wordprocessingml') ||
+                            ctLower.includes('openxmlformats') ||
+                            ctLower.includes('msword');
+
+                        // Magic-byte detection: if content is binary, check ZIP header (docx/xlsx/pptx are ZIP)
+                        if (!isPdf && !isDocx && fileData.buffer) {
+                            const magic = fileData.buffer.slice(0, 4);
+                            if (magic[0] === 0x50 && magic[1] === 0x4B && magic[2] === 0x03 && magic[3] === 0x04) {
+                                // ZIP magic bytes — likely a .docx/.xlsx/.pptx
+                                if (nameLower.endsWith('.xlsx') || nameLower.endsWith('.pptx')) {
+                                    console.warn(`[LearningContextService] Skipping unsupported Office format: ${urlFileName}`);
+                                    return;
+                                }
+                                // Default: treat as docx
+                                console.log(`[LearningContextService] Detected ZIP magic bytes, treating as DOCX: ${urlFileName}`);
+                            }
+                        }
+                        // Re-evaluate isDocx after magic-byte check
+                        const isDocxFinal = isDocx || (
+                            fileData.buffer &&
+                            fileData.buffer[0] === 0x50 && fileData.buffer[1] === 0x4B &&
+                            fileData.buffer[2] === 0x03 && fileData.buffer[3] === 0x04 &&
+                            !nameLower.endsWith('.xlsx') && !nameLower.endsWith('.pptx')
+                        );
 
                         if (isPdf && pdfParse) {
                             try {
-                                const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                const pdfBuffer = fileData.buffer || Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
                                 const pdfData = await pdfParse(pdfBuffer);
                                 textToIngest = pdfData.text;
                                 if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
                             } catch (pdfErr) {
                                 result.errors.push({ file: fileName, error: `PDF parse: ${pdfErr.message}` });
                             }
+                        } else if (isDocxFinal && mammoth) {
+                            try {
+                                const buffer = fileData.buffer || Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'binary');
+                                const docxResult = await mammoth.extractRawText({ buffer });
+                                textToIngest = docxResult.value;
+                                if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
+                                console.log(`[LearningContextService] DOCX extracted ${textToIngest?.length ?? 0} chars from "${urlFileName}"`);
+                            } catch (docxErr) {
+                                result.errors.push({ file: fileName, error: `DOCX parse: ${docxErr.message}` });
+                            }
                         } else if (!fileData.isBase64) {
+                            // Safety guard: reject content that looks like binary garbage
+                            const sample = (fileData.content || '').substring(0, 500);
+                            const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F]/g) || []).length;
+                            if (controlChars > sample.length * 0.05) {
+                                console.warn(`[LearningContextService] Skipping binary content disguised as text: ${urlFileName} (${controlChars} control chars in sample)`);
+                                result.errors.push({ file: fileName, error: 'Binary content detected, cannot ingest as text' });
+                                return;
+                            }
                             textToIngest = fileData.content;
                         }
                     } catch (dlErr) {
                         result.errors.push({ file: fileName, error: `Download: ${dlErr.message}` });
                     }
                 } else {
-                    // Body is plain text content
+                    // Body is plain text content — but verify it's not binary/DOCX garbage
+                    if (this._looksLikeBinaryOrOfficeXml(body)) {
+                        console.warn(`[LearningContextService] Skipping content_item ${item.id}: body looks like binary/Office XML, not plain text (${body.length} chars)`);
+                        result.errors.push({ file: fileName, error: 'Body contains binary/Office XML content — needs proper file parser' });
+                        return;
+                    }
                     textToIngest = body;
                 }
 
@@ -341,7 +419,19 @@ export class LearningContextService {
                         result.errors.push({ file: fileName, error: ingestErr.message });
                     }
                 }
-            }
+
+                return;
+            };
+
+            let queueIndex = 0;
+            const workers = Array.from({ length: CONCURRENT_INGESTIONS }, async() => {
+                while (queueIndex < ingestableItems.length) {
+                    const item = ingestableItems[queueIndex++];
+                    await processItem(item);
+                }
+            });
+
+            await Promise.all(workers);
 
             result.ingested = result.filesProcessed > 0;
             return result;
@@ -534,6 +624,46 @@ export class LearningContextService {
             console.warn('[LearningContextService] getHybridRagContent error (non-blocking):', error.message);
             return { content: '', chunks: 0, files: [], semanticHits: 0, expandedChunks: 0, reranked: false, rerankMethod: 'none', page: 0, totalPages: 0, totalChunks: 0 };
         }
+    }
+    /**
+     * Detects if a string looks like binary data, Office XML, or ZIP container content
+     * rather than legitimate plain text. Prevents ingesting DOCX/ZIP garbage as text.
+     * @private
+     * @param {string} text
+     * @returns {boolean}
+     */
+    _looksLikeBinaryOrOfficeXml(text) {
+        if (!text || text.length < 50) return false;
+
+        const sample = text.substring(0, 2000);
+
+        // 1. ZIP magic bytes (PK\x03\x04) — DOCX/XLSX/PPTX are ZIP containers
+        if (sample.startsWith('PK\x03\x04') || sample.startsWith('PK')) return true;
+
+        // 2. Office XML namespace tags
+        const officeXmlPatterns = [
+            'schemas.openxmlformats.org',
+            'schemas.microsoft.com/office',
+            '<w:document',  '<w:body',  '<w:r>',  '<w:p>',  '<w:t>',
+            '<w:rPr>',     '<w:pPr>',  '<w:sz',   '<w:rFonts',
+            'word/document.xml',
+            'word/_rels',
+            '[Content_Types].xml',
+            'docProps/core.xml',
+        ];
+        const matchCount = officeXmlPatterns.filter(p => sample.includes(p)).length;
+        if (matchCount >= 2) return true;
+
+        // 3. High ratio of non-printable / control characters (binary data decoded as UTF-8)
+        const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F-\x9F]/g) || []).length;
+        if (controlChars > sample.length * 0.03) return true;
+
+        // 4. Base64-encoded binary (long lines of only A-Za-z0-9+/= without spaces)
+        const lines = sample.split('\n');
+        const b64Lines = lines.filter(l => l.length > 100 && /^[A-Za-z0-9+/=]+$/.test(l.trim()));
+        if (b64Lines.length > 3) return true;
+
+        return false;
     }
 }
 

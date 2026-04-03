@@ -10,6 +10,10 @@ export function reinforcementRoutes({ reinforcementController }) {
     // ═══ Unified server-side generation (replaces 3-step client flow) ═══
     router.post('/generate-questions', reinforcementController.generateQuestions);
 
+    // ═══ Polling-based generation (avoids long HTTP connections) ═══
+    router.post('/start-generation', reinforcementController.startGeneration);
+    router.get('/poll-generation/:jobId', reinforcementController.pollGeneration);
+
     // ═══ Existing endpoints ═══
     router.post('/session', reinforcementController.saveSession);
     router.post('/save-questions', reinforcementController.saveQuestions);

@@ -12,7 +12,7 @@ const saveResultSchema = Joi.object({
     task_id: Joi.number().integer().allow(null).optional(),
     totalQuestions: Joi.number().integer().min(1).required(),
     correctAnswers: Joi.number().integer().min(0).required(),
-    difficulty: Joi.string().valid('EASY', 'MEDIUM', 'HARD').optional(),
+    difficulty: Joi.string().valid('EASY', 'MEDIUM', 'INTERMEDIATE', 'HARD').optional(),
     durationSeconds: Joi.number().integer().min(0).optional(),
 }).options({ allowUnknown: true });
 

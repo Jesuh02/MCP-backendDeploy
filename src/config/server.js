@@ -34,7 +34,15 @@ export function createApp() {
 
     app.use((req, res, next) => {
         const origin = req.headers.origin;
-        if (origin && ALLOWED_ORIGINS.includes(origin)) {
+        // Allow exact matches from the allowlist
+        const isAllowed = origin && (
+            ALLOWED_ORIGINS.includes(origin) ||
+            // Allow any *.jdavidherazo.workers.dev subdomain (other deployments/tenants)
+            /^https:\/\/[a-z0-9-]+\.jdavidherazo\.workers\.dev$/.test(origin) ||
+            // Allow localhost for development
+            /^https?:\/\/localhost(:\d+)?$/.test(origin)
+        );
+        if (isAllowed) {
             res.header('Access-Control-Allow-Origin', origin);
             res.header('Vary', 'Origin');
         }

@@ -16,6 +16,8 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch (_) { pdfParse = null; }
+let mammoth;
+try { mammoth = require('mammoth'); } catch (_) { mammoth = null; }
 
 // ─── Semaphore: máximo de llamadas LLM simultáneas en todo el proceso ───────
 const MAX_CONCURRENT_LLM = 3;
@@ -154,27 +156,69 @@ export class ReinforcementDomainService {
                             continue;
                         }
 
-                        const nameLower = fileName.toLowerCase();
-                        const isPdf = nameLower.endsWith('.pdf') || (fileData.contentType || '').includes('pdf');
+                        // Derive actual filename from URL path (item.title may lack extension)
+                        let urlFileName = fileName;
+                        try {
+                            const urlPath = new URL(body).pathname;
+                            const urlBase = decodeURIComponent(urlPath.split('/').pop() || '');
+                            if (urlBase && urlBase.includes('.')) urlFileName = urlBase;
+                        } catch (_) { /* keep original fileName */ }
+
+                        const nameLower = (urlFileName || fileName).toLowerCase();
+                        const ctLower = (fileData.contentType || '').toLowerCase();
+                        const isPdf = nameLower.endsWith('.pdf') || ctLower.includes('pdf');
+                        const isDocx = nameLower.endsWith('.docx') || nameLower.endsWith('.doc') ||
+                            ctLower.includes('wordprocessingml') ||
+                            ctLower.includes('openxmlformats') ||
+                            ctLower.includes('msword');
+
+                        // Magic-byte detection: if content is binary, check ZIP header (docx/xlsx/pptx are ZIP)
+                        const isDocxFinal = isDocx || (
+                            fileData.buffer &&
+                            fileData.buffer[0] === 0x50 && fileData.buffer[1] === 0x4B &&
+                            fileData.buffer[2] === 0x03 && fileData.buffer[3] === 0x04 &&
+                            !nameLower.endsWith('.xlsx') && !nameLower.endsWith('.pptx')
+                        );
 
                         if (isPdf && pdfParse) {
                             try {
-                                const pdfBuffer = Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
+                                const pdfBuffer = fileData.buffer || Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'utf-8');
                                 const pdfData = await pdfParse(pdfBuffer);
                                 textToIngest = pdfData.text;
                                 if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
                             } catch (pdfErr) {
                                 console.warn(`[ReinforcementService] PDF parse error for ${fileName}: ${pdfErr.message}`);
                             }
+                        } else if (isDocxFinal && mammoth) {
+                            try {
+                                const buffer = fileData.buffer || Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'binary');
+                                const docxResult = await mammoth.extractRawText({ buffer });
+                                textToIngest = docxResult.value;
+                                if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
+                                console.log(`[ReinforcementService] DOCX extracted ${textToIngest?.length ?? 0} chars from "${urlFileName}"`);
+                            } catch (docxErr) {
+                                console.warn(`[ReinforcementService] DOCX parse error for ${fileName}: ${docxErr.message}`);
+                            }
                         } else if (!fileData.isBase64) {
+                            // Safety guard: reject content that looks like binary garbage
+                            const sample = (fileData.content || '').substring(0, 500);
+                            const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F]/g) || []).length;
+                            if (controlChars > sample.length * 0.05) {
+                                console.warn(`[ReinforcementService] Skipping binary content disguised as text: ${urlFileName} (${controlChars} control chars)`);
+                                continue;
+                            }
                             textToIngest = fileData.content;
                         }
                     } catch (dlErr) {
                         console.warn(`[ReinforcementService] Download error for ${fileName}: ${dlErr.message}`);
                     }
                 } else {
-                    // Body is plain text content
-                    textToIngest = body;
+                    // Body is plain text content — guard against binary/Office XML garbage
+                    if (this._looksLikeBinaryOrOfficeXml(body)) {
+                        console.warn(`[ReinforcementService] Skipping binary/Office-XML body for content_item ${item.id} (${fileName})`);
+                    } else {
+                        textToIngest = body;
+                    }
                 }
 
                 if (textToIngest && textToIngest.length >= 50) {
@@ -539,13 +583,19 @@ export class ReinforcementDomainService {
         const contextBlock = this._buildContextBlock(topicName, ctx.topic?.description, taskName, ctx.task?.description, ragContent, ctx.ragFiles || []);
         const diffLabel = (difficulty || 'HARD').toUpperCase();
         const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount);
+
+        // Step 2b: Detect domain to enforce topic boundary and prevent cross-domain contamination
+        const domain = this._inferDomain(topicName, taskName, ragContent);
+        const domainLockBlock = this._buildDomainLockBlock(domain, topicName, taskName);
+        console.log(`🎯 [ReinforcementService] Detected domain: ${domain} (topic='${topicName}', task='${taskName}')`);
+
         const topicHint = topicName
-            ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Analiza el dominio (matemáticas, SQL, programación, idiomas, ciencias, etc.) y elige los tipos de ejercicio MÁS AVANZADOS posibles para ese dominio.`
-            : '';
+            ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Dominio detectado: ${domain}. TODOS los ejercicios son EXCLUSIVAMENTE de ese dominio. Lleva el dominio a su EXPRESIÓN MÁS COMPLEJA Y AVANZADA.\n\n${domainLockBlock}`
+            : `\n${domainLockBlock}`;
 
         // Complexity enforcement added to the user prompt for HARD difficulty
         const hardEnforcement = diffLabel === 'HARD'
-            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: Identifica el DOMINIO CENTRAL del material (matemáticas, SQL, programación, física, idiomas, etc.).\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado.\n\nREGLAS INQUEBRANTABLES:\n- Si el tema es SUMAS: genera sumas de 7+ dígitos (ej: 1023232+12213123), sumas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de series. NUNCA sumas tipo "24+18" o "234+567".\n- Si el tema es MATEMÁTICAS: ecuaciones cuadráticas, sistemas 2x2 o 3x3, derivadas, integrales definidas. NUNCA ecuaciones lineales simples.\n- Si el tema es SQL: JOINs múltiples + subconsultas + window functions + CTEs. NUNCA SELECT simple sin JOIN.\n- Si el tema es PROGRAMACIÓN: algoritmos avanzados (recursión, grafos, DP, complejidad). NUNCA sintaxis básica.\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional posible.\n\nTEST: Si un ejercicio se resuelve en <30 segundos → DESCÁRTALO y genera uno más complejo.\nEJEMPLOS de complejidad mínima aceptable HARD:\n- Sumas: 1,023,232 + 12,213,456 + 987,654 = ___\n- Álgebra: sistema 3x+2y=12, 5x-y=7, resolver x e y\n- SQL: WITH cte AS (...) SELECT ... JOIN ... WHERE ... GROUP BY ... HAVING\n- Programación: implementar búsqueda binaria, analizar complejidad O(n log n)`
+            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: El dominio YA FUE DETERMINADO: ${domain}. NO cambies de dominio.\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado del dominio ${domain}.\n\nREGLAS INQUEBRANTABLES PARA DOMINIO ${domain}:\n${domain === 'MATH' ? '- SUMAS: genera sumas de 7+ dígitos (ej: 1,023,232 + 12,213,456 + 987,654 = ___), sumas encadenadas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de matrices, series aritméticas/geométricas. NUNCA sumas de 1-3 dígitos. NUNCA algoritmos de programación (Kahan, etc.).' : ''}\n${domain === 'MATH' ? '- ÁLGEBRA: ecuaciones cuadráticas, sistemas de ecuaciones, derivadas, integrales definidas. NUNCA ecuaciones lineales de un solo paso.' : ''}\n${domain === 'SQL' ? '- JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK, ROW_NUMBER), CTEs (WITH), GROUP BY con HAVING. NUNCA SELECT simple sin JOIN.' : ''}\n${domain === 'PROGRAMMING' ? '- Algoritmos con análisis de complejidad O(n log n), recursión con memoización, programación dinámica, grafos. NUNCA sintaxis básica ni Hello World.' : ''}\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional.\n\nTEST DE COMPLEJIDAD: Si un ejercicio se resuelve en <30 segundos de pensamiento activo → DESCÁRTALO y genera uno más complejo.`
             : '';
 
         // Accumulate unique questions across iterations
@@ -598,9 +648,9 @@ export class ReinforcementDomainService {
 
             // Server-side complexity filter: reject trivial exercises in HARD mode
             const filtered = diffLabel === 'HARD' ? deduped.filter(q => {
-                const trivial = this._isExerciseTrivialForHard(q);
+                const trivial = this._isExerciseTrivialForHard(q, domain);
                 if (trivial) {
-                    console.warn(`[ReinforcementService] HARD filter rejected trivial exercise: "${q.question.substring(0, 80)}..."`);
+                    console.warn(`[ReinforcementService] HARD filter rejected trivial/off-domain exercise: "${q.question.substring(0, 80)}..."`);
                 }
                 return !trivial;
             }) : deduped;
@@ -664,6 +714,149 @@ export class ReinforcementDomainService {
         return block;
     }
 
+    /**
+     * Infers the primary domain from topic/task name and RAG content.
+     * Returns a normalized domain key used for domain-lock enforcement.
+     * @private
+     */
+    _inferDomain(topicName = '', taskName = '', ragContent = '') {
+        // Topic/task name is the STRONGEST signal — weight it much higher than RAG
+        const topicText = `${topicName} ${taskName}`.toLowerCase();
+        // RAG content may contain off-topic examples; only use first 1500 chars as weak signal
+        const ragSample = ragContent.substring(0, 1500).toLowerCase();
+
+        const DOMAIN_KEYWORDS = {
+            MATH: {
+                strong: ['suma', 'sumas', 'adición', 'sustracción', 'resta', 'multiplicación', 'división',
+                    'aritmética', 'álgebra', 'cálculo', 'calculo', 'ecuación', 'ecuaciones', 'matemática',
+                    'matemáticas', 'trigonometría', 'geometría', 'fracción', 'decimal', 'porcentaje',
+                    'integral', 'derivada', 'límite', 'serie', 'sumatoria', 'logaritmo', 'exponente',
+                    'polinomio', 'matriz', 'vector', 'probabilidad', 'estadística', 'binomial'],
+                weak: ['número', 'números', 'operación', 'resultado', 'calcular', 'resolver'],
+            },
+            SQL: {
+                strong: ['sql', 'select', 'query', 'base de datos', 'database', 'postgresql', 'mysql',
+                    'supabase', 'joins', 'subconsulta', 'stored procedure', 'trigger', 'índice', 'índices'],
+                weak: ['tabla', 'tablas', 'consulta', 'registro', 'campo'],
+            },
+            PROGRAMMING: {
+                strong: ['programación', 'programming', 'algoritmo', 'algoritmos', 'javascript', 'python',
+                    'java', 'typescript', 'c++', 'c#', 'kotlin', 'swift', 'react', 'vue', 'angular',
+                    'api', 'frontend', 'backend', 'fullstack', 'recursión', 'poo', 'oop', 'clase',
+                    'función', 'variable', 'estructura de datos', 'grafo', 'árbol binario'],
+                weak: ['código', 'función', 'objeto', 'método', 'loop', 'ciclo'],
+            },
+            PHYSICS: {
+                strong: ['física', 'physics', 'fuerza', 'energía', 'velocidad', 'aceleración', 'mecánica',
+                    'termodinámica', 'óptica', 'electromagnetismo', 'ondas', 'newton', 'joule', 'watt'],
+                weak: ['masa', 'tiempo', 'distancia', 'potencia'],
+            },
+            CHEMISTRY: {
+                strong: ['química', 'chemistry', 'reacción', 'mol', 'átomo', 'molécula', 'concentración',
+                    'ph', 'oxidación', 'reducción', 'estequiometría', 'enlace', 'tabla periódica'],
+                weak: ['elemento', 'compuesto', 'mezcla', 'solución'],
+            },
+            LANGUAGE: {
+                strong: ['inglés', 'español', 'francés', 'alemán', 'idioma', 'gramática', 'vocabulario',
+                    'conjugación', 'sintaxis', 'semántica', 'escritura', 'comprensión lectora', 'redacción',
+                    'ortografía', 'puntuación', 'subjuntivo', 'condicional'],
+                weak: ['verbo', 'sustantivo', 'adjetivo', 'adverbio', 'preposición'],
+            },
+            HISTORY: {
+                strong: ['historia', 'history', 'guerra', 'revolución', 'siglo', 'época', 'civilización',
+                    'independencia', 'colonización', 'monarquía', 'república', 'imperio', 'tratado',
+                    'movimiento social', 'dictadura'],
+                weak: ['año', 'período', 'personaje', 'país', 'evento'],
+            },
+            ACCOUNTING: {
+                strong: ['contabilidad', 'accounting', 'balance', 'debe', 'haber', 'activo', 'pasivo',
+                    'patrimonio', 'asiento', 'estado financiero', 'flujo de caja', 'depreciación',
+                    'amortización', 'auditoría', 'finanzas', 'presupuesto', 'tributación'],
+                weak: ['cuenta', 'ingreso', 'egreso', 'gasto', 'capital'],
+            },
+            BIOLOGY: {
+                strong: ['biología', 'biology', 'célula', 'adn', 'proteína', 'genética', 'evolución',
+                    'ecosistema', 'mitosis', 'meiosis', 'fotosíntesis', 'respiración celular', 'tejido'],
+                weak: ['organismo', 'especie', 'gen', 'cromosoma'],
+            },
+        };
+
+        const scores = {};
+        for (const [domain, kw] of Object.entries(DOMAIN_KEYWORDS)) {
+            let score = 0;
+            // Strong match in topic name → very high weight (10 pts each)
+            score += kw.strong.filter(k => topicText.includes(k)).length * 10;
+            // Weak match in topic name → medium weight (4 pts each)
+            score += kw.weak.filter(k => topicText.includes(k)).length * 4;
+            // Strong match in RAG sample → low weight (1 pt each)
+            score += kw.strong.filter(k => ragSample.includes(k)).length * 1;
+            scores[domain] = score;
+        }
+
+        const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+        const [bestDomain, bestScore] = sorted[0];
+        const [secondDomain, secondScore] = sorted[1] || ['GENERAL', 0];
+
+        // Only declare a domain if the best score is meaningfully higher than the second
+        if (bestScore === 0) return 'GENERAL';
+        // If MATH scores highest, return MATH even if score is 10 (one keyword match)
+        return bestScore >= 4 ? bestDomain : 'GENERAL';
+    }
+
+    /**
+     * Builds a hard domain-lock instruction block that prohibits off-domain questions.
+     * @private
+     */
+    _buildDomainLockBlock(domain, topicName, taskName) {
+        const DOMAIN_LABELS = {
+            MATH: 'MATEMÁTICAS / ARITMÉTICA',
+            SQL: 'SQL / BASES DE DATOS',
+            PROGRAMMING: 'PROGRAMACIÓN / ALGORITMOS',
+            PHYSICS: 'FÍSICA',
+            CHEMISTRY: 'QUÍMICA',
+            LANGUAGE: 'IDIOMAS / LENGUAJE',
+            HISTORY: 'HISTORIA / CIENCIAS SOCIALES',
+            ACCOUNTING: 'CONTABILIDAD / FINANZAS',
+            BIOLOGY: 'BIOLOGÍA / CIENCIAS NATURALES',
+            GENERAL: 'CONOCIMIENTO GENERAL (según el material)',
+        };
+
+        const FORBIDDEN_DOMAINS = {
+            MATH: 'SQL, programación (Python/JS/Java/etc.), algoritmos de software, bases de datos, historia, idiomas. ESPECIALMENTE prohibido: algoritmos como Kahan, búsqueda binaria, QuickSort, BFS, DFS o cualquier pseudocódigo de programación.',
+            SQL: 'matemáticas puras, física, química, historia, idiomas, código de programación que no sea SQL',
+            PROGRAMMING: 'historia, idiomas básicos, ciencias puras sin relación al código',
+            PHYSICS: 'programación, SQL, historia, idiomas, contabilidad, biología',
+            CHEMISTRY: 'programación, SQL, historia, idiomas, matemáticas sin relación a la química',
+            LANGUAGE: 'programación, SQL, matemáticas, física, química, biología',
+            HISTORY: 'programación, SQL, matemáticas, física, química, biología',
+            ACCOUNTING: 'programación, física, química, historia, idiomas',
+            BIOLOGY: 'programación, SQL, historia, idiomas, contabilidad',
+            GENERAL: '(ningún dominio específico prohibido — sigue el tema del material)',
+        };
+
+        const label = DOMAIN_LABELS[domain] || domain;
+        const forbidden = FORBIDDEN_DOMAINS[domain] || '';
+        const topicCtx = topicName ? `"${topicName}"${taskName ? ` → Tarea: "${taskName}"` : ''}` : '(ver material adjunto)';
+
+        return `
+🔒🔒🔒 BLOQUEO ABSOLUTO DE DOMINIO — REGLA NO NEGOCIABLE 🔒🔒🔒
+
+El material de estudio pertenece EXCLUSIVAMENTE al dominio: ██ ${label} ██
+Tema activo: ${topicCtx}
+
+▶ TODOS los ejercicios deben pertenecer al dominio: ${label}
+▶ PROHIBICIÓN TOTAL de ejercicios sobre: ${forbidden}
+
+⚠️ ADVERTENCIA CRÍTICA: Si el material de referencia contiene ejemplos de ${forbidden} como contexto o analogía, IGNÓRALOS completamente para la generación de ejercicios. Solo genera ejercicios del dominio ${label}.
+
+VERIFICACIÓN OBLIGATORIA antes de cada ejercicio:
+  → Pregunta: "¿Este ejercicio es sobre ${label}?"
+  → Si la respuesta es NO → DESCARTA el ejercicio y genera uno correcto del dominio ${label}.
+  → Si el ejercicio menciona código, algoritmos de software, SQL, o lenguajes de programación y el dominio es MATH → DESCARTA y reemplaza.
+
+🔒🔒🔒 FIN BLOQUEO DE DOMINIO 🔒🔒🔒`.trim();
+    }
+
     /** @private Build system prompt based on difficulty */
     _buildSystemPrompt(difficulty, targetCount) {
         const groundingRule = `REGLA: Basa los ejercicios EXCLUSIVAMENTE en el material proporcionado. NO inventes información.`;
@@ -699,7 +892,32 @@ Antes de incluir CADA ejercicio en el JSON, verifica:
 ✓ ¿Requiere 3+ pasos de razonamiento? Si NO → RECHAZAR.
 ✓ ¿Un estudiante de primer semestre podría resolverlo en 10 segundos? Si SÍ → RECHAZAR.
 ✓ ¿Involucra solo una operación/concepto aislado? Si SÍ → RECHAZAR.
-✓ ¿Es del nivel más avanzado posible dentro del dominio? Si NO → escalar complejidad.`,
+✓ ¿Es del nivel más avanzado posible dentro del dominio? Si NO → escalar complejidad.
+
+══ VERIFICACIÓN MATEMÁTICA RIGUROSA (OBLIGATORIA) ══
+⚠️ NO asumas que tu primer cálculo es correcto. DEBES hacer doble verificación:
+1. Realiza el cálculo paso a paso.
+2. VERIFICA el resultado repitiendo el cálculo con un método diferente (ej: suma en orden inverso, descomposición, etc.).
+3. Si el resultado de la verificación NO coincide → REHAZ el cálculo desde cero.
+4. Si el cálculo es demasiado complejo para tu ventana de contexto (>8 dígitos, >5 operandos), SIMPLIFICA los números pero AUMENTA la complejidad del razonamiento lógico (más pasos, conversiones, redondeo).
+5. PROHIBIDO generar respuestas con más de 8 dígitos significativos en fill_in_blank. Si el resultado natural tiene más, redondea y pide el resultado redondeado explícitamente.
+6. La explicación DEBE mostrar EXACTAMENTE los mismos pasos que producen el correctAnswer. Si hay discrepancia → la pregunta es INVÁLIDA.
+
+══ CALIDAD DE DISTRACTORES (multiple_choice) ══
+⚠️ NUNCA generes opciones con el mismo valor numérico o la misma explicación.
+Cada distractor DEBE representar un error conceptual plausible:
+- Error de acarreo (ej: olvidar llevar 1 en una suma)
+- Error de fórmula (ej: usar suma en vez de resta)
+- Error de redondeo (ej: redondear hacia arriba vs abajo)
+- Error de orden de operaciones (ej: sumar antes de multiplicar)
+Si NO puedes generar 3 distractores plausibles y DISTINTOS → convierte la pregunta a fill_in_blank.
+VERIFICACIÓN: Las 4 opciones DEBEN ser valores DIFERENTES entre sí. Si dos opciones son iguales → la pregunta es INVÁLIDA.
+
+══ PRECISION EN fill_in_blank ══
+- PROHIBIDO pedir respuestas con más de 2 decimales. Si el resultado tiene más decimales, pide explícitamente que redondeen (ej: "redondea a 2 decimales").
+- PROHIBIDO pedir números de más de 8 dígitos sin separadores. Si el resultado es grande, permite separadores o pide el resultado en notación simplificada.
+- La respuesta correcta (correctAnswer) NUNCA debe incluir separadores de miles (comas, puntos). Solo dígitos y opcionalmente un punto decimal.
+- "Difícil" NO significa "números más largos". Significa mayor PROFUNDIDAD COGNITIVA: más pasos, conversiones, análisis de casos, redondeo estratégico.`,
             FREE: `Genera ejercicios variados que cubran TODO el contenido. Mezcla niveles: comprensión, análisis, aplicación y creación.`,
         };
 
@@ -777,8 +995,8 @@ TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
    INTERMEDIATE:
    - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 4,827 + 3,695 = ___", correctAnswer: "8522", hint: "Suma columna por columna con acarreo", explanation: "7+5=12 (lleva 1), 2+9+1=12 (lleva 1), 8+6+1=15 (lleva 1), 4+3+1=8. Resultado: 8,522" }
    HARD (COMPLEJIDAD MÁXIMA — los ejemplos para HARD son los que debes seguir):
-   - Matemáticas/Suma: { type: "fill_in_blank", question: "Resuelve la siguiente suma de números grandes: 1,023,232 + 12,213,456 + 987,654 = ___", correctAnswer: "14224342", hint: "Suma columna por columna de derecha a izquierda, llevando acarreos", explanation: "Alineando por posición: 1,023,232 + 12,213,456 + 987,654 = 14,224,342. Se suman las unidades (2+6+4=12, lleva 1), decenas (3+5+5+1=14, lleva 1), centenas (2+4+6+1=13, lleva 1), etc." }
-   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el valor de x donde ocurre el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x)=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). f(3)=27-54+27+2=2." }
+   - Matemáticas/Suma: { type: "fill_in_blank", question: "Una empresa tiene 3 sucursales con ventas mensuales de $45,230, $78,945 y $63,120. Calcula el total de ventas y luego aplica un impuesto del 16%. ¿Cuál es el monto total con impuesto? (redondea a entero)", correctAnswer: "217422", hint: "Primero suma las 3 cantidades, luego multiplica por 1.16", explanation: "Paso 1: 45230 + 78945 + 63120 = 187295. Paso 2: 187295 × 1.16 = 217262.2 → redondeado: 217262. VERIFICACIÓN: 187295 × 0.16 = 29967.2, + 187295 = 217262." }
+   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el valor de x donde ocurre el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x)=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). VERIFICACIÓN: f''(x)=6x-12, f''(3)=6>0 confirma mínimo local. f(3)=27-54+27+2=2." }
    - SQL: { type: "fill_in_blank", question: "Completa la función de ventana para calcular el salario acumulado por departamento:\nSELECT nombre, departamento, salario,\n  ___(salario) OVER (PARTITION BY departamento ORDER BY fecha_contratacion) AS salario_acum\nFROM empleados;", correctAnswer: "SUM", hint: "Función de agregado que suma progresivamente", explanation: "SUM() OVER(PARTITION BY ... ORDER BY ...) calcula una suma acumulada (running total) dentro de cada partición." }
    - Programación: { type: "fill_in_blank", question: "Completa la búsqueda binaria recursiva:\nfunction binarySearch(arr, target, lo, hi) {\n  if (lo > hi) return -1;\n  const mid = Math.floor((lo + hi) / 2);\n  if (arr[mid] === target) return mid;\n  if (arr[mid] < target) return binarySearch(arr, target, ___, hi);\n  return binarySearch(arr, target, lo, mid - 1);\n}", correctAnswer: "mid + 1", hint: "Si el elemento del medio es menor, busca en la mitad derecha", explanation: "Si arr[mid] < target, el objetivo está en [mid+1, hi]. Pasar lo=mid+1 descarta la mitad izquierda." }
    - Física: { type: "fill_in_blank", question: "Un proyectil se lanza a 30° con v₀=40m/s. Su alcance horizontal R = v₀²·sin(2θ)/g = ___ m (g=10m/s², sin(60°)≈0.866)", correctAnswer: "138.56", hint: "R=1600·0.866/10", explanation: "R = (40²·sin(60°))/10 = (1600·0.866)/10 ≈ 138.56 m" }
@@ -840,8 +1058,24 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
 
         switch (type) {
             case 'fill_in_blank': {
-                const correctAnswer = String(q.correctAnswer ?? q.correct_answer ?? '').trim();
+                let correctAnswer = String(q.correctAnswer ?? q.correct_answer ?? '').trim();
                 if (!correctAnswer) return null;
+
+                // Normalize numeric answers: strip thousand separators, limit decimals
+                const numericClean = correctAnswer.replace(/,/g, '').replace(/\s/g, '');
+                const numericVal = Number(numericClean);
+                if (Number.isFinite(numericVal) && /^-?\d/.test(numericClean)) {
+                    // Strip thousand separators from correct answer (always store as plain digits)
+                    correctAnswer = numericClean;
+                    // Limit to max 2 decimal places
+                    if (correctAnswer.includes('.')) {
+                        const parts = correctAnswer.split('.');
+                        if (parts[1] && parts[1].length > 2) {
+                            correctAnswer = String(Math.round(numericVal * 100) / 100);
+                        }
+                    }
+                }
+
                 return {
                     type: 'fill_in_blank',
                     question: q.question.trim(),
@@ -906,6 +1140,27 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                     }
                 }
 
+                // Anti-duplicate-options: reject if options are not all unique
+                const uniqueOpts = new Set(options.map(o => o.toLowerCase().replace(/[^a-záéíóúñü0-9]/g, '').trim()));
+                if (uniqueOpts.size < options.length) {
+                    console.warn(`[ReinforcementService] Duplicate options detected in: "${q.question.substring(0, 60)}..." — rejecting question`);
+                    return null;
+                }
+
+                // Anti-duplicate numeric options: for numeric-looking options, compare values
+                const numericOpts = options.map(o => {
+                    const cleaned = o.replace(/[^0-9.\-]/g, '');
+                    const n = Number(cleaned);
+                    return cleaned && Number.isFinite(n) ? n : null;
+                });
+                if (numericOpts.every(n => n !== null)) {
+                    const uniqueNums = new Set(numericOpts);
+                    if (uniqueNums.size < numericOpts.length) {
+                        console.warn(`[ReinforcementService] Duplicate numeric option values in: "${q.question.substring(0, 60)}..." — rejecting question`);
+                        return null;
+                    }
+                }
+
                 return {
                     type: 'multiple_choice',
                     question: q.question.trim(),
@@ -915,6 +1170,461 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                 };
             }
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MATH VERIFICATION — Programmatic answer validation
+    // LLMs are notoriously unreliable at multi-digit arithmetic.
+    // These methods recompute the answer using JavaScript and fix errors.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Verifies and fixes math in a generated question by recomputing the answer
+     * programmatically. Returns the corrected question, or null to reject it.
+     * @private
+     */
+    _verifyMathAnswer(q) {
+        if (!q) return q;
+        const text = q.question;
+        const lower = (text || '').toLowerCase();
+
+        // Only verify questions that involve numeric computation
+        const mathSignals = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|¿cuánto|cuántos|cuántas|promedio|media|porcentaje/i;
+        const hasSignificantNumbers = /\d{3,}/.test(text.replace(/,/g, ''));
+        if (!mathSignals.test(lower) && !hasSignificantNumbers) return q;
+
+        try {
+            const result = this._computeExpectedAnswer(text);
+            if (result === null) return q; // Can't reliably compute — pass through
+
+            const requestedDecimals = this._extractRequestedDecimals(text);
+            let finalAnswer = result.value;
+            if (requestedDecimals !== null) {
+                finalAnswer = parseFloat(finalAnswer.toFixed(requestedDecimals));
+            } else if (!Number.isInteger(finalAnswer)) {
+                finalAnswer = parseFloat(finalAnswer.toFixed(2));
+            }
+
+            if (q.type === 'fill_in_blank') {
+                const currentAnswer = parseFloat(String(q.correctAnswer).replace(/,/g, ''));
+                if (!Number.isFinite(currentAnswer)) return q;
+
+                const tolerance = Math.max(Math.abs(finalAnswer) * 0.001, 0.01);
+                if (Math.abs(currentAnswer - finalAnswer) > tolerance) {
+                    console.warn(`🔧 [MathVerify] CORRECTED fill_in_blank: "${text.substring(0, 100)}..." LLM="${q.correctAnswer}" → Correct="${finalAnswer}"`);
+                    q.correctAnswer = String(finalAnswer);
+                    q.explanation = `${result.steps.join('. ')}. Resultado final: ${finalAnswer}.`;
+                }
+            } else if (q.type === 'multiple_choice') {
+                // Parse numeric value from each option
+                const optionValues = q.options.map(opt => {
+                    const nums = opt.match(/[\d,]+\.?\d*/g);
+                    if (!nums) return NaN;
+                    const parsed = nums.map(n => parseFloat(n.replace(/,/g, ''))).filter(Number.isFinite);
+                    return parsed.length > 0 ? parsed.reduce((a, b) => Math.abs(a) > Math.abs(b) ? a : b) : NaN;
+                });
+
+                let closestIdx = -1;
+                let closestDiff = Infinity;
+                for (let i = 0; i < optionValues.length; i++) {
+                    if (!Number.isFinite(optionValues[i])) continue;
+                    const diff = Math.abs(optionValues[i] - finalAnswer);
+                    if (diff < closestDiff) {
+                        closestDiff = diff;
+                        closestIdx = i;
+                    }
+                }
+
+                const tolerance = Math.max(Math.abs(finalAnswer) * 0.001, 0.01);
+                if (closestIdx >= 0 && closestDiff <= tolerance) {
+                    if (closestIdx !== q.correctIndex) {
+                        console.warn(`🔧 [MathVerify] CORRECTED multiple_choice: "${text.substring(0, 100)}..." correctIndex ${q.correctIndex}→${closestIdx} (computed=${finalAnswer})`);
+                        q.correctIndex = closestIdx;
+                        q.explanation = `${result.steps.join('. ')}. Resultado final: ${finalAnswer}.`;
+                    }
+                } else {
+                    // No option matches the computed answer — reject the question
+                    console.warn(`🔧 [MathVerify] REJECTED multiple_choice: "${text.substring(0, 100)}..." No option ≈ computed=${finalAnswer} (opts: ${optionValues.join(', ')})`);
+                    return null;
+                }
+            }
+        } catch (err) {
+            // Non-blocking: if verification fails, let the question through unchanged
+            console.warn(`[MathVerify] Error (non-blocking): ${err.message}`);
+        }
+        return q;
+    }
+
+    /**
+     * Attempt to compute the expected math answer from question text.
+     * Returns { value: number, steps: string[] } or null.
+     * @private
+     */
+    _computeExpectedAnswer(text) {
+        // Strategy 1: Explicit inline arithmetic (e.g. "12,345 + 9,876 + ...")
+        const explicit = this._tryExplicitArithmetic(text);
+        if (explicit !== null) return explicit;
+
+        // Strategy 2: Word problem — sum data numbers, apply rate/percentage
+        const wordProblem = this._tryWordProblem(text);
+        if (wordProblem !== null) return wordProblem;
+
+        // Strategy 3: Fallback — extract all numbers and try sum + percentage
+        const sumFallback = this._trySumFallback(text);
+        if (sumFallback !== null) return sumFallback;
+
+        return null;
+    }
+
+    /**
+     * Parse and evaluate explicit arithmetic: "12,345,678.45 + 9,876,543.21 + ..."
+     * Supports +, -, ×, *, ÷, /
+     * @private
+     */
+    _tryExplicitArithmetic(text) {
+        // Strip currency symbols so "$45,230 + $78,945" matches as arithmetic
+        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
+        // Match chains: number op number [op number...] where op ∈ {+, -, ×, *, ÷, /}
+        const numberPat = '\\d[\\d,]*\\.?\\d*';
+        const opPat = '[+\\-×*÷/]';
+        const exprRegex = new RegExp(
+            `(${numberPat})\\s*(${opPat})\\s*(${numberPat}(?:\\s*${opPat}\\s*${numberPat})*)`, 'g'
+        );
+        const match = exprRegex.exec(cleaned);
+        if (!match) return null;
+
+        const expr = match[0];
+        const tokens = expr.split(/\s*([+\-×*÷/])\s*/).filter(t => t.trim());
+
+        let result = parseFloat(tokens[0].replace(/,/g, ''));
+        if (!Number.isFinite(result)) return null;
+
+        const steps = [];
+        for (let i = 1; i < tokens.length; i += 2) {
+            const op = tokens[i];
+            const num = parseFloat((tokens[i + 1] || '').replace(/,/g, ''));
+            if (!Number.isFinite(num)) return null;
+
+            const prev = result;
+            switch (op) {
+                case '+': result += num; break;
+                case '-': result -= num; break;
+                case '×': case '*': result *= num; break;
+                case '÷': case '/': if (num === 0) return null; result /= num; break;
+                default: return null;
+            }
+            steps.push(`${prev} ${op} ${num} = ${result}`);
+        }
+
+        // Check for follow-up operation in the remaining text
+        const afterExpr = cleaned.substring(cleaned.indexOf(match[0]) + match[0].length);
+        const followUp = this._detectFollowUpOperation(afterExpr);
+        if (followUp) {
+            const prev = result;
+            result = followUp.apply(result);
+            steps.push(followUp.describe(prev, result));
+        }
+
+        return { value: result, steps };
+    }
+
+    /**
+     * Parse word problems: extract data numbers, detect operations (sum, multiply).
+     * Handles "calcula el total de X, Y, Z. Luego multiplica por W" patterns.
+     * @private
+     */
+    _tryWordProblem(text) {
+        const lower = text.toLowerCase();
+
+        // Must look like a sum/total problem
+        if (!/total|suma|calcula|acumulad|promedio|media|¿cuánto|cuántos|monto|resultado/i.test(lower)) return null;
+
+        // Extract "data" numbers — numbers associated with labels (Nodo A: 12345, Sucursal: 9876, etc.)
+        const dataNumbers = [];
+        // Pattern 1: labeled numbers — "Label: $12,345,678.45"
+        // Note: use [a-zA-Z...] instead of \w to avoid matching digits in the label
+        const labeledPattern = /(?:[a-zA-ZáéíóúñÁÉÍÓÚÑ][a-zA-ZáéíóúñÁÉÍÓÚÑ\s]*[:=]\s*\$?)([\d,]+\.?\d*)/gi;
+        let m;
+        while ((m = labeledPattern.exec(text)) !== null) {
+            const num = parseFloat(m[1].replace(/,/g, ''));
+            if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
+        }
+
+        // Pattern 1b: currency amounts — "$45,230", "$78,945.50"
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const currencyPat = /\$\s?([\d,]+\.?\d*)/gi;
+            while ((m = currencyPat.exec(text)) !== null) {
+                const num = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 1) dataNumbers.push(num);
+            }
+        }
+
+        // Pattern 1c: "de" amounts — "ventas de 45,230", "valor de 78,945"
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            const dePat = /(?:de|por|con|=)\s*\$?\s*([\d,]+\.?\d*)/gi;
+            while ((m = dePat.exec(text)) !== null) {
+                const num = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(num) && num >= 10) dataNumbers.push(num);
+            }
+        }
+
+        // Pattern 2: if not enough, extract all significant numbers (≥10)
+        if (dataNumbers.length < 2) {
+            dataNumbers.length = 0;
+            // Strip currency for clean extraction
+            const stripped = text.replace(/[$€¥£₡₿]\s*/g, '');
+            const allNums = stripped.match(/\d[\d,]*\.?\d*/g) || [];
+            // Collect percentages to exclude from data
+            const pctSet = new Set();
+            const pctRe = /([\d,.]+)\s*%/g;
+            let pm;
+            while ((pm = pctRe.exec(text)) !== null) {
+                pctSet.add(parseFloat(pm[1].replace(/,/g, '')));
+            }
+            for (const raw of allNums) {
+                const num = parseFloat(raw.replace(/,/g, ''));
+                if (!Number.isFinite(num) || num < 10) continue;
+                if (pctSet.has(num)) continue;                         // skip percentages
+                if (num >= 1900 && num <= 2100 && Number.isInteger(num)) continue; // skip years
+                dataNumbers.push(num);
+            }
+        }
+
+        if (dataNumbers.length < 2) return null;
+
+        // Detect the primary aggregation
+        let result;
+        const steps = [];
+
+        if (/promedio|media\b/i.test(lower)) {
+            const sum = dataNumbers.reduce((a, b) => a + b, 0);
+            result = sum / dataNumbers.length;
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+        } else {
+            // Default: sum
+            result = dataNumbers.reduce((a, b) => a + b, 0);
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+        }
+
+        // Look for a rate/cost multiplier
+        const ratePatterns = [
+            /costo\s+(?:de\s+(?:procesamiento|producción|envío|operación|mantenimiento))?\s*(?:de|es|por|=)?\s*\$?([\d,.]+)/i,
+            /precio\s+(?:de|por|unitario|cada)?\s*\$?([\d,.]+)/i,
+            /cada\s+\w+\s+(?:tiene\s+)?(?:un\s+)?(?:costo|precio|valor)\s+(?:de\s*)?\$?([\d,.]+)/i,
+            /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
+            /(?:tasa|tarifa|factor|coeficiente)\s+(?:de\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+            /(?:se\s+)?aplic[aá]\s+(?:un\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+            /\$\s*([\d,.]+)\s*(?:por|\/)\s*(?:cada|unidad|GB|kg|litro|km|hora)/i,
+        ];
+        for (const re of ratePatterns) {
+            const rm = text.match(re);
+            if (rm) {
+                const rate = parseFloat(rm[1].replace(/,/g, ''));
+                if (Number.isFinite(rate) && rate > 0 && rate < result) {
+                    const prev = result;
+                    result = result * rate;
+                    steps.push(`Costo/Multiplicación: ${prev} × ${rate} = ${result}`);
+                    break;
+                }
+            }
+        }
+
+        // Look for percentage (impuesto, descuento, incremento)
+        const pctMatch = text.match(/(?:impuesto|descuento|incremento|aumento|IVA|ISR|interés)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        if (pctMatch) {
+            const pct = parseFloat(pctMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(pct) && pct > 0 && pct <= 200) {
+                const prev = result;
+                if (/descuento/i.test(pctMatch[0])) {
+                    result = result * (1 - pct / 100);
+                    steps.push(`Descuento ${pct}%: ${prev} × ${1 - pct / 100} = ${result}`);
+                } else {
+                    result = result * (1 + pct / 100);
+                    steps.push(`+ ${pct}%: ${prev} × ${1 + pct / 100} = ${result}`);
+                }
+            }
+        }
+
+        // Look for post-operation addition (e.g. "se agrega un tráfico de respaldo de 5,000,000.500")
+        const addMatch = text.match(/(?:se\s+)?(?:agrega[rn]?|añad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?)\s+(?:\S+\s+){0,8}?([\d,]+\.?\d*)/i);
+        if (addMatch) {
+            const addVal = parseFloat(addMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(addVal) && addVal > 0 && !dataNumbers.includes(addVal)) {
+                const prev = result;
+                result += addVal;
+                steps.push(`Adición: ${prev} + ${addVal} = ${result}`);
+            }
+        }
+
+        // Only return if we performed at least a sum
+        if (steps.length === 0) return null;
+        return { value: result, steps };
+    }
+
+    /**
+     * Detect a follow-up operation in text after an explicit expression.
+     * e.g., "... multiply by 0.0375" or "aplica impuesto del 16%"
+     * @private
+     */
+    _detectFollowUpOperation(text) {
+        if (!text) return null;
+
+        // Multiplication: "multiply by X", "× X", "costo de $X"
+        const multPatterns = [
+            /(?:multiplic[aá]r?\s+por|×)\s*\$?([\d,.]+)/i,
+            /(?:costo|precio|tarifa|tasa)\s+(?:de\s+(?:\w+\s+)*)?(?:de\s*)?\$?([\d,.]+)/i,
+            /cada\s+\w+\s+.*?\$?([\d,.]+)/i,
+        ];
+        for (const re of multPatterns) {
+            const m = text.match(re);
+            if (m) {
+                const factor = parseFloat(m[1].replace(/,/g, ''));
+                if (Number.isFinite(factor) && factor > 0) {
+                    return {
+                        apply: (v) => v * factor,
+                        describe: (prev, result) => `Multiplicación: ${prev} × ${factor} = ${result}`,
+                    };
+                }
+            }
+        }
+
+        // Percentage
+        const pctMatch = text.match(/(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        if (pctMatch) {
+            const pct = parseFloat(pctMatch[1].replace(/,/g, ''));
+            if (Number.isFinite(pct) && pct > 0) {
+                const isDiscount = /descuento/i.test(pctMatch[0]);
+                const factor = isDiscount ? (1 - pct / 100) : (1 + pct / 100);
+                return {
+                    apply: (v) => v * factor,
+                    describe: (prev, result) => `${isDiscount ? 'Descuento' : 'Incremento'} ${pct}%: ${prev} × ${factor} = ${result}`,
+                };
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract the requested number of decimal places from the question text.
+     * e.g., "redondea a 2 decimales" → 2
+     * @private
+     */
+    _extractRequestedDecimals(text) {
+        const match = text.match(/redonde[ao].*?(\d+)\s*decimal/i);
+        if (match) return parseInt(match[1]);
+        // Also detect "a X cifras decimales"
+        const match2 = text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i);
+        if (match2) return parseInt(match2[1]);
+        return null;
+    }
+
+    /**
+     * Fallback strategy: extract ALL significant numbers from the text,
+     * compute their sum, and optionally apply a percentage found in the text.
+     * More aggressive than _tryWordProblem — used as a last-resort catch-all.
+     * @private
+     */
+    _trySumFallback(text) {
+        const lower = text.toLowerCase();
+        // Only apply when the question clearly asks for a numeric result
+        if (!/(?:total|suma|calcula|resultado|¿cuánto|cuántos|monto|costo|precio|valor)/i.test(lower)) return null;
+
+        // Strip currency symbols for clean extraction
+        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
+
+        // Collect percentage values to exclude from data numbers
+        const pctValues = new Set();
+        const pctRe = /([\d,.]+)\s*%/g;
+        let pm;
+        while ((pm = pctRe.exec(text)) !== null) {
+            pctValues.add(parseFloat(pm[1].replace(/,/g, '')));
+        }
+
+        // Extract all numbers
+        const numRe = /\d[\d,]*\.?\d*/g;
+        let nm;
+        const candidates = [];
+        while ((nm = numRe.exec(cleaned)) !== null) {
+            const val = parseFloat(nm[0].replace(/,/g, ''));
+            if (!Number.isFinite(val)) continue;
+            if (pctValues.has(val)) continue;                                    // skip percentages
+            if (val <= 5) continue;                                              // skip tiny counts
+            if (val >= 1900 && val <= 2100 && Number.isInteger(val)) continue;   // skip years
+            candidates.push(val);
+        }
+
+        if (candidates.length < 2) return null;
+
+        // Separate data numbers from metadata by magnitude clustering
+        const sorted = [...candidates].sort((a, b) => a - b);
+        const largest = sorted[sorted.length - 1];
+        const dataNumbers = sorted.filter(n => n >= largest * 0.001 && n >= 10);
+        if (dataNumbers.length < 2) return null;
+
+        let result;
+        const steps = [];
+
+        if (/promedio|media\b/i.test(lower)) {
+            const sum = dataNumbers.reduce((a, b) => a + b, 0);
+            result = sum / dataNumbers.length;
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+        } else {
+            result = dataNumbers.reduce((a, b) => a + b, 0);
+            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+        }
+
+        // Apply percentage if present
+        if (pctValues.size > 0) {
+            const pct = [...pctValues][0];
+            if (Number.isFinite(pct) && pct > 0 && pct <= 200) {
+                const prev = result;
+                if (/descuento/i.test(lower)) {
+                    result *= (1 - pct / 100);
+                    steps.push(`Descuento ${pct}%: ${prev} × ${(1 - pct / 100)} = ${result}`);
+                } else if (/impuesto|iva|incremento|aumento|interés|recargo/i.test(lower)) {
+                    result *= (1 + pct / 100);
+                    steps.push(`+ ${pct}%: ${prev} × ${(1 + pct / 100)} = ${result}`);
+                }
+            }
+        }
+
+        // Look for a rate/cost multiplier
+        const ratePatterns = [
+            /(?:multiplic[aá]r?|×)\s*(?:por)?\s*\$?([\d,.]+)/i,
+            /(?:costo|precio|tarifa|tasa|factor|coeficiente)\s+(?:de\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+            /(?:se\s+)?aplic[aá]\s+(?:un\s+)?(?:[a-zA-ZáéíóúñÁÉÍÓÚÑüÜ]+\s+)*(?:del?\s+)?\$?([\d,.]+)(?!\s*%)/i,
+        ];
+        for (const re of ratePatterns) {
+            const rm = text.match(re);
+            if (rm) {
+                const rate = parseFloat(rm[1].replace(/,/g, ''));
+                if (Number.isFinite(rate) && rate > 0 && rate < result) {
+                    const prev = result;
+                    result *= rate;
+                    steps.push(`Multiplicación: ${prev} × ${rate} = ${result}`);
+                    break;
+                }
+            }
+        }
+
+        // Look for post-operation addition
+        const addMatchFb = text.match(/(?:se\s+)?(?:agrega[rn]?|añad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?)\s+(?:\S+\s+){0,8}?([\d,]+\.?\d*)/i);
+        if (addMatchFb) {
+            const addVal = parseFloat(addMatchFb[1].replace(/,/g, ''));
+            if (Number.isFinite(addVal) && addVal > 0 && !candidates.includes(addVal)) {
+                const prev = result;
+                result += addVal;
+                steps.push(`Adición: ${prev} + ${addVal} = ${result}`);
+            }
+        }
+
+        if (steps.length === 0) return null;
+        return { value: result, steps };
     }
 
     /** @private Extract complete JSON objects from a potentially truncated array string */
@@ -959,7 +1669,11 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
             try {
                 const parsed = JSON.parse(content.substring(start, end + 1));
                 if (Array.isArray(parsed)) {
-                    const normalized = parsed.map(q => this._normalizeQuestion(q)).filter(Boolean);
+                    const normalized = parsed
+                        .map(q => this._normalizeQuestion(q))
+                        .filter(Boolean)
+                        .map(q => this._verifyMathAnswer(q))
+                        .filter(Boolean);
                     if (normalized.length > 0) return normalized;
                 }
             } catch (_) { /* fall through to repair */ }
@@ -970,7 +1684,11 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         const searchIn = start !== -1 ? content.substring(start) : content;
         const objects = this._extractObjectsFromBrokenArray(searchIn);
         if (objects.length > 0) {
-            const normalized = objects.map(q => this._normalizeQuestion(q)).filter(Boolean);
+            const normalized = objects
+                .map(q => this._normalizeQuestion(q))
+                .filter(Boolean)
+                .map(q => this._verifyMathAnswer(q))
+                .filter(Boolean);
             if (normalized.length > 0) {
                 console.log(`[ReinforcementService] Repair recovered ${normalized.length} questions from broken JSON`);
                 return normalized;
@@ -1002,13 +1720,40 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         });
     }
 
-    _isExerciseTrivialForHard(q) {
+    _isExerciseTrivialForHard(q, domain = 'GENERAL') {
         const text = (q.question || '').toLowerCase();
-        const answer = String(q.correct_answer || '').toLowerCase();
+        const answer = String(q.correct_answer || q.correctAnswer || '').toLowerCase();
         const allText = text + ' ' + answer;
 
-        // 1. Simple arithmetic: "digit op digit" without complex context
-        if (/^\s*¿?(cuánto|calcula|resuelve|resultado)\b/.test(text)) {
+        // 0. Cross-domain contamination check — reject questions from the wrong domain
+        if (domain === 'MATH') {
+            // Programming/SQL signals are forbidden in a MATH topic
+            const programmingSignals = [
+                'select ', ' from ', ' where ', ' join ', 'function(', 'function (', '() {', '() =>',
+                'algorithm', 'class ', 'new class', '= new ', 'api ', '\.push(', '\.pop(', '\.map(',
+                'const ', 'let ', 'var ', 'def ', 'import ', 'console.log', 'system.out',
+                'kahan', 'binary search', 'quicksort', 'mergesort', 'heapsort', 'bfs', 'dfs',
+                'dijkstra', 'memoization', 'dynamic programming', 'programación dinámica',
+                'recursion', 'recursive', 'recursivo', 'linked list', 'graph ', ' grafo',
+                'hash map', 'hashmap', 'stack overflow', 'time complexity', 'space complexity',
+                'big-o', 'o(n)', 'o(log', 'pseudocódigo', 'pseudocode', 'sintaxis de', 'punto flotante de doble'
+            ];
+            if (programmingSignals.some(s => text.includes(s))) {
+                return true; // Reject: programming/SQL question in a MATH topic
+            }
+        }
+
+        if (domain === 'SQL') {
+            // Pure math/science questions are off-domain for SQL topics
+            const mathOnlySignals = [/\b\d+\s*[+\-*\/]\s*\d+\s*=\s*___/, /calcula\s+la\s+(integral|derivada|sumatoria)/i];
+            if (mathOnlySignals.some(r => r.test(text))) return true;
+        }
+
+        // 1. Simple arithmetic: reject if ALL numbers have < 5 digits in MATH domain
+        if (domain === 'MATH' && /^\s*¿?(cuánto|calcula|resuelve|resultado)\b/.test(text)) {
+            const numbers = text.match(/\d+/g) || [];
+            if (numbers.length >= 2 && numbers.every(n => n.length < 5)) return true;
+        } else if (/^\s*¿?(cuánto|calcula|resuelve|resultado)\b/.test(text)) {
             const numbers = text.match(/\d+/g) || [];
             if (numbers.length >= 2 && numbers.every(n => n.length < 5)) return true;
         }
@@ -1060,6 +1805,26 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
     async getUserSessions(userId, pagination = {}) {
         const sessions = await this.reinforcementRepo.findByUser(userId, pagination);
         return Result.ok(sessions);
+    }
+
+    _looksLikeBinaryOrOfficeXml(text) {
+        if (!text || text.length < 50) return false;
+        const sample = text.substring(0, 2000);
+        if (sample.startsWith('PK\x03\x04') || sample.startsWith('PK')) return true;
+        const officeXmlPatterns = [
+            'schemas.openxmlformats.org', 'schemas.microsoft.com/office',
+            '<w:document', '<w:body', '<w:r>', '<w:p>', '<w:t>',
+            '<w:rPr>', '<w:pPr>', '<w:sz', '<w:rFonts',
+            'word/document.xml', 'word/_rels', '[Content_Types].xml', 'docProps/core.xml',
+        ];
+        const matchCount = officeXmlPatterns.filter(p => sample.includes(p)).length;
+        if (matchCount >= 2) return true;
+        const controlChars = (sample.match(/[\x00-\x08\x0E-\x1F\x7F-\x9F]/g) || []).length;
+        if (controlChars > sample.length * 0.03) return true;
+        const lines = sample.split('\n');
+        const b64Lines = lines.filter(l => l.length > 100 && /^[A-Za-z0-9+/=]+$/.test(l.trim()));
+        if (b64Lines.length > 3) return true;
+        return false;
     }
 }
 export default ReinforcementDomainService;

@@ -1356,14 +1356,17 @@ export class WhatsAppDomainService {
 
             // Always instruct the model not to grade tasks when queries come from
             // WhatsApp. This channel is for open-ended Q&A only.
-            promptToSend = `Por favor responde como un asistente general. NO califiques tareas ni asumas el rol de evaluador.\n\n${promptToSend}`;
+            const usernameTag = user?.username ? `[Usuario: ${user.username}] ` : '';
+            promptToSend = `${usernameTag}Por favor responde como un asistente general. NO califiques tareas ni asumas el rol de evaluador.\n\n${promptToSend}`;
 
             // For administrators we always engage the Business Intelligence persona
             // that mirrors the behaviour of DatabaseQueryFragment.kt.  This means every
             // message is sent to the LLM with instructions to use `query_database` when
-            // appropriate and to format results as a BI report.  Non-admin users will
-            // still receive a generic LLM chat response.
-            if (isAdmin) {
+            // appropriate and to format results as a BI report.
+            // Teachers (role 2) also get the BI persona so they can query their students'
+            // progress, grades, and reinforcement practice — scoped to their collaborator subjects.
+            const isTeacher = Array.isArray(userRoles) && userRoles.includes(2);
+            if (isAdmin || isTeacher) {
                 forceTools = true;
                 const username = user?.username || 'usuario';
                 const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${text}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema' (salvo que necesites confirmar la estructura de tablas).\n2. 📌 OBLIGATORIO: usa la herramienta 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.). No inventes datos.\n   - Para invocarla, responde primero con un bloque JSON EXACTO:\n` +

@@ -1840,7 +1840,20 @@ GROUP BY u.id, u.username
 - Si necesitas ejecutar SQL, hazlo internamente con la herramienta, pero tu respuesta final debe ser en español claro, sin código.`);
 
             conversationHistory.push(systemMessage);
-            conversationHistory.push(new HumanMessage(query));
+
+            // ── Inject user identity so the LLM always knows who is asking ──
+            // This is critical for questions like "¿cuál es mi username?" or
+            // "¿cuántos cursos tengo?" where the LLM needs to know the userId.
+            let identityPrefix = '';
+            if (userId && username) {
+                identityPrefix = `[IDENTIDAD DEL USUARIO QUE PREGUNTA: userId=${userId}, username="${username}". ` +
+                    `Cuando pregunte sobre SÍ MISMO ("mi username", "mis cursos", "mi progreso", "quién soy"), ` +
+                    `usa estos datos para filtrar. NO necesitas preguntar quién es.]\n\n`;
+            } else if (userId) {
+                identityPrefix = `[IDENTIDAD DEL USUARIO QUE PREGUNTA: userId=${userId}. ` +
+                    `Cuando pregunte sobre sí mismo, filtra por este ID.]\n\n`;
+            }
+            conversationHistory.push(new HumanMessage(identityPrefix + query));
 
             let consecutiveEmptyResponses = 0;
             const MAX_EMPTY_RESPONSES = 3; // Increased slightly since we have schema pre-loaded
@@ -1944,9 +1957,16 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                     // No tool call - check if it's a final response or empty
                     const trimmedResponse = responseContent.trim();
                     
+                    // If we already got data from a tool call and the LLM now responds
+                    // with ANY non-empty text (even short like "Tu username es X"),
+                    // treat it as the final answer. This prevents the loop where short
+                    // answers are mistaken for "empty" responses and re-prompted.
+                    const hasDataContext = !!lastSuccessfulData;
+                    const isLikelyFinalAnswer = hasDataContext && trimmedResponse.length > 5;
+                    
                     // If we have meaningful content (not just empty), treat as final response
-                    if (trimmedResponse.length > 50) {
-                        logger.info(`✅ Agent completed after ${iteration} iterations`);
+                    if (isLikelyFinalAnswer || trimmedResponse.length > 50) {
+                        logger.info(`✅ Agent completed after ${iteration} iterations (hasDataContext=${hasDataContext}, len=${trimmedResponse.length})`);
                         
                         // Clean up any residual code blocks that shouldn't be shown
                         let finalResponse = responseContent;
