@@ -98,6 +98,9 @@ export class SupabaseContentItemRepository {
             creator_usuario_id: itemData.creatorUsuarioId || null,
             creator_username: itemData.creatorUsername || null,
         };
+        // Persist file_uri and file_name so the public R2 URL is stored
+        if (itemData.fileUri) payload.file_uri = itemData.fileUri;
+        if (itemData.fileName || itemData.file_name) payload.file_name = itemData.fileName || itemData.file_name;
         if (itemData.createdBy) payload.created_by = itemData.createdBy;
         const { data, error } = await this.client.from('content_items').insert(payload).select().single();
         if (error) throw new Error(error.message);
@@ -110,6 +113,8 @@ export class SupabaseContentItemRepository {
         if (updateData.body !== undefined) payload.body = updateData.body;
         if (updateData.contentType !== undefined) payload.content_type = updateData.contentType;
         if (updateData.orderIndex !== undefined) payload.order_index = updateData.orderIndex;
+        if (updateData.fileUri !== undefined) payload.file_uri = updateData.fileUri;
+        if (updateData.fileName !== undefined) payload.file_name = updateData.fileName;
         if (updateData.updatedBy) payload.updated_by = updateData.updatedBy;
         const { data, error } = await this.client.from('content_items').update(payload).eq('id', id).select().single();
         if (error) throw new Error(error.message);
