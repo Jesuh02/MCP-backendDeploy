@@ -985,6 +985,43 @@ export class ProgressDomainService {
 
     async setCourseEnrollmentStatus(userId, courseId, status) {
         await this.progressRepo.setCourseEnrollmentStatus(userId, courseId, status);
+
+        // Notificar al estudiante cuando se le desactiva el acceso
+        const normalizedStatus = String(status || '').trim().toLowerCase();
+        if (normalizedStatus === 'inactivo' && this._notificationService) {
+            try {
+                let courseName = 'un curso';
+                if (this.courseRepo) {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                }
+
+                await this._notificationService.send(userId, {
+                    title: 'Se te quitó el acceso',
+                    message: `Tu acceso al curso "${courseName}" fue desactivado por el administrador.`,
+                    type: 'enrollment_revoked',
+                    relatedId: courseId,
+                    metadata: { courseId, courseName, reason: 'Acceso desactivado por el administrador' },
+                });
+
+                await this._notificationService.sendEmail(userId, {
+                    subject: `Acceso desactivado: ${courseName}`,
+                    text: [
+                        'Hola,',
+                        '',
+                        `Tu acceso al curso "${courseName}" ha sido desactivado por el administrador.`,
+                        '',
+                        'Si crees que esto es un error, contacta al administrador del curso.',
+                        '',
+                        'Equipo CourseV.'
+                    ].join('\n'),
+                    html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#1c1c1e;color:#fff;border-radius:12px"><h2 style="margin:0 0 16px">Acceso desactivado</h2><p>Tu acceso al curso <strong>"${courseName}"</strong> ha sido desactivado por el administrador.</p><hr style="border:none;border-top:1px solid #333;margin:20px 0"><p style="font-size:13px;color:#8e8e93">Si crees que esto es un error, contacta al administrador del curso.</p><p style="font-size:13px;color:#8e8e93">Equipo CourseV.</p></div>`,
+                });
+            } catch (err) {
+                console.error('[ProgressService] Error sending enrollment inactivo notification/email:', err?.message);
+            }
+        }
+
         return Result.ok({ message: 'Estado de matricula actualizado', userId, courseId, status });
     }
 
