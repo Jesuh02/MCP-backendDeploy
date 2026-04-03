@@ -1107,13 +1107,25 @@ export class ProgressDomainService {
      * enrolled directly by an admin without going through the request flow).
      */
     async isEnrolledAndApproved(userId, courseId) {
+        // Siempre verificar enrollment_status en progreso_curso — tiene prioridad
+        // sobre pre_enrollments porque un admin puede desactivar el acceso desde ahí.
+        const courseEnrollmentStatus = await this.progressRepo.findCourseEnrollmentStatus(userId, courseId);
+        if (courseEnrollmentStatus !== null) {
+            const normalized = String(courseEnrollmentStatus).trim().toLowerCase();
+            if (normalized === 'inactivo') {
+                return Result.ok({
+                    enrolled: false,
+                    status: 'inactivo',
+                    enrollmentStatus: 'inactivo',
+                });
+            }
+        }
+
         const row = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!row) {
             // No pre_enrollment record – check enrollment_status directly in progreso_curso
-            const courseEnrollmentStatus = await this.progressRepo.findCourseEnrollmentStatus(userId, courseId);
             if (courseEnrollmentStatus !== null) {
                 const normalized = String(courseEnrollmentStatus).trim().toLowerCase();
-                // Solo 'activo' (valor por defecto) equivale a una matricula activa
                 const isActive = normalized === 'activo';
                 return Result.ok({
                     enrolled: isActive,
