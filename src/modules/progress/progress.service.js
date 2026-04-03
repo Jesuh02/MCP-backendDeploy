@@ -943,23 +943,40 @@ export class ProgressDomainService {
         //   2. No elimina progreso_curso, permitiendo acceso al curso por esa vÃ­a.
         await this.progressRepo.revokeEnrollmentAccess(userId, courseId);
 
-        // Notify the student about revocation
-        if (this._notificationService && reason) {
+        // Notify the student about revocation (push + email)
+        if (this._notificationService) {
             try {
                 let courseName = 'un curso';
                 if (this.courseRepo) {
                     const course = await this.courseRepo.findById(courseId);
                     if (course?.title) courseName = course.title;
                 }
+                const displayReason = reason || 'No especificado';
                 await this._notificationService.send(userId, {
-                    title: 'Se te quitÃ³ el acceso',
-                    message: `Tu acceso a "${courseName}" fue revocado. Motivo: ${reason}`,
+                    title: 'Se te quitó el acceso',
+                    message: `Tu acceso a "${courseName}" fue revocado. Motivo: ${displayReason}`,
                     type: 'enrollment_revoked',
                     relatedId: courseId,
-                    metadata: { courseId, courseName, reason },
+                    metadata: { courseId, courseName, reason: displayReason },
+                });
+
+                // Enviar correo electrónico de revocación
+                await this._notificationService.sendEmail(userId, {
+                    subject: `Acceso revocado: ${courseName}`,
+                    text: [
+                        `Hola,`,
+                        '',
+                        `Tu acceso al curso "${courseName}" ha sido revocado.`,
+                        `Motivo: ${displayReason}`,
+                        '',
+                        'Si crees que esto es un error, contacta al administrador del curso.',
+                        '',
+                        'Equipo CourseV.'
+                    ].join('\n'),
+                    html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#1c1c1e;color:#fff;border-radius:12px"><h2 style="margin:0 0 16px">Acceso revocado</h2><p>Tu acceso al curso <strong>"${courseName}"</strong> ha sido revocado.</p><p><strong>Motivo:</strong> ${displayReason}</p><hr style="border:none;border-top:1px solid #333;margin:20px 0"><p style="font-size:13px;color:#8e8e93">Si crees que esto es un error, contacta al administrador del curso.</p><p style="font-size:13px;color:#8e8e93">Equipo CourseV.</p></div>`,
                 });
             } catch (err) {
-                console.error('[ProgressService] Error sending revoke notification:', err?.message);
+                console.error('[ProgressService] Error sending revoke notification/email:', err?.message);
             }
         }
 

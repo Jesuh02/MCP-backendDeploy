@@ -1591,18 +1591,11 @@ export class SupabaseProgressRepository {
             .eq('course_id', courseId);
         if (error) throw new Error(error.message);
 
-        // Eliminar registros de progreso para bloquear el acceso por la ruta progreso_curso.
-        // Estas eliminaciones son best-effort: el estudiante puede no tener progreso registrado
-        // si solo tenía una invitación aceptada pero nunca inició el curso.
-        await this.client
-            .from('progreso_materia')
-            .delete()
-            .eq('usuario_estudiante', userId)
-            .eq('curso_id', courseId);
-
+        // Marcar enrollment_status como 'inactivo' en progreso_curso para bloquear acceso
+        // sin perder el historial de progreso del estudiante.
         await this.client
             .from('progreso_curso')
-            .delete()
+            .update({ enrollment_status: 'inactivo' })
             .eq('usuario_estudiante', userId)
             .eq('curso_id', courseId);
 
