@@ -15,10 +15,15 @@
 import { OAuth2Client } from 'google-auth-library';
 import { ValidationError } from '../../../shared/errors/index.js';
 
+// Soportar múltiples Client IDs (web + Android) separados por coma
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_IDS = (GOOGLE_CLIENT_ID || '')
+    .split(',')
+    .map(id => id.trim())
+    .filter(Boolean);
 
 // Reutilizar el cliente para beneficiarse del caché de claves públicas
-const oauthClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+const oauthClient = new OAuth2Client(GOOGLE_CLIENT_IDS[0]);
 
 /**
  * Verifica criptográficamente un Google ID Token y retorna su payload.
@@ -28,14 +33,14 @@ const oauthClient = new OAuth2Client(GOOGLE_CLIENT_ID);
  * @throws {ValidationError} Si el token es inválido, expirado o la firma no es correcta.
  */
 export async function verifyGoogleIdToken(idToken) {
-    if (!GOOGLE_CLIENT_ID) {
+    if (GOOGLE_CLIENT_IDS.length === 0) {
         throw new Error('GOOGLE_CLIENT_ID no está configurado en las variables de entorno');
     }
 
     try {
         const ticket = await oauthClient.verifyIdToken({
             idToken,
-            audience: GOOGLE_CLIENT_ID,
+            audience: GOOGLE_CLIENT_IDS,
         });
 
         const payload = ticket.getPayload();
