@@ -55,7 +55,6 @@ export class ProgressDomainService {
         }
 
         progress = progress || this._buildEmptyCourseProgress(userId, courseId);
-        subjectProgress = await this._enrichSubjectProgressWithCreator(subjectProgress, courseId);
         return Result.ok({...progress, gradedTasks, subjectProgress });
     }
 
@@ -68,8 +67,6 @@ export class ProgressDomainService {
         } else if (subjectProgress?.length && this.taskRepo && this.submissionRepo && this.subjectRepo) {
             this._scheduleUserCourseRefresh(userId, courseId);
         }
-
-        subjectProgress = await this._enrichSubjectProgressWithCreator(subjectProgress, courseId);
 
         return Result.ok(subjectProgress || []);
     }
@@ -713,23 +710,8 @@ export class ProgressDomainService {
         }
         if (!subjects?.length) return;
 
-        // Resolve creator usernames from subjects.created_by (user IDs)
-        const creatorIds = [...new Set(subjects.map(s => s.created_by).filter(Boolean))];
-        const creatorNameById = new Map();
-        if (creatorIds.length > 0 && this.userRepo && typeof this.userRepo.findByIds === 'function') {
-            try {
-                const creators = await this.userRepo.findByIds(creatorIds);
-                for (const u of (creators || [])) {
-                    creatorNameById.set(Number(u.id), u.username || null);
-                }
-            } catch (_) {}
-        }
-
         const results = await Promise.allSettled(
-            subjects.map(subject => {
-                const creatorName = subject.created_by ? (creatorNameById.get(Number(subject.created_by)) || null) : null;
-                return this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id, creatorName);
-            })
+            subjects.map(subject => this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id))
         );
         for (const r of results) {
             if (r.status === 'rejected') {
@@ -738,7 +720,7 @@ export class ProgressDomainService {
         }
     }
 
-    async _recalculateAndUpsertUserSubjectProgress(userId, courseId, subjectId, createdByName = null) {
+    async _recalculateAndUpsertUserSubjectProgress(userId, courseId, subjectId) {
         const totalTasks = await this.taskRepo.countBySubject(subjectId);
         if (totalTasks === 0) return null;
 
@@ -755,17 +737,6 @@ export class ProgressDomainService {
 
         const status = averageGrade >= 6 ? 'Ganado' : 'Perdido';
 
-        // If createdByName not provided, resolve it from the subject
-        if (!createdByName && this.subjectRepo && this.userRepo) {
-            try {
-                const subject = await this.subjectRepo.findById(subjectId);
-                if (subject?.created_by) {
-                    const creators = await this.userRepo.findByIds([subject.created_by]);
-                    if (creators?.length) createdByName = creators[0].username || null;
-                }
-            } catch (_) {}
-        }
-
         return this.progressRepo.upsert({
             userId,
             courseId,
@@ -775,7 +746,6 @@ export class ProgressDomainService {
             progressPercentage,
             subjectId,
             status,
-            ...(createdByName ? { createdBy: createdByName } : {}),
         });
     }
 
@@ -783,39 +753,6 @@ export class ProgressDomainService {
         if (!this.subjectRepo) return null;
         const subject = await this.subjectRepo.findById(subjectId);
         return subject?.course_id || null;
-    }
-
-    /**
-     * Enrich subject progress entries with createdBy (creator username)
-     * for entries that don't have it yet, by looking up subjects → usuarios.
-     */
-    async _enrichSubjectProgressWithCreator(subjectProgress, courseId) {
-        if (!Array.isArray(subjectProgress) || !subjectProgress.length) return subjectProgress;
-        // Check if any entry is missing createdBy
-        const missing = subjectProgress.filter(sp => !sp.createdBy && sp.subjectId);
-        if (!missing.length) return subjectProgress;
-        if (!this.subjectRepo || !this.userRepo) return subjectProgress;
-
-        try {
-            const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
-            const subjectsById = new Map((subjects || []).map(s => [Number(s.id), s]));
-            const creatorIds = [...new Set(subjects.filter(s => s.created_by).map(s => Number(s.created_by)))];
-            if (!creatorIds.length) return subjectProgress;
-
-            const creators = typeof this.userRepo.findByIds === 'function'
-                ? await this.userRepo.findByIds(creatorIds)
-                : [];
-            const creatorNameById = new Map((creators || []).map(u => [Number(u.id), u.username || null]));
-
-            return subjectProgress.map(sp => {
-                if (sp.createdBy || !sp.subjectId) return sp;
-                const subject = subjectsById.get(Number(sp.subjectId));
-                const creatorName = subject?.created_by ? creatorNameById.get(Number(subject.created_by)) : null;
-                return creatorName ? { ...sp, createdBy: creatorName } : sp;
-            });
-        } catch (_) {
-            return subjectProgress;
-        }
     }
 
     async _isCreatorOrCollaborator(userId, courseId) {
@@ -994,238 +931,39 @@ export class ProgressDomainService {
 
     /**
      * Admin: revoke a user's enrollment (remove course access).
-     * Updates both pre_enrollments (status='revoked') and progreso_curso (enrollment_status='revocado').
-     * Sends in-app notification AND email to the student.
      */
     async revokeEnrollment(userId, courseId, reason = null) {
-        let existing = await this.progressRepo.findPreEnrollment(userId, courseId);
-        // Handle "direct enrollment" users (have progreso_curso but no pre_enrollment record)
-        if (!existing) {
-            try {
-                existing = await this.progressRepo.upsertPreEnrollment(userId, courseId, 'approved');
-            } catch (_) { /* ignore – proceed to revoke even if upsert fails */ }
-            if (!existing) return Result.fail(new NotFoundError('Matr\u00edcula', `${userId}/${courseId}`));
-        }
-        await this.progressRepo.deleteEnrollment(userId, courseId, reason);
+        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+        if (!existing) return Result.fail(new NotFoundError('MatrÃ­cula', `${userId}/${courseId}`));
 
-        // Resolve course name for notifications
-        let courseName = 'un curso';
-        if (this.courseRepo) {
-            try {
-                const course = await this.courseRepo.findById(courseId);
-                if (course?.title) courseName = course.title;
-            } catch (_) { /* ignore */ }
-        }
+        // OCP / DIP â€" Usa revokeEnrollmentAccess (mÃ©todo especÃ­fico del repositorio) en lugar
+        // de deleteEnrollment, que tiene dos bugs:
+        //   1. El UPDATE a status='revoked' falla silenciosamente si la columna revoke_reason
+        //      no existe en pre_enrollments o hay un CHECK constraint en status.
+        //   2. No elimina progreso_curso, permitiendo acceso al curso por esa vÃ­a.
+        await this.progressRepo.revokeEnrollmentAccess(userId, courseId);
 
-        // Notify the student about revocation (in-app + email)
-        if (this._notificationService) {
-            const reasonText = reason || 'Sin motivo especificado';
+        // Notify the student about revocation
+        if (this._notificationService && reason) {
             try {
+                let courseName = 'un curso';
+                if (this.courseRepo) {
+                    const course = await this.courseRepo.findById(courseId);
+                    if (course?.title) courseName = course.title;
+                }
                 await this._notificationService.send(userId, {
-                    title: 'Se te quitó el acceso',
-                    message: `Tu acceso a "${courseName}" fue revocado. Motivo: ${reasonText}`,
+                    title: 'Se te quitÃ³ el acceso',
+                    message: `Tu acceso a "${courseName}" fue revocado. Motivo: ${reason}`,
                     type: 'enrollment_revoked',
                     relatedId: courseId,
-                    metadata: { courseId, courseName, reason: reasonText },
+                    metadata: { courseId, courseName, reason },
                 });
             } catch (err) {
                 console.error('[ProgressService] Error sending revoke notification:', err?.message);
             }
-
-            // Send email notification
-            try {
-                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
-                const html = generateGenericEmailHTML(
-                    'Acceso al curso revocado',
-                    `Tu acceso al curso "${courseName}" ha sido revocado.\n\nMotivo: ${reasonText}\n\nSi crees que es un error, contacta al administrador del curso.`,
-                    'enrollment_revoked',
-                    null
-                );
-                await this._notificationService.sendEmail(userId, {
-                    subject: `Tu acceso a "${courseName}" fue revocado – CourseV`,
-                    html,
-                    text: `Tu acceso al curso "${courseName}" fue revocado. Motivo: ${reasonText}. Si crees que es un error, contacta al administrador.`,
-                });
-            } catch (err) {
-                console.error('[ProgressService] Error sending revoke email:', err?.message);
-            }
         }
 
         return Result.ok({ message: 'Acceso al curso revocado', reason });
-    }
-
-    /**
-     * Admin: restore a previously revoked enrollment (re-approve).
-     * Restores both pre_enrollments (status='approved') and progreso_curso (enrollment_status='activo').
-     */
-    async restoreEnrollment(userId, courseId) {
-        const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
-        if (!existing) return Result.fail(new NotFoundError('Matr\u00edcula', `${userId}/${courseId}`));
-
-        const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
-
-        // Also restore enrollment_status in progreso_curso
-        try {
-            await this.progressRepo.restoreEnrollmentInProgress(userId, courseId);
-        } catch (err) {
-            console.error('[ProgressService] Error restoring progreso_curso enrollment_status:', err?.message);
-        }
-
-        // Notify the student about restoration (in-app + push + email)
-        if (this._notificationService) {
-            let courseName = 'un curso';
-            if (this.courseRepo) {
-                try {
-                    const course = await this.courseRepo.findById(courseId);
-                    if (course?.title) courseName = course.title;
-                } catch (_) { /* ignore */ }
-            }
-
-            try {
-                await this._notificationService.send(userId, {
-                    title: 'Acceso restaurado',
-                    message: `Tu acceso a "${courseName}" ha sido restaurado. ¡Ya puedes acceder nuevamente!`,
-                    type: 'enrollment_restored',
-                    relatedId: courseId,
-                    metadata: { courseId, courseName },
-                });
-            } catch (err) {
-                console.error('[ProgressService] Error sending restore notification:', err?.message);
-            }
-
-            // Send email notification
-            try {
-                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
-                const html = generateGenericEmailHTML(
-                    'Acceso al curso restaurado',
-                    `Tu acceso al curso "${courseName}" ha sido restaurado.\n\n¡Ya puedes acceder nuevamente a todo el contenido del curso!`,
-                    'enrollment_restored',
-                    null
-                );
-                await this._notificationService.sendEmail(userId, {
-                    subject: `Tu acceso a "${courseName}" fue restaurado – CourseV`,
-                    html,
-                    text: `Tu acceso al curso "${courseName}" ha sido restaurado. ¡Ya puedes acceder nuevamente!`,
-                });
-            } catch (err) {
-                console.error('[ProgressService] Error sending restore email:', err?.message);
-            }
-        }
-
-        return Result.ok({ ...updated, message: 'Acceso al curso restaurado' });
-    }
-
-    // --- Enrollment Status Toggle (activar / inactivar) ---
-
-    /**
-     * Admin: toggle enrollment_status for a course ('activo' <-> 'inactivo').
-     */
-    async setCourseEnrollmentStatus(userId, courseId, status) {
-        if (!['activo', 'inactivo'].includes(status)) {
-            return Result.fail(new ForbiddenError('Status must be "activo" or "inactivo"'));
-        }
-        await this.progressRepo.setCourseEnrollmentStatus(userId, courseId, status);
-
-        // Notify the student when course access is reactivated
-        if (status === 'activo' && this._notificationService) {
-            let courseName = 'un curso';
-            if (this.courseRepo) {
-                try {
-                    const course = await this.courseRepo.findById(courseId);
-                    if (course?.title) courseName = course.title;
-                } catch (_) { /* ignore */ }
-            }
-
-            try {
-                await this._notificationService.send(userId, {
-                    title: 'Acceso al curso reactivado',
-                    message: `Tu acceso al curso "${courseName}" ha sido reactivado. ¡Ya puedes acceder nuevamente!`,
-                    type: 'enrollment_restored',
-                    relatedId: courseId,
-                    metadata: { courseId, courseName },
-                });
-            } catch (err) {
-                console.error('[ProgressService] Error sending course reactivation notification:', err?.message);
-            }
-
-            try {
-                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
-                const html = generateGenericEmailHTML(
-                    'Acceso al curso reactivado',
-                    `Tu acceso al curso "${courseName}" ha sido reactivado.\n\n¡Ya puedes acceder nuevamente!`,
-                    'enrollment_restored',
-                    null
-                );
-                await this._notificationService.sendEmail(userId, {
-                    subject: `Tu acceso a "${courseName}" fue reactivado – CourseV`,
-                    html,
-                    text: `Tu acceso al curso "${courseName}" ha sido reactivado. ¡Ya puedes acceder nuevamente!`,
-                });
-            } catch (err) {
-                console.error('[ProgressService] Error sending course reactivation email:', err?.message);
-            }
-        }
-
-        return Result.ok({ message: `Enrollment status del curso actualizado a '${status}'` });
-    }
-
-    /**
-     * Admin: toggle enrollment_status for a subject ('activo' <-> 'inactivo').
-     */
-    async setSubjectEnrollmentStatus(userId, courseId, subjectId, status) {
-        if (!['activo', 'inactivo'].includes(status)) {
-            return Result.fail(new ForbiddenError('Status must be "activo" or "inactivo"'));
-        }
-        await this.progressRepo.setSubjectEnrollmentStatus(userId, courseId, subjectId, status);
-
-        // Notify the student when subject access is reactivated
-        if (status === 'activo' && this._notificationService) {
-            let subjectName = 'una materia';
-            let courseName = 'un curso';
-            if (this.subjectRepo) {
-                try {
-                    const subject = await this.subjectRepo.findById(subjectId);
-                    if (subject?.name) subjectName = subject.name;
-                } catch (_) { /* ignore */ }
-            }
-            if (this.courseRepo) {
-                try {
-                    const course = await this.courseRepo.findById(courseId);
-                    if (course?.title) courseName = course.title;
-                } catch (_) { /* ignore */ }
-            }
-
-            try {
-                await this._notificationService.send(userId, {
-                    title: 'Acceso a materia reactivado',
-                    message: `Tu acceso a la materia "${subjectName}" ha sido reactivado. ¡Ya puedes acceder nuevamente!`,
-                    type: 'subject_access_unblocked',
-                    relatedId: subjectId,
-                    metadata: { subjectId, subjectName, courseId, courseName },
-                });
-            } catch (err) {
-                console.error('[ProgressService] Error sending subject reactivation notification:', err?.message);
-            }
-
-            try {
-                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
-                const html = generateGenericEmailHTML(
-                    'Acceso a materia reactivado',
-                    `Tu acceso a la materia "${subjectName}" del curso "${courseName}" ha sido reactivado.\n\n¡Ya puedes acceder nuevamente!`,
-                    'subject_access_unblocked',
-                    null
-                );
-                await this._notificationService.sendEmail(userId, {
-                    subject: `Tu acceso a "${subjectName}" fue reactivado – CourseV`,
-                    html,
-                    text: `Tu acceso a la materia "${subjectName}" del curso "${courseName}" ha sido reactivado. ¡Ya puedes acceder nuevamente!`,
-                });
-            } catch (err) {
-                console.error('[ProgressService] Error sending subject reactivation email:', err?.message);
-            }
-        }
-
-        return Result.ok({ message: `Enrollment status de la materia actualizado a '${status}'` });
     }
 
     // â”€â”€â”€ Subject Access Blocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1238,13 +976,6 @@ export class ProgressDomainService {
             return Result.fail(new ForbiddenError('Debe proporcionar una razÃ³n para bloquear el acceso'));
         }
         const block = await this.progressRepo.blockSubjectAccess(userId, courseId, subjectId, reason.trim(), blockedBy);
-
-        // Also set enrollment_status = 'inactivo' in progreso_materia
-        try {
-            await this.progressRepo.setSubjectEnrollmentStatus(userId, courseId, subjectId, 'inactivo');
-        } catch (err) {
-            console.error('[ProgressService] Error setting subject enrollment_status to inactivo:', err?.message);
-        }
 
         // Notify the student
         if (this._notificationService) {
@@ -1271,73 +1002,9 @@ export class ProgressDomainService {
 
     /**
      * Admin: unblock a user's access to a specific subject.
-     * @param {number|null} courseId - required to restore enrollment_status in progreso_materia
      */
-    async unblockSubjectAccess(userId, subjectId, courseId = null, unblockedBy = null) {
-        await this.progressRepo.unblockSubjectAccess(userId, subjectId, unblockedBy);
-
-        // Restore enrollment_status = 'activo' in progreso_materia when courseId is known
-        if (courseId) {
-            try {
-                await this.progressRepo.setSubjectEnrollmentStatus(userId, courseId, subjectId, 'activo');
-            } catch (err) {
-                console.error('[ProgressService] Error restoring subject enrollment_status to activo:', err?.message);
-            }
-        }
-
-        // Notify the student that subject access was restored (in-app + push + email)
-        if (this._notificationService) {
-            try {
-                let subjectName = 'una materia';
-                let courseName = 'un curso';
-                if (this.subjectRepo) {
-                    const subject = await this.subjectRepo.findById(subjectId);
-                    if (subject?.name) subjectName = subject.name;
-                }
-                if (this.courseRepo && courseId) {
-                    const course = await this.courseRepo.findById(courseId);
-                    if (course?.title) courseName = course.title;
-                }
-                await this._notificationService.send(userId, {
-                    title: 'Acceso restaurado',
-                    message: `Tu acceso a la materia "${subjectName}" ha sido restaurado. ¡Ya puedes acceder nuevamente!`,
-                    type: 'subject_access_unblocked',
-                    relatedId: subjectId,
-                    metadata: { subjectId, subjectName, courseId, courseName },
-                });
-            } catch (err) {
-                console.error('[ProgressService] Error sending subject unblock notification:', err?.message);
-            }
-
-            // Send email notification
-            try {
-                let subjectName = 'una materia';
-                let courseName = 'un curso';
-                if (this.subjectRepo) {
-                    const subject = await this.subjectRepo.findById(subjectId);
-                    if (subject?.name) subjectName = subject.name;
-                }
-                if (this.courseRepo && courseId) {
-                    const course = await this.courseRepo.findById(courseId);
-                    if (course?.title) courseName = course.title;
-                }
-                const { generateGenericEmailHTML } = await import('../../templates/emailTemplates.js');
-                const html = generateGenericEmailHTML(
-                    'Acceso a materia restaurado',
-                    `Tu acceso a la materia "${subjectName}" del curso "${courseName}" ha sido restaurado.\n\n¡Ya puedes acceder nuevamente!`,
-                    'subject_access_unblocked',
-                    null
-                );
-                await this._notificationService.sendEmail(userId, {
-                    subject: `Tu acceso a "${subjectName}" fue restaurado – CourseV`,
-                    html,
-                    text: `Tu acceso a la materia "${subjectName}" del curso "${courseName}" ha sido restaurado. ¡Ya puedes acceder nuevamente!`,
-                });
-            } catch (err) {
-                console.error('[ProgressService] Error sending subject unblock email:', err?.message);
-            }
-        }
-
+    async unblockSubjectAccess(userId, subjectId) {
+        await this.progressRepo.unblockSubjectAccess(userId, subjectId);
         return Result.ok({ message: 'Acceso a la materia restaurado' });
     }
 
@@ -1358,22 +1025,7 @@ export class ProgressDomainService {
      */
     async getSubjectAccessBlocks(userId, courseId) {
         const blocks = await this.progressRepo.findSubjectAccessBlocksByUserAndCourse(userId, courseId);
-        // Also include subjects with enrollment_status='inactivo' in progreso_materia
-        const inactiveSubjects = await this.progressRepo.findInactiveSubjectsByUserAndCourse(userId, courseId);
-        const blockedSubjectIds = new Set((blocks || []).map(b => Number(b.subject_id)));
-        const merged = [...(blocks || [])];
-        for (const s of inactiveSubjects) {
-            if (!blockedSubjectIds.has(Number(s.materia_id))) {
-                merged.push({
-                    subject_id: s.materia_id,
-                    course_id: courseId,
-                    user_id: userId,
-                    reason: 'Tu acceso a esta materia fue desactivado por el administrador.',
-                    is_active: true,
-                });
-            }
-        }
-        return Result.ok(merged);
+        return Result.ok(blocks || []);
     }
 
     /**
@@ -1391,18 +1043,9 @@ export class ProgressDomainService {
      * enrolled directly by an admin without going through the request flow).
      */
     async isEnrolledAndApproved(userId, courseId) {
-        // Check progreso_curso.enrollment_status first - admin may have toggled it to 'inactivo'
-        const courseEnrollStatus = await this.progressRepo.findCourseEnrollmentStatus(userId, courseId);
-        if (courseEnrollStatus === 'inactivo') {
-            return Result.ok({ enrolled: true, status: 'inactivo', enrollmentStatus: 'inactivo' });
-        }
-        if (courseEnrollStatus === 'revocado') {
-            return Result.ok({ enrolled: false, status: 'revoked', enrollmentStatus: 'revoked' });
-        }
-
         const row = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!row) {
-            // No pre_enrollment record - check if user has a direct enrollment (progress record)
+            // No pre_enrollment record â€” check if user has a direct enrollment (progress record)
             const directlyEnrolled = await this.progressRepo.isEnrolled(userId, courseId);
             if (directlyEnrolled) {
                 return Result.ok({ enrolled: true, status: 'approved', enrollmentStatus: 'approved' });

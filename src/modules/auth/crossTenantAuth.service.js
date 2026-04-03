@@ -16,7 +16,7 @@
  */
 import crypto from 'crypto';
 import { Result } from '../../shared/Result.js';
-import { UnauthorizedError, ConflictError, ValidationError } from '../../shared/errors/index.js';
+import { UnauthorizedError, ConflictError, ValidationError, ForbiddenError } from '../../shared/errors/index.js';
 import { SupabaseUserRepository, hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
 import { SupabaseInstitucionRepository } from '../institucion/infrastructure/supabase.institucion.repository.js';
 import { SupabasePersonaRepository } from '../persona/infrastructure/supabase.persona.repository.js';
@@ -177,11 +177,18 @@ export class CrossTenantAuthService {
      * @param {string|null} cedula  Optional cedula to disambiguate same-credential collisions.
      */
     _resolveMatches(settled, noMatchMessage, cedula = null) {
+        // Detectar errores de usuario desactivado — tienen prioridad sobre 'no encontrado'
+        const forbiddenError = settled
+            .filter(r => r.status === 'rejected')
+            .map(r => r.reason)
+            .find(e => e instanceof ForbiddenError);
+
         let matches = settled
             .filter(r => r.status === 'fulfilled' && r.value !== null)
             .map(r => r.value);
 
         if (matches.length === 0) {
+            if (forbiddenError) return Result.fail(forbiddenError);
             return Result.fail(new UnauthorizedError(noMatchMessage));
         }
 
@@ -291,7 +298,11 @@ export class CrossTenantAuthService {
 
             let user = await userRepo.findByUsername(username);
             if (!user) user = await userRepo.findByEmail(username);
-            if (!user || user.isActive === false) return null;
+            if (!user) return null;
+
+            if (user.isActive === false) {
+                throw new ForbiddenError('Su usuario ha sido desactivado, porfavor contactar con soporte');
+            }
 
             const valid = await this._verifyPassword(userRepo, user, password);
             if (!valid) return null;
@@ -305,6 +316,7 @@ export class CrossTenantAuthService {
             match._cedulaHash = cedulaHash; // attached for cross-tenant identity check
             return match;
         } catch (e) {
+            if (e instanceof ForbiddenError) throw e; // propagar error de usuario desactivado
             console.warn(`[CrossTenantAuth] Probe failed for ${entry.id}: ${e.message}`);
             return null;
         }
@@ -347,7 +359,11 @@ export class CrossTenantAuthService {
             if (!user && username?.trim()?.length >= 3) {
                 user = await userRepo.findByUsername(username.trim());
             }
-            if (!user || user.isActive === false) return null;
+            if (!user) return null;
+
+            if (user.isActive === false) {
+                throw new ForbiddenError('Su usuario ha sido desactivado, porfavor contactar con soporte');
+            }
 
             if (avatarUrl && user.avatar !== avatarUrl) {
                 try { await userRepo.update(user.id, { avatar: avatarUrl }); user.avatar = avatarUrl; } catch { /* ignore */ }
@@ -361,6 +377,7 @@ export class CrossTenantAuthService {
             match._cedulaHash = cedulaHash;
             return match;
         } catch (e) {
+            if (e instanceof ForbiddenError) throw e; // propagar error de usuario desactivado
             console.warn(`[CrossTenantAuth] Google probe failed for ${entry.id}: ${e.message}`);
             return null;
         }
