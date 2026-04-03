@@ -1045,10 +1045,17 @@ export class ProgressDomainService {
     async isEnrolledAndApproved(userId, courseId) {
         const row = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!row) {
-            // No pre_enrollment record â€” check if user has a direct enrollment (progress record)
-            const directlyEnrolled = await this.progressRepo.isEnrolled(userId, courseId);
-            if (directlyEnrolled) {
-                return Result.ok({ enrolled: true, status: 'approved', enrollmentStatus: 'approved' });
+            // No pre_enrollment record – check enrollment_status directly in progreso_curso
+            const courseEnrollmentStatus = await this.progressRepo.findCourseEnrollmentStatus(userId, courseId);
+            if (courseEnrollmentStatus !== null) {
+                const normalized = String(courseEnrollmentStatus).trim().toLowerCase();
+                // Solo 'activo' (valor por defecto) equivale a una matricula activa
+                const isActive = normalized === 'activo';
+                return Result.ok({
+                    enrolled: isActive,
+                    status: isActive ? 'approved' : normalized,
+                    enrollmentStatus: isActive ? 'approved' : normalized,
+                });
             }
             return Result.ok({ enrolled: false, status: null, enrollmentStatus: null });
         }
