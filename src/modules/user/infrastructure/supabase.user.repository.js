@@ -121,15 +121,22 @@ export class SupabaseUserRepository {
     async findByEmail(email) {
         const hashed = hashEmail(email);
         if (!hashed) return null;
+        const normalized = String(email).trim().toLowerCase();
+
+        // 1. Buscar por hash SHA-256 (formato nuevo)
         const { data, error } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').eq('email', hashed).maybeSingle();
-        if (error) {
-            console.warn(`[UserRepo] findByEmail error (with join): ${error.message}, trying without join`);
-            const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').eq('email', hashed).maybeSingle();
-            if (e2 || !d2) return null;
-            return this._enrichWithRoles(this._mapUser(d2));
-        }
-        if (!data) return null;
-        return this._enrichWithRoles(this._mapUser(data));
+        if (!error && data) return this._enrichWithRoles(this._mapUser(data));
+        if (error) console.warn(`[UserRepo] findByEmail hashed error: ${error.message}`);
+
+        // 2. Fallback: buscar por email en texto plano (usuarios legacy)
+        const { data: plain, error: plainErr } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').ilike('email', normalized).maybeSingle();
+        if (!plainErr && plain) return this._enrichWithRoles(this._mapUser(plain));
+        if (plainErr) console.warn(`[UserRepo] findByEmail plain fallback error: ${plainErr.message}`);
+
+        // 3. Último intento sin join (por si falla la FK)
+        const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').ilike('email', normalized).maybeSingle();
+        if (e2 || !d2) return null;
+        return this._enrichWithRoles(this._mapUser(d2));
     }
 
     /**
