@@ -368,6 +368,28 @@ export class SupabaseProgressRepository {
         return !error && count > 0;
     }
 
+    async findCourseEnrollmentStatus(userId, courseId) {
+        const { data, error } = await this.client
+            .from(this._courseProgressTable())
+            .select('enrollment_status')
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId)
+            .maybeSingle();
+        if (error || !data) return null;
+        return data.enrollment_status ?? 'activo';
+    }
+
+    async findInactiveSubjectsByUserAndCourse(userId, courseId) {
+        const { data, error } = await this.client
+            .from(this._subjectProgressTable())
+            .select('materia_id, enrollment_status')
+            .eq('usuario_estudiante', userId)
+            .eq('curso_id', courseId)
+            .eq('enrollment_status', 'inactivo');
+        if (error || !data) return [];
+        return data;
+    }
+
     async countEnrolled(userId) {
         const { count, error } = await this.client
             .from(this._courseProgressTable())

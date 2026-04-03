@@ -1358,7 +1358,22 @@ export class ProgressDomainService {
      */
     async getSubjectAccessBlocks(userId, courseId) {
         const blocks = await this.progressRepo.findSubjectAccessBlocksByUserAndCourse(userId, courseId);
-        return Result.ok(blocks || []);
+        // Also include subjects with enrollment_status='inactivo' in progreso_materia
+        const inactiveSubjects = await this.progressRepo.findInactiveSubjectsByUserAndCourse(userId, courseId);
+        const blockedSubjectIds = new Set((blocks || []).map(b => Number(b.subject_id)));
+        const merged = [...(blocks || [])];
+        for (const s of inactiveSubjects) {
+            if (!blockedSubjectIds.has(Number(s.materia_id))) {
+                merged.push({
+                    subject_id: s.materia_id,
+                    course_id: courseId,
+                    user_id: userId,
+                    reason: 'Tu acceso a esta materia fue desactivado por el administrador.',
+                    is_active: true,
+                });
+            }
+        }
+        return Result.ok(merged);
     }
 
     /**
@@ -1376,9 +1391,18 @@ export class ProgressDomainService {
      * enrolled directly by an admin without going through the request flow).
      */
     async isEnrolledAndApproved(userId, courseId) {
+        // Check progreso_curso.enrollment_status first - admin may have toggled it to 'inactivo'
+        const courseEnrollStatus = await this.progressRepo.findCourseEnrollmentStatus(userId, courseId);
+        if (courseEnrollStatus === 'inactivo') {
+            return Result.ok({ enrolled: true, status: 'inactivo', enrollmentStatus: 'inactivo' });
+        }
+        if (courseEnrollStatus === 'revocado') {
+            return Result.ok({ enrolled: false, status: 'revoked', enrollmentStatus: 'revoked' });
+        }
+
         const row = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!row) {
-            // No pre_enrollment record â€” check if user has a direct enrollment (progress record)
+            // No pre_enrollment record - check if user has a direct enrollment (progress record)
             const directlyEnrolled = await this.progressRepo.isEnrolled(userId, courseId);
             if (directlyEnrolled) {
                 return Result.ok({ enrolled: true, status: 'approved', enrollmentStatus: 'approved' });
