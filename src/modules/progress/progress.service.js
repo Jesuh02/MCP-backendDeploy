@@ -55,6 +55,7 @@ export class ProgressDomainService {
         }
 
         progress = progress || this._buildEmptyCourseProgress(userId, courseId);
+        subjectProgress = await this._enrichSubjectProgressWithCreator(subjectProgress, courseId);
         return Result.ok({...progress, gradedTasks, subjectProgress });
     }
 
@@ -67,6 +68,8 @@ export class ProgressDomainService {
         } else if (subjectProgress?.length && this.taskRepo && this.submissionRepo && this.subjectRepo) {
             this._scheduleUserCourseRefresh(userId, courseId);
         }
+
+        subjectProgress = await this._enrichSubjectProgressWithCreator(subjectProgress, courseId);
 
         return Result.ok(subjectProgress || []);
     }
@@ -710,8 +713,23 @@ export class ProgressDomainService {
         }
         if (!subjects?.length) return;
 
+        // Resolve creator usernames from subjects.created_by (user IDs)
+        const creatorIds = [...new Set(subjects.map(s => s.created_by).filter(Boolean))];
+        const creatorNameById = new Map();
+        if (creatorIds.length > 0 && this.userRepo && typeof this.userRepo.findByIds === 'function') {
+            try {
+                const creators = await this.userRepo.findByIds(creatorIds);
+                for (const u of (creators || [])) {
+                    creatorNameById.set(Number(u.id), u.username || null);
+                }
+            } catch (_) {}
+        }
+
         const results = await Promise.allSettled(
-            subjects.map(subject => this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id))
+            subjects.map(subject => {
+                const creatorName = subject.created_by ? (creatorNameById.get(Number(subject.created_by)) || null) : null;
+                return this._recalculateAndUpsertUserSubjectProgress(userId, courseId, subject.id, creatorName);
+            })
         );
         for (const r of results) {
             if (r.status === 'rejected') {
@@ -720,7 +738,7 @@ export class ProgressDomainService {
         }
     }
 
-    async _recalculateAndUpsertUserSubjectProgress(userId, courseId, subjectId) {
+    async _recalculateAndUpsertUserSubjectProgress(userId, courseId, subjectId, createdByName = null) {
         const totalTasks = await this.taskRepo.countBySubject(subjectId);
         if (totalTasks === 0) return null;
 
@@ -737,6 +755,17 @@ export class ProgressDomainService {
 
         const status = averageGrade >= 6 ? 'Ganado' : 'Perdido';
 
+        // If createdByName not provided, resolve it from the subject
+        if (!createdByName && this.subjectRepo && this.userRepo) {
+            try {
+                const subject = await this.subjectRepo.findById(subjectId);
+                if (subject?.created_by) {
+                    const creators = await this.userRepo.findByIds([subject.created_by]);
+                    if (creators?.length) createdByName = creators[0].username || null;
+                }
+            } catch (_) {}
+        }
+
         return this.progressRepo.upsert({
             userId,
             courseId,
@@ -746,6 +775,7 @@ export class ProgressDomainService {
             progressPercentage,
             subjectId,
             status,
+            ...(createdByName ? { createdBy: createdByName } : {}),
         });
     }
 
@@ -753,6 +783,39 @@ export class ProgressDomainService {
         if (!this.subjectRepo) return null;
         const subject = await this.subjectRepo.findById(subjectId);
         return subject?.course_id || null;
+    }
+
+    /**
+     * Enrich subject progress entries with createdBy (creator username)
+     * for entries that don't have it yet, by looking up subjects → usuarios.
+     */
+    async _enrichSubjectProgressWithCreator(subjectProgress, courseId) {
+        if (!Array.isArray(subjectProgress) || !subjectProgress.length) return subjectProgress;
+        // Check if any entry is missing createdBy
+        const missing = subjectProgress.filter(sp => !sp.createdBy && sp.subjectId);
+        if (!missing.length) return subjectProgress;
+        if (!this.subjectRepo || !this.userRepo) return subjectProgress;
+
+        try {
+            const subjects = await this.subjectRepo.findByCourse(courseId, { activeOnly: false });
+            const subjectsById = new Map((subjects || []).map(s => [Number(s.id), s]));
+            const creatorIds = [...new Set(subjects.filter(s => s.created_by).map(s => Number(s.created_by)))];
+            if (!creatorIds.length) return subjectProgress;
+
+            const creators = typeof this.userRepo.findByIds === 'function'
+                ? await this.userRepo.findByIds(creatorIds)
+                : [];
+            const creatorNameById = new Map((creators || []).map(u => [Number(u.id), u.username || null]));
+
+            return subjectProgress.map(sp => {
+                if (sp.createdBy || !sp.subjectId) return sp;
+                const subject = subjectsById.get(Number(sp.subjectId));
+                const creatorName = subject?.created_by ? creatorNameById.get(Number(subject.created_by)) : null;
+                return creatorName ? { ...sp, createdBy: creatorName } : sp;
+            });
+        } catch (_) {
+            return subjectProgress;
+        }
     }
 
     async _isCreatorOrCollaborator(userId, courseId) {
