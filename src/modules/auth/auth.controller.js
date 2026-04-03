@@ -1,4 +1,4 @@
-import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema, googleLoginSchema } from './auth.schemas.js';
+import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema, googleLoginSchema, forgotPasswordSchema, verifyResetCodeSchema, resetPasswordSchema } from './auth.schemas.js';
 import { ValidationError, ConflictError } from '../../shared/errors/index.js';
 import { runInTenantContext, getTenantClient, TENANT_CONFIGS } from '../../config/tenantRegistry.js';
 import { verifyGoogleIdToken } from './infrastructure/google-token.verifier.js';
@@ -20,9 +20,10 @@ async function normalizeGoogleLoginPayload(payload) {
 }
 
 export class AuthController {
-    constructor({ authService, crossTenantAuthService }) {
+    constructor({ authService, crossTenantAuthService, emailAdapter }) {
         this.authService = authService;
         this.crossTenantAuthService = crossTenantAuthService;
+        this.emailAdapter = emailAdapter || null;
     }
 
     register = async(req, res, next) => {
@@ -138,6 +139,39 @@ export class AuthController {
             if (error) return next(ValidationError.fromJoi(error));
             const normalized = await normalizeGoogleLoginPayload(value);
             const result = await this.crossTenantAuthService.googleLogin(normalized);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Sends a 4-digit password reset code to the user's email. */
+    forgotPassword = async(req, res, next) => {
+        try {
+            const { error, value } = forgotPasswordSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            const result = await this.crossTenantAuthService.sendPasswordReset(value.email, this.emailAdapter);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Checks whether the 4-digit code is valid for the given email. */
+    verifyResetCode = async(req, res, next) => {
+        try {
+            const { error, value } = verifyResetCodeSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            const result = await this.crossTenantAuthService.verifyPasswordResetCode(value.email, value.code);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Resets the password after verifying the 4-digit code. */
+    resetPassword = async(req, res, next) => {
+        try {
+            const { error, value } = resetPasswordSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            const result = await this.crossTenantAuthService.resetPassword(value.email, value.code, value.newPassword);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

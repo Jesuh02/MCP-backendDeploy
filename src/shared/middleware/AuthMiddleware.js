@@ -20,6 +20,9 @@ const DEFAULT_PUBLIC_PATHS = [
     '/api/v1/auth/check-password',
     '/api/v1/auth/cross-tenant-login',
     '/api/v1/auth/cross-tenant-google',
+    '/api/v1/auth/forgot-password',
+    '/api/v1/auth/verify-reset-code',
+    '/api/v1/auth/reset-password',
     '/api/v1/instituciones/cross-tenant',
     '/api/v1/public',
 ];

@@ -404,7 +404,7 @@ export function createContainer() {
     // 4. CONTROLADORES — Inyectar servicios de dominio
     // ═══════════════════════════════════════════════════════════
 
-    const authController = new AuthController({ authService, crossTenantAuthService });
+    const authController = new AuthController({ authService, crossTenantAuthService, emailAdapter });
     const userController = new UserController({ userService, whatsAppService: whatsAppDomainService });
     const collaboratorController = new CollaboratorController({ collaboratorService });
     const courseController = new CourseController({ courseService });

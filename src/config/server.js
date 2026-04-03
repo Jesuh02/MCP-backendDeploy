@@ -27,6 +27,8 @@ export function createApp() {
         'https://coursevwebfrontend1.jdavidherazo.workers.dev',
         'http://localhost:5173',
         'http://127.0.0.1:5173',
+        'http://192.168.1.37:5173',   // 
+        'http://192.168.20.14:5173',  // 
         // Agrega aquí otros orígenes de confianza
     ];
 

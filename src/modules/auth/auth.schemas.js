@@ -57,6 +57,31 @@ export const changePasswordSchema = Joi.object({
     newPassword: Joi.string().min(6).max(128).required(),
 });
 
+export const forgotPasswordSchema = Joi.object({
+    email: Joi.string().email().required().messages({
+        'string.email': 'Correo electrónico inválido',
+        'any.required': 'El correo electrónico es requerido',
+    }),
+});
+
+export const verifyResetCodeSchema = Joi.object({
+    email: Joi.string().email().required(),
+    code: Joi.string().length(4).pattern(/^\d{4}$/).required().messages({
+        'string.length': 'El código debe tener 4 dígitos',
+        'string.pattern.base': 'El código debe contener solo dígitos',
+        'any.required': 'El código es requerido',
+    }),
+});
+
+export const resetPasswordSchema = Joi.object({
+    email: Joi.string().email().required(),
+    code: Joi.string().length(4).pattern(/^\d{4}$/).required(),
+    newPassword: Joi.string().min(6).max(128).required().messages({
+        'string.min': 'La nueva contraseña debe tener al menos 6 caracteres',
+        'any.required': 'La nueva contraseña es requerida',
+    }),
+});
+
 export const checkPasswordSchema = Joi.object({
     password: Joi.string().min(1).required().messages({
         'any.required': 'La contraseña es requerida',
