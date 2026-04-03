@@ -180,7 +180,7 @@ export class NotificationDomainService {
         const t = String(type || '').toLowerCase();
         return t === 'new_course' || t === 'new_task' || t === 'task_submission' || t === 'task_graded' ||
                t === 'enrollment_approved' || t === 'collaborator_added' || t === 'enrollment_request' ||
-               t === 'course_invitation';
+               t === 'course_invitation' || t === 'enrollment_revoked';
     }
 
     _getCourseIdFromMetadata(metadata) {
