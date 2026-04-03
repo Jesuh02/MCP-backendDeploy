@@ -118,8 +118,10 @@ export class CrossTenantAuthService {
 
     /**
      * Attempts Google login on every registered tenant in parallel.
+     * Accepts an optional cedula to disambiguate when the same email belongs to
+     * different people across institutions.
      */
-    async googleLogin({ email, displayName, avatarUrl, username }) {
+    async googleLogin({ email, displayName, avatarUrl, username, cedula }) {
         const entries = getAllTenantEntries();
         if (entries.length === 0) {
             return Result.fail(new UnauthorizedError('No hay instituciones configuradas'));
@@ -129,7 +131,7 @@ export class CrossTenantAuthService {
             entries.map(entry => this._tryGoogleLogin(entry, { email, displayName, avatarUrl, username })),
         );
 
-        return this._resolveMatches(results, 'Usuario no encontrado en ninguna institución');
+        return this._resolveMatches(results, 'Usuario no encontrado en ninguna institución', cedula);
     }
 
     /**

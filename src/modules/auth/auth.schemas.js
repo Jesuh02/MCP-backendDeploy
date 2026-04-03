@@ -71,5 +71,8 @@ export const googleLoginSchema = Joi.object({
     displayName: Joi.string().allow('').optional(),
     avatarUrl: Joi.string().uri().allow(null, '').optional(),
     username: Joi.string().min(3).max(30).allow(null, '').optional(),
+    cedula: Joi.string().allow('', null).optional().messages({
+        'string.base': 'La cédula debe ser texto',
+    }),
 });
 
