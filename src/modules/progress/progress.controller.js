@@ -1,3 +1,5 @@
+import { getIO } from '../../config/socketServer.js';
+
 export class ProgressController {
     constructor({ progressService }) {
         this.progressService = progressService;
@@ -419,6 +421,9 @@ export class ProgressController {
             const blockedBy = req.user?.userId || null;
             const result = await this.progressService.blockSubjectAccess(uid, cid, sid, reason, blockedBy);
             if (result.isFail()) return next(result.getError());
+            // Emit real-time event so the student's UI updates immediately
+            const io = getIO();
+            if (io) io.to(`user:${uid}`).emit('subject:access-blocked', { subjectId: sid, courseId: cid, reason: String(reason).trim() });
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
@@ -435,6 +440,9 @@ export class ProgressController {
             const unblockedBy = req.user?.userId || null;
             const result = await this.progressService.unblockSubjectAccess(userId, subjectId, courseId && !isNaN(courseId) && courseId > 0 ? courseId : null, unblockedBy);
             if (result.isFail()) return next(result.getError());
+            // Emit real-time event so the student's UI updates immediately
+            const io = getIO();
+            if (io) io.to(`user:${userId}`).emit('subject:access-unblocked', { subjectId, courseId: courseId || null });
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
