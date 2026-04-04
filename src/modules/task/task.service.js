@@ -351,6 +351,9 @@ export class TaskDomainService {
         const courseResult = this.courseService ? await this.courseService.getById(courseId) : null;
         const courseTitle = courseResult ?.isOk ?.() ? (courseResult.getValue() ?.title || 'Curso') : 'Curso';
 
+        const subject = await this._getSubjectFromTopic(topic);
+        const subjectTitle = subject ?.title || subject ?.name || null;
+
         const progressResult = await this.progressService.getAllByCourse(courseId);
         if (progressResult.isFail()) return;
 
@@ -364,6 +367,7 @@ export class TaskDomainService {
             userIds,
             taskTitle: task.title,
             courseTitle,
+            subjectTitle,
             dueDate: dueDate.toISOString()
         });
     }
@@ -387,6 +391,27 @@ export class TaskDomainService {
         const userIds = this._extractEnrollmentUserIds(progressResult.getValue() || []);
 
         this.notificationService.cancelTaskReminderForUsers(task.id, userIds);
+    }
+
+    /**
+     * Restaura los recordatorios de entrega de todas las tareas con fecha futura.
+     * Debe llamarse al arrancar el servidor para recuperar timers perdidos en reinicios.
+     */
+    async restoreTaskReminders() {
+        if (!this.taskRepo?.findWithFutureDueDate || !this.notificationService || !this.progressService) return;
+        try {
+            const tasks = await this.taskRepo.findWithFutureDueDate();
+            let scheduled = 0;
+            for (const task of tasks) {
+                await this._scheduleTaskDeadlineReminder(task).catch(err =>
+                    console.error(`[TaskDomainService] Error restaurando recordatorio tarea ${task.id}:`, err.message)
+                );
+                scheduled++;
+            }
+            console.log(`[TaskDomainService] Recordatorios restaurados: ${scheduled} tarea(s) reprogramada(s).`);
+        } catch (err) {
+            console.error('[TaskDomainService] Error al restaurar recordatorios de entrega:', err.message);
+        }
     }
 
     /** Actualiza una tarea existente. */
