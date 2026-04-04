@@ -180,6 +180,20 @@ export class SupabaseCourseRepository {
                     }
 
                     await this.client.from('task_submissions').delete().in('task_id', taskIds);
+
+                    // Delete question_sessions children before the sessions
+                    const { data: qSessions } = await this.client
+                        .from('question_sessions').select('id').in('task_id', taskIds);
+                    const qSessionIds = (qSessions || []).map(s => s.id);
+                    if (qSessionIds.length > 0) {
+                        const { data: qHistory } = await this.client
+                            .from('questions_history').select('id').in('session_id', qSessionIds);
+                        const qHistoryIds = (qHistory || []).map(h => h.id);
+                        if (qHistoryIds.length > 0) {
+                            await this.client.from('question_options').delete().in('question_id', qHistoryIds);
+                        }
+                        await this.client.from('questions_history').delete().in('session_id', qSessionIds);
+                    }
                     await this.client.from('question_sessions').delete().in('task_id', taskIds);
                     await this.client.from('tasks').delete().in('topic_id', topicIds);
                 }
