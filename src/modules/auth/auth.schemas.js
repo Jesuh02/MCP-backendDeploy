@@ -63,6 +63,31 @@ export const checkPasswordSchema = Joi.object({
     }),
 });
 
+export const forgotPasswordSchema = Joi.object({
+    email: Joi.string().email().required().messages({
+        'any.required': 'El correo electrónico es requerido',
+        'string.email': 'El correo electrónico no es válido',
+    }),
+});
+
+export const verifyResetCodeSchema = Joi.object({
+    email: Joi.string().email().required(),
+    code: Joi.string().length(4).pattern(/^[0-9]+$/).required().messages({
+        'any.required': 'El código es requerido',
+        'string.length': 'El código debe tener 4 dígitos',
+        'string.pattern.base': 'El código debe ser numérico',
+    }),
+});
+
+export const resetPasswordSchema = Joi.object({
+    email: Joi.string().email().required(),
+    code: Joi.string().length(4).pattern(/^[0-9]+$/).required(),
+    newPassword: Joi.string().min(6).required().messages({
+        'any.required': 'La nueva contraseña es requerida',
+        'string.min': 'La contraseña debe tener al menos 6 caracteres',
+    }),
+});
+
 export const googleLoginSchema = Joi.object({
     idToken: Joi.string().min(1).required().messages({
         'any.required': 'El idToken de Google es requerido',
