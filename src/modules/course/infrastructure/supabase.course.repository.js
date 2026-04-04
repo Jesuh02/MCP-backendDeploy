@@ -208,7 +208,11 @@ export class SupabaseCourseRepository {
                 await this.client.from('topics').delete().in('id', topicIds);
             }
 
-            await this.client.from('subjects').delete().eq('course_id', id);
+            // Delete progreso_materia by materia_id to clear FK before dropping subjects
+            await this.client.from('progreso_materia').delete().in('materia_id', subjectIds);
+
+            const { error: subjectDeleteError } = await this.client.from('subjects').delete().eq('course_id', id);
+            if (subjectDeleteError) throw new Error(`Error eliminando materias del curso: ${subjectDeleteError.message}`);
         }
 
         // 11. Finally delete the course
