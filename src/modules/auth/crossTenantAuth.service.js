@@ -15,6 +15,7 @@
  *     that prevents username-collision attacks across tenants.
  */
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { Result } from '../../shared/Result.js';
 import { UnauthorizedError, ConflictError, ValidationError, ForbiddenError } from '../../shared/errors/index.js';
 import { SupabaseUserRepository, hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
@@ -557,7 +558,6 @@ export class CrossTenantAuthService {
         const tenantEntry = tenantEntries.find(e => e.id === entry.tenantId);
         if (!tenantEntry?.client) throw new Error('Tenant no disponible');
 
-        const bcrypt = await import('bcrypt');
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         const userRepo = new SupabaseUserRepository(tenantEntry.client);
         await userRepo.update(entry.userId, { password: hashedPassword });
