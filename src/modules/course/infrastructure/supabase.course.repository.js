@@ -263,8 +263,47 @@ export class SupabaseCourseRepository {
                 await this.client.from('topics').delete().in('materia_id', subjectIds);
             }
 
-            // Final safety-net: unconditionally remove any topics still referencing these subjects
-            await this.client.from('topics').delete().in('materia_id', subjectIds);
+            // Final safety-net: find ALL remaining topics by materia_id OR subject_id
+            const { data: finalTopics } = await this.client
+                .from('topics').select('id')
+                .or(`materia_id.in.(${subjectIds.join(',')}),subject_id.in.(${subjectIds.join(',')})`);
+            if (finalTopics && finalTopics.length > 0) {
+                const finalTopicIds = finalTopics.map(t => t.id);
+                // Cascade-clear ALL child FK constraints on these topics
+                const { data: fTasks } = await this.client.from('tasks').select('id').in('topic_id', finalTopicIds);
+                if (fTasks && fTasks.length > 0) {
+                    const fTaskIds = fTasks.map(t => t.id);
+                    await this.client.from('rag_documents').delete().in('task_id', fTaskIds);
+                    const { data: fItems } = await this.client.from('content_items').select('id').in('task_id', fTaskIds);
+                    if (fItems && fItems.length > 0) {
+                        await this.client.from('rag_documents').delete().in('content_item_id', fItems.map(i => i.id));
+                        await this.client.from('content_items').delete().in('task_id', fTaskIds);
+                    }
+                    await this.client.from('task_submissions').delete().in('task_id', fTaskIds);
+                    const { data: fQS } = await this.client.from('question_sessions').select('id').in('task_id', fTaskIds);
+                    if (fQS && fQS.length > 0) {
+                        const fQSIds = fQS.map(s => s.id);
+                        const { data: fQH } = await this.client.from('questions_history').select('id').in('session_id', fQSIds);
+                        if (fQH && fQH.length > 0) {
+                            await this.client.from('question_options').delete().in('question_id', fQH.map(h => h.id));
+                        }
+                        await this.client.from('questions_history').delete().in('session_id', fQSIds);
+                    }
+                    await this.client.from('question_sessions').delete().in('task_id', fTaskIds);
+                    await this.client.from('tasks').delete().in('topic_id', finalTopicIds);
+                }
+                const { data: fTopicItems } = await this.client.from('content_items').select('id').in('topic_id', finalTopicIds);
+                if (fTopicItems && fTopicItems.length > 0) {
+                    await this.client.from('rag_documents').delete().in('content_item_id', fTopicItems.map(i => i.id));
+                    await this.client.from('content_items').delete().in('topic_id', finalTopicIds);
+                }
+                await this.client.from('rag_documents').delete().in('topic_id', finalTopicIds);
+                await this.client.from('reinforcement_question_history').delete().in('topic_id', finalTopicIds);
+                await this.client.from('reinforcement_results').delete().in('topic_id', finalTopicIds);
+                await this.client.from('question_sessions').delete().in('topic_id', finalTopicIds);
+                const { error: topicDelErr } = await this.client.from('topics').delete().in('id', finalTopicIds);
+                if (topicDelErr) throw new Error(`Error eliminando temas del curso: ${topicDelErr.message}`);
+            }
 
             const { error: subjectDeleteError } = await this.client.from('subjects').delete().eq('course_id', id);
             if (subjectDeleteError) throw new Error(`Error eliminando materias del curso: ${subjectDeleteError.message}`);
