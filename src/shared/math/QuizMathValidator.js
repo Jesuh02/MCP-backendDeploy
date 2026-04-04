@@ -481,18 +481,65 @@ export class QuizMathValidator {
      * to match correctOrder. This is the SINGLE SOURCE OF TRUTH — the explanation
      * is always derived from the computed correct sequence, never from the LLM text.
      *
+     * The LLM explanation is sanitized to remove any ordering claims (arrow chains,
+     * numbered lists, ordinal sequences) that could contradict the programmatic
+     * correctOrder. Only conceptual/educational reasoning is preserved.
+     *
      * @param {string[]} correctSequence - Items in their correct order
-     * @param {string}   llmExplanation  - Original LLM explanation (preserved as context)
-     * @returns {string} Canonical explanation
+     * @param {string}   llmExplanation  - Original LLM explanation (may contain conflicting order)
+     * @returns {string} Canonical explanation with single source of truth
      */
     static buildOrderingExplanation(correctSequence, llmExplanation = '') {
+        const sanitized = QuizMathValidator._stripOrderingClaims(llmExplanation);
         const numbered = correctSequence
             .map((item, i) => `${i + 1}. ${item}`)
             .join('\n');
-        const base = llmExplanation
-            ? `${llmExplanation.replace(/\.\s*$/, '')}.\n\nOrden correcto:\n${numbered}`
+        return sanitized
+            ? `${sanitized.replace(/\.\s*$/, '')}.\n\nOrden correcto:\n${numbered}`
             : `Orden correcto:\n${numbered}`;
-        return base;
+    }
+
+    /**
+     * Strips ordering-specific claims from LLM explanation text to prevent
+     * contradictions with the programmatically computed correct order.
+     *
+     * Removes: arrow chains (A → B → C), numbered step lists, ordinal sequences
+     * (first/second, primero/segundo), and explicit "the order is..." phrases.
+     * Preserves: conceptual reasoning, domain explanations, educational content.
+     *
+     * Handles both English and Spanish text.
+     *
+     * @param {string} text - Raw LLM explanation
+     * @returns {string} Sanitized explanation without ordering claims
+     */
+    static _stripOrderingClaims(text) {
+        if (!text || typeof text !== 'string') return '';
+
+        let s = text;
+
+        // 1. Remove arrow-chain sequences: "A → B → C → D" (≥3 elements)
+        s = s.replace(/[\w\sáéíóúñÁÉÍÓÚÑ]+(?:\s*[→⟶⟹⇒]+\s*[\w\sáéíóúñÁÉÍÓÚÑ]+){2,}/g, '');
+
+        // 2. Remove explicit "the order is/correct order is" phrases (EN + ES)
+        s = s.replace(/(?:the\s+)?(?:correct\s+|logical\s+)?order\s+(?:is|would\s+be|should\s+be)\s*:?[^.;]*/gi, '');
+        s = s.replace(/(?:el\s+)?orden\s+(?:correcto\s+|l[oó]gico\s+)?(?:es|ser[ií]a|debe\s+ser)\s*:?[^.;]*/gi, '');
+
+        // 3. Remove numbered step enumerations: "1. X\n2. Y\n3. Z" (≥3 consecutive)
+        s = s.replace(/(?:^|\n)\s*\d+[.)]\s+.+(?:\n\s*\d+[.)]\s+.+){2,}/gm, '');
+
+        // 4. Remove ordinal enumeration sequences (EN: first...second...third; ES: primero...segundo...tercero)
+        const ordinalPattern = /(?:(?:first|second|third|fourth|fifth|sixth|primero|segundo|tercero|cuarto|quinto|sexto)\s*[:,.]\s*[^,;.]+[,;.]\s*){2,}/gi;
+        s = s.replace(ordinalPattern, '');
+
+        // 5. Remove stray "from X to Y to Z" / "de X a Y a Z" ordering descriptions
+        s = s.replace(/(?:from\s+.+?\s+to\s+.+?(?:\s+to\s+.+?)+)/gi, '');
+        s = s.replace(/(?:de\s+(?:lo\s+)?[\wáéíóúñ]+\s+a\s+(?:lo\s+)?[\wáéíóúñ]+(?:\s+a\s+(?:lo\s+)?[\wáéíóúñ]+)+)/gi, '');
+
+        // Clean up residual whitespace and punctuation artifacts
+        s = s.replace(/[,:;]\s*[,:;]/g, ',').replace(/\.(\s*\.)+/g, '.').replace(/\n{3,}/g, '\n\n').replace(/\s{2,}/g, ' ').trim();
+        s = s.replace(/^[.,;:\s]+/, '').replace(/[,;:\s]+$/, '').trim();
+
+        return s;
     }
 }
 
