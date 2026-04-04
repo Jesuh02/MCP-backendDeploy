@@ -900,12 +900,16 @@ export class WhatsAppDomainService {
             }
 
             // 10. Actualizar contexto de conversación
-            session.addToContext('user', text);
-            session.addToContext('assistant', response.substring(0, 500));
-            await this.sessionRepo.update(session.id, {
-                conversation_context: session.conversationContext,
-                last_message_at: new Date().toISOString(),
-            });
+            try {
+                session.addToContext('user', text);
+                session.addToContext('assistant', response.substring(0, 500));
+                await this.sessionRepo.update(session.id, {
+                    conversation_context: session.conversationContext,
+                    last_message_at: new Date().toISOString(),
+                });
+            } catch (ctxErr) {
+                console.warn('[WhatsApp] failed to update session context', ctxErr && ctxErr.message);
+            }
     }
 
     // ═══════════════════════════════════════════════════════════

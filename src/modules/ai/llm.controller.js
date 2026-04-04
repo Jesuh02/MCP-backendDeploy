@@ -140,9 +140,9 @@ export class LLMController {
             let excelUrl = null;
             if (this.excelService && this._isProgressExcelIntent(params.prompt, params.taskDescription || '')) {
                 try {
-                    const progressQuery = (params.taskDescription || '').includes('RESUMEN DE PROGRESO')
-                        ? `Progreso de estudiantes: ${params.taskDescription}`
-                        : `Progreso de todos los estudiantes en los cursos del docente con userId ${params.userId}`;
+                    // Use the user's ACTUAL prompt so the Excel data matches the LLM text response.
+                    // Previously a hardcoded query was used here, causing Excel and text to diverge.
+                    const progressQuery = params.prompt;
 
                     const excelResult = await this.excelService.generateFromQuery({
                         query: progressQuery,
