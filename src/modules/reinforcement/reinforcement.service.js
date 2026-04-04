@@ -79,13 +79,33 @@ export class ReinforcementDomainService {
 
         questions.forEach((item, questionIndex) => {
             const questionText = String(item?.question || '').trim() || '(sin texto de pregunta)';
-            const options = Array.isArray(item?.options) ? item.options : [];
-            const correctIndex = Number.isInteger(item?.correctIndex) ? item.correctIndex : null;
+            const type = String(item?.type || 'multiple_choice').trim().toLowerCase();
 
             console.log(`   Q${questionIndex + 1}: ${questionText}`);
 
+            if (type === 'fill_in_blank') {
+                const correctAnswer = String(item?.correctAnswer || item?.correct_answer || '').trim();
+                const hint = String(item?.hint || '').trim();
+                console.log(`      [fill_in_blank] respuesta="${correctAnswer}"${hint ? `, pista="${hint}"` : ''}`);
+                return;
+            }
+
+            if (type === 'ordering') {
+                const items = Array.isArray(item?.items) ? item.items : [];
+                const correctOrder = Array.isArray(item?.correctOrder) ? item.correctOrder : [];
+                console.log(`      [ordering] items=${items.length}, correctOrder=[${correctOrder.join(',')}]`);
+                items.forEach((it, idx) => {
+                    console.log(`        (${idx}) ${String(it || '').trim()}`);
+                });
+                return;
+            }
+
+            // multiple_choice
+            const options = Array.isArray(item?.options) ? item.options : [];
+            const correctIndex = Number.isInteger(item?.correctIndex) ? item.correctIndex : null;
+
             if (options.length === 0) {
-                console.log('      opciones: (sin opciones)');
+                console.log(`      [${type}] opciones: (sin opciones)`);
                 return;
             }
 
@@ -1094,19 +1114,29 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                 if (rawItems.length < 3) return null;
                 // Server-side shuffle: fixes LLM indexing errors
                 const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
+                const llmExplanation = String(q.explanation ?? '').trim();
+                // Detect and log explanation ↔ correctOrder inconsistencies
+                const sanitized = QuizMathValidator._stripOrderingClaims(llmExplanation);
+                if (sanitized.length < llmExplanation.length * 0.7) {
+                    console.warn(`⚠️ [ReinforcementService] Ordering explanation inconsistency detected — stripped conflicting ordering claims: "${q.question.substring(0, 60)}..."`);
+                }
                 return {
                     type: 'ordering',
                     question: q.question.trim(),
                     items: fixed.items,
                     correctOrder: fixed.correctOrder,
-                    explanation: String(q.explanation ?? '').trim() || 'Revisa el orden correcto en la explicación.',
+                    explanation: QuizMathValidator.buildOrderingExplanation(fixed.correctSequence, llmExplanation),
                 };
             }
             default: {
-                // multiple_choice (backward compatible)
-                if (!Array.isArray(q.options) || q.options.length < 2) return null;
+                // multiple_choice — architecture requires exactly 4 options
+                if (!Array.isArray(q.options) || q.options.length < 4) return null;
                 const correctIndex = Number(q.correctIndex ?? q.correct_index ?? 0);
-                if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= q.options.length) return null;
+                if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= q.options.length) {
+                    // Try to recover: find correct answer by text in explanation
+                    console.warn(`[ReinforcementService] correctIndex=${q.correctIndex} out of range (options.length=${q.options.length}) for: "${q.question.substring(0, 60)}..." — rejecting`);
+                    return null;
+                }
                 const options = q.options.map(o => String(o ?? '').trim());
 
                 // Anti-length-bias: equalize all option lengths
@@ -1341,11 +1371,16 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
     async _backgroundSave(userId, courseId, topicId, taskId, questions) {
         try {
             const mcpService = new MCPService();
-            await mcpService.saveReinforcementHistory(
+            const result = await mcpService.saveReinforcementHistory(
                 userId, courseId, questions,
                 topicId || null, taskId || null
             );
-            console.log(`💾 [ReinforcementService] Background save complete: ${questions.length} questions`);
+            const savedCount = result?.savedCount || 0;
+            const cumulativeCount = result?.cumulativeCount || savedCount;
+            console.log(`💾 [ReinforcementService] Background save complete: ${savedCount}/${questions.length} unique saved (cumulative: ${cumulativeCount})`);
+            if (savedCount < questions.length) {
+                console.log(`💾 [ReinforcementService] ${questions.length - savedCount} questions were duplicates (hash or semantic)`);
+            }
         } catch (e) {
             console.error('[ReinforcementService] Background save error:', e.message);
             // Non-blocking, just log
