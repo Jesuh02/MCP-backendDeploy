@@ -113,6 +113,7 @@ export const createContentItemSchema = Joi.object({
     content: Joi.string().max(50000).allow('', null).optional(),
     fileUri: Joi.string().allow(null, '').optional(),
     fileName: Joi.string().max(255).allow(null, '').optional(),
+    file_name: Joi.string().max(255).allow(null, '').optional(),
     name: Joi.string().max(500).allow('', null).optional(),
     uriString: Joi.string().allow(null, '').optional(),
     orderIndex: Joi.number().integer().min(0).default(0),
@@ -132,6 +133,7 @@ export const createContentItemSchema = Joi.object({
     else if (!value.contentType) value.contentType = 'text';
     // Mapear campos Android: name→title, uriString→body
     if (!value.title && value.name) value.title = value.name;
+    if (!value.fileName && value.file_name) value.fileName = value.file_name;
     if (!value.title && value.fileName) value.title = value.fileName;
     if (!value.body && value.uriString) value.body = value.uriString;
     if (!value.body && value.fileUri) value.body = value.fileUri;
@@ -147,6 +149,7 @@ export const createContentItemSchema = Joi.object({
     delete value.uriString;
     delete value.fileUri;
     delete value.fileName;
+    delete value.file_name;
     delete value.content;
     delete value.order_index;
     delete value.creator_usuario_id;
