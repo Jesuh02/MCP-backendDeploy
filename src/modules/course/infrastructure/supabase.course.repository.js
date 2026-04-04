@@ -263,6 +263,9 @@ export class SupabaseCourseRepository {
                 await this.client.from('topics').delete().in('materia_id', subjectIds);
             }
 
+            // Final safety-net: unconditionally remove any topics still referencing these subjects
+            await this.client.from('topics').delete().in('materia_id', subjectIds);
+
             const { error: subjectDeleteError } = await this.client.from('subjects').delete().eq('course_id', id);
             if (subjectDeleteError) throw new Error(`Error eliminando materias del curso: ${subjectDeleteError.message}`);
         }
