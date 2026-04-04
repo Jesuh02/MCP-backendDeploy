@@ -1095,6 +1095,11 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                 // Server-side shuffle: fixes LLM indexing errors
                 const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
                 const llmExplanation = String(q.explanation ?? '').trim();
+                // Detect and log explanation ↔ correctOrder inconsistencies
+                const sanitized = QuizMathValidator._stripOrderingClaims(llmExplanation);
+                if (sanitized.length < llmExplanation.length * 0.7) {
+                    console.warn(`⚠️ [ReinforcementService] Ordering explanation inconsistency detected — stripped conflicting ordering claims: "${q.question.substring(0, 60)}..."`);
+                }
                 return {
                     type: 'ordering',
                     question: q.question.trim(),
