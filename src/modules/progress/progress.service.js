@@ -737,6 +737,19 @@ export class ProgressDomainService {
 
         const status = averageGrade >= 6 ? 'Ganado' : 'Perdido';
 
+        // Look up subject creator username for progreso_materia.created_by
+        let createdBy = null;
+        try {
+            if (this.subjectRepo) {
+                const subject = await this.subjectRepo.findById(subjectId);
+                const creatorId = subject?.created_by ?? subject?.createdBy;
+                if (creatorId && this.userRepo) {
+                    const creator = await this.userRepo.findById(creatorId);
+                    if (creator?.username) createdBy = creator.username;
+                }
+            }
+        } catch (_) { /* non-critical */ }
+
         return this.progressRepo.upsert({
             userId,
             courseId,
@@ -746,6 +759,7 @@ export class ProgressDomainService {
             progressPercentage,
             subjectId,
             status,
+            createdBy,
         });
     }
 
