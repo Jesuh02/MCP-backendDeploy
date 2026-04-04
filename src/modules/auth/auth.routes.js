@@ -17,6 +17,11 @@ export function authRoutes({ authController }) {
     router.post('/cross-tenant-login', authRateLimiter, validate(loginSchema), authController.crossTenantLogin);
     router.post('/cross-tenant-google', authRateLimiter, validate(googleLoginSchema), authController.crossTenantGoogleLogin);
 
+    // Password recovery (public — no auth required)
+    router.post('/forgot-password', authRateLimiter, authController.forgotPassword);
+    router.post('/verify-reset-code', authRateLimiter, authController.verifyResetCode);
+    router.post('/reset-password', authRateLimiter, authController.resetPassword);
+
     return router;
 }
 export default authRoutes;
