@@ -108,3 +108,4 @@ scripts/migration_fix_enrollment_blocks.sql
 docs/migration_subject_enrollment_status.sql
 scripts/fix_inconsistent_subject_blocks.sql
 docs/migration_progreso_materia_created_by.sql
+docs/migration_fix_chat_messages_sequence.sql
