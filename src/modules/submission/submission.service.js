@@ -161,30 +161,12 @@ export class SubmissionDomainService {
             }
         }
 
+        // Solo notificar al creador del curso y al creador de la materia (colaborador docente).
+        // Los colaboradores que NO crearon la materia no deben recibir esta notificación.
         const subjectCreatorId = await this._resolveSubjectCreator(topicId);
         const recipientIds = new Set();
-        if (courseCreatorId && courseCreatorId !== data.userId) recipientIds.add(Number(courseCreatorId));
-        if (subjectCreatorId && subjectCreatorId !== data.userId) recipientIds.add(Number(subjectCreatorId));
-
-        // Incluir colaboradores docentes del curso
-        if (this.collaboratorService) {
-            try {
-                const collaboratorUserIds = await this.collaboratorService.getCollaboratorUserIds(courseId);
-                for (const collabUserId of (collaboratorUserIds || [])) {
-                    if (Number(collabUserId) !== Number(data.userId)) recipientIds.add(Number(collabUserId));
-                }
-            } catch { /* silent */ }
-        }
-
-        if (this.progressService && typeof this.progressService.getAllByCourse === 'function') {
-            const progressResult = await this.progressService.getAllByCourse(courseId);
-            if (progressResult.isOk()) {
-                const enrolledUserIds = this._extractEnrollmentUserIds(progressResult.getValue() || []);
-                for (const enrolledUserId of enrolledUserIds) {
-                    if (enrolledUserId !== Number(data.userId)) recipientIds.add(enrolledUserId);
-                }
-            }
-        }
+        if (courseCreatorId && Number(courseCreatorId) !== Number(data.userId)) recipientIds.add(Number(courseCreatorId));
+        if (subjectCreatorId && Number(subjectCreatorId) !== Number(data.userId)) recipientIds.add(Number(subjectCreatorId));
 
         const resolvedRecipientIds = [...recipientIds];
         if (resolvedRecipientIds.length === 0) return;

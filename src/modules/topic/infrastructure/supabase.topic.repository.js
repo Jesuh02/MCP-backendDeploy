@@ -94,8 +94,22 @@ export class SupabaseTopicRepository {
                 await this.client.from('content_items').delete().in('task_id', taskIds);
             }
 
-            // 5. Delete task submissions and question sessions for those tasks
+            // 5. Delete task submissions and question sessions (with children) for those tasks
             await this.client.from('task_submissions').delete().in('task_id', taskIds);
+
+            // 5a. Delete question_sessions children before the sessions themselves
+            const { data: qSessions } = await this.client
+                .from('question_sessions').select('id').in('task_id', taskIds);
+            const qSessionIds = (qSessions || []).map(s => s.id);
+            if (qSessionIds.length > 0) {
+                const { data: qHistory } = await this.client
+                    .from('questions_history').select('id').in('session_id', qSessionIds);
+                const qHistoryIds = (qHistory || []).map(h => h.id);
+                if (qHistoryIds.length > 0) {
+                    await this.client.from('question_options').delete().in('question_id', qHistoryIds);
+                }
+                await this.client.from('questions_history').delete().in('session_id', qSessionIds);
+            }
             await this.client.from('question_sessions').delete().in('task_id', taskIds);
 
             // 5b. Delete reinforcement data tied to those tasks
@@ -103,7 +117,8 @@ export class SupabaseTopicRepository {
             await this.client.from('reinforcement_results').delete().in('task_id', taskIds);
 
             // 6. Delete the tasks
-            await this.client.from('tasks').delete().eq('topic_id', id);
+            const { error: tasksError } = await this.client.from('tasks').delete().eq('topic_id', id);
+            if (tasksError) throw new Error(`Failed to delete tasks for topic ${id}: ${tasksError.message}`);
         }
 
         // 7. Delete content items directly under this topic (topic_id, no task)

@@ -8,7 +8,7 @@
  * No contiene lógica de infraestructura; delega en el repositorio inyectado.
  */
 import { Result } from '../../shared/Result.js';
-import { NotFoundError } from '../../shared/errors/index.js';
+import { NotFoundError, AppError } from '../../shared/errors/index.js';
 
 export class ChatMessageDomainService {
     constructor({ chatMessageRepository }) {
@@ -37,13 +37,27 @@ export class ChatMessageDomainService {
     }
 
     async create(data) {
-        const created = await this.chatMessageRepo.create(data);
-        return Result.ok(created);
+        try {
+            const created = await this.chatMessageRepo.create(data);
+            return Result.ok(created);
+        } catch (err) {
+            return Result.fail(new AppError(
+                `No se pudo guardar el mensaje: ${err.message}`,
+                500, true, 'CHAT_CREATE_ERROR'
+            ));
+        }
     }
 
     async upsert(data) {
-        const upserted = await this.chatMessageRepo.upsert(data);
-        return Result.ok(upserted);
+        try {
+            const upserted = await this.chatMessageRepo.upsert(data);
+            return Result.ok(upserted);
+        } catch (err) {
+            return Result.fail(new AppError(
+                `No se pudo guardar el mensaje: ${err.message}`,
+                500, true, 'CHAT_UPSERT_ERROR'
+            ));
+        }
     }
 
     async delete(id) {
