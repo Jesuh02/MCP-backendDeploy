@@ -1004,8 +1004,9 @@ TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
 
 3. "ordering" — Ordenar elementos en la secuencia correcta.
    Ideal para: pasos de un algoritmo, líneas de código, procesos complejos, pasos de demostración.
-   Campos: { type: "ordering", question, items (array desordenado), correctOrder (array de índices del orden correcto), explanation }
-   Ejemplo EASY: { type: "ordering", question: "Ordena los pasos para resolver 234 + 178", items: ["Obtener resultado: 412", "Sumar unidades: 4+8=12, escribir 2, llevar 1", "Sumar centenas: 2+1+1=4", "Sumar decenas: 3+7+1=11, escribir 1, llevar 1"], correctOrder: [1, 3, 2, 0], explanation: "Se suman de derecha a izquierda." }
+   Campos: { type: "ordering", question, items (array EN ORDEN CORRECTO — el servidor los baraja automáticamente), correctOrder: [0,1,2,...] (siempre identidad — el servidor lo recalcula), explanation }
+   IMPORTANTE: Proporciona los items YA EN SU ORDEN CORRECTO y pon correctOrder como [0,1,2,...]. El servidor los baraja automáticamente y recalcula los índices.
+   Ejemplo EASY: { type: "ordering", question: "Ordena los pasos para resolver 234 + 178", items: ["Sumar unidades: 4+8=12, escribir 2, llevar 1", "Sumar decenas: 3+7+1=11, escribir 1, llevar 1", "Sumar centenas: 2+1+1=4", "Obtener resultado: 412"], correctOrder: [0, 1, 2, 3], explanation: "Se suman de derecha a izquierda." }
    Ejemplo HARD: { type: "ordering", question: "Ordena los pasos de QuickSort para el arreglo [3,8,1,5,2,7]", items: ["Seleccionar pivote (ej: 5)", "Particionar: [3,1,2] [5] [8,7]", "Recursión izquierda: [1,2,3]", "Recursión derecha: [7,8]", "Combinar: [1,2,3,5,7,8]"], correctOrder: [0, 1, 2, 3, 4], explanation: "QuickSort: selecciona pivote, particiona O(n), aplica recursión en cada mitad. Complejidad promedio O(n log n)." }
 
 DECISIÓN INTELIGENTE DE TIPOS — PRIORIZA EJERCICIOS PRÁCTICOS:
@@ -1086,17 +1087,18 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                 };
             }
             case 'ordering': {
-                const items = Array.isArray(q.items) ? q.items.map(i => String(i ?? '').trim()) : [];
-                const correctOrder = Array.isArray(q.correctOrder ?? q.correct_order)
+                const rawItems = Array.isArray(q.items) ? q.items.map(i => String(i ?? '').trim()).filter(Boolean) : [];
+                const rawCorrectOrder = Array.isArray(q.correctOrder ?? q.correct_order)
                     ? (q.correctOrder ?? q.correct_order).map(Number)
                     : [];
-                if (items.length < 3 || correctOrder.length !== items.length) return null;
-                if (!correctOrder.every(i => Number.isInteger(i) && i >= 0 && i < items.length)) return null;
+                if (rawItems.length < 3) return null;
+                // Server-side shuffle: fixes LLM indexing errors
+                const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
                 return {
                     type: 'ordering',
                     question: q.question.trim(),
-                    items,
-                    correctOrder,
+                    items: fixed.items,
+                    correctOrder: fixed.correctOrder,
                     explanation: String(q.explanation ?? '').trim() || 'Revisa el orden correcto en la explicación.',
                 };
             }
