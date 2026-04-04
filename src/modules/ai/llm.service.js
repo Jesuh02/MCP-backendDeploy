@@ -1334,12 +1334,13 @@ Responde de forma clara y constructiva.`;
                 if (rawItems.length < 3) continue;
                 // Server-side shuffle: fixes LLM indexing errors
                 const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
+                const llmExplanation = String(rawQuestion?.explanation || '').trim();
                 sanitized.push({
                     type: 'ordering',
                     question: questionText,
                     items: fixed.items,
                     correctOrder: fixed.correctOrder,
-                    explanation: String(rawQuestion?.explanation || '').trim() || 'Revisa el orden correcto en la explicación.',
+                    explanation: QuizMathValidator.buildOrderingExplanation(fixed.correctSequence, llmExplanation),
                 });
                 seenQuestions.add(normalizedQuestion);
                 if (sanitized.length >= 10) break;

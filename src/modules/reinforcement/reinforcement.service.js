@@ -1094,12 +1094,13 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                 if (rawItems.length < 3) return null;
                 // Server-side shuffle: fixes LLM indexing errors
                 const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
+                const llmExplanation = String(q.explanation ?? '').trim();
                 return {
                     type: 'ordering',
                     question: q.question.trim(),
                     items: fixed.items,
                     correctOrder: fixed.correctOrder,
-                    explanation: String(q.explanation ?? '').trim() || 'Revisa el orden correcto en la explicación.',
+                    explanation: QuizMathValidator.buildOrderingExplanation(fixed.correctSequence, llmExplanation),
                 };
             }
             default: {
