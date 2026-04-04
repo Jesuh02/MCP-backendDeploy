@@ -1,7 +1,7 @@
 import { Result } from '../../shared/Result.js';
 import { generateTaskReminderEmailHTML } from '../../templates/index.js';
 
-const TASK_REMINDER_OFFSET_MS = 5 * 60 * 60 * 1000;
+const TASK_REMINDER_OFFSET_MS = 24 * 60 * 60 * 1000; // 24 horas antes del vencimiento
 const MAX_TIMEOUT_MS = 2147483647;
 
 export class NotificationDomainService {
@@ -352,7 +352,35 @@ export class NotificationDomainService {
             .map(u => ({ userId: u.id, email: u.email, username: u.username || 'Usuario' }));
     }
 
-    async _sendTaskReminderEmail({ userId, taskTitle, courseTitle, dueDate }) {
+    async _sendTaskReminderNotification({ userId, taskTitle, courseTitle, subjectTitle, dueDate }) {
+        const fallbackTaskTitle = taskTitle || 'Actividad pendiente';
+        const fallbackSubjectTitle = subjectTitle || courseTitle || 'tu curso';
+        const due = new Date(dueDate);
+        const timeText = due.toLocaleString('es-CO', {
+            timeZone: 'America/Bogota',
+            hour: '2-digit',
+            minute: '2-digit'
+        })
+            .replace(/^0(\d)/, '$1')          // quitar cero inicial: 05:18 → 5:18
+            .replace(/\s*p\.\s*m\./i, ' p.m')  // normalizar p. m. → p.m
+            .replace(/\s*a\.\s*m\./i, ' a.m');
+        const title = `Recordatorio de entrega: ${fallbackTaskTitle}`;
+        const message = `La tarea "${fallbackTaskTitle}" se entrega hoy a las ${timeText} en ${fallbackSubjectTitle}.`;
+
+        // Push + in-app
+        await this.send(userId, {
+            title,
+            message,
+            type: 'task_reminder',
+            relatedId: null,
+            metadata: JSON.stringify({ taskTitle: fallbackTaskTitle, courseTitle, subjectTitle, dueDate, type: 'task_reminder' })
+        }).catch(err => console.error('[NotificationDomainService] Error enviando push reminder:', err.message));
+
+        // Email
+        await this._sendTaskReminderEmail({ userId, taskTitle, courseTitle, subjectTitle, dueDate });
+    }
+
+    async _sendTaskReminderEmail({ userId, taskTitle, courseTitle, subjectTitle, dueDate }) {
         if (!this._isEmailAvailable()) return;
 
         const resolvedUsers = await this._resolveUsersWithValidEmail([userId]);
@@ -360,28 +388,32 @@ export class NotificationDomainService {
         if (!user) return;
 
         const dueDateText = new Date(dueDate).toLocaleString('es-CO', {
+            timeZone: 'America/Bogota',
             year: 'numeric', month: '2-digit', day: '2-digit',
             hour: '2-digit', minute: '2-digit'
         });
 
         const fallbackTaskTitle = taskTitle || 'Actividad pendiente';
         const fallbackCourseTitle = courseTitle || 'Curso';
+        const fallbackSubjectTitle = subjectTitle || null;
         const subject = `Recordatorio de entrega: ${fallbackTaskTitle}`;
         const text = [
             `Hola ${user.username},`,
             '',
             `Este es un recordatorio de entrega para la tarea "${fallbackTaskTitle}".`,
+            fallbackSubjectTitle ? `Materia: ${fallbackSubjectTitle}.` : '',
             `Curso: ${fallbackCourseTitle}.`,
             `Fecha limite: ${dueDateText}.`,
             '',
             'Si ya realizaste la entrega, puedes ignorar este mensaje.',
             '',
             'Equipo CourseV.'
-        ].join('\n');
+        ].filter(Boolean).join('\n');
         const html = generateTaskReminderEmailHTML({
             userName: user.username,
             taskTitle: fallbackTaskTitle,
             courseTitle: fallbackCourseTitle,
+            subjectTitle: fallbackSubjectTitle,
             dueDateText,
             ctaUrl: process.env.FRONTEND_URL || process.env.APP_BASE_URL || ''
         });
@@ -389,7 +421,7 @@ export class NotificationDomainService {
         await this.email.sendEmail({ to: user.email, subject, text, html });
     }
 
-    async scheduleTaskDeadlineReminder({ taskId, userId, taskTitle, courseTitle, dueDate }) {
+    async scheduleTaskDeadlineReminder({ taskId, userId, taskTitle, courseTitle, subjectTitle, dueDate }) {
         const parsedTaskId = Number(taskId);
         const parsedUserId = Number(userId);
         const due = new Date(dueDate);
@@ -404,12 +436,12 @@ export class NotificationDomainService {
         const delayMs = reminderAt - Date.now();
 
         if (delayMs <= 0) {
-            await this._sendTaskReminderEmail({ userId: parsedUserId, taskTitle, courseTitle, dueDate: due.toISOString() });
+            await this._sendTaskReminderNotification({ userId: parsedUserId, taskTitle, courseTitle, subjectTitle, dueDate: due.toISOString() });
             return Result.ok({ scheduled: false, sentNow: true });
         }
 
         this._scheduleTimeout(parsedTaskId, parsedUserId, delayMs, async() => {
-            await this._sendTaskReminderEmail({ userId: parsedUserId, taskTitle, courseTitle, dueDate: due.toISOString() });
+            await this._sendTaskReminderNotification({ userId: parsedUserId, taskTitle, courseTitle, subjectTitle, dueDate: due.toISOString() });
         });
 
         return Result.ok({ scheduled: true, reminderAt: new Date(reminderAt).toISOString() });
@@ -420,10 +452,10 @@ export class NotificationDomainService {
         return Result.ok({ cancelled: true });
     }
 
-    async scheduleTaskReminderForUsers({ taskId, userIds = [], taskTitle, courseTitle, dueDate }) {
+    async scheduleTaskReminderForUsers({ taskId, userIds = [], taskTitle, courseTitle, subjectTitle, dueDate }) {
         const results = [];
         for (const userId of userIds) {
-            const result = await this.scheduleTaskDeadlineReminder({ taskId, userId, taskTitle, courseTitle, dueDate });
+            const result = await this.scheduleTaskDeadlineReminder({ taskId, userId, taskTitle, courseTitle, subjectTitle, dueDate });
             results.push({ userId, success: result.isOk() });
         }
         return Result.ok(results);

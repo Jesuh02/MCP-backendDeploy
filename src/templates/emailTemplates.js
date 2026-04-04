@@ -584,10 +584,11 @@ function escapeHtml(value = '') {
  * @param {string} [params.ctaUrl]
  * @returns {string}
  */
-export function generateTaskReminderEmailHTML({ userName, taskTitle, courseTitle, dueDateText, ctaUrl }) {
+export function generateTaskReminderEmailHTML({ userName, taskTitle, courseTitle, subjectTitle, dueDateText, ctaUrl }) {
     const safeUserName = escapeHtml(userName || 'estudiante');
     const safeTaskTitle = escapeHtml(taskTitle || 'Actividad pendiente');
     const safeCourseTitle = escapeHtml(courseTitle || 'Curso');
+    const safeSubjectTitle = subjectTitle ? escapeHtml(subjectTitle) : null;
     const safeDueDateText = escapeHtml(dueDateText || 'fecha no disponible');
     const safeCtaUrl = typeof ctaUrl === 'string' && /^https?:\/\//i.test(ctaUrl) ? escapeHtml(ctaUrl) : '';
 
@@ -708,7 +709,7 @@ export function generateTaskReminderEmailHTML({ userName, taskTitle, courseTitle
             <div class="top-line"></div>
             <div class="content">
                 <span class="tag">Recordatorio</span>
-                <h1 class="title">Tu tarea vence en 5 horas</h1>
+                <h1 class="title">Tu tarea vence en 24 horas</h1>
                 <p class="subtitle">Hola ${safeUserName}, este es un aviso para que puedas enviar tu entrega con tiempo.</p>
 
                 <div class="details">
@@ -716,6 +717,7 @@ export function generateTaskReminderEmailHTML({ userName, taskTitle, courseTitle
                         <p class="label">Tarea</p>
                         <p class="value">${safeTaskTitle}</p>
                     </div>
+                    ${safeSubjectTitle ? `<div class="row"><p class="label">Materia</p><p class="value">${safeSubjectTitle}</p></div>` : ''}
                     <div class="row">
                         <p class="label">Curso</p>
                         <p class="value">${safeCourseTitle}</p>

@@ -106,6 +106,17 @@ export class SupabaseTaskRepository {
         return this._toDomainList(data);
     }
 
+    async findWithFutureDueDate() {
+        const now = new Date().toISOString();
+        const { data, error } = await this.client
+            .from('tasks')
+            .select('*')
+            .gt('due_date', now)
+            .order('due_date', { ascending: true });
+        if (error) throw new Error(error.message);
+        return this._toDomainList(data);
+    }
+
     // -- Mutations --------------------------------------------
 
     async create(taskData) {
