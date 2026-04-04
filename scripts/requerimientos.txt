@@ -1,0 +1,715 @@
+﻿
+══════════════════════════════════════════════════════════════════════
+ ARQUITECTURA HEXAGONAL COMPLETA — Clean Architecture + SOLID + Seguridad
+ Backend Node.js — Gateway Único para App Android
+ Versión: 3.0 — Transición Total
+ Última actualización: 2025-02-11
+══════════════════════════════════════════════════════════════════════
+
+
+═══════════════════════════════════════
+ 1. VISIÓN GENERAL
+═══════════════════════════════════════
+
+La app Android realiza ~200+ operaciones directas contra Supabase (PostgREST)
+y ~10 operaciones contra Cloudflare R2 (AWS Signature V4), exponiendo
+credenciales sensibles en el cliente móvil. Este backend Node.js implementa
+Arquitectura Hexagonal pura (Ports & Adapters) con Clean Architecture,
+principios SOLID estrictos, y seguridad multi-capa. La app Android solo se
+comunica con el backend vía REST + JWT.
+
+El sistema gestiona 24 dominios funcionales, cada uno siguiendo el patrón:
+  Puerto (interfaz) → Servicio de dominio (caso de uso) → Adaptador (infra)
+
+Stack tecnológico:
+  - Runtime:       Node.js + Express (ESM modules)
+  - Base de datos: Supabase (PostgreSQL via PostgREST)
+  - Storage:       Cloudflare R2 (S3-compatible, presigned URLs)
+  - Auth:          JWT (bcryptjs), RBAC
+  - AI/LLM:        DeepSeek / OpenRouter / qwen embedding
+  - TTS:           OpenAI Text-to-Speech API
+  - Video:         FFmpeg (análisis + compresión)
+  - RAG:           pgvector embeddings + búsqueda semántica
+  - Notifications: FCM (push) + Resend (email)
+  - Payments:      Wompi gateway
+  - Deploy:        Railway + Docker
+
+
+═══════════════════════════════════════
+ 2. PRINCIPIOS ARQUITECTÓNICOS
+═══════════════════════════════════════
+
+1. Dependency Inversion (SOLID-D)
+   El dominio NUNCA depende de infraestructura. Los puertos (interfaces)
+   viven en el dominio; los adaptadores en infraestructura. La inyección
+   se realiza en el Composition Root (container.js).
+
+2. Single Responsibility (SOLID-S)
+   Cada clase/módulo tiene UNA razón para cambiar.
+   Ejemplo: SupabaseUserRepository solo persiste usuarios.
+
+3. Open/Closed (SOLID-O)
+   Agregar un nuevo dominio = agregar entidad + puerto + adaptador +
+   servicio + controlador + rutas. Sin modificar lo existente.
+
+4. Liskov Substitution (SOLID-L)
+   Todo adaptador puede sustituirse por otro que implemente el mismo
+   puerto sin romper el sistema.
+
+5. Interface Segregation (SOLID-I)
+   Puertos granulares. No interfaces monolíticas. Cada puerto define solo
+   las operaciones que su consumidor necesita.
+
+
+═══════════════════════════════════════
+ 3. ESTRUCTURA DE CARPETAS
+═══════════════════════════════════════
+
+MCP-backendDeploy/
+│
+├── index.js                     # Bootstrap limpio (~65 líneas)
+├── index.legacy.js              # Monolito original (preservado, no activo)
+│
+├── src/
+│   ├── config/
+│   │   ├── env.js               # Carga .env multi-entorno
+│   │   ├── container.js         # Composition Root (DI Container) — ~320 líneas
+│   │   └── server.js            # Configuración Express + middleware + mount
+│   │
+│   ├── domain/                  # ══ NÚCLEO — 0 deps externas ══
+│   │   ├── entities/            # 13 entidades de dominio puras
+│   │   │   ├── User.js
+│   │   │   ├── Course.js
+│   │   │   ├── Video.js
+│   │   │   ├── Topic.js
+│   │   │   ├── Task.js
+│   │   │   ├── ContentItem.js
+│   │   │   ├── Submission.js
+│   │   │   ├── Subscription.js
+│   │   │   ├── Progress.js
+│   │   │   ├── Like.js
+│   │   │   ├── Comment.js
+│   │   │   ├── Notification.js
+│   │   │   └── Transaction.js
+│   │   │
+│   │   ├── ports/
+│   │   │   ├── in/              # Input Ports (use case interfaces)
+│   │   │   │   ├── IAuthUseCase.js
+│   │   │   │   ├── IUserUseCase.js
+│   │   │   │   ├── ICourseUseCase.js
+│   │   │   │   ├── IVideoUseCase.js
+│   │   │   │   ├── ITopicUseCase.js
+│   │   │   │   ├── ITaskUseCase.js
+│   │   │   │   ├── IContentItemUseCase.js
+│   │   │   │   ├── ISubmissionUseCase.js
+│   │   │   │   ├── ISubscriptionUseCase.js
+│   │   │   │   ├── IProgressUseCase.js
+│   │   │   │   ├── ILikeUseCase.js
+│   │   │   │   ├── ICommentUseCase.js
+│   │   │   │   ├── INotificationUseCase.js
+│   │   │   │   ├── IPaymentUseCase.js
+│   │   │   │   ├── IStorageUseCase.js
+│   │   │   │   ├── IPersonaUseCase.js
+│   │   │   │   ├── IRolUseCase.js
+│   │   │   │   ├── IFileContextUseCase.js
+│   │   │   │   └── IReinforcementUseCase.js
+│   │   │   │
+│   │   │   └── out/             # Output Ports (repos + adapters)
+│   │   │       ├── index.js     # Barrel file (re-exports todo)
+│   │   │       │
+│   │   │       │  ── Repositorios ──
+│   │   │       ├── IUserRepository.js
+│   │   │       ├── ICourseRepository.js
+│   │   │       ├── IVideoRepository.js
+│   │   │       ├── ITopicRepository.js
+│   │   │       ├── ITaskRepository.js
+│   │   │       ├── IContentItemRepository.js
+│   │   │       ├── ISubmissionRepository.js
+│   │   │       ├── ISubscriptionRepository.js
+│   │   │       ├── IProgressRepository.js
+│   │   │       ├── ILikeRepository.js
+│   │   │       ├── ICommentRepository.js
+│   │   │       ├── INotificationRepository.js
+│   │   │       ├── ITransactionRepository.js
+│   │   │       ├── IPersonaRepository.js
+│   │   │       ├── IRolRepository.js
+│   │   │       ├── IFileContextRepository.js
+│   │   │       ├── IReinforcementRepository.js
+│   │   │       │
+│   │   │       │  ── Puertos de Adaptadores Externos ──
+│   │   │       ├── IFileStoragePort.js
+│   │   │       ├── IPushNotificationPort.js
+│   │   │       ├── IEmailPort.js
+│   │   │       ├── IPaymentGatewayPort.js
+│   │   │       ├── IJWTPort.js
+│   │   │       ├── ITTSPort.js
+│   │   │       ├── IVideoProcessingPort.js
+│   │   │       ├── ILLMPort.js
+│   │   │       ├── IRAGPort.js
+│   │   │       ├── IGitHubPort.js
+│   │   │       └── ICachePort.js
+│   │   │
+│   │   ├── services/            # 24 Casos de uso (application services)
+│   │   │   ├── AuthService.js
+│   │   │   ├── UserDomainService.js
+│   │   │   ├── CourseDomainService.js
+│   │   │   ├── VideoDomainService.js
+│   │   │   ├── TopicDomainService.js
+│   │   │   ├── TaskDomainService.js
+│   │   │   ├── ContentItemDomainService.js
+│   │   │   ├── SubmissionDomainService.js
+│   │   │   ├── SubscriptionDomainService.js
+│   │   │   ├── ProgressDomainService.js
+│   │   │   ├── LikeDomainService.js
+│   │   │   ├── CommentDomainService.js
+│   │   │   ├── NotificationDomainService.js
+│   │   │   ├── PaymentDomainService.js
+│   │   │   ├── StorageDomainService.js
+│   │   │   ├── PersonaDomainService.js
+│   │   │   ├── RolDomainService.js
+│   │   │   ├── FileContextDomainService.js
+│   │   │   ├── ReinforcementDomainService.js
+│   │   │   ├── TTSDomainService.js         ← nuevo (transición hex)
+│   │   │   ├── VideoProcessingDomainService.js  ← nuevo
+│   │   │   ├── LLMDomainService.js         ← nuevo
+│   │   │   ├── RAGDomainService.js         ← nuevo
+│   │   │   └── MCPDomainService.js         ← nuevo
+│   │   │
+│   │   └── validators/          # Joi Schemas por dominio
+│   │       ├── AuthSchemas.js
+│   │       ├── UserSchemas.js
+│   │       ├── CourseSchemas.js
+│   │       ├── VideoSchemas.js
+│   │       ├── TopicSchemas.js
+│   │       ├── TaskSchemas.js
+│   │       ├── ContentItemSchemas.js
+│   │       ├── SubmissionSchemas.js
+│   │       ├── SubscriptionSchemas.js
+│   │       ├── ProgressSchemas.js
+│   │       ├── CommentSchemas.js
+│   │       ├── StorageSchemas.js
+│   │       ├── TTSSchemas.js               ← nuevo
+│   │       ├── LLMSchemas.js               ← nuevo
+│   │       ├── VideoProcessingSchemas.js    ← nuevo
+│   │       └── RAGSchemas.js               ← nuevo
+│   │
+│   ├── infrastructure/          # ══ ADAPTADORES DE SALIDA ══
+│   │   ├── database/
+│   │   │   ├── SupabaseService.js         # Singleton conexión
+│   │   │   ├── DataMapper.js              # snake_case ↔ camelCase
+│   │   │   └── repositories/              # 17 repositorios Supabase
+│   │   │       ├── SupabaseUserRepository.js
+│   │   │       ├── SupabaseCourseRepository.js
+│   │   │       ├── SupabaseVideoRepository.js
+│   │   │       ├── SupabaseTopicRepository.js
+│   │   │       ├── SupabaseTaskRepository.js
+│   │   │       ├── SupabaseContentItemRepository.js
+│   │   │       ├── SupabaseSubmissionRepository.js
+│   │   │       ├── SupabaseSubscriptionRepository.js
+│   │   │       ├── SupabaseProgressRepository.js
+│   │   │       ├── SupabaseLikeRepository.js
+│   │   │       ├── SupabaseCommentRepository.js
+│   │   │       ├── SupabaseNotificationRepository.js
+│   │   │       ├── SupabaseTransactionRepository.js
+│   │   │       ├── SupabasePersonaRepository.js
+│   │   │       ├── SupabaseRolRepository.js
+│   │   │       ├── SupabaseFileContextRepository.js
+│   │   │       └── SupabaseReinforcementRepository.js
+│   │   │
+│   │   ├── storage/
+│   │   │   └── R2StorageAdapter.js        # Cloudflare R2 (S3) → IFileStoragePort
+│   │   │
+│   │   ├── notifications/
+│   │   │   ├── FCMAdapter.js              # Firebase Cloud Messaging → IPushNotificationPort
+│   │   │   └── EmailAdapter.js            # Resend emails → IEmailPort
+│   │   │
+│   │   ├── payment/
+│   │   │   └── WompiAdapter.js            # Wompi gateway → IPaymentGatewayPort
+│   │   │
+│   │   ├── auth/
+│   │   │   └── JWTAdapter.js              # JWT sign/verify → IJWTPort
+│   │   │
+│   │   ├── ai/                            # ← nuevos adaptadores hex
+│   │   │   ├── LLMAdapter.js              # DeepSeek/OpenRouter/Ollama → ILLMPort
+│   │   │   ├── RAGAdapter.js              # pgvector RAG → IRAGPort
+│   │   │   ├── LLMService.js              # Legacy (envuelto por LLMAdapter)
+│   │   │   ├── EmbeddingService.js        # Legacy embeddings
+│   │   │   └── RAGService.js              # Legacy RAG (envuelto por RAGAdapter)
+│   │   │
+│   │   ├── tts/                           # ← nuevo
+│   │   │   └── OpenAITTSAdapter.js        # OpenAI TTS API → ITTSPort
+│   │   │
+│   │   ├── video/                         # ← nuevo
+│   │   │   └── FFmpegVideoAdapter.js      # FFmpeg spawn → IVideoProcessingPort
+│   │   │
+│   │   ├── github/                        # ← nuevo
+│   │   │   └── GitHubAdapter.js           # Octokit → IGitHubPort
+│   │   │
+│   │   ├── cache/                         # ← nuevo
+│   │   │   └── CacheAdapter.js            # In-memory Map + TTL → ICachePort
+│   │   │
+│   │   ├── logging/
+│   │   │   └── Logger.js                  # Winston/Console logger
+│   │   │
+│   │   └── middleware/                    # Middleware Express
+│   │       ├── authMiddleware.js          # JWT verify + req.user
+│   │       ├── errorHandler.js            # Centralizado AppError → HTTP
+│   │       ├── rateLimiter.js             # express-rate-limit
+│   │       ├── corsMiddleware.js          # CORS configurable
+│   │       └── validationMiddleware.js    # Joi validate(schema)
+│   │
+│   ├── interfaces/              # ══ ADAPTADORES DE ENTRADA ══
+│   │   ├── http/
+│   │   │   ├── controllers/     # 25 controladores
+│   │   │   │   ├── AuthController.js
+│   │   │   │   ├── UserController.js
+│   │   │   │   ├── CourseController.js
+│   │   │   │   ├── VideoController.js
+│   │   │   │   ├── TopicController.js
+│   │   │   │   ├── TaskController.js
+│   │   │   │   ├── ContentItemController.js
+│   │   │   │   ├── SubmissionController.js
+│   │   │   │   ├── SubscriptionController.js
+│   │   │   │   ├── ProgressController.js
+│   │   │   │   ├── LikeController.js
+│   │   │   │   ├── CommentController.js
+│   │   │   │   ├── NotificationController.js
+│   │   │   │   ├── PaymentController.js
+│   │   │   │   ├── StorageController.js
+│   │   │   │   ├── HealthController.js
+│   │   │   │   ├── PersonaController.js
+│   │   │   │   ├── RolController.js
+│   │   │   │   ├── FileContextController.js
+│   │   │   │   ├── ReinforcementController.js
+│   │   │   │   ├── TTSController.js           ← nuevo
+│   │   │   │   ├── LLMController.js           ← nuevo
+│   │   │   │   ├── VideoProcessingController.js  ← nuevo
+│   │   │   │   ├── RAGController.js           ← nuevo
+│   │   │   │   └── MCPController.js           ← nuevo
+│   │   │   │
+│   │   │   └── routes/
+│   │   │       └── v1/          # 26 archivos de rutas API versionada
+│   │   │           ├── index.js             # Router principal v1
+│   │   │           ├── authRoutes.js
+│   │   │           ├── userRoutes.js
+│   │   │           ├── courseRoutes.js
+│   │   │           ├── videoRoutes.js
+│   │   │           ├── topicRoutes.js
+│   │   │           ├── taskRoutes.js
+│   │   │           ├── contentItemRoutes.js
+│   │   │           ├── submissionRoutes.js
+│   │   │           ├── subscriptionRoutes.js
+│   │   │           ├── progressRoutes.js
+│   │   │           ├── likeRoutes.js
+│   │   │           ├── commentRoutes.js
+│   │   │           ├── notificationRoutes.js
+│   │   │           ├── paymentRoutes.js
+│   │   │           ├── storageRoutes.js
+│   │   │           ├── healthRoutes.js
+│   │   │           ├── personaRoutes.js
+│   │   │           ├── rolRoutes.js
+│   │   │           ├── fileContextRoutes.js
+│   │   │           ├── reinforcementRoutes.js
+│   │   │           ├── ttsRoutes.js           ← nuevo
+│   │   │           ├── llmRoutes.js           ← nuevo
+│   │   │           ├── videoProcessingRoutes.js  ← nuevo
+│   │   │           ├── ragRoutes.js           ← nuevo
+│   │   │           └── mcpRoutes.js           ← nuevo
+│   │   │
+│   │   └── routes/              # Legacy (compatibilidad temporal)
+│   │
+│   ├── services/                # DEPRECADO — migrado a domain/services + infrastructure/
+│   │   ├── NotificationService.js
+│   │   ├── PaymentService.js
+│   │   ├── R2StorageService.js
+│   │   ├── TTSService.js
+│   │   ├── UserService.js
+│   │   └── VideoProcessingService.js
+│   │
+│   ├── shared/                  # Utilidades transversales
+│   │   ├── errors/
+│   │   │   ├── AppError.js          # Base (statusCode, isOperational)
+│   │   │   ├── NotFoundError.js     # 404
+│   │   │   ├── ValidationError.js   # 400 + fromJoi()
+│   │   │   ├── UnauthorizedError.js # 401
+│   │   │   ├── ForbiddenError.js    # 403
+│   │   │   └── ConflictError.js     # 409
+│   │   ├── Result.js               # Patrón Result<T,E> monádico
+│   │   └── pagination.js           # Helpers paginación estándar
+│   │
+│   ├── templates/               # Plantillas email HTML
+│   │   ├── emailTemplates.js
+│   │   └── index.js
+│   │
+│   └── utils/                   # Utilidades genéricas
+│       └── fileUtils.js
+│
+├── mcp-proxy/                   # Proxy MCP separado
+│   ├── index.js
+│   └── package.json
+│
+└── scripts/                     # SQL + docs
+    ├── ddlpro.sql
+    ├── ddlqa.sql
+    ├── requerimientos.txt       # ← este archivo
+    └── ...
+
+
+═══════════════════════════════════════
+ 4. PATRÓN DE COMPOSICIÓN (DI CONTAINER)
+═══════════════════════════════════════
+
+Archivo: src/config/container.js
+
+Flujo de wiring:
+  1. Instanciar adaptadores de infraestructura (JWTAdapter, R2Storage, etc.)
+  2. Instanciar adaptadores nuevos (OpenAITTSAdapter, FFmpegVideo, LLM, RAG, GitHub, Cache)
+  3. Instanciar repositorios Supabase (inyectando client)
+  4. Instanciar servicios de dominio (inyectando puertos via constructor)
+  5. Instanciar controladores (inyectando servicios)
+  6. Retornar mapa { controllers, services, adapters }
+
+Constructor injection pattern (destrucción de objeto):
+
+  class XDomainService {
+      constructor({ xRepository, fileStoragePort }) {
+          this.repo = xRepository;
+          this.storage = fileStoragePort;
+      }
+  }
+
+Entrypoint de la aplicación (index.js):
+
+  import { createApp, startServer } from './src/config/server.js';
+  const { app } = createApp();
+  startServer(app, PORT);
+
+
+═══════════════════════════════════════
+ 5. DOMINIOS FUNCIONALES (24 dominios)
+═══════════════════════════════════════
+
+ ┌─────────────────────┬────────────────────────────────────────────────────┐
+ │ Dominio             │ Descripción                                        │
+ ├─────────────────────┼────────────────────────────────────────────────────┤
+ │ Auth                │ Login, registro, JWT, refresh, cambio password     │
+ │ User                │ CRUD usuarios, perfil, avatar, búsqueda           │
+ │ Course              │ CRUD cursos, publicación, inscripción              │
+ │ Video               │ CRUD videos, metadatos, ordenamiento              │
+ │ Topic               │ CRUD temas/módulos dentro de cursos               │
+ │ Task                │ CRUD tareas/evaluaciones                          │
+ │ ContentItem         │ Contenido rico dentro de temas                    │
+ │ Submission          │ Entregas de tareas, calificación, archivos        │
+ │ Subscription        │ Suscripciones usuario-curso                       │
+ │ Progress            │ Progreso de aprendizaje (videos vistos, %)        │
+ │ Like                │ Likes/unlikes en videos                           │
+ │ Comment             │ Comentarios en videos + notificaciones            │
+ │ Notification        │ Push (FCM) + Email, gestión de tokens             │
+ │ Payment             │ Transacciones Wompi, verificación, reembolsos     │
+ │ Storage             │ Upload/download R2, presigned URLs                │
+ │ Persona             │ Perfiles/personas del sistema                     │
+ │ Rol                 │ Roles y permisos                                  │
+ │ FileContext          │ Contextos de archivos para LLM                    │
+ │ Reinforcement       │ Material de refuerzo para IA                      │
+ │ TTS ★               │ Text-to-Speech via OpenAI                         │
+ │ VideoProcessing ★   │ Análisis y compresión FFmpeg                      │
+ │ LLM ★               │ Procesamiento de prompts, análisis, feedback      │
+ │ RAG ★               │ Ingestión, búsqueda semántica, contexto           │
+ │ MCP ★               │ Model Context Protocol (datos para AI tools)      │
+ └─────────────────────┴────────────────────────────────────────────────────┘
+ ★ = migrado a hexagonal en v3.0
+
+
+═══════════════════════════════════════
+ 6. PUERTOS DE SALIDA (Output Ports)
+═══════════════════════════════════════
+
+Los puertos son interfaces abstractas en src/domain/ports/out/.
+Cada uno define métodos que las implementaciones (adaptadores) deben cumplir.
+
+ 6.1 REPOSITORIOS (17)
+ ─────────────────────────────────────
+ Puerto                  │ Adaptador Supabase                    │ Métodos principales
+ IUserRepository         │ SupabaseUserRepository                │ findById, findByEmail, create, update, delete
+ ICourseRepository       │ SupabaseCourseRepository              │ findById, findAll, create, update, delete
+ IVideoRepository        │ SupabaseVideoRepository               │ findById, findByCourse, create, update
+ ITopicRepository        │ SupabaseTopicRepository               │ findById, findByCourse, create, update
+ ITaskRepository         │ SupabaseTaskRepository                │ findById, findByTopic, create, update
+ IContentItemRepository  │ SupabaseContentItemRepository         │ findById, findByTopic, create, update
+ ISubmissionRepository   │ SupabaseSubmissionRepository          │ findById, findByTask, create, update
+ ISubscriptionRepository │ SupabaseSubscriptionRepository        │ findByUser, subscribe, unsubscribe
+ IProgressRepository     │ SupabaseProgressRepository            │ findByUser, upsert, calculatePercentage
+ ILikeRepository         │ SupabaseLikeRepository                │ toggle, findByVideo, count
+ ICommentRepository      │ SupabaseCommentRepository             │ findByVideo, create, update, delete
+ INotificationRepository │ SupabaseNotificationRepository        │ findByUser, create, markRead
+ ITransactionRepository  │ SupabaseTransactionRepository         │ findById, create, updateStatus
+ IPersonaRepository      │ SupabasePersonaRepository             │ findById, findAll, create, update, delete
+ IRolRepository          │ SupabaseRolRepository                 │ findById, findAll, create, update, delete
+ IFileContextRepository  │ SupabaseFileContextRepository         │ findById, findAll, create, update, delete
+ IReinforcementRepository│ SupabaseReinforcementRepository       │ findById, findAll, create, update, delete
+
+ 6.2 ADAPTADORES EXTERNOS (11)
+ ─────────────────────────────────────
+ Puerto                  │ Adaptador                     │ Tecnología          │ Descripción
+ IFileStoragePort        │ R2StorageAdapter              │ Cloudflare R2 (S3)  │ Upload, download, presigned URLs
+ IPushNotificationPort   │ FCMAdapter                    │ Firebase FCM        │ Envío push notifications
+ IEmailPort              │ EmailAdapter                  │ Resend              │ Envío emails transaccionales
+ IPaymentGatewayPort     │ WompiAdapter                  │ Wompi               │ Crear transacciones, verificar
+ IJWTPort                │ JWTAdapter                    │ jsonwebtoken        │ Sign, verify tokens
+ ITTSPort ★              │ OpenAITTSAdapter              │ OpenAI              │ Síntesis de voz, voces, formatos
+ IVideoProcessingPort ★  │ FFmpegVideoAdapter            │ FFmpeg (spawn)      │ Análisis, compresión, jobs
+ ILLMPort ★              │ LLMAdapter                    │ DeepSeek/OpenRouter  │ Chat, embed, modelos
+ IRAGPort ★              │ RAGAdapter                    │ pgvector            │ Ingestión, búsqueda, contexto
+ IGitHubPort ★           │ GitHubAdapter                 │ Octokit             │ Análisis repos, contenido
+ ICachePort ★            │ CacheAdapter                  │ In-memory Map+TTL   │ get, set, delete, TTL auto
+
+ ★ = creado en v3.0
+
+
+═══════════════════════════════════════
+ 7. SEGURIDAD MULTI-CAPA
+═══════════════════════════════════════
+
+7.1 AUTENTICACIÓN
+ - JWT Bearer Token obligatorio en /api/v1/* (excepto /auth, /health, /mcp)
+ - Access Token: 24h, payload: { userId, username, roles }
+ - Refresh Token: 7d
+ - bcryptjs (10 salt rounds) para passwords
+ - Middleware authMiddleware.js verifica en cada request
+
+7.2 AUTORIZACIÓN (RBAC)
+ - Rol 1: Estudiante
+ - Rol 2: Docente / Creador
+ - Rol 3: Admin
+ - Middleware requireRoles(...) para rutas sensibles
+ - Ownership verification: solo creator modifica sus recursos
+
+7.3 SEGURIDAD HTTP
+ - Helmet.js: CSP, HSTS, X-Frame-Options, X-Content-Type-Options
+ - CORS configurable por entorno (origins whitelist)
+ - Rate Limiting:
+   - Global: 100 req/min
+   - Auth: 5 req/min (login, register)
+   - Upload: 10 req/min
+ - Sanitización anti-XSS
+ - Body limits: 50MB uploads, 1MB JSON
+
+7.4 VALIDACIÓN
+ - Joi schemas para TODA entrada (body, params, query)
+ - Middleware validate(schema) centralizado
+ - IDs parametrizados (PostgREST) — no SQL raw
+ - ValidationError.fromJoi(error) con detalles
+
+7.5 SECRETOS
+ - NINGUNA credencial en Android
+ - .env (no committed) con todas las keys
+ - Presigned URLs para uploads R2 (temporales, 15min)
+ - Service Account Keys en servidor únicamente
+
+
+═══════════════════════════════════════
+ 8. PATRONES DE IMPLEMENTACIÓN
+═══════════════════════════════════════
+
+8.1 RESULT MONAD
+ Archivo: src/shared/Result.js
+
+   Result.ok(data)     → { success: true, data }
+   Result.fail(error)  → { success: false, error }
+   // Inmutables via Object.freeze
+   // Control de flujo SIN excepciones
+
+8.2 CONTROLADOR (arrow function properties)
+   class XController {
+       constructor({ xService }) {
+           this.service = xService;
+       }
+       getById = async (req, res, next) => {
+           try {
+               const result = await this.service.getById(req.params.id);
+               if (result.isFail()) return res.status(404).json(result.error);
+               res.json(result.data);
+           } catch (err) { next(err); }
+       };
+   }
+
+8.3 RUTA (factory function)
+   export function xRoutes({ xController }) {
+       const router = Router();
+       router.get('/:id', xController.getById);
+       router.post('/', validate(schema), xController.create);
+       return router;
+   }
+
+8.4 SERVICIO DE DOMINIO
+   class XDomainService {
+       constructor({ xRepository }) { this.repo = xRepository; }
+       async getById(id) {
+           const data = await this.repo.findById(id);
+           if (!data) return Result.fail(new NotFoundError('X no encontrado'));
+           return Result.ok(data);
+       }
+   }
+
+8.5 JERARQUÍA DE ERRORES
+   AppError (base)
+     ├── NotFoundError       (404)
+     ├── ValidationError     (400) — tiene .fromJoi()
+     ├── UnauthorizedError   (401)
+     ├── ForbiddenError      (403)
+     └── ConflictError       (409)
+
+8.6 DATA MAPPER
+   DataMapper.js maneja la conversión snake_case ↔ camelCase
+   entre las entidades de dominio y la base de datos Supabase.
+   Las entidades NUNCA conocen el formato de BD.
+
+
+═══════════════════════════════════════
+ 9. API REST — RUTAS V1
+═══════════════════════════════════════
+
+Base URL: /api/v1
+
+ ── Públicas (sin JWT) ──────────────────────
+ POST   /auth/login
+ POST   /auth/register
+ POST   /auth/refresh
+ GET    /health
+ GET    /health/services
+ ALL    /mcp/*                    ← MCP transport (público)
+
+ ── Protegidas (JWT required) ──────────────
+ GET    /users                    ← CRUD usuarios
+ GET    /users/:id
+ PUT    /users/:id
+ DELETE /users/:id
+
+ GET    /courses                  ← CRUD cursos
+ POST   /courses
+ GET    /courses/:id
+ PUT    /courses/:id
+ DELETE /courses/:id
+
+ GET    /videos                   ← CRUD videos
+ POST   /videos
+ ...
+
+ POST   /tts/synthesize           ← TTS (nuevo)
+ GET    /tts/voices
+ GET    /tts/formats
+
+ POST   /llm/process              ← LLM (nuevo)
+ POST   /llm/analyze-submission
+ POST   /llm/feedback
+
+ POST   /video-processing/analyze ← Video Processing (nuevo)
+ POST   /video-processing/process
+ POST   /video-processing/process-url
+ GET    /video-processing/jobs/:jobId
+ GET    /video-processing/presets
+
+ POST   /rag/ingest               ← RAG (nuevo)
+ POST   /rag/search
+ POST   /rag/context
+ GET    /rag/status
+
+ ── Compatibilidad Legacy ───────────────────
+ POST   /procesar-prompt       → redirige a /api/v1/llm/process
+ POST   /tts/synthesize        → redirige a /api/v1/tts/synthesize
+ ALL    /video/*               → redirige a /api/v1/video-processing/*
+ ALL    /mcp/*                 → redirige a /api/v1/mcp/*
+
+
+═══════════════════════════════════════
+ 10. BOOTSTRAP Y CICLO DE VIDA
+═══════════════════════════════════════
+
+index.js (65 líneas):
+  1. Carga variables de entorno (env.js)
+  2. Llama createApp() → { app, container }
+  3. Llama startServer(app, PORT)
+  4. Registra handlers: SIGTERM, SIGINT, uncaughtException, unhandledRejection
+
+server.js:
+  1. createApp():
+     a. Crea container (DI wiring)
+     b. Configura Express (helmet, cors, json, rate-limit)
+     c. Monta /api/v1/* rutas
+     d. Registra redirects legacy
+     e. Monta error handler global
+     f. Retorna { app, container }
+
+  2. startServer(app, port):
+     a. Crea http.Server
+     b. Bind en puerto
+     c. Retorna server reference
+
+Shutdown graceful:
+  - SIGTERM: cierra server.close() + process.exit(0)
+  - uncaughtException: log + exit(1)
+  - unhandledRejection: log + exit(1)
+
+
+═══════════════════════════════════════
+ 11. DECISIONES ARQUITECTÓNICAS
+═══════════════════════════════════════
+
+ Decisión                       │ Justificación
+ JWT sobre API Key              │ Estándar, roles embebidos, refresh flow
+ Presigned URLs sobre proxy     │ No duplicar bandwidth (+100MB videos)
+ API versionada /api/v1/        │ Evolución sin romper clientes
+ DI Container simple (factory)  │ Suficiente para el tamaño del proyecto
+ Supabase PostgREST client      │ Evita SQL injection
+ Input Ports como interfaces    │ Documenta contratos, facilita testing
+ DataMapper en infraestructura  │ Entidades puras sin snake_case
+ Result<T,E> monádico           │ Control de flujo sin excepciones
+ ESM modules (.js ext)          │ Estándar moderno, tree-shaking
+ Dual exports (named+default)   │ Flexibilidad de import
+ Legacy wrappers                │ LLMAdapter envuelve LLMService existente
+ Legacy redirects               │ Compatiblidad backward con app Android
+
+
+═══════════════════════════════════════
+ 12. ENTIDADES DE DOMINIO — Regla de Pureza
+═══════════════════════════════════════
+
+Las entidades son clases PURAS:
+  ✗ NO importan nada de infraestructura
+  ✗ NO conocen Supabase, R2, JWT, Express
+  ✗ NO tienen fromSupabaseRow() (eso va en DataMapper)
+  ✓ SÍ tienen lógica de negocio (isAdmin(), belongsToCreator())
+  ✓ SÍ tienen validación de invariantes
+  ✓ SÍ usan camelCase
+
+El mapeo snake_case ↔ camelCase se realiza en DataMapper.js
+
+
+═══════════════════════════════════════
+ 13. DEPLOY
+═══════════════════════════════════════
+
+ Plataforma: Railway
+ Container: Docker (Dockerfile + docker-compose.yml)
+ Config: railway.json, nixpacks.toml
+ Start: start.sh → node index.js
+ Puerto: process.env.PORT (default 3000)
+
+
+═══════════════════════════════════════
+ 14. CÓMO AGREGAR UN NUEVO DOMINIO
+═══════════════════════════════════════
+
+ 1. Crear entidad en domain/entities/X.js (si aplica)
+ 2. Crear puerto de salida en domain/ports/out/IXRepository.js
+ 3. Crear input port en domain/ports/in/IXUseCase.js
+ 4. Crear servicio de dominio en domain/services/XDomainService.js
+ 5. Crear Joi schemas en domain/validators/XSchemas.js
+ 6. Crear adaptador en infrastructure/database/repositories/SupabaseXRepository.js
+ 7. Crear controlador en interfaces/http/controllers/XController.js
+ 8. Crear rutas en interfaces/http/routes/v1/xRoutes.js
+ 9. Registrar todo en config/container.js (imports + wiring)
+ 10. Montar rutas en routes/v1/index.js
+
+Ningún archivo existente necesita ser modificado (excepto container.js y v1/index.js).
+

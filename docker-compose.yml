@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   mcp-server:
     build: .
@@ -15,9 +13,8 @@ services:
       - BIND_HOST=0.0.0.0
       - INTERFACE_HEARTBEAT_TIMEOUT_MS=3000
     volumes:
-      - ./:/app
-      - /app/node_modules
-    # Run Node directly to avoid shell script encoding issues from Windows-mounted files
+      - ./.env:/app/.env:ro
+    # node_modules vienen del build de Docker — no se montan como volumen
     command: node index.js
     restart: always
     extra_hosts:
@@ -30,3 +27,5 @@ services:
       timeout: 2s
       retries: 2
       start_period: 5s
+
+

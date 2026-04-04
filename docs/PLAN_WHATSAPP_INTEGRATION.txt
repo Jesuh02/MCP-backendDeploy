@@ -1,0 +1,864 @@
+================================================================================
+  PLAN DE INTEGRACIÓN WHATSAPP - CourseV by YisusFactory
+  Fecha: 2026-02-13
+  Autor: Equipo de Desarrollo
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+1. RESUMEN EJECUTIVO
+────────────────────────────────────────────────────────────────────────────────
+
+Integrar un canal de WhatsApp que replique las funcionalidades de:
+  - ChatBotFragment.kt  → Agente calificador de tareas + preguntas generales
+  - DatabaseQueryFragment.kt → Chat MCP con consultas READ-ONLY a la BD
+
+El usuario activa la integración desde ProfileFragment.kt (botón en configuración).
+Se utiliza la Meta WhatsApp Business Cloud API (gratuita para recibir mensajes,
+cobro por mensajes enviados fuera de ventana de 24h).
+
+────────────────────────────────────────────────────────────────────────────────
+2. ALCANCE FUNCIONAL
+────────────────────────────────────────────────────────────────────────────────
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ROL          │ FUNCIONALIDAD                                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Docente      │ • Preguntas generales al LLM (ej. "¿Quién es Marie Curie?")│
+│ (no admin)   │ • Calificar tareas de SUS estudiantes                       │
+│              │ • Consultar desempeño de SUS estudiantes                    │
+│              │   (progreso_estudiante WHERE curso.creator_user_id = user)  │
+│              │ • Agregar nota a task_submissions                           │
+│              │ • NO puede consultar datos de otros usuarios/cursos         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Admin        │ • TODO lo anterior +                                        │
+│ (rol 3)      │ • Chat MCP completo (DatabaseQueryFragment)                 │
+│              │ • Consultar CUALQUIER dato de la BD (READ-ONLY)             │
+│              │ • NO puede DELETE, INSERT, UPDATE                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Estudiante   │ • Preguntas generales al LLM                                │
+│              │ • Consultar su propio progreso                              │
+│              │ • NO puede calificar ni ver datos de otros                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+────────────────────────────────────────────────────────────────────────────────
+3. ARQUITECTURA HEXAGONAL - CAPAS Y COMPONENTES
+────────────────────────────────────────────────────────────────────────────────
+
+Se sigue la arquitectura existente del proyecto:
+
+  Route → Controller → DomainService → Port (interface) → Adapter (implementación)
+
+NUEVOS COMPONENTES (por capa):
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                        DOMAIN LAYER (núcleo)                            │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │                                                                        │
+  │  src/domain/entities/WhatsAppSession.js                                │
+  │  ─────────────────────────────────────────                             │
+  │  Entidad que representa una sesión activa de WhatsApp:                 │
+  │    - id, userId, phoneNumber, waId (WhatsApp ID)                       │
+  │    - isActive, linkedAt, lastMessageAt                                 │
+  │    - conversationContext[] (historial corto para contexto LLM)         │
+  │                                                                        │
+  │  src/domain/entities/WhatsAppMessage.js                                │
+  │  ──────────────────────────────────────────                            │
+  │  Entidad que representa un mensaje entrante/saliente:                  │
+  │    - id, sessionId, direction (inbound/outbound)                       │
+  │    - content, messageType (text/image/document)                        │
+  │    - waMessageId, timestamp, status                                    │
+  │                                                                        │
+  │  src/domain/ports/out/IWhatsAppPort.js                                 │
+  │  ─────────────────────────────────────────                             │
+  │  Puerto de salida (interfaz abstracta):                                │
+  │    - sendTextMessage(phoneNumber, text)                                │
+  │    - sendInteractiveMessage(phoneNumber, options)                      │
+  │    - markAsRead(waMessageId)                                           │
+  │    - isAvailable()                                                     │
+  │                                                                        │
+  │  src/domain/ports/out/IWhatsAppSessionRepository.js                    │
+  │  ──────────────────────────────────────────────────                    │
+  │  Puerto de repositorio:                                                │
+  │    - findByPhoneNumber(phone) → WhatsAppSession | null                 │
+  │    - findByUserId(userId) → WhatsAppSession | null                     │
+  │    - save(session) → WhatsAppSession                                   │
+  │    - deactivate(userId)                                                │
+  │                                                                        │
+  │  src/domain/services/WhatsAppDomainService.js                          │
+  │  ────────────────────────────────────────────                          │
+  │  Servicio de dominio (CASO DE USO PRINCIPAL):                          │
+  │    - handleIncomingMessage(waPayload) → void                           │
+  │    - linkAccount(userId, phoneNumber) → Result                         │
+  │    - unlinkAccount(userId) → Result                                    │
+  │    - getSessionByUser(userId) → WhatsAppSession | null                 │
+  │                                                                        │
+  │  Dependencias inyectadas (constructor):                                │
+  │    {                                                                   │
+  │      whatsAppPort,             // IWhatsAppPort                        │
+  │      whatsAppSessionRepo,      // IWhatsAppSessionRepository           │
+  │      userRepository,           // IUserRepository                      │
+  │      rolRepository,            // IRolRepository                       │
+  │      mcpDomainService,         // MCPDomainService (consultas BD)      │
+  │      llmDomainService,         // LLMDomainService (preguntas grales)  │
+  │      submissionRepository,     // ISubmissionRepository                │
+  │      progressRepository,       // IProgressRepository                  │
+  │      courseRepository,         // ICourseRepository                    │
+  │    }                                                                   │
+  │                                                                        │
+  │  src/domain/validators/WhatsAppValidator.js                            │
+  │  ──────────────────────────────────────────                            │
+  │    - validatePhoneNumber(phone) → { valid, normalized }                │
+  │    - validateGradeCommand(text) → { valid, submissionId, grade }       │
+  │    - sanitizeInput(text) → string                                      │
+  │                                                                        │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                    INFRASTRUCTURE LAYER (adaptadores)                    │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │                                                                        │
+  │  src/infrastructure/messaging/MetaWhatsAppAdapter.js                   │
+  │  ──────────────────────────────────────────────────                    │
+  │  Implementa IWhatsAppPort usando Meta WhatsApp Business Cloud API:     │
+  │    - sendTextMessage(phone, text) → POST /v21.0/{PHONE_ID}/messages    │
+  │    - sendInteractiveMessage(phone, opts) → botones/listas interactivas │
+  │    - markAsRead(waMessageId) → marca mensajes como leídos             │
+  │    - isAvailable() → verifica token y conectividad                     │
+  │                                                                        │
+  │  Configuración requerida (env.js):                                     │
+  │    - WHATSAPP_VERIFY_TOKEN   (token de verificación webhook)           │
+  │    - WHATSAPP_ACCESS_TOKEN   (token de acceso permanente)              │
+  │    - WHATSAPP_PHONE_ID       (ID del número de teléfono de negocio)    │
+  │    - WHATSAPP_BUSINESS_ID    (ID de la cuenta de negocio)              │
+  │                                                                        │
+  │  src/infrastructure/database/WhatsAppSessionRepository.js              │
+  │  ───────────────────────────────────────────────────────               │
+  │  Implementa IWhatsAppSessionRepository usando Supabase:                │
+  │    - Tabla: whatsapp_sessions                                          │
+  │    - CRUD sobre sesiones vinculadas                                    │
+  │                                                                        │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                    INTERFACES LAYER (controladores + rutas)              │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │                                                                        │
+  │  src/interfaces/http/WhatsAppController.js                             │
+  │  ─────────────────────────────────────────                             │
+  │  Controlador HTTP:                                                     │
+  │    - verifyWebhook(req, res)   → GET  /api/v1/whatsapp/webhook         │
+  │    - handleWebhook(req, res)   → POST /api/v1/whatsapp/webhook         │
+  │    - linkAccount(req, res)     → POST /api/v1/whatsapp/link            │
+  │    - unlinkAccount(req, res)   → POST /api/v1/whatsapp/unlink          │
+  │    - getStatus(req, res)       → GET  /api/v1/whatsapp/status          │
+  │                                                                        │
+  │  src/interfaces/routes/v1/whatsappRoutes.js                            │
+  │  ──────────────────────────────────────────                            │
+  │  Rutas Express:                                                        │
+  │    GET  /webhook        → público (verificación Meta)                  │
+  │    POST /webhook        → público (recepción mensajes)                 │
+  │    POST /link           → protegido (JWT auth)                         │
+  │    POST /unlink         → protegido (JWT auth)                         │
+  │    GET  /status         → protegido (JWT auth)                         │
+  │                                                                        │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+────────────────────────────────────────────────────────────────────────────────
+4. MODELO DE DATOS (Nueva tabla en Supabase)
+────────────────────────────────────────────────────────────────────────────────
+
+  CREATE TABLE public.whatsapp_sessions (
+      id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id         bigint NOT NULL UNIQUE,
+      phone_number    text NOT NULL UNIQUE,
+      wa_id           text,                              -- WhatsApp ID interno
+      is_active       boolean DEFAULT true,
+      linked_at       timestamp with time zone DEFAULT now(),
+      last_message_at timestamp with time zone,
+      conversation_context jsonb DEFAULT '[]'::jsonb,    -- últimos N mensajes
+      created_at      timestamp with time zone DEFAULT now(),
+      updated_at      timestamp with time zone DEFAULT now(),
+
+      CONSTRAINT whatsapp_sessions_user_id_fkey
+          FOREIGN KEY (user_id) REFERENCES public.usuarios(id)
+  );
+
+  -- Índices para búsquedas rápidas
+  CREATE INDEX idx_whatsapp_sessions_phone ON public.whatsapp_sessions(phone_number);
+  CREATE INDEX idx_whatsapp_sessions_wa_id ON public.whatsapp_sessions(wa_id);
+
+  -- Modificación de tabla existente chat_messages para soporte de WhatsApp
+  -- Se reutiliza la tabla chat_messages en lugar de crear whatsapp_messages
+  /*
+  ALTER TABLE public.chat_messages
+      ADD COLUMN IF NOT EXISTS origin text DEFAULT 'app',        -- 'app', 'web', 'whatsapp'
+      ADD COLUMN IF NOT EXISTS wa_message_id text,               -- ID mensaje Meta
+      ADD COLUMN IF NOT EXISTS message_type text DEFAULT 'text', -- 'text', 'image', etc.
+      ADD COLUMN IF NOT EXISTS status text DEFAULT 'sent',       -- 'sent', 'delivered', 'read'
+      ADD COLUMN IF NOT EXISTS submission_id bigint;             -- FK a task_submissions
+
+  ALTER TABLE public.chat_messages
+      ADD CONSTRAINT fk_chat_messages_submission
+      FOREIGN KEY (submission_id) REFERENCES public.task_submissions(id);
+      
+  CREATE INDEX IF NOT EXISTS idx_chat_messages_wa_id ON public.chat_messages(wa_message_id);
+  */
+
+────────────────────────────────────────────────────────────────────────────────
+5. FLUJO DE MENSAJES (Secuencia detallada)
+────────────────────────────────────────────────────────────────────────────────
+
+  ┌─────────┐     ┌──────────┐     ┌──────────────┐     ┌─────────────────┐
+  │ WhatsApp│────>│ Meta API │────>│  Webhook      │────>│ WhatsApp        │
+  │ Usuario │     │ Cloud    │     │  Controller   │     │ DomainService   │
+  └─────────┘     └──────────┘     └──────────────┘     └────────┬────────┘
+                                                                  │
+                                                         ┌────────┴────────┐
+                                                         │ Identificar     │
+                                                         │ sesión por      │
+                                                         │ phone_number    │
+                                                         └────────┬────────┘
+                                                                  │
+                                                    ┌─────────────┴──────────────┐
+                                                    │                            │
+                                              ¿Sesión existe?             NO → Responder:
+                                              ¿is_active = true?          "Vincula tu cuenta
+                                                    │                     desde la app"
+                                                   SÍ
+                                                    │
+                                         ┌──────────┴──────────┐
+                                         │ Obtener user y roles │
+                                         │ del usuario vinculado│
+                                         └──────────┬──────────┘
+                                                    │
+                                    ┌───────────────┼───────────────┐
+                                    │               │               │
+                              ¿Es Admin?      ¿Es Docente?    ¿Es Estudiante?
+                              (rol = 3)       (tiene cursos)   (solo progreso)
+                                    │               │               │
+                                    ▼               ▼               ▼
+                            ┌───────────┐   ┌───────────┐   ┌───────────┐
+                            │ Router    │   │ Router    │   │ Router    │
+                            │ Admin     │   │ Docente   │   │ Estudiante│
+                            └─────┬─────┘   └─────┬─────┘   └─────┬─────┘
+                                  │               │               │
+                                  ▼               ▼               ▼
+                          Funcionalidades   Funcionalidades   Funcionalidades
+                          completas MCP +   ChatBot +         preguntas +
+                          ChatBot +         progreso de       su progreso
+                          calificación     SUS estudiantes   propio
+
+FLUJO DETALLADO DE UN MENSAJE ENTRANTE:
+
+  1. Meta envía POST al webhook con el payload del mensaje
+  2. WhatsAppController.handleWebhook() extrae:
+     - from (número de teléfono)
+     - message body/type
+     - wa_message_id
+  3. WhatsAppDomainService.handleIncomingMessage():
+     a. Busca sesión activa por phone_number
+     b. Si no existe → responde con mensaje de vinculación
+     c. Si existe → obtiene userId, roles del usuario
+     d. Clasifica intención del mensaje:
+        - Comando de calificación: "/calificar 123 8.5"
+        - Consulta de progreso: "¿cómo van mis estudiantes?"
+        - Consulta MCP (solo admin): "cuántos usuarios hay?"
+        - Pregunta general: "¿quién es Marie Curie?"
+     e. Enruta al handler correspondiente
+     f. Envía respuesta vía IWhatsAppPort.sendTextMessage()
+
+────────────────────────────────────────────────────────────────────────────────
+6. LÓGICA DE NEGOCIO - HANDLERS POR INTENCIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+6.1 HANDLER: PREGUNTAS GENERALES (todos los roles)
+─────────────────────────────────────────────────────
+  - Usa LLMDomainService.processPrompt() existente
+  - Envía la pregunta al LLM (DeepSeek) tal cual
+  - Retorna la respuesta formateada para WhatsApp (max 4096 chars)
+  - Si la respuesta es muy larga, la divide en múltiples mensajes
+
+6.2 HANDLER: CALIFICACIÓN DE TAREAS (docente + admin)
+──────────────────────────────────────────────────────
+  Formato del comando:
+    "/calificar <submission_id> <nota>"
+    "/calificar <submission_id> <nota> <feedback opcional>"
+    
+  Ejemplo:
+    "/calificar 45 8.5 Buen trabajo, mejorar formato"
+
+  Flujo:
+    1. Parsear comando con WhatsAppValidator.validateGradeCommand()
+    2. Verificar que el submission_id existe en task_submissions
+    3. Verificar que la tarea pertenece a un curso del docente:
+       task_submissions → tasks → topics → courses.creator_user_id = userId
+    4. Si es válido → UPDATE task_submissions SET grade = X, feedback = Y
+    5. Enviar confirmación: "✅ Calificación registrada: 8.5/10 para entrega #45"
+    6. Notificar al estudiante (FCM + notificación en BD)
+
+  Botones interactivos (tras calificar):
+    [Ver siguiente entrega pendiente] [Ver todas las pendientes]
+
+6.3 HANDLER: PROGRESO DE ESTUDIANTES (docente)
+───────────────────────────────────────────────
+  Query permitida:
+    "¿cómo van mis estudiantes?"
+    "progreso del curso X"
+    "notas de mis estudiantes"
+
+  Flujo:
+    1. Obtener cursos del docente: courses WHERE creator_user_id = userId
+    2. Obtener IDs de esos cursos
+    3. Consultar progreso_estudiante WHERE curso_id IN (ids_cursos_docente)
+    4. JOIN con usuarios para nombres
+    5. Formatear tabla de resultados para WhatsApp
+    6. Enviar resumen con el LLM para formato natural
+
+  SQL base (filtrado por seguridad):
+    SELECT pe.*, u.username, c.title as curso
+    FROM progreso_estudiante pe
+    JOIN usuarios u ON pe.usuario_estudiante = u.id
+    JOIN courses c ON pe.curso_id = c.id
+    WHERE c.creator_user_id = $1  -- userId del docente autenticado
+
+6.4 HANDLER: CONSULTAS MCP (solo admin, rol = 3)
+─────────────────────────────────────────────────
+  - Usa MCPDomainService.processQuery() existente
+  - SOLO operaciones SELECT (validación estricta)
+  - Bloquea INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE
+  - Tiene acceso completo al esquema de la BD
+  - Respuesta formateada para WhatsApp
+
+  Validación de seguridad (doble capa):
+    1. Capa Domain: WhatsAppDomainService verifica rol antes de enrutar
+    2. Capa MCP: MCPService ya tiene validación READ-ONLY
+
+
+────────────────────────────────────────────────────────────────────────────────
+7. CLASIFICADOR DE INTENCIONES (Intent Router)
+────────────────────────────────────────────────────────────────────────────────
+
+Dentro de WhatsAppDomainService, el método _classifyIntent(message, userRoles):
+
+  class IntentClassifier {
+
+      classify(message, userRoles) {
+          const text = message.trim().toLowerCase();
+
+          // 1. Comandos explícitos (mayor prioridad)
+          if (text.startsWith('/calificar'))    return { intent: 'GRADE_TASK',     requiresRole: 'teacher' };
+          if (text.startsWith('/progreso'))     return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
+          if (text.startsWith('/consulta'))     return { intent: 'MCP_QUERY',      requiresRole: 'admin' };
+          if (text.startsWith('/ayuda'))        return { intent: 'HELP',           requiresRole: null };
+          if (text.startsWith('/desvincular'))  return { intent: 'UNLINK',         requiresRole: null };
+
+          // 2. Detección por palabras clave
+          if (this._isGradeIntent(text))        return { intent: 'GRADE_TASK',     requiresRole: 'teacher' };
+          if (this._isProgressIntent(text))     return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
+          if (this._isMCPIntent(text) && userRoles.includes(3))
+                                                return { intent: 'MCP_QUERY',      requiresRole: 'admin' };
+
+          // 3. Fallback: pregunta general al LLM
+          return { intent: 'GENERAL_QUESTION', requiresRole: null };
+      }
+  }
+
+  Validación de permisos:
+    - Si el intent requiere un rol que el usuario NO tiene:
+      → Responder con mensaje de acceso denegado
+      → Ejemplo: "❌ Solo los administradores pueden realizar consultas MCP."
+
+────────────────────────────────────────────────────────────────────────────────
+8. VINCULACIÓN DE CUENTA (desde la App Android)
+────────────────────────────────────────────────────────────────────────────────
+
+FLUJO EN ProfileFragment.kt:
+
+  1. Usuario abre perfil → menú Configuración → "Vincular WhatsApp"
+  2. Se abre un diálogo preguntando número de WhatsApp
+  3. La app envía POST /api/v1/whatsapp/link con JWT + phoneNumber
+  4. El backend:
+     a. Valida formato del número
+     b. Verifica que el número no esté vinculado a otro usuario
+     c. Crea registro en whatsapp_sessions
+     d. Genera un código OTP de 6 dígitos
+     e. Envía código OTP al WhatsApp del usuario vía Meta API
+  5. El usuario recibe el OTP en WhatsApp y lo ingresa en la app
+  6. La app envía POST /api/v1/whatsapp/verify con el código
+  7. Si es correcto → activa la sesión (is_active = true)
+  8. Confirmación en la app: "✅ WhatsApp vinculado correctamente"
+
+FLUJO DE DESVINCULACIÓN:
+
+  1. ProfileFragment → "Desvincular WhatsApp"
+  2. POST /api/v1/whatsapp/unlink con JWT
+  3. Backend marca is_active = false en whatsapp_sessions
+  4. Confirmación en la app
+
+CAMBIOS EN ANDROID (ProjectCourseV1):
+
+  ProfileFragment.kt:
+    - Nuevo ítem en menú: "WhatsApp" con icono de WhatsApp
+    - Diálogo de vinculación/desvinculación
+    - Indicador de estado (vinculado/no vinculado)
+
+  BackendApiService.kt:
+    - linkWhatsApp(phoneNumber: String): ApiResult<WhatsAppLinkResponse>
+    - verifyWhatsApp(code: String): ApiResult<WhatsAppVerifyResponse>
+    - unlinkWhatsApp(): ApiResult<Unit>
+    - getWhatsAppStatus(): ApiResult<WhatsAppStatusResponse>
+
+  Nuevos data classes:
+    - WhatsAppLinkResponse(sessionId, message)
+    - WhatsAppVerifyResponse(verified, message)
+    - WhatsAppStatusResponse(isLinked, phoneNumber, linkedAt)
+
+────────────────────────────────────────────────────────────────────────────────
+9. SEGURIDAD
+────────────────────────────────────────────────────────────────────────────────
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ CAPA           │ MECANISMO                                              │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Webhook        │ Verificación con WHATSAPP_VERIFY_TOKEN                 │
+  │                │ Validación de firma X-Hub-Signature-256 (HMAC SHA256)  │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Vinculación    │ JWT auth + OTP por WhatsApp                            │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Identidad      │ phone_number → whatsapp_sessions → user_id            │
+  │                │ Cada mensaje se autentica por la sesión vinculada      │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Autorización   │ Roles verificados en CADA mensaje:                     │
+  │                │ - Admin (rol 3): acceso MCP completo                   │
+  │                │ - Docente: solo sus cursos/estudiantes                  │
+  │                │ - Estudiante: solo su propio progreso                  │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ SQL Injection  │ - MCPService ya usa parameterized queries              │
+  │                │ - Validación adicional: regex whitelist de SELECT       │
+  │                │ - Bloqueo explícito de DDL/DML destructivo             │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Rate Limiting  │ - Max 30 mensajes/minuto por usuario                   │
+  │                │ - Max 5 calificaciones/minuto por docente              │
+  │                │ - Cooldown de 2 segundos entre mensajes                │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ Sanitización   │ - WhatsAppValidator.sanitizeInput() en cada mensaje    │
+  │                │ - Limitar longitud de entrada a 2000 caracteres        │
+  │                │ - Escapar caracteres especiales para prevenir injection │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+────────────────────────────────────────────────────────────────────────────────
+10. PRINCIPIOS SOLID APLICADOS
+────────────────────────────────────────────────────────────────────────────────
+
+  S - Single Responsibility:
+      • WhatsAppDomainService: solo orquesta el flujo de mensajes
+      • IntentClassifier: solo clasifica intenciones
+      • MetaWhatsAppAdapter: solo comunica con Meta API
+      • WhatsAppValidator: solo valida entradas
+      • Cada handler (grade, progress, mcp, general) es un método separado
+
+  O - Open/Closed:
+      • Nuevos intents se agregan al IntentClassifier sin modificar handlers
+      • Nuevos canales de mensajería implementan IWhatsAppPort (ej. Telegram)
+      • Los handlers son extensibles sin cambiar el router
+
+  L - Liskov Substitution:
+      • MetaWhatsAppAdapter sustituible por TwilioWhatsAppAdapter
+      • Ambos implementan IWhatsAppPort con el mismo contrato
+
+  I - Interface Segregation:
+      • IWhatsAppPort: solo métodos de envío de mensajes
+      • IWhatsAppSessionRepository: solo persistencia de sesiones
+      • No se mezclan responsabilidades entre puertos
+
+  D - Dependency Inversion:
+      • WhatsAppDomainService depende de IWhatsAppPort, NO de MetaWhatsAppAdapter
+      • Inyección via container.js (Composition Root existente)
+      • El dominio no conoce la implementación concreta
+
+────────────────────────────────────────────────────────────────────────────────
+11. CLEAN CODE - ESTRUCTURA DE ARCHIVOS
+────────────────────────────────────────────────────────────────────────────────
+
+BACKEND (MCP-backendDeploy):
+
+  src/
+  ├── domain/
+  │   ├── entities/
+  │   │   ├── WhatsAppSession.js          # Entidad de sesión
+  │   │   └── WhatsAppMessage.js          # Entidad de mensaje
+  │   ├── ports/
+  │   │   └── out/
+  │   │       ├── IWhatsAppPort.js        # Puerto de mensajería
+  │   │       └── IWhatsAppSessionRepository.js  # Puerto de repositorio
+  │   ├── services/
+  │   │   └── WhatsAppDomainService.js    # Servicio de dominio
+  │   └── validators/
+  │       └── WhatsAppValidator.js        # Validaciones
+  │
+  ├── infrastructure/
+  │   ├── messaging/
+  │   │   └── MetaWhatsAppAdapter.js      # Adapter Meta API
+  │   └── database/
+  │       └── WhatsAppSessionRepository.js # Adapter Supabase
+  │
+  ├── interfaces/
+  │   ├── http/
+  │   │   └── WhatsAppController.js       # Controlador HTTP
+  │   └── routes/
+  │       └── v1/
+  │           └── whatsappRoutes.js       # Rutas Express
+  │
+  └── config/
+      ├── container.js                    # + wiring de nuevos componentes
+      └── env.js                          # + variables WHATSAPP_*
+
+ANDROID (ProjectCourseV1):
+
+  app/src/main/java/com/example/tareamov/
+  ├── ui/
+  │   └── ProfileFragment.kt             # + botón WhatsApp en menú
+  ├── service/
+  │   └── BackendApiService.kt           # + endpoints WhatsApp
+  └── data/
+      └── model/
+          └── WhatsAppModels.kt           # DTOs de respuesta
+
+────────────────────────────────────────────────────────────────────────────────
+12. VARIABLES DE ENTORNO REQUERIDAS
+────────────────────────────────────────────────────────────────────────────────
+
+  # WhatsApp Business Cloud API (Meta)
+  WHATSAPP_VERIFY_TOKEN=mi_token_de_verificacion_secreto
+  WHATSAPP_ACCESS_TOKEN=EAAxxxxxxxx...    # Token permanente de sistema
+  WHATSAPP_PHONE_ID=1234567890            # ID del número de negocio
+  WHATSAPP_BUSINESS_ID=9876543210         # ID de cuenta de negocio
+  WHATSAPP_APP_SECRET=abcdef123456        # Para verificar firmas HMAC
+
+────────────────────────────────────────────────────────────────────────────────
+13. CONFIGURACIÓN META WHATSAPP BUSINESS
+────────────────────────────────────────────────────────────────────────────────
+
+  Pasos para configurar en Meta for Developers:
+
+  1. Crear una app en https://developers.facebook.com/apps/
+  2. Agregar producto "WhatsApp" a la app
+  3. Configurar número de teléfono de negocio
+  4. Obtener tokens de acceso (System User Token permanente)
+  5. Configurar webhook:
+     - URL: https://tu-dominio.com/api/v1/whatsapp/webhook
+     - Verify Token: el valor de WHATSAPP_VERIFY_TOKEN
+     - Suscribirse a: messages, message_deliveries, message_reads
+  6. Verificar negocio (requerido para producción)
+
+────────────────────────────────────────────────────────────────────────────────
+14. FORMATO DE RESPUESTAS WHATSAPP
+────────────────────────────────────────────────────────────────────────────────
+
+  WhatsApp tiene limitaciones de formato:
+    - Máximo 4096 caracteres por mensaje
+    - Soporta: *negrita*, _cursiva_, ~tachado~, ```monospace```
+    - NO soporta Markdown completo (ni tablas, ni headers ##)
+
+  Conversión Markdown → WhatsApp:
+    - ## Título        →  *Título*
+    - **negrita**      →  *negrita*
+    - - item           →  • item
+    - ```code```       →  ```code```
+    - | tabla |        →  formato lista con alineación de espacios
+
+  Clase utilitaria:
+    src/utils/whatsappFormatter.js
+      - markdownToWhatsApp(text)      → convierte MD a formato WA
+      - truncateResponse(text, max)   → divide en mensajes de max chars
+      - formatTable(rows, columns)    → tabla legible en texto plano
+      - formatProgressReport(data)    → formato estándar de reporte
+
+────────────────────────────────────────────────────────────────────────────────
+15. MENSAJES PREDEFINIDOS
+────────────────────────────────────────────────────────────────────────────────
+
+  BIENVENIDA (primera vez que escribe un número vinculado):
+    "👋 ¡Hola {nombre}! Bienvenido/a al asistente CourseV.
+    
+    Puedo ayudarte con:
+    📚 Preguntas generales
+    📊 Progreso de tus estudiantes
+    ✏️ Calificar entregas
+    
+    Escribe /ayuda para ver todos los comandos."
+
+  AYUDA (comando /ayuda):
+    "*Comandos disponibles:*
+    
+    /calificar <id> <nota> [feedback]
+    → Califica una entrega
+    
+    /progreso [curso]
+    → Ver progreso de estudiantes
+    
+    /consulta <pregunta> *(solo admin)*
+    → Consultar base de datos
+    
+    /desvincular
+    → Desvincular tu cuenta
+    
+    /ayuda
+    → Ver este mensaje"
+
+  NO VINCULADO:
+    "⚠️ Este número no está vinculado a ninguna cuenta.
+    
+    Para usar el asistente por WhatsApp:
+    1. Abre la app CourseV
+    2. Ve a tu Perfil → Configuración
+    3. Selecciona 'Vincular WhatsApp'
+    4. Ingresa este número de teléfono"
+
+  ACCESO DENEGADO:
+    "❌ No tienes permisos para esta acción.
+    Tu rol actual: {rol}
+    Rol requerido: {rolRequerido}"
+
+  CALIFICACIÓN EXITOSA:
+    "✅ *Calificación registrada*
+    
+    📝 Entrega: #{submissionId}
+    📚 Tarea: {taskTitle}
+    👤 Estudiante: {studentName}
+    📊 Nota: {grade}/10
+    💬 Feedback: {feedback}
+    
+    El estudiante ha sido notificado."
+
+────────────────────────────────────────────────────────────────────────────────
+16. WIRING EN CONTAINER.JS
+────────────────────────────────────────────────────────────────────────────────
+
+  Agregar en container.js (respetando el patrón existente):
+
+  // ─── WhatsApp Adapters (Level 0) ───
+  const whatsAppAdapter = safeInit('MetaWhatsAppAdapter', () =>
+      new MetaWhatsAppAdapter({
+          accessToken: env.WHATSAPP_ACCESS_TOKEN,
+          phoneId:     env.WHATSAPP_PHONE_ID,
+          appSecret:   env.WHATSAPP_APP_SECRET,
+      })
+  );
+
+  const whatsAppSessionRepo = safeInit('WhatsAppSessionRepository', () =>
+      new WhatsAppSessionRepository(supabaseClient)
+  );
+
+  // ─── WhatsApp Domain Service (Level 2 - depends on MCP, LLM) ───
+  const whatsAppDomainService = safeInit('WhatsAppDomainService', () =>
+      new WhatsAppDomainService({
+          whatsAppPort:         whatsAppAdapter,
+          whatsAppSessionRepo:  whatsAppSessionRepo,
+          userRepository:       userRepository,
+          rolRepository:        rolRepository,
+          mcpDomainService:     mcpDomainService,
+          llmDomainService:     llmDomainService,
+          submissionRepository: submissionRepository,
+          progressRepository:   progressRepository,
+          courseRepository:     courseRepository,
+      })
+  );
+
+  // ─── WhatsApp Controller ───
+  const whatsAppController = new WhatsAppController({
+      whatsAppDomainService,
+      verifyToken: env.WHATSAPP_VERIFY_TOKEN,
+  });
+
+────────────────────────────────────────────────────────────────────────────────
+17. REGISTRO DE RUTAS (routes/v1/index.js)
+────────────────────────────────────────────────────────────────────────────────
+
+Agregar en el archivo de rutas V1:
+
+  // Rutas públicas (webhook Meta requiere ser público)
+  router.use('/whatsapp', whatsappRoutes(deps));
+
+  Donde las rutas de webhook (GET/POST) son públicas y las de
+  link/unlink/status son protegidas con JWT auth middleware.
+
+────────────────────────────────────────────────────────────────────────────────
+18. RATE LIMITING ESPECÍFICO
+────────────────────────────────────────────────────────────────────────────────
+
+  src/infrastructure/middleware/whatsappRateLimiter.js
+
+  Configuración:
+    - Webhook: sin límite (Meta controla la frecuencia)
+    - Mensajes por usuario: 30/minuto
+    - Calificaciones por docente: 5/minuto
+    - Consultas MCP por admin: 10/minuto
+
+  Implementación: usar el CacheAdapter existente (node-cache) para contadores
+  con TTL de 60 segundos por phone_number.
+
+────────────────────────────────────────────────────────────────────────────────
+19. MANEJO DE ERRORES
+────────────────────────────────────────────────────────────────────────────────
+
+  Patrón Result existente (Result.ok / Result.fail):
+
+  - Errores de validación  → Respuesta amigable al usuario
+  - Errores de BD          → "Lo siento, hubo un error. Intenta de nuevo."
+  - Errores de Meta API    → Log + reintentar con backoff exponencial
+  - Timeout de LLM         → "La respuesta está tardando. Intenta de nuevo."
+  - Sesión no encontrada   → Mensaje de vinculación
+
+  Todos los errores se loggean con el logger existente del proyecto.
+
+────────────────────────────────────────────────────────────────────────────────
+20. TESTING
+────────────────────────────────────────────────────────────────────────────────
+
+  Tests unitarios:
+    - WhatsAppValidator: formatos de teléfono, comandos de calificación
+    - IntentClassifier: clasificación de intenciones por rol
+    - WhatsAppDomainService: flujos de cada handler (mock de puertos)
+    - MetaWhatsAppAdapter: envío de mensajes (mock de HTTP)
+
+  Tests de integración:
+    - Webhook completo: recibir mensaje → procesar → enviar respuesta
+    - Vinculación/desvinculación de cuentas
+    - Calificación end-to-end
+    - Autorización por roles
+
+  Tests de seguridad:
+    - Inyección SQL vía mensajes
+    - Escalación de privilegios (docente → admin)
+    - Suplantación de identidad (cambiar phone_number)
+    - Rate limiting bajo carga
+
+────────────────────────────────────────────────────────────────────────────────
+21. PLAN DE IMPLEMENTACIÓN (FASES)
+────────────────────────────────────────────────────────────────────────────────
+
+  FASE 1 - INFRAESTRUCTURA BASE (3-4 días)
+  ─────────────────────────────────────────
+    □ Crear tabla whatsapp_sessions en Supabase
+    □ Alterar tabla chat_messages para soporte WhatsApp (script alter_chat_messages_for_whatsapp.sql)
+    □ Implementar entidades: WhatsAppSession.js, WhatsAppMessage.js (adaptado a chat_messages)
+    □ Implementar puertos: IWhatsAppPort.js, IWhatsAppSessionRepository.js
+    □ Implementar adaptador: MetaWhatsAppAdapter.js
+    □ Implementar repositorio: WhatsAppSessionRepository.js
+    □ Agregar variables de entorno en env.js
+    □ Configurar cuenta Meta WhatsApp Business
+
+  FASE 2 - LÓGICA DE DOMINIO (3-4 días)
+  ──────────────────────────────────────
+    □ Implementar WhatsAppValidator.js
+    □ Implementar IntentClassifier (dentro de WhatsAppDomainService)
+    □ Implementar WhatsAppDomainService.js:
+      □ handleIncomingMessage()
+      □ _handleGeneralQuestion() → LLMDomainService
+      □ _handleGradeTask() → SubmissionRepository
+      □ _handleStudentProgress() → ProgressRepository + CourseRepository
+      □ _handleMCPQuery() → MCPDomainService (solo admin)
+    □ Implementar linkAccount / unlinkAccount / verify
+    □ Implementar whatsappFormatter.js
+
+  FASE 3 - INTERFAZ HTTP + WIRING (2 días)
+  ─────────────────────────────────────────
+    □ Implementar WhatsAppController.js
+    □ Implementar whatsappRoutes.js
+    □ Registrar en container.js
+    □ Registrar en routes/v1/index.js
+    □ Implementar rate limiter
+    □ Implementar verificación de firma HMAC
+
+  FASE 4 - INTEGRACIÓN ANDROID (2 días)
+  ─────────────────────────────────────
+    □ Agregar endpoints en BackendApiService.kt
+    □ Crear WhatsAppModels.kt
+    □ Agregar botón en ProfileFragment.kt (menú configuración)
+    □ Crear diálogo de vinculación (input teléfono + verificación OTP)
+    □ Mostrar estado de vinculación en perfil
+
+  FASE 5 - TESTING Y DESPLIEGUE (2-3 días)
+  ─────────────────────────────────────────
+    □ Tests unitarios de todos los componentes nuevos
+    □ Tests de integración webhook
+    □ Pruebas manuales con WhatsApp sandbox de Meta
+    □ Configurar webhook en producción (Railway/Docker)
+    □ Verificar negocio en Meta (si se requiere producción)
+    □ Documentar API endpoints nuevos
+
+  TOTAL ESTIMADO: 12-15 días de desarrollo
+
+────────────────────────────────────────────────────────────────────────────────
+22. DEPENDENCIAS NPM REQUERIDAS
+────────────────────────────────────────────────────────────────────────────────
+
+  Nuevas (mínimas):
+    - Ninguna obligatoria: se usa fetch/axios (ya existe en el proyecto)
+      para comunicar con la Meta API REST
+
+  Opcionales:
+    - whatsapp-web.js (si se quisiera una alternativa no-oficial, NO recomendado)
+
+  La Meta WhatsApp Cloud API es REST pura, solo requiere HTTP requests.
+  El proyecto ya tiene axios o node-fetch disponible.
+
+────────────────────────────────────────────────────────────────────────────────
+23. CONSIDERACIONES DE COSTO
+────────────────────────────────────────────────────────────────────────────────
+
+  Meta WhatsApp Business API pricing:
+    - Recibir mensajes: GRATIS
+    - Responder dentro de 24h: GRATIS (conversation-based pricing)
+    - Mensajes fuera de ventana de 24h: ~$0.005 - $0.08 USD por mensaje
+      (varía por país y tipo de conversación)
+    - Primeras 1000 conversaciones/mes: GRATIS
+
+  Recomendación:
+    - Responder siempre dentro de la ventana de 24h
+    - No enviar mensajes proactivos fuera de ventana
+    - Monitorear uso con métricas en dashboard de Meta
+
+────────────────────────────────────────────────────────────────────────────────
+24. DIAGRAMA DE DEPENDENCIAS (MERMAID)
+────────────────────────────────────────────────────────────────────────────────
+
+  graph TB
+    subgraph "Android App"
+      PF[ProfileFragment] --> BAS[BackendApiService]
+    end
+
+    subgraph "Interfaces Layer"
+      WR[whatsappRoutes] --> WC[WhatsAppController]
+    end
+
+    subgraph "Domain Layer"
+      WC --> WDS[WhatsAppDomainService]
+      WDS --> IC[IntentClassifier]
+      WDS --> WV[WhatsAppValidator]
+      WDS --> LLM[LLMDomainService]
+      WDS --> MCP[MCPDomainService]
+      WDS --> SR[SubmissionRepository]
+      WDS --> PR[ProgressRepository]
+      WDS --> CR[CourseRepository]
+    end
+
+    subgraph "Infrastructure Layer"
+      WDS --> WAP[IWhatsAppPort]
+      WAP --> MWA[MetaWhatsAppAdapter]
+      WDS --> WSR[IWhatsAppSessionRepo]
+      WSR --> WSRI[WhatsAppSessionRepository]
+      MWA --> META[Meta Cloud API]
+    end
+
+    subgraph "External"
+      META --> WA[WhatsApp]
+      WA --> USER[Usuario]
+    end
+
+    BAS --> WR
+
+================================================================================
+  FIN DEL PLAN
+================================================================================

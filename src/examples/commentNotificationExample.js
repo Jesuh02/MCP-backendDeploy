@@ -1,17 +1,24 @@
 /**
  * EJEMPLO DE USO: Notificaciones para Comentarios y Likes
  * 
- * Este archivo muestra cómo integrar las notificaciones en tus endpoints
- * de comentarios y likes en video_comments.
+ * Este archivo muestra cómo integrar las notificaciones usando
+ * la arquitectura hexagonal (NotificationDomainService).
  * 
  * IMPORTANTE: No ejecutar este archivo directamente, solo es referencia.
+ * En producción, el contenedor de DI inyecta las dependencias.
  */
 
-import { NotificationService } from '../services/NotificationService.js';
-import { SupabaseService } from '../infrastructure/database/SupabaseService.js';
+// En un controlador real, notificationService se inyecta via constructor:
+// constructor({ notificationService }) { this.notifService = notificationService; }
+//
+// Aquí se muestra un ejemplo simplificado para documentación.
 
-const notificationService = NotificationService.getInstance();
+import { SupabaseService } from '../shared/database/SupabaseService.js';
+
 const supabaseService = SupabaseService.getInstance();
+
+// NOTE: In production, notificationService is injected by the DI container.
+// This example assumes it's available as a parameter or from the container.
 
 // ============================================================
 // EJEMPLO 1: Notificar cuando alguien comenta en un video
@@ -65,29 +72,29 @@ async function createCommentExample(req, res) {
         // 4. Enviar notificación al dueño del video (solo si no es el mismo usuario)
         if (video.remote_id && video.remote_id !== userId) {
             await notificationService.notifyVideoComment(
-                video.remote_id,           // videoOwnerId
-                videoId,                   // videoId
-                comment.id,                // commentId ⭐ IMPORTANTE
-                commenter.usuario,         // commentAuthor
-                commenter.avatar || '',    // commentAuthorAvatar
+                video.remote_id, // videoOwnerId
+                videoId, // videoId
+                comment.id, // commentId ⭐ IMPORTANTE
+                commenter.usuario, // commentAuthor
+                commenter.avatar || '', // commentAuthorAvatar
                 video.thumbnail_uri || '', // videoThumbnail
-                commentText                // commentText (opcional, para preview)
+                commentText // commentText (opcional, para preview)
             );
 
             console.log(`✅ Notification sent to video owner (${video.remote_id})`);
         }
 
-        res.status(201).json({ 
-            success: true, 
+        res.status(201).json({
+            success: true,
             comment: comment,
             message: 'Comentario creado exitosamente'
         });
 
     } catch (error) {
         console.error('❌ Error creating comment:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            error: error.message
         });
     }
 }
@@ -122,9 +129,9 @@ async function likeCommentExample(req, res) {
         if (likeError) {
             // Si ya existe el like, podemos ignorar o hacer toggle
             if (likeError.code === '23505') { // Duplicate key
-                return res.status(200).json({ 
-                    success: true, 
-                    message: 'Ya habías dado like a este comentario' 
+                return res.status(200).json({
+                    success: true,
+                    message: 'Ya habías dado like a este comentario'
                 });
             }
             throw likeError;
@@ -160,27 +167,27 @@ async function likeCommentExample(req, res) {
         // 5. Enviar notificación al autor del comentario (solo si no es el mismo usuario)
         if (comment.usuario_id !== userId) {
             await notificationService.notifyCommentLike(
-                comment.usuario_id,        // commentOwnerId
-                comment.video_id,          // videoId
-                commentId,                 // commentId ⭐ IMPORTANTE
-                liker.usuario,             // likerUsername
-                liker.avatar || '',        // likerAvatar
-                video.thumbnail_uri || ''  // videoThumbnail
+                comment.usuario_id, // commentOwnerId
+                comment.video_id, // videoId
+                commentId, // commentId ⭐ IMPORTANTE
+                liker.usuario, // likerUsername
+                liker.avatar || '', // likerAvatar
+                video.thumbnail_uri || '' // videoThumbnail
             );
 
             console.log(`✅ Like notification sent to comment owner (${comment.usuario_id})`);
         }
 
-        res.status(200).json({ 
-            success: true, 
+        res.status(200).json({
+            success: true,
             message: 'Like registrado exitosamente'
         });
 
     } catch (error) {
         console.error('❌ Error liking comment:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            error: error.message
         });
     }
 }
@@ -247,30 +254,30 @@ async function replyToCommentExample(req, res) {
         // 5. Enviar notificación al autor del comentario padre (solo si no es el mismo usuario)
         if (parentComment.usuario_id !== userId) {
             await notificationService.notifyCommentReply(
-                parentComment.usuario_id,  // parentCommentOwnerId
-                parentComment.video_id,    // videoId
-                parentCommentId,           // parentCommentId
-                reply.id,                  // replyCommentId ⭐ IMPORTANTE
-                replier.usuario,           // replyAuthor
-                replier.avatar || '',      // replyAuthorAvatar
+                parentComment.usuario_id, // parentCommentOwnerId
+                parentComment.video_id, // videoId
+                parentCommentId, // parentCommentId
+                reply.id, // replyCommentId ⭐ IMPORTANTE
+                replier.usuario, // replyAuthor
+                replier.avatar || '', // replyAuthorAvatar
                 video.thumbnail_uri || '', // videoThumbnail
-                replyText                  // replyText (opcional, para preview)
+                replyText // replyText (opcional, para preview)
             );
 
             console.log(`✅ Reply notification sent to parent comment owner (${parentComment.usuario_id})`);
         }
 
-        res.status(201).json({ 
-            success: true, 
+        res.status(201).json({
+            success: true,
             reply: reply,
             message: 'Respuesta creada exitosamente'
         });
 
     } catch (error) {
         console.error('❌ Error replying to comment:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            error: error.message
         });
     }
 }
@@ -284,3 +291,4 @@ export {
     likeCommentExample,
     replyToCommentExample
 };
+

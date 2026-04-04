@@ -5,8 +5,8 @@
  */
 
 import './config/env.js';
-import { MCPService } from './domain/services/MCPService.js';
-import { SupabaseService } from './infrastructure/database/SupabaseService.js';
+import { MCPService } from './modules/ai/mcp-legacy.service.js';
+import { SupabaseService } from './shared/database/SupabaseService.js';
 
 // CRITICAL: Redirect ALL stdout to stderr before any other imports
 // MCP protocol requires ONLY JSON-RPC messages on stdout
@@ -135,7 +135,7 @@ async function handleToolsList(id) {
 - Use ORDER BY and LIMIT for top/bottom results
 
 **AVAILABLE TABLES:**
-usuarios, personas, courses, videos, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos, progreso_estudiante, knowledge_base`,
+usuarios, personas, courses, videos, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos, progreso_curso, progreso_materia, knowledge_base`,
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -351,3 +351,4 @@ main().catch((error) => {
     console.error('❌ Fatal error:', error);
     process.exit(1);
 });
+
