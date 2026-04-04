@@ -69,7 +69,8 @@ export class ExcelDomainService {
             return Result.ok({
                 url: publicUrl,
                 rows: dataToExport.length,
-                filename
+                filename,
+                data: dataToExport,
             });
         } catch (uploadErr) {
             return Result.fail(`Error subiendo archivo: ${uploadErr.message}`);

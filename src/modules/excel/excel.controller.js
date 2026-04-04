@@ -46,7 +46,9 @@ export class ExcelController {
                 return res.status(400).json({ success: false, error: result.getError() });
             }
 
-            res.json({ success: true, data: result.getValue() });
+            // Exclude raw data array from HTTP response (only used internally by llm.controller)
+            const { data: _rawData, ...publicFields } = result.getValue();
+            res.json({ success: true, data: publicFields });
         } catch (err) {
             next(err);
         }

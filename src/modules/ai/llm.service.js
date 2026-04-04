@@ -52,7 +52,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number, tenantId?: string, availableTenants?: string[], institutionName?: string }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
@@ -289,6 +289,31 @@ export class LLMDomainService {
 - Tu trabajo cuando el usuario pide un Excel: presenta los datos en una TABLA MARKDOWN bien formateada y añade un resumen breve. El archivo Excel se adjuntará automáticamente por el sistema.
 - Ejemplo de respuesta CORRECTA cuando piden Excel: "Aquí tienes el progreso de tus estudiantes: [tabla markdown] El archivo Excel está listo para descargar."
 - Ejemplo de respuesta PROHIBIDA: "No puedo generar archivos Excel, pero aquí tienes los datos..."`;
+
+            // ── EXCEL DATA CONTEXT INJECTION ──────────────────────────────────────
+            // When the controller already generated an Excel file, inject the raw data
+            // so the LLM text response describes EXACTLY the same rows as the Excel.
+            // This prevents the inconsistency where text and Excel show different data.
+            if (excelDataContext && Array.isArray(excelDataContext) && excelDataContext.length > 0) {
+                // Limit to first 200 rows to avoid exceeding context window
+                const previewRows = excelDataContext.slice(0, 200);
+                const columnNames = Object.keys(previewRows[0]);
+                // Build a compact Markdown table for the LLM to reference
+                let dataTable = `| ${columnNames.join(' | ')} |\n| ${columnNames.map(() => '---').join(' | ')} |\n`;
+                for (const row of previewRows) {
+                    dataTable += `| ${columnNames.map(c => String(row[c] ?? '')).join(' | ')} |\n`;
+                }
+                const truncatedNote = excelDataContext.length > 200
+                    ? `\n(Mostrando 200 de ${excelDataContext.length} filas totales en el Excel)`
+                    : '';
+                systemPrompt += `\n\n══════════ DATOS DEL EXCEL GENERADO ══════════
+Los siguientes datos son los que YA se exportaron al archivo Excel que el usuario va a descargar.
+Tu respuesta de texto DEBE describir y presentar EXACTAMENTE estos mismos datos. NO consultes la base de datos nuevamente; usa estos datos directamente.
+Presenta estos datos en una tabla Markdown bien formateada en tu respuesta.${truncatedNote}
+
+${dataTable}
+══════════ FIN DATOS EXCEL ══════════`;
+            }
 
             systemPrompt += `\n\nREGLA DE FORMATO DE TABLAS — MARKDOWN:
 - Cuando presentes datos tabulares, usa SIEMPRE tablas Markdown correctamente formateadas.
