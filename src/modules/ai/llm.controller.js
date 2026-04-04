@@ -28,6 +28,14 @@ export class LLMController {
     }
 
     /**
+     * Returns true when the user's prompt indicates ANY intent to generate an Excel file,
+     * regardless of topic (progress, payments, users, etc.).
+     */
+    _isExcelIntent(prompt) {
+        return /\b(excel|xls|xlsx|exportar|descargar\s+reporte|generar\s+reporte|haz?\s+un?\s+excel|crea?\s+un?\s+excel|spreadsheet|hoja\s+de\s+c[aá]lculo|reporte\s+excel)\b/i.test(prompt);
+    }
+
+    /**
      * Detects if the prompt asks about which institutions the user belongs to.
      * e.g. "¿En cuántas instituciones estoy?", "mis instituciones", "a qué instituciones pertenezco"
      */
@@ -43,7 +51,7 @@ export class LLMController {
     async _lookupUserInstitutions(username) {
         const entries = getAllTenantEntries();
         const results = await Promise.allSettled(
-            entries.map(async (entry) => {
+            entries.map(async(entry) => {
                 if (!entry.client) return null;
                 const repo = new SupabaseUserRepository(entry.client);
                 const user = await repo.findByUsername(username);
@@ -69,11 +77,11 @@ export class LLMController {
             // Normalize field names (Android client sends both formats)
             // Resolve tenant context: TenantMiddleware has already run and set the AsyncLocalStorage
             // context. getCurrentTenantId() returns the tenant resolved from X-Tenant-Id / JWT.
-            const resolvedTenantId = getCurrentTenantId() || req.user?.tenantId || 'qa-develop';
-            const jwtAvailableTenants = Array.isArray(req.user?.availableTenants)
-                ? req.user.availableTenants
-                : (req.user?.tenantId ? [{ id: req.user.tenantId, name: req.user.tenantId }] : [{ id: resolvedTenantId, name: resolvedTenantId }]);
-            const institutionName = TENANT_CONFIGS.find(t => t.id === resolvedTenantId)?.name ?? resolvedTenantId;
+            const resolvedTenantId = getCurrentTenantId() || req.user ? .tenantId || 'qa-develop';
+            const jwtAvailableTenants = Array.isArray(req.user ? .availableTenants) ?
+                req.user.availableTenants :
+                (req.user ? .tenantId ? [{ id: req.user.tenantId, name: req.user.tenantId }] : [{ id: resolvedTenantId, name: resolvedTenantId }]);
+            const institutionName = TENANT_CONFIGS.find(t => t.id === resolvedTenantId) ? .name ? ? resolvedTenantId;
 
             const params = {
                 prompt: value.prompt,
@@ -83,10 +91,10 @@ export class LLMController {
                 fileContent: value.fileContent,
                 fileUri: value.fileUri || value.file_uri,
                 studentId: value.studentId || value.student_id,
-                userId: req.user?.userId || value.userId,
+                userId: req.user ? .userId || value.userId,
                 // Authenticated username from JWT — used for course ownership lookup.
                 // Fall back to body-supplied username (for Android/web clients).
-                username: req.user?.username || value.username || null,
+                username: req.user ? .username || value.username || null,
                 submissionId: value.submissionId,
                 taskId: value.taskId,
                 topicId: value.topicId || value.topic_id,
@@ -95,7 +103,7 @@ export class LLMController {
                 difficulty: value.difficulty || null,
                 // Pass authenticated user's roles for data-access scoping.
                 // Prefer JWT roles (from req.user), fall back to body-supplied roles (for Android without JWT).
-                userRoles: (req.user?.roles || value.userRoles || []).map(Number),
+                userRoles: (req.user ? .roles || value.userRoles || []).map(Number),
                 // Multi-tenant context: which institution is active and which ones are available
                 tenantId: resolvedTenantId,
                 availableTenants: jwtAvailableTenants,
@@ -105,7 +113,7 @@ export class LLMController {
             // ── INSTITUTION LOOKUP SHORT-CIRCUIT ──────────────────────────────────
             // Detect "¿En cuántas instituciones estoy?" and answer directly without LLM.
             if (this._isInstitutionLookupIntent(value.prompt)) {
-                const username = req.user?.username || null;
+                const username = req.user ? .username || null;
                 if (!username) {
                     return res.json({
                         success: true,
@@ -136,28 +144,46 @@ export class LLMController {
                 }
             }
 
-            // Detect Excel generation intent for student progress and generate the file proactively
+            // Detect Excel generation intent and generate the file proactively.
+            // The raw data from the Excel is then injected into processPrompt so the
+            // LLM text response describes the SAME data that went into the Excel file.
             let excelUrl = null;
-            if (this.excelService && this._isProgressExcelIntent(params.prompt, params.taskDescription || '')) {
+            let excelDataForContext = null;
+            if (this.excelService && this._isExcelIntent(params.prompt)) {
                 try {
-                    // Use the user's ACTUAL prompt so the Excel data matches the LLM text response.
-                    // Previously a hardcoded query was used here, causing Excel and text to diverge.
-                    const progressQuery = params.prompt;
+                    // For progress-specific queries, build a targeted query
+                    let excelQuery = params.prompt;
+                    if (this._isProgressExcelIntent(params.prompt, params.taskDescription || '')) {
+                        excelQuery = (params.taskDescription || '').includes('RESUMEN DE PROGRESO') ?
+                            `Progreso de estudiantes: ${params.taskDescription}` :
+                            `Progreso de todos los estudiantes en los cursos del docente con userId ${params.userId}`;
+                    }
 
                     const excelResult = await this.excelService.generateFromQuery({
-                        query: progressQuery,
+                        query: excelQuery,
                         userId: String(params.userId || 'anon'),
                         username: params.username,
                         userRoles: params.userRoles,
                     });
 
                     if (!excelResult.isFail()) {
-                        excelUrl = excelResult.getValue().url;
-                        console.log(`[LLM] Excel de progreso generado: ${excelUrl}`);
+                        const excelValue = excelResult.getValue();
+                        excelUrl = excelValue.url;
+                        // Capture the raw data so the LLM text response matches the Excel
+                        if (Array.isArray(excelValue.data) && excelValue.data.length > 0) {
+                            excelDataForContext = excelValue.data;
+                        }
+                        console.log(`[LLM] Excel generado: ${excelUrl} (${excelValue.rows} filas)`);
                     }
                 } catch (excelErr) {
-                    console.error('[LLM] Error generando Excel de progreso:', excelErr.message);
+                    console.error('[LLM] Error generando Excel:', excelErr.message);
                 }
+            }
+
+            // Inject the Excel data into processPrompt so the LLM describes
+            // exactly the same rows that were exported to the spreadsheet.
+            if (excelDataForContext) {
+                params.excelDataContext = excelDataForContext;
             }
 
             const result = await this.llmService.processPrompt(params);
@@ -209,4 +235,3 @@ export class LLMController {
     };
 }
 export default LLMController;
-
