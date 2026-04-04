@@ -115,6 +115,18 @@ export class SupabaseCourseRepository {
         return updated;
     }
 
+    /** Remove chat_messages & file_contexts that reference task_submissions, then remove the submissions */
+    async _deleteTaskSubmissionsWithChildren(taskIds) {
+        if (!taskIds || taskIds.length === 0) return;
+        const { data: subs } = await this.client.from('task_submissions').select('id').in('task_id', taskIds);
+        const subIds = (subs || []).map(s => s.id);
+        if (subIds.length > 0) {
+            await this.client.from('chat_messages').delete().in('submission_id', subIds);
+            await this.client.from('file_contexts').delete().in('submission_id', subIds);
+        }
+        await this.client.from('task_submissions').delete().in('task_id', taskIds);
+    }
+
     async delete(id) {
         // 1. Progress records
         await this.client.from('progreso_materia').delete().eq('curso_id', id);
@@ -178,7 +190,7 @@ export class SupabaseCourseRepository {
                         await this.client.from('content_items').delete().in('task_id', taskIds);
                     }
 
-                    await this.client.from('task_submissions').delete().in('task_id', taskIds);
+                    await this._deleteTaskSubmissionsWithChildren(taskIds);
 
                     // Delete question_sessions children before the sessions
                     const { data: qSessions } = await this.client
@@ -232,7 +244,7 @@ export class SupabaseCourseRepository {
                         await this.client.from('rag_documents').delete().in('content_item_id', rTaskItems.map(i => i.id));
                         await this.client.from('content_items').delete().in('task_id', remainingTaskIds);
                     }
-                    await this.client.from('task_submissions').delete().in('task_id', remainingTaskIds);
+                    await this._deleteTaskSubmissionsWithChildren(remainingTaskIds);
                     const { data: rQSessions } = await this.client.from('question_sessions').select('id').in('task_id', remainingTaskIds);
                     const rQSIds = (rQSessions || []).map(s => s.id);
                     if (rQSIds.length > 0) {
@@ -287,7 +299,7 @@ export class SupabaseCourseRepository {
                         await this.client.from('rag_documents').delete().in('content_item_id', fItems.map(i => i.id));
                     }
                     await this.client.from('content_items').delete().in('task_id', fTaskIds);
-                    await this.client.from('task_submissions').delete().in('task_id', fTaskIds);
+                    await this._deleteTaskSubmissionsWithChildren(fTaskIds);
 
                     const { data: fQS } = await this.client.from('question_sessions').select('id').in('task_id', fTaskIds);
                     const fQSIds = (fQS || []).map(s => s.id);
