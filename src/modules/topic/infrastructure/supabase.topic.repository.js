@@ -103,7 +103,8 @@ export class SupabaseTopicRepository {
             await this.client.from('reinforcement_results').delete().in('task_id', taskIds);
 
             // 6. Delete the tasks
-            await this.client.from('tasks').delete().eq('topic_id', id);
+            const { error: tasksError } = await this.client.from('tasks').delete().eq('topic_id', id);
+            if (tasksError) throw new Error(`Failed to delete tasks for topic ${id}: ${tasksError.message}`);
         }
 
         // 7. Delete content items directly under this topic (topic_id, no task)
