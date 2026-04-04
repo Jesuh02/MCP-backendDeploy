@@ -473,7 +473,26 @@ export class QuizMathValidator {
             newCorrectOrder[shuffleMap[newPos]] = newPos;
         }
 
-        return { items: shuffledItems, correctOrder: newCorrectOrder };
+        return { items: shuffledItems, correctOrder: newCorrectOrder, correctSequence };
+    }
+
+    /**
+     * Builds a canonical explanation for an ordering question that is guaranteed
+     * to match correctOrder. This is the SINGLE SOURCE OF TRUTH — the explanation
+     * is always derived from the computed correct sequence, never from the LLM text.
+     *
+     * @param {string[]} correctSequence - Items in their correct order
+     * @param {string}   llmExplanation  - Original LLM explanation (preserved as context)
+     * @returns {string} Canonical explanation
+     */
+    static buildOrderingExplanation(correctSequence, llmExplanation = '') {
+        const numbered = correctSequence
+            .map((item, i) => `${i + 1}. ${item}`)
+            .join('\n');
+        const base = llmExplanation
+            ? `${llmExplanation.replace(/\.\s*$/, '')}.\n\nOrden correcto:\n${numbered}`
+            : `Orden correcto:\n${numbered}`;
+        return base;
     }
 }
 
