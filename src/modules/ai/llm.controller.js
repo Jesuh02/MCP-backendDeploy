@@ -28,6 +28,14 @@ export class LLMController {
     }
 
     /**
+     * Returns true when the user's prompt indicates ANY intent to generate an Excel file,
+     * regardless of topic (progress, payments, users, etc.).
+     */
+    _isExcelIntent(prompt) {
+        return /\b(excel|xls|xlsx|exportar|descargar\s+reporte|generar\s+reporte|haz?\s+un?\s+excel|crea?\s+un?\s+excel|spreadsheet|hoja\s+de\s+c[aá]lculo|reporte\s+excel)\b/i.test(prompt);
+    }
+
+    /**
      * Detects if the prompt asks about which institutions the user belongs to.
      * e.g. "¿En cuántas instituciones estoy?", "mis instituciones", "a qué instituciones pertenezco"
      */
@@ -136,28 +144,46 @@ export class LLMController {
                 }
             }
 
-            // Detect Excel generation intent for student progress and generate the file proactively
+            // Detect Excel generation intent and generate the file proactively.
+            // The raw data from the Excel is then injected into processPrompt so the
+            // LLM text response describes the SAME data that went into the Excel file.
             let excelUrl = null;
-            if (this.excelService && this._isProgressExcelIntent(params.prompt, params.taskDescription || '')) {
+            let excelDataForContext = null;
+            if (this.excelService && this._isExcelIntent(params.prompt)) {
                 try {
-                    const progressQuery = (params.taskDescription || '').includes('RESUMEN DE PROGRESO')
-                        ? `Progreso de estudiantes: ${params.taskDescription}`
-                        : `Progreso de todos los estudiantes en los cursos del docente con userId ${params.userId}`;
+                    // For progress-specific queries, build a targeted query
+                    let excelQuery = params.prompt;
+                    if (this._isProgressExcelIntent(params.prompt, params.taskDescription || '')) {
+                        excelQuery = (params.taskDescription || '').includes('RESUMEN DE PROGRESO')
+                            ? `Progreso de estudiantes: ${params.taskDescription}`
+                            : `Progreso de todos los estudiantes en los cursos del docente con userId ${params.userId}`;
+                    }
 
                     const excelResult = await this.excelService.generateFromQuery({
-                        query: progressQuery,
+                        query: excelQuery,
                         userId: String(params.userId || 'anon'),
                         username: params.username,
                         userRoles: params.userRoles,
                     });
 
                     if (!excelResult.isFail()) {
-                        excelUrl = excelResult.getValue().url;
-                        console.log(`[LLM] Excel de progreso generado: ${excelUrl}`);
+                        const excelValue = excelResult.getValue();
+                        excelUrl = excelValue.url;
+                        // Capture the raw data so the LLM text response matches the Excel
+                        if (Array.isArray(excelValue.data) && excelValue.data.length > 0) {
+                            excelDataForContext = excelValue.data;
+                        }
+                        console.log(`[LLM] Excel generado: ${excelUrl} (${excelValue.rows} filas)`);
                     }
                 } catch (excelErr) {
-                    console.error('[LLM] Error generando Excel de progreso:', excelErr.message);
+                    console.error('[LLM] Error generando Excel:', excelErr.message);
                 }
+            }
+
+            // Inject the Excel data into processPrompt so the LLM describes
+            // exactly the same rows that were exported to the spreadsheet.
+            if (excelDataForContext) {
+                params.excelDataContext = excelDataForContext;
             }
 
             const result = await this.llmService.processPrompt(params);
