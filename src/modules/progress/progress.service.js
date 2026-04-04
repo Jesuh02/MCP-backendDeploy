@@ -1170,6 +1170,16 @@ export class ProgressDomainService {
      * enrolled directly by an admin without going through the request flow).
      */
     async isEnrolledAndApproved(userId, courseId) {
+        // Rol 3 (admin) tiene acceso a todos los cursos sin necesidad de matrícula
+        const roleIds = await this._getUserRoleIds(userId);
+        if (roleIds.includes(3)) {
+            return Result.ok({
+                enrolled: true,
+                status: 'admin',
+                enrollmentStatus: 'admin',
+            });
+        }
+
         // Siempre verificar enrollment_status en progreso_curso — tiene prioridad
         // sobre pre_enrollments porque un admin puede desactivar el acceso desde ahí.
         const courseEnrollmentStatus = await this.progressRepo.findCourseEnrollmentStatus(userId, courseId);
