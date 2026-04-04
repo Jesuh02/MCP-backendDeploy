@@ -60,17 +60,11 @@ export class SupabaseChatMessageRepository {
             timestamp: messageData.timestamp ?? Date.now(),
             session_id: messageData.sessionId,
             has_calification: messageData.hasCalification ?? false,
-            calification_value: messageData.calificationValue ?? null,
+            calification_value: messageData.calificationValue != null ? Number(messageData.calificationValue) : null,
             calification_added: messageData.calificationAdded ?? false,
             usuario_id: messageData.usuarioId ?? null,
             username: messageData.username ?? null,
-            is_typing: messageData.isTyping ?? false,
-            is_error: messageData.isError ?? false,
-            is_graph_response: messageData.isGraphResponse ?? false,
             origin: messageData.origin ?? null,
-            wa_message_id: messageData.waMessageId ?? null,
-            message_type: messageData.messageType ?? 'text',
-            status: messageData.status ?? 'sent',
             submission_id: messageData.submissionId ?? null,
             excel_url: messageData.excelUrl ?? null,
             attached_file_url: messageData.attachedFileUrl ?? null,
@@ -78,34 +72,40 @@ export class SupabaseChatMessageRepository {
             attached_file_type: messageData.attachedFileType ?? null,
             sender_avatar: messageData.senderAvatar ?? null,
         };
+
+        // Optional columns — only include if set
+        if (messageData.waMessageId != null) payload.wa_message_id = messageData.waMessageId;
+        if (messageData.isTyping) payload.is_typing = true;
+        if (messageData.isError) payload.is_error = true;
+        if (messageData.isGraphResponse) payload.is_graph_response = true;
+        if (messageData.messageType && messageData.messageType !== 'text') payload.message_type = messageData.messageType;
+        if (messageData.status && messageData.status !== 'sent') payload.status = messageData.status;
 
         const { data, error } = await this.client
             .from('chat_messages')
             .insert(payload)
             .select()
             .single();
-        if (error) throw new Error(error.message);
+        if (error) throw new Error(`chat_messages insert failed: ${error.message} (code=${error.code})`);
         return this._mapToDomain(data);
     }
 
     async upsert(messageData) {
+        // Build payload with only the core columns that always exist.
+        // Optional columns (is_typing, is_error, is_graph_response, message_type, status)
+        // are added only when their values are non-default to avoid failures on tenants
+        // whose schema may not include them yet.
         const payload = {
             message: messageData.message,
             is_from_user: messageData.isFromUser ?? false,
             timestamp: messageData.timestamp ?? Date.now(),
             session_id: messageData.sessionId,
             has_calification: messageData.hasCalification ?? false,
-            calification_value: messageData.calificationValue ?? null,
+            calification_value: messageData.calificationValue != null ? Number(messageData.calificationValue) : null,
             calification_added: messageData.calificationAdded ?? false,
             usuario_id: messageData.usuarioId ?? null,
             username: messageData.username ?? null,
-            is_typing: messageData.isTyping ?? false,
-            is_error: messageData.isError ?? false,
-            is_graph_response: messageData.isGraphResponse ?? false,
             origin: messageData.origin ?? null,
-            wa_message_id: messageData.waMessageId ?? null,
-            message_type: messageData.messageType ?? 'text',
-            status: messageData.status ?? 'sent',
             submission_id: messageData.submissionId ?? null,
             excel_url: messageData.excelUrl ?? null,
             attached_file_url: messageData.attachedFileUrl ?? null,
@@ -113,6 +113,16 @@ export class SupabaseChatMessageRepository {
             attached_file_type: messageData.attachedFileType ?? null,
             sender_avatar: messageData.senderAvatar ?? null,
         };
+
+        // Optional columns — only include if the caller set them so that tenants
+        // missing these columns are not affected.
+        if (messageData.waMessageId != null) payload.wa_message_id = messageData.waMessageId;
+        if (messageData.isTyping) payload.is_typing = true;
+        if (messageData.isError) payload.is_error = true;
+        if (messageData.isGraphResponse) payload.is_graph_response = true;
+        if (messageData.messageType && messageData.messageType !== 'text') payload.message_type = messageData.messageType;
+        if (messageData.status && messageData.status !== 'sent') payload.status = messageData.status;
+
         // If a remote id is provided, update the existing row; otherwise insert a new one.
         if (messageData.id && typeof messageData.id === 'number') {
             // Try to update by id first (only valid remote/Supabase ids)
@@ -129,7 +139,7 @@ export class SupabaseChatMessageRepository {
                     .eq('id', messageData.id)
                     .select()
                     .single();
-                if (error) throw new Error(error.message);
+                if (error) throw new Error(`chat_messages update failed: ${error.message} (code=${error.code})`);
                 return this._mapToDomain(data);
             }
         }
@@ -140,7 +150,7 @@ export class SupabaseChatMessageRepository {
             .insert(payload)
             .select()
             .single();
-        if (error) throw new Error(error.message);
+        if (error) throw new Error(`chat_messages insert failed: ${error.message} (code=${error.code})`);
         return this._mapToDomain(data);
     }
 
