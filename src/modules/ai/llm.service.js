@@ -375,7 +375,7 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
 - Cada objeto DEBE tener un campo "type" que sea "multiple_choice", "fill_in_blank" o "ordering".
 - Para "multiple_choice": campos "question", "type", "options" (array de 4), "correctIndex" (0-3), "explanation".
 - Para "fill_in_blank": campos "question", "type", "correctAnswer" (string), "hint" (string opcional), "explanation".
-- Para "ordering": campos "question", "type", "items" (array desordenado), "correctOrder" (array de índices), "explanation".
+- Para "ordering": campos "question", "type", "items" (array EN ORDEN CORRECTO — el servidor los baraja), "correctOrder": [0,1,2,...] (identidad — el servidor lo recalcula), "explanation".
 - NUNCA mezcles campos de diferentes objetos. Completa un objeto completamente ANTES de iniciar el siguiente.
 - Asegúrate de poner comas entre campos y entre objetos.
 - Genera EXACTAMENTE 10 ejercicios que se puedan verificar DIRECTAMENTE en el contexto RAG proporcionado.
@@ -1327,16 +1327,18 @@ Responde de forma clara y constructiva.`;
             }
 
             if (type === 'ordering') {
-                const items = Array.isArray(rawQuestion?.items) ? rawQuestion.items.map(i => String(i ?? '').trim()) : [];
-                const correctOrder = Array.isArray(rawQuestion?.correctOrder ?? rawQuestion?.correct_order)
+                const rawItems = Array.isArray(rawQuestion?.items) ? rawQuestion.items.map(i => String(i ?? '').trim()).filter(Boolean) : [];
+                const rawCorrectOrder = Array.isArray(rawQuestion?.correctOrder ?? rawQuestion?.correct_order)
                     ? (rawQuestion.correctOrder ?? rawQuestion.correct_order).map(Number)
                     : [];
-                if (items.length < 3 || correctOrder.length !== items.length) continue;
+                if (rawItems.length < 3) continue;
+                // Server-side shuffle: fixes LLM indexing errors
+                const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
                 sanitized.push({
                     type: 'ordering',
                     question: questionText,
-                    items,
-                    correctOrder,
+                    items: fixed.items,
+                    correctOrder: fixed.correctOrder,
                     explanation: String(rawQuestion?.explanation || '').trim() || 'Revisa el orden correcto en la explicación.',
                 });
                 seenQuestions.add(normalizedQuestion);

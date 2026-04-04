@@ -421,6 +421,60 @@ export class QuizMathValidator {
 
         return null;
     }
+
+    // ── Ordering question fix: shuffle server-side & recompute correctOrder ───
+
+    /**
+     * Validates and fixes an ordering question.
+     * 1. Reconstructs the correct sequence from LLM-provided items + correctOrder
+     * 2. Re-shuffles items server-side (Fisher-Yates)
+     * 3. Recomputes correctOrder programmatically
+     *
+     * This eliminates LLM indexing errors — the LLM only needs items in
+     * any order; the backend always produces a valid shuffle + correctOrder.
+     *
+     * @param {string[]} items       - Items as provided by the LLM
+     * @param {number[]} rawCorrectOrder - correctOrder as provided by the LLM (may be wrong)
+     * @returns {{ items: string[], correctOrder: number[] }}
+     */
+    static fixOrderingQuestion(items, rawCorrectOrder) {
+        const n = items.length;
+
+        // Step 1: Determine the correct sequence
+        const isValidPerm = Array.isArray(rawCorrectOrder) &&
+            rawCorrectOrder.length === n &&
+            rawCorrectOrder.every(i => Number.isInteger(i) && i >= 0 && i < n) &&
+            new Set(rawCorrectOrder).size === n;
+
+        const correctSequence = isValidPerm
+            ? rawCorrectOrder.map(i => items[i])
+            : [...items]; // Assume items are already in correct order
+
+        // Step 2: Fisher-Yates shuffle on index mapping
+        //   shuffleMap[newPos] = origPos  →  shuffledItems[newPos] = correctSequence[origPos]
+        const shuffleMap = Array.from({ length: n }, (_, i) => i);
+        for (let i = n - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffleMap[i], shuffleMap[j]] = [shuffleMap[j], shuffleMap[i]];
+        }
+
+        // Ensure at least one position changed (question isn't trivial)
+        if (shuffleMap.every((v, i) => v === i)) {
+            [shuffleMap[0], shuffleMap[1]] = [shuffleMap[1], shuffleMap[0]];
+        }
+
+        // Step 3: Build shuffled items
+        const shuffledItems = shuffleMap.map(origPos => correctSequence[origPos]);
+
+        // Step 4: Compute correctOrder (inverse permutation)
+        //   correctOrder[origPos] = newPos  →  shuffledItems[correctOrder[i]] = correctSequence[i]
+        const newCorrectOrder = new Array(n);
+        for (let newPos = 0; newPos < n; newPos++) {
+            newCorrectOrder[shuffleMap[newPos]] = newPos;
+        }
+
+        return { items: shuffledItems, correctOrder: newCorrectOrder };
+    }
 }
 
 export default QuizMathValidator;
