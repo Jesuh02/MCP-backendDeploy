@@ -809,6 +809,15 @@ export class ProgressDomainService {
         const course = await this.courseRepo.findById(courseId);
         if (!course) return Result.fail(new NotFoundError('Curso', courseId));
 
+        // Bloquear si el usuario tiene enrollment_status = 'inactivo' en progreso_curso
+        const courseEnrollmentStatus = await this.progressRepo.findCourseEnrollmentStatus(userId, courseId);
+        if (courseEnrollmentStatus !== null) {
+            const normalized = String(courseEnrollmentStatus).trim().toLowerCase();
+            if (normalized === 'inactivo') {
+                return Result.fail(new ForbiddenError('Tu acceso a este curso fue desactivado por el administrador'));
+            }
+        }
+
         const roleIds = await this._getUserRoleIds(userId);
         if (roleIds.includes(3)) {
             return Result.fail(new ForbiddenError('Los administradores no pueden matricularse en cursos'));
@@ -986,8 +995,31 @@ export class ProgressDomainService {
     async setCourseEnrollmentStatus(userId, courseId, status) {
         await this.progressRepo.setCourseEnrollmentStatus(userId, courseId, status);
 
-        // Notificar al estudiante cuando se le desactiva el acceso
+        // Cuando se desactiva el acceso, también revocar el pre_enrollment para
+        // que isEnrolledAndApproved no devuelva 'approved' desde pre_enrollments.
         const normalizedStatus = String(status || '').trim().toLowerCase();
+        if (normalizedStatus === 'inactivo') {
+            try {
+                const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+                if (existing) {
+                    await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'revoked');
+                }
+            } catch (err) {
+                console.warn('[ProgressService] Error syncing pre_enrollment on inactivo:', err?.message);
+            }
+        } else if (normalizedStatus === 'activo') {
+            // Al reactivar, restaurar el pre_enrollment a 'approved'
+            try {
+                const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
+                if (existing) {
+                    await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
+                }
+            } catch (err) {
+                console.warn('[ProgressService] Error syncing pre_enrollment on activo:', err?.message);
+            }
+        }
+
+        // Notificar al estudiante cuando se le desactiva el acceso
         if (normalizedStatus === 'inactivo' && this._notificationService) {
             try {
                 let courseName = 'un curso';
