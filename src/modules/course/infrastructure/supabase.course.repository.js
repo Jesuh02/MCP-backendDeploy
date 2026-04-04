@@ -204,6 +204,13 @@ export class SupabaseCourseRepository {
                     await this.client.from('content_items').delete().in('topic_id', topicIds);
                 }
 
+                // Reinforcement data referencing these topics
+                await this.client.from('reinforcement_question_history').delete().in('topic_id', topicIds);
+                await this.client.from('reinforcement_results').delete().in('topic_id', topicIds);
+
+                // Question sessions linked directly to topics
+                await this.client.from('question_sessions').delete().in('topic_id', topicIds);
+
                 await this.client.from('topics').delete().in('id', topicIds);
             }
 
@@ -245,6 +252,14 @@ export class SupabaseCourseRepository {
                     await this.client.from('content_items').delete().in('topic_id', remainingTopicIds);
                 }
                 await this.client.from('rag_documents').delete().in('topic_id', remainingTopicIds);
+
+                // Reinforcement data referencing remaining topics
+                await this.client.from('reinforcement_question_history').delete().in('topic_id', remainingTopicIds);
+                await this.client.from('reinforcement_results').delete().in('topic_id', remainingTopicIds);
+
+                // Question sessions linked directly to remaining topics
+                await this.client.from('question_sessions').delete().in('topic_id', remainingTopicIds);
+
                 await this.client.from('topics').delete().in('materia_id', subjectIds);
             }
 
