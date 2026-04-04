@@ -1334,12 +1334,13 @@ Responde de forma clara y constructiva.`;
                 if (rawItems.length < 3) continue;
                 // Server-side shuffle: fixes LLM indexing errors
                 const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
+                const llmExplanation = String(rawQuestion?.explanation || '').trim();
                 sanitized.push({
                     type: 'ordering',
                     question: questionText,
                     items: fixed.items,
                     correctOrder: fixed.correctOrder,
-                    explanation: String(rawQuestion?.explanation || '').trim() || 'Revisa el orden correcto en la explicación.',
+                    explanation: QuizMathValidator.buildOrderingExplanation(fixed.correctSequence, llmExplanation),
                 });
                 seenQuestions.add(normalizedQuestion);
                 if (sanitized.length >= 10) break;
@@ -1369,11 +1370,16 @@ Responde de forma clara y constructiva.`;
             const options = uniqueOptions.slice(0, 4);
             const requestedIndex = Number(rawQuestion?.correctIndex);
             const safeRequestedIndex = Number.isInteger(requestedIndex) ? requestedIndex : 0;
-            const originalCorrectOption = rawOptions[safeRequestedIndex] || options[0];
+            // Use ORIGINAL unfiltered options array for index lookup to avoid index shift
+            // when empty strings were removed from rawOptions
+            const originalUnfilteredOptions = Array.isArray(rawQuestion?.options) ? rawQuestion.options : [];
+            const originalCorrectText = String(originalUnfilteredOptions[safeRequestedIndex] || '').trim();
+            const originalCorrectOption = originalCorrectText || options[0];
             const normalizedCorrectOption = this._normalizeQuizText(originalCorrectOption);
 
             let correctIndex = options.findIndex(option => this._normalizeQuizText(option) === normalizedCorrectOption);
             if (correctIndex < 0) {
+                console.warn(`[LLMService] correctIndex=${safeRequestedIndex} could not be mapped to filtered options for: "${questionText.substring(0, 60)}...". Defaulting to 0.`);
                 correctIndex = 0;
             }
 
