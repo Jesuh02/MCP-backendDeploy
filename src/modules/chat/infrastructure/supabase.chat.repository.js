@@ -144,14 +144,74 @@ export class SupabaseChatMessageRepository {
             }
         }
 
-        // No existing row found (or no id provided) — insert without id
+        // No existing row found (or no id provided) — insert without id.
         const { data, error } = await this.client
             .from('chat_messages')
             .insert(payload)
             .select()
             .single();
-        if (error) throw new Error(`chat_messages insert failed: ${error.message} (code=${error.code})`);
-        return this._mapToDomain(data);
+
+        if (!error) return this._mapToDomain(data);
+
+        // Code 23505 = duplicate primary key. This happens when the identity sequence is
+        // behind the table's actual max id (e.g. after a bulk data import / migration ran
+        // with OVERRIDING SYSTEM VALUE). Attempt to repair the sequence and retry once.
+        if (error.code === '23505' && error.message.includes('chat_messages_pkey')) {
+            console.warn('[ChatRepo] pkey conflict on insert — attempting sequence repair…');
+            await this._repairIdentitySequence();
+
+            const { data: retryData, error: retryError } = await this.client
+                .from('chat_messages')
+                .insert(payload)
+                .select()
+                .single();
+            if (!retryError) return this._mapToDomain(retryData);
+            throw new Error(`chat_messages insert failed: ${retryError.message} (code=${retryError.code})`);
+        }
+
+        throw new Error(`chat_messages insert failed: ${error.message} (code=${error.code})`);
+    }
+
+    /**
+     * Resets the identity sequence for chat_messages.id to max(id)+1 so that
+     * auto-generated values no longer collide with existing rows.
+     * Uses the execute_sql RPC that is already deployed in the tenant database.
+     */
+    async _repairIdentitySequence() {
+        try {
+            const sql = `
+                SELECT setval(
+                    pg_get_serial_sequence('public.chat_messages', 'id'),
+                    COALESCE((SELECT MAX(id) FROM public.chat_messages), 0) + 1,
+                    false
+                )`.trim();
+            const { error } = await this.client.rpc('execute_sql', { query: sql });
+            if (error) {
+                // pg_get_serial_sequence may return NULL for GENERATED ALWAYS AS IDENTITY
+                // on some PostgreSQL versions. Fall back to looking up the sequence directly.
+                const fallbackSql = `
+                    SELECT setval(
+                        (
+                            SELECT pg_catalog.quote_ident(ns.nspname) || '.' || pg_catalog.quote_ident(seq.relname)
+                            FROM pg_class seq
+                            JOIN pg_depend d     ON d.objid = seq.oid
+                            JOIN pg_class tbl   ON tbl.oid = d.refobjid
+                            JOIN pg_namespace ns ON ns.oid = seq.relnamespace
+                            JOIN pg_attribute attr
+                                ON attr.attrelid = d.refobjid AND attr.attnum = d.refobjsubid
+                            WHERE tbl.relname = 'chat_messages'
+                              AND attr.attname = 'id'
+                              AND seq.relkind  = 'S'
+                        ),
+                        COALESCE((SELECT MAX(id) FROM public.chat_messages), 0) + 1,
+                        false
+                    )`.trim();
+                await this.client.rpc('execute_sql', { query: fallbackSql });
+            }
+            console.warn('[ChatRepo] chat_messages identity sequence repaired successfully.');
+        } catch (e) {
+            console.warn('[ChatRepo] Sequence auto-repair failed (will be retried next insert):', e.message);
+        }
     }
 
     async delete(id) {
