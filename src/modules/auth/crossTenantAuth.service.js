@@ -15,6 +15,7 @@
  *     that prevents username-collision attacks across tenants.
  */
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { Result } from '../../shared/Result.js';
 import { UnauthorizedError, ConflictError, ValidationError, ForbiddenError } from '../../shared/errors/index.js';
 import { SupabaseUserRepository, hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
@@ -469,5 +470,103 @@ export class CrossTenantAuthService {
             return null;
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Password Reset (in-memory store with 30-min TTL)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Generates a 4-digit code, stores it for 30 min, and sends it by email.
+     * Always resolves (never throws) so callers can fire-and-forget for security.
+     */
+    async sendPasswordReset(email, emailAdapter) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const code = String(Math.floor(1000 + Math.random() * 9000));
+        const expiresAt = Date.now() + 30 * 60 * 1000;
+
+        // Find the user across all tenants
+        let foundUserId = null;
+        let foundTenantId = null;
+        const entries = getAllTenantEntries();
+        for (const entry of entries) {
+            if (!entry.client) continue;
+            try {
+                const userRepo = new SupabaseUserRepository(entry.client);
+                const user = await userRepo.findByEmail(normalizedEmail);
+                if (user) {
+                    foundUserId = user.id;
+                    foundTenantId = entry.id;
+                    break;
+                }
+            } catch (e) {
+                console.warn(`[CrossTenantAuth] sendPasswordReset probe failed for tenant ${entry.id}: ${e.message}`);
+            }
+        }
+
+        // Store code regardless of whether user was found (security: always store+send)
+        _resetStore.set(normalizedEmail, { code, expiresAt, userId: foundUserId, tenantId: foundTenantId });
+        setTimeout(() => _resetStore.delete(normalizedEmail), 30 * 60 * 1000);
+
+        if (!emailAdapter) {
+            console.warn('[CrossTenantAuth] sendPasswordReset: no emailAdapter configured');
+            return;
+        }
+
+        try {
+            await emailAdapter.sendEmail({
+                to: normalizedEmail,
+                subject: 'Código de recuperación de contraseña',
+                html: `
+                    <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px;background:#1A1A2E;color:#fff;border-radius:12px">
+                        <h2 style="color:#8B5CF6;margin-bottom:8px">Recuperación de contraseña</h2>
+                        <p style="color:#94A3B8">Usa el siguiente código para restablecer tu contraseña. Este código es válido por <strong style="color:#fff">30 minutos</strong>.</p>
+                        <div style="background:#16213E;border:2px solid #8B5CF6;border-radius:10px;padding:20px;text-align:center;margin:24px 0">
+                            <span style="font-size:36px;font-weight:bold;letter-spacing:12px;color:#8B5CF6">${code}</span>
+                        </div>
+                        <p style="color:#EF4444;font-size:13px">Si no solicitaste este código, ignora este correo.</p>
+                    </div>`,
+            });
+            console.log(`[CrossTenantAuth] Reset code sent to ${normalizedEmail}`);
+        } catch (e) {
+            console.error(`[CrossTenantAuth] Failed to send reset email to ${normalizedEmail}: ${e.message}`);
+        }
+    }
+
+    /**
+     * Returns true if the code is valid and not expired.
+     */
+    async verifyPasswordResetCode(email, code) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const entry = _resetStore.get(normalizedEmail);
+        if (!entry) return false;
+        if (Date.now() > entry.expiresAt) { _resetStore.delete(normalizedEmail); return false; }
+        return entry.code === String(code);
+    }
+
+    /**
+     * Verifies the code and updates the password in the correct tenant DB.
+     */
+    async resetPassword(email, code, newPassword) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const valid = await this.verifyPasswordResetCode(normalizedEmail, code);
+        if (!valid) throw new Error('Código inválido o expirado');
+
+        const entry = _resetStore.get(normalizedEmail);
+        if (!entry?.tenantId || !entry?.userId) throw new Error('No se encontró información del usuario');
+
+        const tenantEntries = getAllTenantEntries();
+        const tenantEntry = tenantEntries.find(e => e.id === entry.tenantId);
+        if (!tenantEntry?.client) throw new Error('Tenant no disponible');
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        const userRepo = new SupabaseUserRepository(tenantEntry.client);
+        await userRepo.update(entry.userId, { password: hashedPassword });
+
+        _resetStore.delete(normalizedEmail);
+        console.log(`[CrossTenantAuth] Password reset for user ${entry.userId} in tenant ${entry.tenantId}`);
+    }
 }
+
+/** In-memory store: email → { code, expiresAt, userId, tenantId } */
+const _resetStore = new Map();
 
