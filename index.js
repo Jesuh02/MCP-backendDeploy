@@ -41,6 +41,11 @@ initSocketServer(server);
 // Ejecutar migraciones DDL en background (no bloquea el arranque)
 runStartupMigrations().catch(() => {/* errores ya logueados en migrationRunner */});
 
+// Restaurar recordatorios de entrega de tareas con fecha futura (se pierden en cada reinicio)
+container.taskService.restoreTaskReminders().catch(err =>
+    console.error('[Bootstrap] Error restaurando recordatorios de tareas:', err.message)
+);
+
 // ═══════════════════════════════════════════════════════════
 // GRACEFUL SHUTDOWN — Compatible con Railway/Docker
 // ═══════════════════════════════════════════════════════════
