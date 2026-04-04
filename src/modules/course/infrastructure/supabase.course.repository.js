@@ -155,9 +155,8 @@ export class SupabaseCourseRepository {
         if (subjects && subjects.length > 0) {
             const subjectIds = subjects.map(s => s.id);
 
-            // Topics linked by materia_id OR subject_id
-            const orFilter = subjectIds.map(sid => `materia_id.eq.${sid},subject_id.eq.${sid}`).join(',');
-            const { data: topics } = await this.client.from('topics').select('id').or(orFilter);
+            // Topics linked by materia_id (FK: fk_topics_materia)
+            const { data: topics } = await this.client.from('topics').select('id').in('materia_id', subjectIds);
 
             if (topics && topics.length > 0) {
                 const topicIds = topics.map(t => t.id);
@@ -210,6 +209,9 @@ export class SupabaseCourseRepository {
 
             // Delete progreso_materia by materia_id to clear FK before dropping subjects
             await this.client.from('progreso_materia').delete().in('materia_id', subjectIds);
+
+            // Safety-net: force-delete any remaining topics referencing these subjects
+            await this.client.from('topics').delete().in('materia_id', subjectIds);
 
             const { error: subjectDeleteError } = await this.client.from('subjects').delete().eq('course_id', id);
             if (subjectDeleteError) throw new Error(`Error eliminando materias del curso: ${subjectDeleteError.message}`);
