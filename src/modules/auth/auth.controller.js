@@ -1,4 +1,4 @@
-import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema, googleLoginSchema } from './auth.schemas.js';
+import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema, googleLoginSchema, forgotPasswordSchema, verifyResetCodeSchema, resetPasswordSchema } from './auth.schemas.js';
 import { ValidationError, ConflictError } from '../../shared/errors/index.js';
 import { runInTenantContext, getTenantClient, TENANT_CONFIGS } from '../../config/tenantRegistry.js';
 import { verifyGoogleIdToken } from './infrastructure/google-token.verifier.js';
@@ -20,9 +20,10 @@ async function normalizeGoogleLoginPayload(payload) {
 }
 
 export class AuthController {
-    constructor({ authService, crossTenantAuthService }) {
+    constructor({ authService, crossTenantAuthService, emailAdapter }) {
         this.authService = authService;
         this.crossTenantAuthService = crossTenantAuthService;
+        this.emailAdapter = emailAdapter || null;
     }
 
     register = async(req, res, next) => {
@@ -140,6 +141,39 @@ export class AuthController {
             const result = await this.crossTenantAuthService.googleLogin(normalized);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Sends a 4-digit reset code to the given email. Always responds { sent: true } for security. */
+    forgotPassword = async(req, res, next) => {
+        try {
+            const { error, value } = forgotPasswordSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            // Fire-and-forget: security — never reveal if email exists
+            this.crossTenantAuthService.sendPasswordReset(value.email, this.emailAdapter).catch(e =>
+                console.error('[AuthController] forgotPassword error (silent):', e.message)
+            );
+            res.json({ success: true, data: { sent: true } });
+        } catch (err) { next(err); }
+    };
+
+    /** Verifies the 4-digit reset code (no password change). */
+    verifyResetCode = async(req, res, next) => {
+        try {
+            const { error, value } = verifyResetCodeSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            const valid = await this.crossTenantAuthService.verifyPasswordResetCode(value.email, value.code);
+            res.json({ success: true, data: { valid } });
+        } catch (err) { next(err); }
+    };
+
+    /** Resets the user password after code verification. */
+    resetPassword = async(req, res, next) => {
+        try {
+            const { error, value } = resetPasswordSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            await this.crossTenantAuthService.resetPassword(value.email, value.code, value.newPassword);
+            res.json({ success: true, data: { message: 'Contraseña actualizada correctamente' } });
         } catch (err) { next(err); }
     };
 }
