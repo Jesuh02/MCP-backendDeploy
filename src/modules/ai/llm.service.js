@@ -456,9 +456,19 @@ Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejid
             }
 
             // 3. Build user prompt with file content if available
+            // Cap file content to ~100 000 chars (≈ 25 000 tokens) to stay well under
+            // the DeepSeek context limit of 131 072 tokens once the system prompt is added.
+            const MAX_FILE_CHARS = 100_000;
             let fullPrompt = prompt;
             if (resolvedFileContent) {
-                fullPrompt = `Contenido del archivo:\n${resolvedFileContent}\n\nPregunta/Instrucción: ${prompt}`;
+                const safeContent = resolvedFileContent.length > MAX_FILE_CHARS
+                    ? resolvedFileContent.slice(0, MAX_FILE_CHARS) +
+                      `\n\n[... contenido truncado: el archivo supera el límite de contexto. Se muestran los primeros ${MAX_FILE_CHARS} caracteres de ${resolvedFileContent.length} totales ...]`
+                    : resolvedFileContent;
+                if (resolvedFileContent.length > MAX_FILE_CHARS) {
+                    console.warn(`[LLMDomainService] ⚠️ fileContent truncated from ${resolvedFileContent.length} to ${MAX_FILE_CHARS} chars to avoid context overflow`);
+                }
+                fullPrompt = `Contenido del archivo:\n${safeContent}\n\nPregunta/Instrucción: ${prompt}`;
             }
 
             // 4. Check reinforcement history to avoid repetitions (skip for EASY — allow repeats for fast loading)
