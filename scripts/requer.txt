@@ -1,0 +1,5 @@
+## las menos lineas de codigo posibles para la misma solucion
+## principios SOLID
+## Arquitectura hexagonal
+## codigo limpio 
+## buenas practicas

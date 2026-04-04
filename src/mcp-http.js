@@ -7,8 +7,8 @@
 import './config/env.js';
 import express from 'express';
 import os from 'os';
-import { MCPService } from './domain/services/MCPService.js';
-import { SupabaseService } from './infrastructure/database/SupabaseService.js';
+import { MCPService } from './modules/ai/mcp-legacy.service.js';
+import { SupabaseService } from './shared/database/SupabaseService.js';
 
 const app = express();
 const PORT = process.env.MCP_HTTP_PORT || 3000;
@@ -156,7 +156,7 @@ app.post('/tools/list', async(req, res) => {
 - Use ORDER BY and LIMIT for top/bottom results
 
 **AVAILABLE TABLES:**
-usuarios, personas, courses, videos, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos, progreso_estudiante`,
+usuarios, personas, courses, videos, topics, content_items, tasks, task_submissions, subscriptions, chat_messages, file_contexts, roles, recursos, rol_recursos, progreso_curso, progreso_materia`,
                     inputSchema: {
                         type: 'object',
                         properties: {
@@ -434,3 +434,4 @@ main().catch((error) => {
     console.error('❌ Fatal error:', error);
     process.exit(1);
 });
+
