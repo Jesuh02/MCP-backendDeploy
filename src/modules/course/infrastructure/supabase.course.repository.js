@@ -210,8 +210,43 @@ export class SupabaseCourseRepository {
             // Delete progreso_materia by materia_id to clear FK before dropping subjects
             await this.client.from('progreso_materia').delete().in('materia_id', subjectIds);
 
-            // Safety-net: force-delete any remaining topics referencing these subjects
-            await this.client.from('topics').delete().in('materia_id', subjectIds);
+            // Safety-net: force-delete any remaining topics AND their children referencing these subjects
+            const { data: remainingTopics } = await this.client.from('topics').select('id').in('materia_id', subjectIds);
+            if (remainingTopics && remainingTopics.length > 0) {
+                const remainingTopicIds = remainingTopics.map(t => t.id);
+
+                // Cascade children of remaining topics
+                const { data: remainingTasks } = await this.client.from('tasks').select('id').in('topic_id', remainingTopicIds);
+                if (remainingTasks && remainingTasks.length > 0) {
+                    const remainingTaskIds = remainingTasks.map(t => t.id);
+                    await this.client.from('rag_documents').delete().in('task_id', remainingTaskIds);
+                    const { data: rTaskItems } = await this.client.from('content_items').select('id').in('task_id', remainingTaskIds);
+                    if (rTaskItems && rTaskItems.length > 0) {
+                        await this.client.from('rag_documents').delete().in('content_item_id', rTaskItems.map(i => i.id));
+                        await this.client.from('content_items').delete().in('task_id', remainingTaskIds);
+                    }
+                    await this.client.from('task_submissions').delete().in('task_id', remainingTaskIds);
+                    const { data: rQSessions } = await this.client.from('question_sessions').select('id').in('task_id', remainingTaskIds);
+                    const rQSIds = (rQSessions || []).map(s => s.id);
+                    if (rQSIds.length > 0) {
+                        const { data: rQHistory } = await this.client.from('questions_history').select('id').in('session_id', rQSIds);
+                        const rQHIds = (rQHistory || []).map(h => h.id);
+                        if (rQHIds.length > 0) {
+                            await this.client.from('question_options').delete().in('question_id', rQHIds);
+                        }
+                        await this.client.from('questions_history').delete().in('session_id', rQSIds);
+                    }
+                    await this.client.from('question_sessions').delete().in('task_id', remainingTaskIds);
+                    await this.client.from('tasks').delete().in('topic_id', remainingTopicIds);
+                }
+                const { data: rTopicItems } = await this.client.from('content_items').select('id').in('topic_id', remainingTopicIds);
+                if (rTopicItems && rTopicItems.length > 0) {
+                    await this.client.from('rag_documents').delete().in('content_item_id', rTopicItems.map(i => i.id));
+                    await this.client.from('content_items').delete().in('topic_id', remainingTopicIds);
+                }
+                await this.client.from('rag_documents').delete().in('topic_id', remainingTopicIds);
+                await this.client.from('topics').delete().in('materia_id', subjectIds);
+            }
 
             const { error: subjectDeleteError } = await this.client.from('subjects').delete().eq('course_id', id);
             if (subjectDeleteError) throw new Error(`Error eliminando materias del curso: ${subjectDeleteError.message}`);
