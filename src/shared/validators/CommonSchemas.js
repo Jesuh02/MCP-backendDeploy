@@ -112,6 +112,7 @@ export const createContentItemSchema = Joi.object({
     body: Joi.string().max(50000).allow('', null).optional(),
     content: Joi.string().max(50000).allow('', null).optional(),
     fileUri: Joi.string().allow(null, '').optional(),
+    file_uri: Joi.string().allow(null, '').optional(),
     fileName: Joi.string().max(255).allow(null, '').optional(),
     file_name: Joi.string().max(255).allow(null, '').optional(),
     name: Joi.string().max(500).allow('', null).optional(),
@@ -136,6 +137,7 @@ export const createContentItemSchema = Joi.object({
     if (!value.fileName && value.file_name) value.fileName = value.file_name;
     if (!value.title && value.fileName) value.title = value.fileName;
     if (!value.body && value.uriString) value.body = value.uriString;
+    if (!value.fileUri && value.file_uri) value.fileUri = value.file_uri;
     if (!value.body && value.fileUri) value.body = value.fileUri;
     if (!value.body && value.content) value.body = value.content;
     if (value.order_index !== undefined && value.orderIndex === undefined) value.orderIndex = value.order_index;
@@ -148,6 +150,7 @@ export const createContentItemSchema = Joi.object({
     delete value.name;
     delete value.uriString;
     delete value.fileUri;
+    delete value.file_uri;
     delete value.fileName;
     delete value.file_name;
     delete value.content;
