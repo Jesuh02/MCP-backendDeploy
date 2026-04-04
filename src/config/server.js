@@ -25,6 +25,7 @@ export function createApp() {
 
     const ALLOWED_ORIGINS = [
         'https://coursevwebfrontend1.jdavidherazo.workers.dev',
+        'https://coursevwebfrontend1.coursev.workers.dev',
         'http://localhost:5173',
         'http://127.0.0.1:5173',
         // Agrega aquí otros orígenes de confianza
@@ -35,8 +36,9 @@ export function createApp() {
         // Allow exact matches from the allowlist
         const isAllowed = origin && (
             ALLOWED_ORIGINS.includes(origin) ||
-            // Allow any *.jdavidherazo.workers.dev subdomain (other deployments/tenants)
+            // Allow any *.jdavidherazo.workers.dev or *.coursev.workers.dev subdomain
             /^https:\/\/[a-z0-9-]+\.jdavidherazo\.workers\.dev$/.test(origin) ||
+            /^https:\/\/[a-z0-9-]+\.coursev\.workers\.dev$/.test(origin) ||
             // Allow localhost for development
             /^https?:\/\/localhost(:\d+)?$/.test(origin)
         );
