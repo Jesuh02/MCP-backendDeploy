@@ -11,18 +11,9 @@ import { idempotencyGuard } from '../shared/middleware/IdempotencyMiddleware.js'
 export function createApp() {
     const app = express();
 
-    // Security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, etc.)
-    // crossOriginResourcePolicy desactivado para no colisionar con el CORS manual de abajo.
-    app.use(helmet({
-        crossOriginResourcePolicy: false,
-    }));
-
-    app.use(express.json({
-        limit: '5mb',
-        verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); },
-    }));
-    app.use(express.urlencoded({ extended: true, limit: '5mb' }));
-
+    // ── CORS — must be the VERY FIRST middleware so preflight responses
+    //    always carry the correct headers, even if later middleware
+    //    (body parsers, Helmet, etc.) fail or short-circuit. ──
     const ALLOWED_ORIGINS = [
         'https://coursevwebfrontend1.jdavidherazo.workers.dev',
         'https://coursevwebfrontend1.coursev.workers.dev',
@@ -47,10 +38,23 @@ export function createApp() {
             res.header('Vary', 'Origin');
         }
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-MCP-Client, X-MCP-Request-Id, X-Tenant-Id');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-MCP-Client, X-MCP-Request-Id, X-Tenant-Id, X-Tenant-ID');
+        res.header('Access-Control-Max-Age', '86400');
         if (req.method === 'OPTIONS') return res.sendStatus(204);
         next();
     });
+
+    // Security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, etc.)
+    // crossOriginResourcePolicy desactivado para no colisionar con el CORS manual.
+    app.use(helmet({
+        crossOriginResourcePolicy: false,
+    }));
+
+    app.use(express.json({
+        limit: '5mb',
+        verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); },
+    }));
+    app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
     app.use((req, res, next) => {
         const start = Date.now();
