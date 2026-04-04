@@ -16,7 +16,32 @@ export class QuizMathValidator {
         if (!MATH_SIGNALS.test(lower) && !HAS_SIGNIFICANT_NUMBERS.test(text.replace(/,/g, ''))) return q;
 
         try {
-            const result = QuizMathValidator.computeExpectedAnswer(text);
+            let result = QuizMathValidator.computeExpectedAnswer(text);
+
+            // Cross-validate with explanation to catch LLM content/option errors
+            if (q.explanation && typeof q.explanation === 'string') {
+                const explResult = QuizMathValidator._tryFromExplanation(q.explanation);
+                if (explResult) {
+                    if (!result) {
+                        result = explResult;
+                    } else if (!result.value.equals(explResult.value)) {
+                        if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
+                            const qMatch = QuizMathValidator._findClosestOption(q.options, result.value);
+                            const eMatch = QuizMathValidator._findClosestOption(q.options, explResult.value);
+                            if (eMatch.within && !qMatch.within) {
+                                console.warn(`🔧 [MathVerify] Question→${result.value} vs Explanation→${explResult.value}; using explanation`);
+                                result = explResult;
+                            } else if (!eMatch.within && !qMatch.within) {
+                                console.warn(`🔧 [MathVerify] NEITHER matches options: Question→${result.value}, Explanation→${explResult.value}`);
+                            }
+                        } else if (q.type === 'fill_in_blank') {
+                            console.warn(`🔧 [MathVerify] Question→${result.value} vs Explanation→${explResult.value}; using explanation for fill_in_blank`);
+                            result = explResult;
+                        }
+                    }
+                }
+            }
+
             if (!result) return q;
 
             const finalAnswer = QuizMathValidator._applyDecimals(result.value, text);
@@ -61,30 +86,13 @@ export class QuizMathValidator {
 
     static _verifyMultipleChoice(q, finalAnswer, steps) {
         if (!Array.isArray(q.options) || q.options.length === 0) return q;
-        const optionValues = q.options.map(opt => {
-            const clean = String(opt).replace(/,/g, '');
-            const nums = clean.match(/\d+\.?\d*/g);
-            if (!nums) return null;
-            const parsed = nums.map(n => QuizMathValidator._parseDecimal(n)).filter(Boolean);
-            return parsed.length > 0 ?
-                parsed.reduce((a, b) => a.abs().gt(b.abs()) ? a : b) :
-                null;
-        });
 
-        let closestIdx = -1;
-        let closestDiff = new Decimal(Infinity);
-        for (let i = 0; i < optionValues.length; i++) {
-            if (!optionValues[i]) continue;
-            const diff = optionValues[i].minus(finalAnswer).abs();
-            if (diff.lt(closestDiff)) { closestDiff = diff;
-                closestIdx = i; }
-        }
+        const match = QuizMathValidator._findClosestOption(q.options, finalAnswer);
 
-        const tolerance = Decimal.max(finalAnswer.abs().times('0.001'), '0.01');
-        if (closestIdx >= 0 && closestDiff.lte(tolerance)) {
-            if (closestIdx !== q.correctIndex) {
-                console.warn(`🔧 [MathVerify] CORRECTED MC: index ${q.correctIndex}→${closestIdx} (computed=${finalAnswer})`);
-                q.correctIndex = closestIdx;
+        if (match.within) {
+            if (match.index !== q.correctIndex) {
+                console.warn(`🔧 [MathVerify] CORRECTED MC: index ${q.correctIndex}→${match.index} (computed=${finalAnswer})`);
+                q.correctIndex = match.index;
                 q.explanation = `${steps.join('. ')}. Resultado final: ${finalAnswer}.`;
             }
             return q;
@@ -96,7 +104,9 @@ export class QuizMathValidator {
     // ── Strategy 1: Explicit arithmetic "12,345 + 9,876 + ..." ───────────
 
     static _tryExplicitArithmetic(text) {
-        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
+        let cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
+        // Implicit multiplication: 8(55) → 8 × 55
+        cleaned = cleaned.replace(/(\d[\d,]*\.?\d*)\s*\(\s*(\d[\d,]*\.?\d*)\s*\)/g, '$1 × $2');
         const numberPat = '\\d[\\d,]*\\.?\\d*';
         const opPat = '[+\\-×*÷/]';
         const exprRegex = new RegExp(
@@ -420,6 +430,93 @@ export class QuizMathValidator {
         }
 
         return null;
+    }
+
+    // ── Explanation cross-validation helpers ──────────────────────────────
+
+    /**
+     * Extracts the computed result from an LLM explanation text.
+     * Tries: (1) computing arithmetic directly, (2) labeled results,
+     * (3) terminal "= X" in chains. Catches cases where the question
+     * text can't be parsed but the explanation has step-by-step math.
+     */
+    static _tryFromExplanation(explanation) {
+        if (!explanation || typeof explanation !== 'string') return null;
+
+        // Strategy 1: Compute arithmetic directly from explanation text
+        const computed = QuizMathValidator._tryExplicitArithmetic(explanation);
+
+        // Strategy 2: Labeled result patterns (highest confidence)
+        const labelPatterns = [
+            /resultado\s+(?:final\s*)?(?:es|=|:)\s*\$?\s*([\d,]+\.?\d*)/i,
+            /(?:el\s+)?total\s+(?:final\s+)?(?:es|=|:)\s*\$?\s*([\d,]+\.?\d*)/i,
+            /(?:the\s+)?(?:final\s+)?(?:answer|result)\s+(?:is|=|:)\s*\$?\s*([\d,]+\.?\d*)/i,
+            /(?:respuesta|solución)\s+(?:correcta\s+)?(?:es|=|:)\s*\$?\s*([\d,]+\.?\d*)/i,
+        ];
+
+        let labeledResult = null;
+        for (const re of labelPatterns) {
+            const rm = explanation.match(re);
+            if (rm) {
+                const d = QuizMathValidator._parseDecimal(rm[1]);
+                if (d && d.gt(0)) { labeledResult = d; break; }
+            }
+        }
+
+        // Strategy 3: Terminal "= NUMBER" in arithmetic chains
+        const equalResults = [];
+        const eqPattern = /=\s*\$?\s*([\d,]+\.?\d*)/g;
+        let m;
+        while ((m = eqPattern.exec(explanation)) !== null) {
+            const d = QuizMathValidator._parseDecimal(m[1]);
+            if (d && d.gt(0)) equalResults.push(d);
+        }
+
+        const lastEquals = equalResults.length > 0 ? equalResults[equalResults.length - 1] : null;
+
+        // Priority: computed arithmetic > labeled result > last "= X"
+        const finalValue = (computed ? computed.value : null) || labeledResult || lastEquals;
+        if (!finalValue) return null;
+
+        const steps = computed
+            ? computed.steps
+            : [`[Verificado desde explicación] Resultado: ${finalValue}`];
+
+        return { value: finalValue, steps };
+    }
+
+    /**
+     * Finds the closest option to a given numeric value.
+     * Returns { index, diff, within } where within=true if diff ≤ tolerance.
+     */
+    static _findClosestOption(options, value) {
+        if (!Array.isArray(options) || options.length === 0) {
+            return { index: -1, diff: new Decimal(Infinity), within: false };
+        }
+
+        let closestIdx = -1;
+        let closestDiff = new Decimal(Infinity);
+
+        for (let i = 0; i < options.length; i++) {
+            const clean = String(options[i]).replace(/,/g, '');
+            const nums = clean.match(/\d+\.?\d*/g);
+            if (!nums) continue;
+            const parsed = nums.map(n => QuizMathValidator._parseDecimal(n)).filter(Boolean);
+            if (parsed.length === 0) continue;
+            const optVal = parsed.reduce((a, b) => a.abs().gt(b.abs()) ? a : b);
+            const diff = optVal.minus(value).abs();
+            if (diff.lt(closestDiff)) {
+                closestDiff = diff;
+                closestIdx = i;
+            }
+        }
+
+        const tolerance = Decimal.max(value.abs().times('0.001'), '0.01');
+        return {
+            index: closestIdx,
+            diff: closestDiff,
+            within: closestIdx >= 0 && closestDiff.lte(tolerance)
+        };
     }
 
     // ── Ordering question fix: shuffle server-side & recompute correctOrder ───
