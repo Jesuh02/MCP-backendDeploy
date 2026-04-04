@@ -161,7 +161,19 @@ export class SupabaseTaskRepository {
         // 3. Delete task submissions
         await this.client.from('task_submissions').delete().eq('task_id', id);
 
-            // 4. Delete question sessions referencing this task
+            // 4. Delete question sessions (with children) referencing this task
+        const { data: qSessions } = await this.client
+            .from('question_sessions').select('id').eq('task_id', id);
+        const qSessionIds = (qSessions || []).map(s => s.id);
+        if (qSessionIds.length > 0) {
+            const { data: qHistory } = await this.client
+                .from('questions_history').select('id').in('session_id', qSessionIds);
+            const qHistoryIds = (qHistory || []).map(h => h.id);
+            if (qHistoryIds.length > 0) {
+                await this.client.from('question_options').delete().in('question_id', qHistoryIds);
+            }
+            await this.client.from('questions_history').delete().in('session_id', qSessionIds);
+        }
         await this.client.from('question_sessions').delete().eq('task_id', id);
 
         // 4b. Delete reinforcement data tied to this task
