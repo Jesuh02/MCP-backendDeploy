@@ -7,9 +7,10 @@ let io = null;
  * Initializes the Socket.io server attached to the given HTTP server.
  * Clients join course-scoped rooms to receive targeted events.
  * @param {import('http').Server} httpServer
+ * @param {{ notificationRepository?: import('../modules/notification/infrastructure/supabase.notification.repository.js').SupabaseNotificationRepository }} [deps]
  * @returns {import('socket.io').Server}
  */
-export function initSocketServer(httpServer) {
+export function initSocketServer(httpServer, { notificationRepository } = {}) {
     io = new Server(httpServer, {
         cors: {
             origin: '*',
@@ -30,8 +31,17 @@ export function initSocketServer(httpServer) {
         });
 
         // Client joins a per-user room to receive personal notifications in real-time
-        socket.on('join:user', (userId) => {
-            if (userId) socket.join(`user:${userId}`);
+        socket.on('join:user', async (userId) => {
+            if (!userId) return;
+            socket.join(`user:${userId}`);
+            // Emit the current unread count immediately so the client badge
+            // is accurate from the moment the connection is established.
+            if (notificationRepository) {
+                try {
+                    const count = await notificationRepository.countUnread(Number(userId));
+                    socket.emit('notification:unread_count', count ?? 0);
+                } catch { /* non-critical — client will fall back to HTTP */ }
+            }
         });
 
         socket.on('leave:user', (userId) => {

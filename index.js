@@ -36,7 +36,7 @@ console.log('══════════════════════�
 
 const { app, container } = createApp();
 const server = startServer(app, PORT);
-initSocketServer(server);
+initSocketServer(server, { notificationRepository: container.notificationRepository });
 
 // Ejecutar migraciones DDL en background (no bloquea el arranque)
 runStartupMigrations().catch(() => {/* errores ya logueados en migrationRunner */});
