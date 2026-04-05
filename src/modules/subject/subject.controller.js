@@ -53,7 +53,7 @@ export class SubjectController {
         try {
             const { error, value } = updateSubjectSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.subjectService.update(parseInt(req.params.id), value, req.user?.userId, req.user?.roles || []);
+            const result = await this.subjectService.update(parseInt(req.params.id), value, req.user?.userId);
             if (result.isFail()) return next(result.getError());
             const subject = result.getValue();
             if (subject?.course_id) getIO()?.to(`course:${subject.course_id}`).emit('subject:updated', subject);
@@ -64,7 +64,7 @@ export class SubjectController {
     delete = async (req, res, next) => {
         try {
             const subjectId = parseInt(req.params.id);
-            const result = await this.subjectService.delete(subjectId, req.user?.userId, req.user?.roles || []);
+            const result = await this.subjectService.delete(subjectId, req.user?.userId);
             if (result.isFail()) return next(result.getError());
             const { courseId } = result.getValue();
             if (courseId) getIO()?.to(`course:${courseId}`).emit('subject:deleted', { id: subjectId, courseId });
