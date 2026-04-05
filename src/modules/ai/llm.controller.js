@@ -108,6 +108,8 @@ export class LLMController {
                 tenantId: resolvedTenantId,
                 availableTenants: jwtAvailableTenants,
                 institutionName,
+                // Vision: base64-encoded image for multimodal analysis
+                imageBase64: value.imageBase64 || null,
             };
 
             // ── INSTITUTION LOOKUP SHORT-CIRCUIT ──────────────────────────────────
