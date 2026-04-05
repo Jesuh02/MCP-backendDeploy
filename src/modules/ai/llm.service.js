@@ -53,7 +53,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number, tenantId?: string, availableTenants?: string[], institutionName?: string }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null }) {
         if (!prompt || prompt.trim().length === 0) {
             return Result.fail(new ValidationError('El prompt es requerido'));
         }
@@ -141,6 +141,7 @@ export class LLMDomainService {
                         tenantId: effectiveTenantId,   // now matches context → no re-dispatch
                         availableTenants,
                         institutionName: effectiveInstitutionName,
+                        imageBase64,
                     }),
                 );
             }
@@ -457,9 +458,9 @@ Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejid
             }
 
             // 3. Build user prompt with file content if available
-            // Cap file content to ~100 000 chars (≈ 25 000 tokens) to stay well under
-            // the DeepSeek context limit of 131 072 tokens once the system prompt is added.
-            const MAX_FILE_CHARS = 100_000;
+            // Cap file content to ~50 000 chars (≈ 20 000 tokens) to stay well under
+            // the DeepSeek context limit of 128K tokens once the system prompt is added.
+            const MAX_FILE_CHARS = 50_000;
             let fullPrompt = prompt;
             if (resolvedFileContent) {
                 const safeContent = resolvedFileContent.length > MAX_FILE_CHARS
@@ -784,6 +785,53 @@ Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejid
                 { name: 'query_database', description: 'Execute queries on Supabase database', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
                 { name: 'get_database_schema', description: 'Get complete database schema', parameters: { type: 'object', properties: {} } },
             ] : [];
+
+            // ── CONTEXT BUDGET: Ensure total tokens stay under model limit ──────
+            // Conservative estimate: 1 token ≈ 2.5 chars (Spanish text averages ~2-3 chars/token)
+            const MODEL_TOKEN_LIMIT = 128_000;
+            const COMPLETION_RESERVE = 8_192; // reserve for output
+            const CHARS_PER_TOKEN = 2.5;
+            const MAX_CONTEXT_CHARS = Math.floor((MODEL_TOKEN_LIMIT - COMPLETION_RESERVE) * CHARS_PER_TOKEN); // ~299K chars
+            const totalChars = systemPrompt.length + fullPrompt.length;
+            if (totalChars > MAX_CONTEXT_CHARS) {
+                console.warn(`[LLMDomainService] ⚠️ Context too large: ${totalChars} chars (~${Math.round(totalChars / CHARS_PER_TOKEN)} tokens). Max: ${MAX_CONTEXT_CHARS} chars`);
+                // Truncate system prompt first (keep first 60%), then user prompt
+                const maxSystem = Math.floor(MAX_CONTEXT_CHARS * 0.6);
+                const maxUser = MAX_CONTEXT_CHARS - Math.min(systemPrompt.length, maxSystem);
+                if (systemPrompt.length > maxSystem) {
+                    console.warn(`[LLMDomainService] ⚠️ Truncating systemPrompt from ${systemPrompt.length} to ${maxSystem} chars`);
+                    systemPrompt = systemPrompt.slice(0, maxSystem) + '\n[... system context truncated to fit model limit ...]';
+                }
+                if (fullPrompt.length > maxUser) {
+                    console.warn(`[LLMDomainService] ⚠️ Truncating fullPrompt from ${fullPrompt.length} to ${maxUser} chars`);
+                    fullPrompt = fullPrompt.slice(0, maxUser) + '\n[... user content truncated to fit model limit ...]';
+                }
+            }
+
+            // ── VISION: Route to vision model if image is attached ──────────────
+            if (imageBase64 && typeof this.llm.chatWithVision === 'function') {
+                console.log(`[LLMDomainService] 🖼️ Image detected (${Math.round(imageBase64.length / 1024)}KB base64), routing to vision model`);
+                const visionResponse = await this.llm.chatWithVision(systemPrompt, fullPrompt, imageBase64, { model });
+                let content = visionResponse.content || '';
+
+                // Post-process vision response for grading signals
+                let esCalificacion = false;
+                let nota = null;
+                const gradingSignal = content.match(/^\[GRADING_REQUEST(?::\s*(\d+(?:\.\d+)?))?\]\s*/i);
+                if (gradingSignal) {
+                    esCalificacion = true;
+                    if (gradingSignal[1]) nota = parseFloat(gradingSignal[1]);
+                    content = content.replace(gradingSignal[0], '');
+                }
+
+                return Result.ok({
+                    response: content,
+                    model: visionResponse.model,
+                    usage: visionResponse.usage,
+                    esCalificacion,
+                    nota,
+                });
+            }
 
             let response = await this.llm.chat(systemPrompt, fullPrompt, {
                 model,

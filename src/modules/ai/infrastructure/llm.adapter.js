@@ -87,6 +87,51 @@ export class LLMAdapter {
     }
 
     /**
+     * Genera una respuesta de chat con imagen (visión).
+     * DeepSeek no soporta imágenes directamente, así que usamos OCR (tesseract.js)
+     * para extraer texto de la imagen y enviarlo como contexto textual a DeepSeek.
+     * @param {string} systemPrompt
+     * @param {string} userPrompt
+     * @param {string} imageBase64 - Imagen en base64 (data:image/...;base64,... o raw base64)
+     * @param {{ model?: string, maxTokens?: number }} options
+     * @returns {Promise<{ content: string, model: string, usage?: Object }>}
+     */
+    async chatWithVision(systemPrompt, userPrompt, imageBase64, options = {}) {
+        // Extract text from image using OCR
+        let extractedText = '';
+        try {
+            const { ImageOCRService } = await import('./image-ocr.service.js');
+            extractedText = await ImageOCRService.extractText(imageBase64);
+            console.log(`[LLMAdapter] 🖼️ OCR extracted ${extractedText.length} chars from image`);
+        } catch (ocrErr) {
+            console.warn(`[LLMAdapter] OCR failed: ${ocrErr.message}`);
+        }
+
+        // Build enhanced prompt with image context
+        let enhancedPrompt = userPrompt;
+        if (extractedText && extractedText.trim().length > 0) {
+            enhancedPrompt =
+                `[CONTENIDO EXTRAÍDO DE LA IMAGEN ADJUNTA (vía OCR)]\n` +
+                `${extractedText.trim()}\n` +
+                `[FIN DEL CONTENIDO DE LA IMAGEN]\n\n` +
+                `${userPrompt}`;
+        } else {
+            enhancedPrompt =
+                `[IMAGEN ADJUNTA: El usuario adjuntó una imagen pero no se pudo extraer texto legible. ` +
+                `La imagen puede contener diagramas, fotos o contenido no textual. ` +
+                `Responde basándote en la pregunta del usuario y pídele que describa el contenido si necesitas más detalles.]\n\n` +
+                `${userPrompt}`;
+        }
+
+        // Augment system prompt with vision instructions
+        const visionSystemPrompt = systemPrompt +
+            `\n\nNOTA: El usuario adjuntó una imagen. El texto extraído de la imagen (si lo hay) está incluido arriba como "[CONTENIDO EXTRAÍDO DE LA IMAGEN ADJUNTA]". ` +
+            `Analiza ese contenido como si pudieras ver la imagen. Si el texto extraído parece ser una tarea o trabajo escrito, evalúalo según los criterios del contexto.`;
+
+        return this.chat(visionSystemPrompt, enhancedPrompt, options);
+    }
+
+    /**
      * Genera embeddings (delegado a EmbeddingService).
      */
     async embed(text, options = {}) {
