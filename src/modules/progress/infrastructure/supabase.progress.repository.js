@@ -1206,6 +1206,11 @@ export class SupabaseProgressRepository {
         if (existing) {
             // UPDATE existing record
             const updatePayload = { status };
+            if (status === 'pending') {
+                // Reset requested_at so the panel shows when this new request was made,
+                // not when the original record was created (e.g. a past invitation).
+                updatePayload.requested_at = now;
+            }
             if (status === 'approved') {
                 updatePayload.reviewed_at = now;
                 if (reviewedBy) updatePayload.reviewed_by = reviewedBy;
