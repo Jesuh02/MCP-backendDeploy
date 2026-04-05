@@ -13,8 +13,11 @@ export class SubjectDomainService {
         this.subjectsByCourseCache = new Map();
     }
 
-    async _canManageSubject(requesterId, subject) {
+    async _canManageSubject(requesterId, subject, requesterRoles = []) {
         if (!requesterId || !subject) return false;
+
+        // Role 3 (admin) can manage any subject regardless of creator
+        if (Array.isArray(requesterRoles) && requesterRoles.map(Number).includes(3)) return true;
 
         const course = await this.courseRepo.findById(subject.course_id);
         if (!course) return false;
@@ -121,11 +124,11 @@ export class SubjectDomainService {
         return Result.ok(created);
     }
 
-    async update(id, data, requesterId) {
+    async update(id, data, requesterId, requesterRoles = []) {
         const subject = await this._getSubject(id);
         if (!subject) return Result.fail(new NotFoundError('Materia', id));
         if (requesterId) {
-            const canManage = await this._canManageSubject(requesterId, subject);
+            const canManage = await this._canManageSubject(requesterId, subject, requesterRoles);
             if (!canManage) {
                 return Result.fail(new ForbiddenError('No tienes permiso para editar esta materia'));
             }
@@ -136,11 +139,11 @@ export class SubjectDomainService {
         return Result.ok(updated);
     }
 
-    async delete(id, requesterId) {
+    async delete(id, requesterId, requesterRoles = []) {
         const subject = await this._getSubject(id);
         if (!subject) return Result.fail(new NotFoundError('Materia', id));
         if (requesterId) {
-            const canManage = await this._canManageSubject(requesterId, subject);
+            const canManage = await this._canManageSubject(requesterId, subject, requesterRoles);
             if (!canManage) {
                 return Result.fail(new ForbiddenError('No tienes permiso para eliminar esta materia'));
             }
