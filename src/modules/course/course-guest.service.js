@@ -130,16 +130,19 @@ export class CourseGuestService {
         }
 
         const existing = await this.progressRepo.findPreEnrollment(guestUserId, courseId);
-        if (!existing) return Result.fail(new NotFoundError('Invitación', `${guestUserId}/${courseId}`));
-
-        await this.progressRepo.deleteEnrollment(guestUserId, courseId, 'Invitación revocada');
-
-        // Also remove the progreso_curso record so the course no longer shows as enrolled
-        try {
-            await this.progressRepo.delete(guestUserId, courseId);
-        } catch (err) {
-            console.warn(`[CourseGuestService] Could not remove progreso_curso for userId=${guestUserId}:`, err?.message);
+        if (!existing) {
+            // No formal pre-enrollment record — guest already has no approved access.
+            return Result.ok({ message: 'Invitado eliminado del curso' });
         }
+
+        // Set pre_enrollment to 'rejected' so:
+        // 1. findApprovedPreEnrollments won't return them (only returns 'approved' records)
+        // 2. They lose course access immediately
+        // 3. They can re-request enrollment via the normal flow (requestEnrollment
+        //    allows re-request when existing status is 'rejected')
+        // progreso_curso is intentionally NOT modified so requestEnrollment is not
+        // blocked by enrollment_status='inactivo'.
+        await this.progressRepo.updateEnrollmentStatus(guestUserId, courseId, 'rejected');
 
         return Result.ok({ message: 'Invitado eliminado del curso' });
     }
