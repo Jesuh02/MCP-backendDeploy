@@ -126,7 +126,7 @@ export class ProgressDomainService {
         }
         if (data?.userId && data?.courseId) {
             const blocked = await this._isCreatorOrCollaborator(data.userId, data.courseId);
-            if (blocked) return Result.fail(new ForbiddenError('Creadores y colaboradores no pueden estar en el progreso de estudiantes'));
+            if (blocked) return Result.ok({ userId: data.userId, courseId: data.courseId, completedTasks: 0, totalTasks: 0, averageGrade: 0, progressPercentage: 0, status: 'Excluido' });
         }
 
         let progress = null;
