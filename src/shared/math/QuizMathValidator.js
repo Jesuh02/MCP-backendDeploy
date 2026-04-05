@@ -543,9 +543,27 @@ export class QuizMathValidator {
             rawCorrectOrder.every(i => Number.isInteger(i) && i >= 0 && i < n) &&
             new Set(rawCorrectOrder).size === n;
 
-        const correctSequence = isValidPerm
+        let correctSequence = isValidPerm
             ? rawCorrectOrder.map(i => items[i])
             : [...items]; // Assume items are already in correct order
+
+        // Step 1b: Pedagogical fix — decimal comma must not be the last step.
+        // If the last item mentions placing/lowering the decimal point/comma
+        // and there is no decimal-alignment item near the first position,
+        // move it to position 0 (correct pedagogy: align decimal FIRST).
+        const DECIMAL_STEP_RE = /\b(coloc[ae]r?|baj[ae]r?|pon[ae]r?|ubic[ae]r?|marcar?|alinear?)\b.{0,60}\b(coma|punto)\s*decimal\b|\balinear?\b.{0,40}\b(coma|punto)\s*decimal\b/i;
+        const DECIMAL_ALIGN_KEYWORDS = /alinea[rn]?|vertical/i;
+
+        const lastItem = correctSequence[n - 1] ?? '';
+        const firstItem = correctSequence[0] ?? '';
+        const isLastDecimalStep = DECIMAL_STEP_RE.test(lastItem);
+        const firstAlreadyAligns = DECIMAL_STEP_RE.test(firstItem) || DECIMAL_ALIGN_KEYWORDS.test(firstItem);
+
+        if (isLastDecimalStep && !firstAlreadyAligns && n >= 3) {
+            console.warn(`[fixOrderingQuestion] Pedagogical fix: moving decimal-comma step from last to first. Item: "${lastItem.substring(0, 60)}"`);
+            const decimalItem = correctSequence.pop();
+            correctSequence.unshift(decimalItem);
+        }
 
         // Step 2: Fisher-Yates shuffle on index mapping
         //   shuffleMap[newPos] = origPos  →  shuffledItems[newPos] = correctSequence[origPos]
@@ -582,12 +600,30 @@ export class QuizMathValidator {
      * numbered lists, ordinal sequences) that could contradict the programmatic
      * correctOrder. Only conceptual/educational reasoning is preserved.
      *
+     * Also patches explanation text that mentions a wrong step/phase count
+     * (e.g. "4 fases" when there are actually 5 items).
+     *
      * @param {string[]} correctSequence - Items in their correct order
      * @param {string}   llmExplanation  - Original LLM explanation (may contain conflicting order)
      * @returns {string} Canonical explanation with single source of truth
      */
     static buildOrderingExplanation(correctSequence, llmExplanation = '') {
-        const sanitized = QuizMathValidator._stripOrderingClaims(llmExplanation);
+        const n = correctSequence.length;
+        let sanitized = QuizMathValidator._stripOrderingClaims(llmExplanation);
+
+        // Patch wrong step/phase counts in explanation text (e.g. "4 fases" when n=5)
+        sanitized = sanitized.replace(
+            /\b(\d+)\s+(paso[s]?|fase[s]?|etapa[s]?|step[s]?)\b/gi,
+            (match, num) => {
+                const mentioned = parseInt(num, 10);
+                if (mentioned !== n) {
+                    console.warn(`[OrderingExplanation] Patched wrong step count: ${mentioned} → ${n}`);
+                    return `${n} ${match.replace(/^\d+\s+/, '')}`;
+                }
+                return match;
+            }
+        );
+
         const numbered = correctSequence
             .map((item, i) => `${i + 1}. ${item}`)
             .join('\n');
