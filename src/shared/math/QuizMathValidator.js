@@ -149,8 +149,8 @@ export class QuizMathValidator {
         }
 
         const afterExpr = cleaned.substring(cleaned.indexOf(match[0]) + match[0].length);
-        const followUp = QuizMathValidator._detectFollowUpOperation(afterExpr);
-        if (followUp) {
+        const followUps = QuizMathValidator._detectFollowUpOperations(afterExpr);
+        for (const followUp of followUps) {
             const prev = result;
             result = followUp.apply(result);
             steps.push(followUp.describe(prev, result));
@@ -168,22 +168,38 @@ export class QuizMathValidator {
         const dataNumbers = QuizMathValidator._extractDataNumbers(text);
         if (dataNumbers.length < 2) return null;
 
+        // Identify numbers in subtraction context and exclude them from the sum
+        const subtractionNums = QuizMathValidator._extractSubtractionNumbers(text);
+        const additionNumbers = subtractionNums.length > 0
+            ? dataNumbers.filter(n => !subtractionNums.some(s => s.equals(n)))
+            : dataNumbers;
+
         const steps = [];
         let result;
 
         if (/promedio|media\b/i.test(lower)) {
-            const sum = dataNumbers.reduce((a, b) => a.plus(b), new Decimal(0));
-            result = sum.div(dataNumbers.length);
-            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
-            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+            const nums = additionNumbers.length >= 2 ? additionNumbers : dataNumbers;
+            const sum = nums.reduce((a, b) => a.plus(b), new Decimal(0));
+            result = sum.div(nums.length);
+            steps.push(`Suma: ${nums.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${nums.length} = ${result}`);
         } else {
-            result = dataNumbers.reduce((a, b) => a.plus(b), new Decimal(0));
-            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+            const nums = additionNumbers.length >= 2 ? additionNumbers : dataNumbers;
+            result = nums.reduce((a, b) => a.plus(b), new Decimal(0));
+            steps.push(`Suma: ${nums.join(' + ')} = ${result}`);
+        }
+
+        // Apply identified subtractions
+        for (const subVal of subtractionNums) {
+            const prev = result;
+            result = result.minus(subVal);
+            steps.push(`Resta: ${prev} - ${subVal} = ${result}`);
         }
 
         result = QuizMathValidator._applyRate(text, result, steps);
         result = QuizMathValidator._applyPercentage(text, result, steps);
         result = QuizMathValidator._applyPostAddition(text, result, dataNumbers, steps);
+        result = QuizMathValidator._applyPostSubtraction(text, result, [...dataNumbers, ...subtractionNums], steps);
 
         return steps.length > 0 ? { value: result, steps } : null;
     }
@@ -216,17 +232,32 @@ export class QuizMathValidator {
         const dataNumbers = sorted.filter(n => n.gte(largest.times('0.001')) && n.gte(10));
         if (dataNumbers.length < 2) return null;
 
+        // Identify numbers in subtraction context and exclude them from the sum
+        const subtractionNums = QuizMathValidator._extractSubtractionNumbers(text);
+        const additionNumbers = subtractionNums.length > 0
+            ? dataNumbers.filter(n => !subtractionNums.some(s => s.equals(n)))
+            : dataNumbers;
+
         const steps = [];
         let result;
 
         if (/promedio|media\b/i.test(lower)) {
-            const sum = dataNumbers.reduce((a, b) => a.plus(b), new Decimal(0));
-            result = sum.div(dataNumbers.length);
-            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${sum}`);
-            steps.push(`Promedio: ${sum} / ${dataNumbers.length} = ${result}`);
+            const nums = additionNumbers.length >= 2 ? additionNumbers : dataNumbers;
+            const sum = nums.reduce((a, b) => a.plus(b), new Decimal(0));
+            result = sum.div(nums.length);
+            steps.push(`Suma: ${nums.join(' + ')} = ${sum}`);
+            steps.push(`Promedio: ${sum} / ${nums.length} = ${result}`);
         } else {
-            result = dataNumbers.reduce((a, b) => a.plus(b), new Decimal(0));
-            steps.push(`Suma: ${dataNumbers.join(' + ')} = ${result}`);
+            const nums = additionNumbers.length >= 2 ? additionNumbers : dataNumbers;
+            result = nums.reduce((a, b) => a.plus(b), new Decimal(0));
+            steps.push(`Suma: ${nums.join(' + ')} = ${result}`);
+        }
+
+        // Apply identified subtractions
+        for (const subVal of subtractionNums) {
+            const prev = result;
+            result = result.minus(subVal);
+            steps.push(`Resta: ${prev} - ${subVal} = ${result}`);
         }
 
         // Apply percentage
@@ -248,6 +279,7 @@ export class QuizMathValidator {
 
         result = QuizMathValidator._applyRate(text, result, steps);
         result = QuizMathValidator._applyPostAddition(text, result, candidates, steps);
+        result = QuizMathValidator._applyPostSubtraction(text, result, [...candidates, ...subtractionNums], steps);
 
         return steps.length > 0 ? { value: result, steps } : null;
     }
@@ -278,6 +310,25 @@ export class QuizMathValidator {
             if (d) result.push(d);
         }
         return result;
+    }
+
+    static _extractSubtractionNumbers(text) {
+        const results = [];
+        const patterns = [
+            /(?:se\s+(?:le\s+)?)?(?:resta[rn]?|quit[ao]?[rn]?|descuent[ao]?[rn]?|deduc[ei][rn]?|sustrae[rn]?|rebaj[ao]?[rn]?)\s+(?:(?:un|una|el|la|los|las|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/gi,
+            /(?:menos|descontando|deduciendo)\s+\$?\s*([\d,]+\.?\d*)/gi,
+        ];
+
+        for (const re of patterns) {
+            let m;
+            while ((m = re.exec(text)) !== null) {
+                const d = QuizMathValidator._parseDecimal(m[1]);
+                if (d && d.gt(0) && !results.some(r => r.equals(d))) {
+                    results.push(d);
+                }
+            }
+        }
+        return results;
     }
 
     static _extractDataNumbers(text) {
@@ -375,6 +426,24 @@ export class QuizMathValidator {
         return result;
     }
 
+    static _applyPostSubtraction(text, result, excludeNumbers, steps) {
+        const subMatch = text.match(/(?:se\s+(?:le\s+)?)?(?:resta[rn]?|quit[ao]?[rn]?|descuent[ao]?[rn]?|deduc[ei][rn]?|sustrae[rn]?|rebaj[ao]?[rn]?)\s+(?:(?:un|una|el|la|los|las|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/i);
+        if (!subMatch) return result;
+
+        const subVal = QuizMathValidator._parseDecimal(subMatch[1]);
+        if (!subVal || subVal.lte(0)) return result;
+
+        const isDuplicate = excludeNumbers.some(n =>
+            (n instanceof Decimal ? n.equals(subVal) : new Decimal(n).equals(subVal))
+        );
+        if (isDuplicate) return result;
+
+        const prev = result;
+        result = result.minus(subVal);
+        steps.push(`Sustracción: ${prev} - ${subVal} = ${result}`);
+        return result;
+    }
+
     static _applyPostAddition(text, result, excludeNumbers, steps) {
         const addMatch = text.match(/(?:se\s+)?(?:agrega[rn]?|añad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?)\s+(?:\S+\s+){0,8}?([\d,]+\.?\d*)/i);
         if (!addMatch) return result;
@@ -393,28 +462,69 @@ export class QuizMathValidator {
         return result;
     }
 
-    static _detectFollowUpOperation(text) {
-        if (!text) return null;
+    static _detectFollowUpOperations(text) {
+        if (!text) return [];
 
-        const multPatterns = [
-            /(?:multiplic[aá]r?\s+por|×)\s*\$?([\d,.]+)/i,
-            /(?:costo|precio|tarifa|tasa)\s+(?:de\s+(?:\w+\s+)*)?(?:de\s*)?\$?([\d,.]+)/i,
-            /cada\s+\w+\s+.*?\$?([\d,.]+)/i,
+        const operations = [];
+
+        // Addition patterns
+        const addPatterns = [
+            /(?:y\s+)?(?:se\s+(?:le\s+)?)?(?:agrega[rn]?|añad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?|más)\s+(?:(?:un|una|el|la|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/gi,
         ];
-        for (const re of multPatterns) {
-            const m = text.match(re);
-            if (m) {
-                const factor = QuizMathValidator._parseDecimal(m[1]);
-                if (factor && factor.gt(0)) {
-                    return {
-                        apply: (v) => v.times(factor),
-                        describe: (prev, result) => `Multiplicación: ${prev} × ${factor} = ${result}`,
-                    };
+        for (const re of addPatterns) {
+            let m;
+            while ((m = re.exec(text)) !== null) {
+                const val = QuizMathValidator._parseDecimal(m[1]);
+                if (val && val.gt(0)) {
+                    operations.push({
+                        apply: (v) => v.plus(val),
+                        describe: (prev, result) => `Adición: ${prev} + ${val} = ${result}`,
+                        position: m.index,
+                    });
                 }
             }
         }
 
-        const pctMatch = text.match(/(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        // Subtraction patterns
+        const subPatterns = [
+            /(?:se\s+(?:le\s+)?)?(?:resta[rn]?|quit[ao]?[rn]?|descuent[ao]?[rn]?|deduc[ei][rn]?|sustrae[rn]?|rebaj[ao]?[rn]?|menos)\s+(?:(?:un|una|el|la|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/gi,
+        ];
+        for (const re of subPatterns) {
+            let m;
+            while ((m = re.exec(text)) !== null) {
+                const val = QuizMathValidator._parseDecimal(m[1]);
+                if (val && val.gt(0)) {
+                    operations.push({
+                        apply: (v) => v.minus(val),
+                        describe: (prev, result) => `Sustracción: ${prev} - ${val} = ${result}`,
+                        position: m.index,
+                    });
+                }
+            }
+        }
+
+        // Multiplication patterns
+        const multPatterns = [
+            /(?:multiplic[aá]r?\s+por|×)\s*\$?([\d,.]+)/gi,
+            /(?:costo|precio|tarifa|tasa)\s+(?:de\s+(?:\w+\s+)*)?(?:de\s*)?\$?([\d,.]+)/gi,
+            /cada\s+\w+\s+.*?\$?([\d,.]+)/gi,
+        ];
+        for (const re of multPatterns) {
+            const m = re.exec(text);
+            if (m) {
+                const factor = QuizMathValidator._parseDecimal(m[1]);
+                if (factor && factor.gt(0)) {
+                    operations.push({
+                        apply: (v) => v.times(factor),
+                        describe: (prev, result) => `Multiplicación: ${prev} × ${factor} = ${result}`,
+                        position: m.index,
+                    });
+                }
+            }
+        }
+
+        // Percentage patterns
+        const pctMatch = /(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i.exec(text);
         if (pctMatch) {
             const pct = QuizMathValidator._parseDecimal(pctMatch[1]);
             if (pct && pct.gt(0)) {
@@ -422,14 +532,18 @@ export class QuizMathValidator {
                 const factor = isDiscount ?
                     new Decimal(1).minus(pct.div(100)) :
                     new Decimal(1).plus(pct.div(100));
-                return {
+                operations.push({
                     apply: (v) => v.times(factor),
                     describe: (prev, result) => `${isDiscount ? 'Descuento' : 'Incremento'} ${pct}%: ${prev} × ${factor} = ${result}`,
-                };
+                    position: pctMatch.index,
+                });
             }
         }
 
-        return null;
+        // Sort by position in text to maintain operation order
+        operations.sort((a, b) => a.position - b.position);
+
+        return operations;
     }
 
     // ── Explanation cross-validation helpers ──────────────────────────────
