@@ -67,6 +67,12 @@ export function createRouter(deps) {
         router.use('/whatsapp', whatsappRoutes(deps));
     }
 
+    // ── Public polling endpoint: jobId is already a secret, no auth needed ──
+    // Registered BEFORE authMiddleware so a token expiry mid-poll doesn't return 401.
+    if (deps.reinforcementController) {
+        router.get('/reinforcement/poll-generation/:jobId', deps.reinforcementController.pollGeneration);
+    }
+
     router.use(authMiddleware);
 
     router.use('/users', userRoutes({...deps, requireRoles }));
