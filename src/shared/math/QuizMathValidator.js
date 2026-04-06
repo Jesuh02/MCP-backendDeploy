@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import { OrderingQuestionValidator } from './OrderingQuestionValidator.js';
 
 Decimal.set({ precision: 64 });
 
@@ -1223,6 +1224,16 @@ export class QuizMathValidator {
     }
 
     // Ordering Helpers
+
+    /**
+     * Validates ordering question semantics using OrderingQuestionValidator.
+     * @param {string} question - Question text
+     * @param {string[]} items - Items in claimed correct order
+     * @returns {{ valid: boolean, items?: string[], reason?: string, corrections?: string[] }}
+     */
+    static validateOrdering(question, items) {
+        return OrderingQuestionValidator.validateQuestion(question, items);
+    }
 
     static fixOrderingQuestion(items, rawCorrectOrder) {
         if (!items || !items.length || items.length < 2) return null;

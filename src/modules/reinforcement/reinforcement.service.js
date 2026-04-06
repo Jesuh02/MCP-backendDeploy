@@ -8,6 +8,7 @@
  */
 import { Result } from '../../shared/Result.js';
 import { QuizMathValidator } from '../../shared/math/QuizMathValidator.js';
+import { OrderingQuestionValidator } from '../../shared/math/OrderingQuestionValidator.js';
 import { MCPService } from '../ai/mcp-legacy.service.js';
 import { RAGService } from '../ai/rag-legacy.service.js';
 import { SupabaseService } from '../../shared/database/SupabaseService.js';
@@ -1127,8 +1128,24 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                     ? (q.correctOrder ?? q.correct_order).map(Number)
                     : [];
                 if (rawItems.length < 3) return null;
+
+                // Semantic validation: catches LLM procedural errors
+                // (e.g. "coma decimal" as independent step when it's part of alignment)
+                const validation = OrderingQuestionValidator.validateQuestion(q.question, rawItems);
+                if (!validation.valid) {
+                    console.warn(`[ReinforcementService] Ordering question rejected by semantic validator: ${validation.reason} — "${q.question.substring(0, 60)}..."`);
+                    return null;
+                }
+                const validatedItems = validation.items;
+                if (validation.corrections?.length > 0) {
+                    console.log(`🔧 [ReinforcementService] Ordering corrections applied: ${validation.corrections.join('; ')}`);
+                }
+
+                // Recalculate correctOrder as identity since validator already fixed item order
+                const validatedCorrectOrder = validatedItems.map((_, i) => i);
+
                 // Server-side shuffle: fixes LLM indexing errors
-                const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
+                const fixed = QuizMathValidator.fixOrderingQuestion(validatedItems, validatedCorrectOrder);
                 if (!fixed) return null;
                 const llmExplanation = String(q.explanation ?? '').trim();
                 // Detect and log explanation ↔ correctOrder inconsistencies

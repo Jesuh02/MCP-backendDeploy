@@ -18,6 +18,7 @@
 import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
 import { QuizMathValidator } from '../../shared/math/QuizMathValidator.js';
+import { OrderingQuestionValidator } from '../../shared/math/OrderingQuestionValidator.js';
 import { TENANT_CONFIGS, runInTenantContext } from '../../config/tenantRegistry.js';
 
 /**
@@ -1380,8 +1381,21 @@ Responde de forma clara y constructiva.`;
                     ? (rawQuestion.correctOrder ?? rawQuestion.correct_order).map(Number)
                     : [];
                 if (rawItems.length < 3) continue;
+
+                // Semantic validation: catches LLM procedural errors
+                const validation = OrderingQuestionValidator.validateQuestion(questionText, rawItems);
+                if (!validation.valid) {
+                    console.warn(`[LLMService] Ordering question rejected: ${validation.reason} — "${questionText.substring(0, 60)}..."`);
+                    continue;
+                }
+                const validatedItems = validation.items;
+                if (validation.corrections?.length > 0) {
+                    console.log(`🔧 [LLMService] Ordering corrections: ${validation.corrections.join('; ')}`);
+                }
+                const validatedCorrectOrder = validatedItems.map((_, i) => i);
+
                 // Server-side shuffle: fixes LLM indexing errors
-                const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
+                const fixed = QuizMathValidator.fixOrderingQuestion(validatedItems, validatedCorrectOrder);
                 const llmExplanation = String(rawQuestion?.explanation || '').trim();
                 sanitized.push({
                     type: 'ordering',
