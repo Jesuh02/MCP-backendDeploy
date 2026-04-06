@@ -576,6 +576,306 @@ export class MathEngine {
         const mantissa = value.div(new Decimal(10).pow(exponent));
         return { mantissa, exponent };
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Polynomial Analysis
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Parses a polynomial from text like "x³ - 12x² + 45x - 10".
+     * Supports unicode superscripts (²³⁴⁵⁶⁷⁸⁹) and ^ notation.
+     * @param {string} text - Expression containing the polynomial (e.g., "f(x) = x³ - 12x² + 45x - 10")
+     * @returns {Object|null} Map { power: Decimal(coefficient) } or null
+     */
+    static parsePolynomialFromText(text) {
+        if (!text || typeof text !== 'string') return null;
+
+        // Extract polynomial from "f(x) = ..." if present
+        let expr = text;
+        const fxMatch = text.match(/f\s*\(\s*x\s*\)\s*=\s*(.+?)(?:\.\s|$)/);
+        if (fxMatch) expr = fxMatch[1].trim();
+
+        // Normalize unicode superscripts to ^n
+        const supMap = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
+        expr = expr.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+/g, m => '^' + [...m].map(c => supMap[c] || c).join(''));
+        // Normalize minus signs
+        expr = expr.replace(/[−–]/g, '-');
+        // Remove spaces inside ^{...}
+        expr = expr.replace(/\^\s*\{?\s*(\d+)\s*\}?/g, '^$1');
+
+        // Ensure leading + for consistent parsing
+        expr = expr.trim();
+        if (!/^[+-]/.test(expr)) expr = '+' + expr;
+
+        const coeffs = {};
+        let hasTerms = false;
+
+        // Split by + and - keeping the sign
+        const terms = expr.match(/[+-][^+-]+/g);
+        if (!terms) return null;
+
+        for (const raw of terms) {
+            const t = raw.trim();
+
+            // ax^n
+            let m = t.match(/^([+-]?\s*\d*\.?\d*)\s*x\s*\^\s*(\d+)\s*$/);
+            if (m) {
+                let c = m[1].replace(/\s/g, '');
+                if (c === '+' || c === '') c = '1';
+                else if (c === '-') c = '-1';
+                coeffs[parseInt(m[2])] = new Decimal(c);
+                hasTerms = true;
+                continue;
+            }
+
+            // ax (power 1)
+            m = t.match(/^([+-]?\s*\d*\.?\d*)\s*x\s*$/);
+            if (m) {
+                let c = m[1].replace(/\s/g, '');
+                if (c === '+' || c === '') c = '1';
+                else if (c === '-') c = '-1';
+                coeffs[1] = new Decimal(c);
+                hasTerms = true;
+                continue;
+            }
+
+            // constant
+            m = t.match(/^([+-]?\s*\d+\.?\d*)\s*$/);
+            if (m) {
+                coeffs[0] = new Decimal(m[1].replace(/\s/g, ''));
+                hasTerms = true;
+                continue;
+            }
+        }
+
+        return hasTerms ? coeffs : null;
+    }
+
+    /**
+     * Computes the derivative of a polynomial.
+     * @param {Object} coeffs - Map { power: Decimal(coefficient) }
+     * @returns {Object} Derivative coefficients map
+     */
+    static polynomialDerivative(coeffs) {
+        const deriv = {};
+        for (const [power, coeff] of Object.entries(coeffs)) {
+            const p = parseInt(power);
+            if (p === 0) continue;
+            deriv[p - 1] = new Decimal(coeff).times(p);
+        }
+        return deriv;
+    }
+
+    /**
+     * Evaluates a polynomial at a given x value.
+     * @param {Object} coeffs - Map { power: Decimal(coefficient) }
+     * @param {number|string|Decimal} x
+     * @returns {Decimal}
+     */
+    static evaluatePolynomial(coeffs, x) {
+        const dx = new Decimal(x);
+        let result = new Decimal(0);
+        for (const [power, coeff] of Object.entries(coeffs)) {
+            result = result.plus(new Decimal(coeff).times(dx.pow(parseInt(power))));
+        }
+        return result;
+    }
+
+    /**
+     * Solves quadratic equation ax² + bx + c = 0.
+     * @returns {Decimal[]} Real roots sorted ascending
+     */
+    static solveQuadratic(a, b, c) {
+        const da = new Decimal(a);
+        const db = new Decimal(b);
+        const dc = new Decimal(c);
+
+        if (da.isZero()) {
+            if (db.isZero()) return [];
+            return [dc.neg().div(db)];
+        }
+
+        const discriminant = db.times(db).minus(da.times(dc).times(4));
+        if (discriminant.lt(0)) return [];
+        if (discriminant.isZero()) return [db.neg().div(da.times(2))];
+
+        const sqrtD = discriminant.sqrt();
+        const x1 = db.neg().plus(sqrtD).div(da.times(2));
+        const x2 = db.neg().minus(sqrtD).div(da.times(2));
+        return [Decimal.min(x1, x2), Decimal.max(x1, x2)];
+    }
+
+    /**
+     * Finds rational/integer roots of a polynomial using rational root theorem.
+     * Tests integers from -maxVal to +maxVal.
+     * @param {Object} coeffs - Map { power: Decimal(coefficient) }
+     * @param {number} maxVal - Max absolute value to test (default 50)
+     * @returns {Decimal[]} Found roots
+     */
+    static findRationalRoots(coeffs, maxVal = 50) {
+        const roots = [];
+        for (let x = -maxVal; x <= maxVal; x++) {
+            const val = MathEngine.evaluatePolynomial(coeffs, x);
+            if (val.abs().lt('0.0001')) {
+                roots.push(new Decimal(x));
+            }
+        }
+        return roots;
+    }
+
+    /**
+     * Finds critical points (extrema) of a polynomial function.
+     * Computes f'(x) = 0, then uses f''(x) to classify min/max.
+     * @param {Object} fCoeffs - Polynomial coefficients { power: Decimal }
+     * @returns {{ minima: Array<{x: Decimal, y: Decimal}>, maxima: Array<{x: Decimal, y: Decimal}>, steps: string[] } | null}
+     */
+    static findPolynomialExtrema(fCoeffs) {
+        if (!fCoeffs || Object.keys(fCoeffs).length < 2) return null;
+
+        const maxPower = Math.max(...Object.keys(fCoeffs).map(Number));
+        if (maxPower < 2 || maxPower > 6) return null;
+
+        const fPrime = MathEngine.polynomialDerivative(fCoeffs);
+        const fDoublePrime = MathEngine.polynomialDerivative(fPrime);
+        const steps = [];
+
+        // Format polynomial for display
+        const formatPoly = (c) => Object.entries(c)
+            .sort((a, b) => parseInt(b[0]) - parseInt(a[0]))
+            .map(([p, v]) => `${v}x^${p}`)
+            .join(' + ');
+
+        steps.push(`f'(x) = ${formatPoly(fPrime)}`);
+
+        // Find critical points (roots of f'(x))
+        let criticalPoints = [];
+        const derivDegree = Math.max(...Object.keys(fPrime).map(Number));
+
+        if (derivDegree === 1) {
+            // Linear f'(x): ax + b = 0
+            const a = fPrime[1] || new Decimal(0);
+            const b = fPrime[0] || new Decimal(0);
+            if (!new Decimal(a).isZero()) {
+                criticalPoints.push(new Decimal(b).neg().div(new Decimal(a)));
+            }
+        } else if (derivDegree === 2) {
+            // Quadratic f'(x): ax² + bx + c = 0
+            const a = fPrime[2] || new Decimal(0);
+            const b = fPrime[1] || new Decimal(0);
+            const c = fPrime[0] || new Decimal(0);
+            criticalPoints = MathEngine.solveQuadratic(a, b, c);
+        } else {
+            // Higher degree: use rational root theorem
+            criticalPoints = MathEngine.findRationalRoots(fPrime, 50);
+        }
+
+        if (criticalPoints.length === 0) return null;
+
+        steps.push(`f'(x) = 0 → x = ${criticalPoints.join(', ')}`);
+
+        const minima = [];
+        const maxima = [];
+
+        for (const x of criticalPoints) {
+            const secondDeriv = MathEngine.evaluatePolynomial(fDoublePrime, x);
+            const y = MathEngine.evaluatePolynomial(fCoeffs, x);
+
+            if (secondDeriv.gt(0)) {
+                minima.push({ x, y });
+                steps.push(`f''(${x}) = ${secondDeriv} > 0 → mínimo local en x=${x}, f(${x})=${y}`);
+            } else if (secondDeriv.lt(0)) {
+                maxima.push({ x, y });
+                steps.push(`f''(${x}) = ${secondDeriv} < 0 → máximo local en x=${x}, f(${x})=${y}`);
+            } else {
+                // f''(x) = 0 → use higher derivatives or leading coefficient test
+                // For even-multiplicity roots: check sign change or use n-th derivative
+                const fTriple = MathEngine.polynomialDerivative(fDoublePrime);
+                const thirdDeriv = MathEngine.evaluatePolynomial(fTriple, x);
+                if (!thirdDeriv.isZero()) {
+                    // Inflection point (odd higher derivative)
+                    steps.push(`f''(${x}) = 0, f'''(${x}) ≠ 0 → punto de inflexión en x=${x}`);
+                } else {
+                    // Check 4th derivative
+                    const fQuad = MathEngine.polynomialDerivative(fTriple);
+                    const fourthDeriv = MathEngine.evaluatePolynomial(fQuad, x);
+                    if (fourthDeriv.gt(0)) {
+                        minima.push({ x, y });
+                        steps.push(`f⁴(${x}) = ${fourthDeriv} > 0 → mínimo local en x=${x}`);
+                    } else if (fourthDeriv.lt(0)) {
+                        maxima.push({ x, y });
+                        steps.push(`f⁴(${x}) = ${fourthDeriv} < 0 → máximo local en x=${x}`);
+                    } else {
+                        // Unique critical point + positive leading coeff + even degree → minimum
+                        if (criticalPoints.length === 1 && maxPower % 2 === 0) {
+                            const leading = new Decimal(fCoeffs[maxPower]);
+                            if (leading.gt(0)) {
+                                minima.push({ x, y });
+                                steps.push(`Único punto crítico, grado par, coef. líder > 0 → mínimo en x=${x}`);
+                            } else {
+                                maxima.push({ x, y });
+                                steps.push(`Único punto crítico, grado par, coef. líder < 0 → máximo en x=${x}`);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return { minima, maxima, steps };
+    }
+
+    /**
+     * Parses numbers in scientific notation from text.
+     * Handles: 5.678912e8, 3.456789 × 10^7, 3.456789 × 10⁷
+     * @param {string} text
+     * @returns {Decimal[]}
+     */
+    static parseScientificNumbers(text) {
+        const numbers = [];
+        const supMap = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
+
+        // Pattern 1: 3.456e7 or 3.456e+7 or 3.456E8
+        const eNotation = /(\d+\.?\d*)\s*[eE]\s*([+-]?\d+)/g;
+        let m;
+        while ((m = eNotation.exec(text)) !== null) {
+            const mantissa = new Decimal(m[1]);
+            const exp = parseInt(m[2], 10);
+            numbers.push(mantissa.times(new Decimal(10).pow(exp)));
+        }
+
+        // Pattern 2: 3.456 × 10^7 or 3.456 * 10^7
+        const mulNotation = /(\d+\.?\d*)\s*[×x*]\s*10\s*\^\s*\{?\s*(\d+)\s*\}?/gi;
+        while ((m = mulNotation.exec(text)) !== null) {
+            const mantissa = new Decimal(m[1]);
+            const exp = parseInt(m[2], 10);
+            numbers.push(mantissa.times(new Decimal(10).pow(exp)));
+        }
+
+        // Pattern 3: 3.456 × 10⁷ (unicode superscript)
+        const uniNotation = /(\d+\.?\d*)\s*[×x*]\s*10\s*([⁰¹²³⁴⁵⁶⁷⁸⁹]+)/gi;
+        while ((m = uniNotation.exec(text)) !== null) {
+            const mantissa = new Decimal(m[1]);
+            const expStr = [...m[2]].map(c => supMap[c] || c).join('');
+            const exp = parseInt(expStr, 10);
+            numbers.push(mantissa.times(new Decimal(10).pow(exp)));
+        }
+
+        return numbers;
+    }
+
+    /**
+     * Rounds a Decimal to N significant figures.
+     * @param {Decimal} value
+     * @param {number} sigFigs
+     * @returns {Decimal}
+     */
+    static roundToSignificantFigures(value, sigFigs) {
+        if (value.isZero()) return new Decimal(0);
+        const absVal = value.abs();
+        const exponent = absVal.log(10).floor().toNumber();
+        const factor = new Decimal(10).pow(sigFigs - 1 - exponent);
+        return value.times(factor).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).div(factor);
+    }
 }
 
 export default MathEngine;

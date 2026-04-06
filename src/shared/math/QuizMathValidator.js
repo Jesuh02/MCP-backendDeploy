@@ -4,7 +4,7 @@ import { MathEngine } from './MathEngine.js';
 
 Decimal.set({ precision: 64 });
 
-const MATH_SIGNALS = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|\xbfcu\xe1nto|cu\xe1ntos|cu\xe1ntas|promedio|media|porcentaje|[a\xe1]rea|per[i\xed]metro|volumen|superficie|inter[e\xe9]s\s+(?:simple|compuesto)|descuento|impuesto|IVA|repartir|dividir|ganancia|utilidad|beneficio/i;
+const MATH_SIGNALS = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|\xbfcu\xe1nto|cu\xe1ntos|cu\xe1ntas|promedio|media|porcentaje|[a\xe1]rea|per[i\xed]metro|volumen|superficie|inter[e\xe9]s\s+(?:simple|compuesto)|descuento|impuesto|IVA|repartir|dividir|ganancia|utilidad|beneficio|derivada|extremo|m[i\xed]nimo\s+local|m[a\xe1]ximo\s+local|notaci[o\xf3]n\s+cient[i\xed]fica/i;
 const HAS_SIGNIFICANT_NUMBERS = /\d{3,}/;
 
 const ADVANCED_FORMULA_PATTERNS = [
@@ -19,7 +19,17 @@ const ADVANCED_FORMULA_PATTERNS = [
     /[\u222b]|integral/i,
     /factorial/i,
     /l[i\xed]mite|lim\s*[\u2192\u27f6]/i,
-    /derivada|d\/dx/i,
+    // derivada removed — now handled by _tryDerivativeExtremaProblem
+];
+
+// Patterns that _tryDerivativeExtremaProblem can handle (not skipped as "advanced")
+const DERIVATIVE_PATTERNS = [
+    /derivada/i,
+    /d\/dx/i,
+    /extremos?\s+locales?/i,
+    /m[i\xed]nimo\s+local/i,
+    /m[a\xe1]ximo\s+local/i,
+    /punto\s+cr[i\xed]tico/i,
 ];
 
 const META_QUESTION_PATTERNS = [
@@ -110,11 +120,20 @@ export class QuizMathValidator {
         var arithmetic = QuizMathValidator._tryExplicitArithmetic(text);
         if (arithmetic) return arithmetic;
 
-        // Strategy 2: Formula evaluation (series, summations)
+        // Strategy 2: Formula evaluation (series, summations, combined series)
         var formula = QuizMathValidator._tryFormulaEvaluation(text);
         if (formula) return formula;
 
+        // Strategy 2.5: Derivative / extrema problems (f'(x) = 0)
+        var deriv = QuizMathValidator._tryDerivativeExtremaProblem(text);
+        if (deriv) return deriv;
+
+        // Strategy 2.6: Scientific notation sum/conversion
+        var sciNot = QuizMathValidator._tryScientificNotationSum(text);
+        if (sciNot) return sciNot;
+
         // Skip for advanced math that needs symbolic computation
+        // BUT NOT for derivatives (handled above) or sci notation (handled above)
         if (QuizMathValidator._isAdvancedMathProblem(text)) return null;
 
         // Strategy 3: Compound multi-step problems (multiple qty×price pairs)
@@ -150,6 +169,8 @@ export class QuizMathValidator {
     }
 
     static _isAdvancedMathProblem(text) {
+        // Derivative problems are handled by _tryDerivativeExtremaProblem — not skipped
+        if (DERIVATIVE_PATTERNS.some(function(re) { return re.test(text); })) return false;
         return ADVANCED_FORMULA_PATTERNS.some(function(re) { return re.test(text); });
     }
 
@@ -237,11 +258,24 @@ export class QuizMathValidator {
 
         var steps = ['Expresión: ' + match[0] + ' = ' + result];
 
+        // Extract individual numbers from the expression for follow-up operations
+        var exprNumbers = [];
+        var numExtractRe = /\d[\d,]*\.?\d*/g;
+        var numM;
+        while ((numM = numExtractRe.exec(match[0])) !== null) {
+            var nd = QuizMathValidator._parseDecimal(numM[0]);
+            if (nd) exprNumbers.push(nd);
+        }
+
         var afterExpr = cleaned.substring(cleaned.indexOf(match[0]) + match[0].length);
         var followUps = QuizMathValidator._detectFollowUpOperations(afterExpr);
         for (var fi = 0; fi < followUps.length; fi++) {
             var prevF = result;
-            result = followUps[fi].apply(result);
+            if (followUps[fi].needsAllNumbers) {
+                result = followUps[fi].apply(result, exprNumbers);
+            } else {
+                result = followUps[fi].apply(result);
+            }
             steps.push(followUps[fi].describe(prevF, result));
         }
         return { value: result, steps: steps };
@@ -305,25 +339,30 @@ export class QuizMathValidator {
     }
 
     static _tryCombinedFormula(text) {
+        // Detect "S₁ + S₂" patterns where S₁ and S₂ are named series
+        var results = [];
+        var steps = [];
+
         var summation = QuizMathValidator._tryPolynomialSummation(text);
         var geo = QuizMathValidator._tryGeometricSeriesFormula(text);
-        if (summation && geo) {
-            var total = summation.value.plus(geo.value);
-            return {
-                value: total,
-                steps: summation.steps.concat(geo.steps).concat(['Total combinado: ' + summation.value + ' + ' + geo.value + ' = ' + total]),
-                fromFormula: true,
-            };
-        }
         var arith = QuizMathValidator._tryArithmeticSeriesFormula(text);
-        if (summation && arith) {
-            var total2 = summation.value.plus(arith.value);
-            return {
-                value: total2,
-                steps: summation.steps.concat(arith.steps).concat(['Total combinado: ' + summation.value + ' + ' + arith.value + ' = ' + total2]),
-                fromFormula: true,
-            };
+
+        if (summation) { results.push(summation); steps = steps.concat(summation.steps); }
+        if (arith && !summation) { results.push(arith); steps = steps.concat(arith.steps); }
+        if (geo) { results.push(geo); steps = steps.concat(geo.steps); }
+
+        if (results.length >= 2) {
+            var total = results[0].value;
+            for (var ci = 1; ci < results.length; ci++) {
+                total = total.plus(results[ci].value);
+            }
+            steps.push('Total combinado: ' + results.map(function(r) { return r.value; }).join(' + ') + ' = ' + total);
+            return { value: total, steps: steps, fromFormula: true };
         }
+
+        // If only one formula was found, return it (single series)
+        if (results.length === 1) return results[0];
+
         return null;
     }
 
@@ -331,6 +370,10 @@ export class QuizMathValidator {
         var sigmaPatterns = [
             /[\u03A3\u2211]\s*\(?(?:de\s+)?i\s*=\s*(\d+)\s+a\s+(\d+)\)?\s*(?:de\s+)?\(([^)]+)\)/i,
             /sumatoria\s*(?::\s*)?[\u03A3\u2211]?\s*\(?(?:de\s+)?i\s*=\s*(\d+)\s+a\s+(\d+)\)?\s*(?:de\s+)?\(([^)]+)\)/i,
+            // LaTeX-like: Σ_{i=1}^{200} (7i - 12)
+            /[\u03A3\u2211]\s*_?\{?\s*[ij]\s*=\s*(\d+)\s*\}?\s*\^?\{?\s*(\d+)\s*\}?\s*\(([^)]+)\)/i,
+            // Alternate LaTeX: Σ_{i=1}^{n} expression without parens
+            /[\u03A3\u2211]\s*_?\{?\s*[ij]\s*=\s*(\d+)\s*\}?\s*\^?\{?\s*(\d+)\s*\}?\s+(\d+\s*[ij](?:\s*[-+]\s*\d+)?)/i,
         ];
         for (var p = 0; p < sigmaPatterns.length; p++) {
             var m = sigmaPatterns[p].exec(text);
@@ -415,6 +458,22 @@ export class QuizMathValidator {
     static _tryGeometricSeriesFormula(text) {
         if (!/serie\s+geom[e\xe9]trica|progresi[o\xf3]n\s+geom[e\xe9]trica|geom[e\xe9]tric/i.test(text)) return null;
         var a1, r, n;
+
+        // Pattern A: Sigma notation — Σ_{j=1}^{25} 4·(3.2)^{j-1}
+        var sigmaGeoRe = /[\u03A3\u2211]\s*_?\{?\s*[ij]\s*=\s*\d+\s*\}?\s*\^?\{?\s*(\d+)\s*\}?\s*(\d+\.?\d*)\s*[·*×\u00b7]\s*\(?(\d+\.?\d*)\)?\s*\^\s*\{?\s*(?:\(\s*)?[ij]\s*(?:-\s*1\s*(?:\))?\s*)?\}?/i;
+        var sigmaM = sigmaGeoRe.exec(text);
+        if (sigmaM) {
+            n = parseInt(sigmaM[1], 10);
+            a1 = new Decimal(sigmaM[2]);
+            r = new Decimal(sigmaM[3]);
+            if (a1.gt(0) && !r.eq(1) && n >= 1 && n <= 10000) {
+                var seriesCalc = MathEngine.geometricSeries(a1, r, n);
+                console.log('[MathVerify] Geometric series from sigma: a1=' + a1 + ', r=' + r + ', n=' + n + ' → S_n=' + seriesCalc.value.toExponential(4));
+                return { value: seriesCalc.value, steps: seriesCalc.steps, fromFormula: true };
+            }
+        }
+
+        // Pattern B: Sequence-based — "primeros 25 términos ... 4, 12, 36, 108"
         var seqRe = /(?:primeros?\s+)?(\d+)\s+t[e\xe9]rminos?[^.]*?(\d+\.?\d*)\s*,\s*(\d+\.?\d*)\s*,\s*(\d+\.?\d*)/i;
         var seqM = seqRe.exec(text);
         if (seqM) {
@@ -428,6 +487,7 @@ export class QuizMathValidator {
             if (!r.equals(r2)) return null;
         }
         if (!a1) {
+            // Pattern C: Parameter-based — "a₁=4, r=3.2, n=25"
             var paramRe = /a[\u20811]\s*=\s*(\d+\.?\d*).*?r\s*=\s*(\d+\.?\d*)/i;
             var paramM = paramRe.exec(text);
             if (paramM) {
@@ -439,10 +499,10 @@ export class QuizMathValidator {
             }
         }
         if (!a1 || !r || !n || r.eq(1) || n < 1) return null;
-        var seriesCalc = MathEngine.geometricSeries(a1, r, n);
+        var seriesCalc2 = MathEngine.geometricSeries(a1, r, n);
         return {
-            value: seriesCalc.value,
-            steps: seriesCalc.steps,
+            value: seriesCalc2.value,
+            steps: seriesCalc2.steps,
             fromFormula: true,
         };
     }
@@ -450,6 +510,27 @@ export class QuizMathValidator {
     static _tryArithmeticSeriesFormula(text) {
             if (!/serie\s+aritm[e\xe9]trica|progresi[o\xf3]n\s+aritm[e\xe9]trica/i.test(text)) return null;
             var a1, d, n;
+
+            // Pattern A: Sigma with linear polynomial — Σ_{i=1}^{200} (7i - 12)
+            var sigmaLinRe = /[\u03A3\u2211]\s*_?\{?\s*[ij]\s*=\s*(\d+)\s*\}?\s*\^?\{?\s*(\d+)\s*\}?\s*\(?(\d+\.?\d*)\s*[ij]\s*([+-]\s*\d+\.?\d*)?\)?/i;
+            var sigmaM = sigmaLinRe.exec(text);
+            if (sigmaM) {
+                var start = parseInt(sigmaM[1], 10);
+                var end = parseInt(sigmaM[2], 10);
+                var slope = QuizMathValidator._parseDecimal(sigmaM[3]);
+                var intercept = sigmaM[4] ? QuizMathValidator._parseDecimal(sigmaM[4].replace(/\s/g, '')) : new Decimal(0);
+                if (slope && intercept !== null && end >= start) {
+                    n = end - start + 1;
+                    a1 = slope.times(start).plus(intercept);
+                    d = slope;
+                    var seriesCalc = MathEngine.arithmeticSeries(a1, d, n);
+                    console.log('[MathVerify] Arithmetic series from sigma: a1=' + a1 + ', d=' + d +
+                        ', n=' + n + ' → S=' + seriesCalc.value);
+                    return { value: seriesCalc.value, steps: seriesCalc.steps, fromFormula: true };
+                }
+            }
+
+            // Pattern B: Sequence-based
             var seqRe = /(?:primeros?\s+)?(\d+)\s+t[e\xe9]rminos?[^.]*?(\d+\.?\d*)\s*,\s*(\d+\.?\d*)\s*,\s*(\d+\.?\d*)/i;
             var seqM = seqRe.exec(text);
             if (seqM) {
@@ -461,6 +542,7 @@ export class QuizMathValidator {
                 if (!d.equals(third.minus(second))) return null;
             }
             if (!a1) {
+                // Pattern C: Parameter-based
                 var paramRe = /a[\u20811]\s*=\s*(\d+\.?\d*).*?d\s*=\s*(\d+\.?\d*)/i;
                 var paramM = paramRe.exec(text);
                 if (paramM) {
@@ -472,10 +554,10 @@ export class QuizMathValidator {
                 }
             }
             if (!a1 || !d || !n || n < 1) return null;
-            var seriesCalc = MathEngine.arithmeticSeries(a1, d, n);
+            var seriesCalc2 = MathEngine.arithmeticSeries(a1, d, n);
             return {
-                value: seriesCalc.value,
-                steps: seriesCalc.steps,
+                value: seriesCalc2.value,
+                steps: seriesCalc2.steps,
                 fromFormula: true,
             };
         }
@@ -1136,6 +1218,28 @@ export class QuizMathValidator {
     static _detectFollowUpOperations(text) {
             if (!text) return [];
             var operations = [];
+
+            // Special: "se le resta la suma de los primeros N números"
+            // This means: from the total sum, subtract the sum of the first N addends
+            var restaSumaRe = /resta[rn]?\s+(?:la\s+)?suma\s+de\s+los\s+primeros?\s+(\d+)\s+n[u\xfa]meros?/i;
+            var restaSumaM = restaSumaRe.exec(text);
+            if (restaSumaM) {
+                var nRestar = parseInt(restaSumaM[1], 10);
+                (function(count, pos) {
+                    operations.push({
+                        apply: function(total, allNumbers) {
+                            if (!allNumbers || allNumbers.length < count) return total;
+                            var partSum = new Decimal(0);
+                            for (var pi = 0; pi < count; pi++) partSum = partSum.plus(allNumbers[pi]);
+                            return total.minus(partSum);
+                        },
+                        describe: function(p, r) { return 'Resta suma de primeros ' + count + ': ' + p + ' → ' + r; },
+                        position: pos,
+                        needsAllNumbers: true,
+                    });
+                })(nRestar, restaSumaM.index);
+            }
+
             var addRe = /(?:y\s+)?(?:se\s+(?:le\s+)?)?(?:agrega[rn]?|a\xf1ad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?|m\xe1s)\s+(?:(?:un|una|el|la|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/gi;
             var m;
             while ((m = addRe.exec(text)) !== null) {
@@ -1294,6 +1398,106 @@ export class QuizMathValidator {
             .replace(/(?:de\s+)?(?:mayor|menor)\s+a\s+(?:mayor|menor)[^.]*\./gi, '')
             .replace(/\s{2,}/g, ' ')
             .trim();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Strategy 2.5: Derivative / Extrema Problems
+    // "f(x) = x³ - 12x² + 45x - 10, ¿cuál es el valor de x donde ocurre
+    //  el mínimo local?" → f'(x) = 0 → x = 5
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    static _tryDerivativeExtremaProblem(text) {
+        if (!DERIVATIVE_PATTERNS.some(function(re) { return re.test(text); })) return null;
+
+        // Must have f(x) = polynomial
+        var fxMatch = text.match(/f\s*\(\s*x\s*\)\s*=\s*([^.]+?)(?:\.\s|$)/i);
+        if (!fxMatch) return null;
+
+        var polyText = fxMatch[1].trim();
+        var coeffs = MathEngine.parsePolynomialFromText(polyText);
+        if (!coeffs) return null;
+
+        var maxPower = Math.max.apply(null, Object.keys(coeffs).map(Number));
+        if (maxPower < 2 || maxPower > 6) return null;
+
+        var extrema = MathEngine.findPolynomialExtrema(coeffs);
+        if (!extrema) return null;
+
+        var lower = text.toLowerCase();
+        var wantsMin = /m[i\xed]nimo|m[i\xed]n(?:imo)?\s+local/i.test(lower);
+        var wantsMax = /m[a\xe1]ximo|m[a\xe1]x(?:imo)?\s+local/i.test(lower) && !wantsMin;
+        var wantsX = /valor\s+de\s+x|cu[a\xe1]l\s+es\s+(?:el\s+)?(?:valor|x)/i.test(lower);
+
+        var steps = extrema.steps.slice();
+        var result = null;
+
+        if (wantsMin && extrema.minima.length > 0) {
+            // Question asks for integer → find the integer minimum
+            var intMin = extrema.minima.filter(function(p) { return p.x.isInteger(); });
+            var target = intMin.length > 0 ? intMin[0] : extrema.minima[0];
+            result = wantsX || /valor\s+de\s+x|x\s+\(/i.test(lower) ? target.x : target.y;
+            steps.push('Respuesta (x del mínimo): ' + target.x);
+        } else if (wantsMax && extrema.maxima.length > 0) {
+            var intMax = extrema.maxima.filter(function(p) { return p.x.isInteger(); });
+            var target2 = intMax.length > 0 ? intMax[0] : extrema.maxima[0];
+            result = wantsX || /valor\s+de\s+x|x\s+\(/i.test(lower) ? target2.x : target2.y;
+            steps.push('Respuesta (x del máximo): ' + target2.x);
+        } else if (extrema.minima.length > 0 || extrema.maxima.length > 0) {
+            // Generic "extremo local" — return first found
+            var all = extrema.minima.concat(extrema.maxima);
+            if (all.length > 0) {
+                result = all[0].x;
+                steps.push('Punto crítico: x = ' + result);
+            }
+        }
+
+        if (result === null) return null;
+        return { value: result, steps: steps };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Strategy 2.6: Scientific Notation Sum / Conversion
+    // "A = 5.678912e8, B = 3.456789e7, C = 1.234567e6. Suma y expresa..."
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    static _tryScientificNotationSum(text) {
+        if (!/notaci[o\xf3]n\s+cient[i\xed]fica|[eE]\d+|10\s*\^/i.test(text)) return null;
+
+        var numbers = MathEngine.parseScientificNumbers(text);
+        if (numbers.length < 2) return null;
+
+        var steps = [];
+        var sum = new Decimal(0);
+        for (var i = 0; i < numbers.length; i++) {
+            sum = sum.plus(numbers[i]);
+            steps.push('Número ' + (i + 1) + ': ' + numbers[i].toExponential(6));
+        }
+        steps.push('Suma: ' + sum.toExponential(6));
+
+        // Check if the question asks for a coefficient (mantissa)
+        var wantsCoefficient = /coeficiente|mantisa/i.test(text);
+        var sigFigMatch = text.match(/(\d+)\s*(?:cifras?\s+significativas?|d[i\xed]gitos?\s+significativos?)/i);
+        var sigFigs = sigFigMatch ? parseInt(sigFigMatch[1], 10) : null;
+
+        if (wantsCoefficient || sigFigs) {
+            var sciNot = MathEngine.toScientificNotation(sum);
+            var mantissa = sciNot.mantissa;
+            if (sigFigs) {
+                mantissa = MathEngine.roundToSignificantFigures(mantissa, sigFigs);
+                steps.push('Coeficiente redondeado a ' + sigFigs + ' cifras significativas: ' + mantissa);
+            } else {
+                steps.push('Coeficiente: ' + mantissa + ' × 10^' + sciNot.exponent);
+            }
+            return { value: mantissa, steps: steps };
+        }
+
+        // Check for rounding
+        if (/redonde[ao]\s+.*?entero/i.test(text)) {
+            sum = sum.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+            steps.push('Redondeado al entero: ' + sum);
+        }
+
+        return { value: sum, steps: steps };
     }
 
 }
