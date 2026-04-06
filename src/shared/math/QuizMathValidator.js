@@ -764,23 +764,59 @@ export class QuizMathValidator {
     // Ordering Helpers
 
     static fixOrderingQuestion(items, rawCorrectOrder) {
-        if (!items || !items.length) return null;
+        if (!items || !items.length || items.length < 2) return null;
+
+        var correctSequence;
+
+        // Try numeric sorting first
         var numeric = [];
+        var canSortNumeric = true;
         for (var oi = 0; oi < items.length; oi++) {
             var d = QuizMathValidator._parseDecimal(String(items[oi]).replace(/[^\d.,-]/g, ''));
-            if (!d) return null;
+            if (!d) { canSortNumeric = false; break; }
             numeric.push({ original: items[oi], value: d, origIdx: oi });
         }
-        var isDesc = false;
-        if (typeof rawCorrectOrder === 'string') {
-            isDesc = /descend|mayor\s*a\s*menor|de\s*mayor/i.test(rawCorrectOrder);
-        } else if (Array.isArray(rawCorrectOrder) && rawCorrectOrder.length >= 2) {
-            var first = QuizMathValidator._parseDecimal(String(rawCorrectOrder[0]).replace(/[^\d.,-]/g, ''));
-            var last = QuizMathValidator._parseDecimal(String(rawCorrectOrder[rawCorrectOrder.length - 1]).replace(/[^\d.,-]/g, ''));
-            if (first && last) isDesc = first.gt(last);
+
+        if (canSortNumeric) {
+            var isDesc = false;
+            if (typeof rawCorrectOrder === 'string') {
+                isDesc = /descend|mayor\s*a\s*menor|de\s*mayor/i.test(rawCorrectOrder);
+            } else if (Array.isArray(rawCorrectOrder) && rawCorrectOrder.length >= 2) {
+                var first = QuizMathValidator._parseDecimal(String(rawCorrectOrder[0]).replace(/[^\d.,-]/g, ''));
+                var last = QuizMathValidator._parseDecimal(String(rawCorrectOrder[rawCorrectOrder.length - 1]).replace(/[^\d.,-]/g, ''));
+                if (first && last) isDesc = first.gt(last);
+            }
+            var sorted = numeric.slice().sort(function(a, b) { return isDesc ? b.value.cmp(a.value) : a.value.cmp(b.value); });
+            correctSequence = sorted.map(function(s) { return s.original; });
+        } else if (Array.isArray(rawCorrectOrder) && rawCorrectOrder.length === items.length) {
+            // Non-numeric: use LLM-provided correctOrder indices
+            var validIndices = rawCorrectOrder.every(function(i) { return Number.isInteger(i) && i >= 0 && i < items.length; });
+            correctSequence = validIndices
+                ? rawCorrectOrder.map(function(i) { return items[i]; })
+                : items.slice();
+        } else {
+            correctSequence = items.slice();
         }
-        var sorted = numeric.slice().sort(function(a, b) { return isDesc ? b.value.cmp(a.value) : a.value.cmp(b.value); });
-        return sorted.map(function(s) { return s.original; });
+
+        // Fisher-Yates shuffle for display order
+        var shuffled = items.slice();
+        for (var si = shuffled.length - 1; si > 0; si--) {
+            var sj = Math.floor(Math.random() * (si + 1));
+            var tmp = shuffled[si]; shuffled[si] = shuffled[sj]; shuffled[sj] = tmp;
+        }
+        // Re-shuffle if identical to correctSequence (avoid presenting already-ordered items)
+        var attempts = 5;
+        while (attempts-- > 0 && shuffled.every(function(itm, idx) { return itm === correctSequence[idx]; })) {
+            for (var si2 = shuffled.length - 1; si2 > 0; si2--) {
+                var sj2 = Math.floor(Math.random() * (si2 + 1));
+                var tmp2 = shuffled[si2]; shuffled[si2] = shuffled[sj2]; shuffled[sj2] = tmp2;
+            }
+        }
+
+        // correctOrder[i] = index in shuffled where correctSequence[i] is located
+        var correctOrder = correctSequence.map(function(item) { return shuffled.indexOf(item); });
+
+        return { items: shuffled, correctOrder: correctOrder, correctSequence: correctSequence };
     }
 
     static buildOrderingExplanation(correctSequence, llmExplanation) {
