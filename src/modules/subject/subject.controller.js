@@ -27,6 +27,15 @@ export class SubjectController {
         } catch (err) { next(err); }
     };
 
+    getByCreator = async (req, res, next) => {
+        try {
+            const result = await this.subjectService.getByCreator(parseInt(req.params.userId));
+            if (result.isFail()) return next(result.getError());
+            res.set('Cache-Control', 'no-store');
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     getById = async (req, res, next) => {
         try {
             const result = await this.subjectService.getById(parseInt(req.params.id));

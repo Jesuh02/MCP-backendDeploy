@@ -27,6 +27,15 @@ export class SupabaseSubjectRepository {
         return data || [];
     }
 
+    async findByCreator(userId) {
+        const { data, error } = await this.client.from('subjects').select('*')
+            .eq('created_by', userId)
+            .eq('is_active', true)
+            .order('created_at', { ascending: false });
+        if (error) throw new Error(error.message);
+        return data || [];
+    }
+
     async create(subjectData) {
         const payload = {
             course_id: subjectData.courseId,
