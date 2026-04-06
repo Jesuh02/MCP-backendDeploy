@@ -36,6 +36,7 @@ import { institucionRoutes } from '../../modules/institucion/institucion.routes.
 import { whatsappRoutes } from '../../modules/whatsapp/whatsapp.routes.js';
 import { createCourseActiveGuard } from '../../shared/middleware/courseActiveGuard.js';
 import { createTenantMiddleware } from '../../shared/middleware/TenantMiddleware.js';
+import { publicRegisterRoutes } from '../../modules/auth/public-register.routes.js';
 
 export function createRouter(deps) {
     const router = Router();
@@ -47,6 +48,7 @@ export function createRouter(deps) {
     router.use(tenantMiddleware);
 
     router.use('/auth', authRoutes(deps));
+    router.use('/register', publicRegisterRoutes());
     router.use('/', healthRoutes(deps));
     router.use('/public', publicRoutes(deps));
 
