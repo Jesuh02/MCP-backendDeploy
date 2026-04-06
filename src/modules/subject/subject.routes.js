@@ -10,6 +10,12 @@ export function subjectRoutes({ subjectController }) {
     router.put('/:id', subjectController.update);
     router.delete('/:id', subjectController.delete);
 
+    // Subject collaborators
+    router.get('/:id/collaborators', subjectController.getSubjectCollaborators);
+    router.post('/:id/collaborators', subjectController.addSubjectCollaborator);
+    router.put('/:id/collaborators/sync', subjectController.syncSubjectCollaborators);
+    router.delete('/:id/collaborators/:userId', subjectController.removeSubjectCollaborator);
+
     return router;
 }
 export default subjectRoutes;
