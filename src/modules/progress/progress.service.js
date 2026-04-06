@@ -147,7 +147,9 @@ export class ProgressDomainService {
     }
 
     async getEnrolledCount(courseId) {
-        const count = await this.progressRepo.countByCourse(courseId);
+        // Contar desde pre_enrollments (status='approved') — misma fuente que getGuests()
+        // para que el número sea consistente con la vista de edición del curso.
+        const count = await this.progressRepo.countApprovedGuestsByCourse(courseId);
         return Result.ok({ count });
     }
 
