@@ -5,6 +5,7 @@ export function subjectRoutes({ subjectController }) {
 
     router.get('/', subjectController.list);
     router.get('/course/:courseId', subjectController.getByCourse);
+    router.get('/creator/:userId', subjectController.getByCreator);
     router.get('/:id', subjectController.getById);
     router.post('/', subjectController.create);
     router.put('/:id', subjectController.update);

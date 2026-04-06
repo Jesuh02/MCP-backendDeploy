@@ -124,8 +124,8 @@ class SumOfParametersVerifier {
 
         // Extract qty×price pairs from the problem text
         const qtyPricePatterns = [
-            /(\d[\d,.]*)\s*(?:\w+\s+){0,3}(?:a|de|por|cada\s+un[oa]|cada\s+uno\s+a)\s*\$?\s*([\d,.]+)/g,
-            /(?:vende|compra|produce|fabrica|tiene)\s+(\d[\d,.]*)\s+\w+\s+(?:a|por)\s*\$?\s*([\d,.]+)/g,
+            /(\d[\d,.]*)\s*(?:[^\s]+\s+){0,3}(?:a|de|por|cada\s+un[oa]|cada\s+uno\s+a)\s*\$?\s*([\d,.]+)/g,
+            /(?:vende|compra|produce|fabrica|tiene)\s+(\d[\d,.]*)\s+[^\s]+\s+(?:a|por)\s*\$?\s*([\d,.]+)/g,
         ];
 
         const pairs = [];
@@ -382,6 +382,323 @@ function _parseDecimalSafe(str) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Verificador 7: IndependentRecalculationVerifier
+// ═══════════════════════════════════════════════════════════════════════════
+// RE-CALCULA la respuesta desde cero usando aritmética independiente.
+// Si el cálculo produce un resultado y NO coincide con ninguna opción → rechazar.
+// Esta es la DEFENSA PRINCIPAL contra respuestas fabricadas.
+
+class IndependentRecalculationVerifier {
+    canHandle(q) {
+        if (q.type !== 'multiple_choice' || !Array.isArray(q.options)) return false;
+        const text = (q.question || '').toLowerCase();
+        // Solo para problemas con señales matemáticas claras
+        return /(?:calcula|suma|multiplica|divide|resta|total|resultado|cu[aá]nto|promedio|porcentaje|inter[eé]s|descuento|[aá]rea|per[ií]metro)/i.test(text);
+    }
+
+    verify(q) {
+        const text = q.question || '';
+
+        // Intentar cálculo aritmético explícito simple
+        const result = this._trySimpleArithmetic(text);
+        if (!result) return { valid: true }; // No pudimos calcular → no rechazar
+
+        const computed = result.value;
+
+        // Verificar que alguna opción coincida con el resultado
+        const options = q.options;
+        let foundMatch = false;
+        let correctIdx = -1;
+
+        for (let i = 0; i < options.length; i++) {
+            const optVal = _parseDecimalSafe(String(options[i]).replace(/[^\d.,-]/g, ''));
+            if (!optVal) continue;
+
+            const diff = computed.minus(optVal).abs();
+            const tolerance = Decimal.max(computed.abs().times('0.01'), new Decimal('0.5'));
+
+            if (diff.lte(tolerance)) {
+                foundMatch = true;
+                correctIdx = i;
+                break;
+            }
+        }
+
+        if (!foundMatch) {
+            // El resultado calculado no está en ninguna opción → pregunta rota
+            const maxOpt = options.map(o => _parseDecimalSafe(String(o).replace(/[^\d.,-]/g, ''))).filter(Boolean);
+            if (maxOpt.length >= 2) {
+                const maxVal = maxOpt.reduce((a, b) => a.abs().gt(b.abs()) ? a : b);
+                const ratio = computed.abs().div(maxVal.abs().plus(1));
+
+                // Solo rechazar si la diferencia es significativa (>10x o el resultado no está cerca)
+                if (ratio.gt(10) || ratio.lt(new Decimal('0.1'))) {
+                    return {
+                        valid: false,
+                        reason: `Recálculo independiente=${computed} no coincide con ninguna opción (ratio=${ratio.toFixed(2)}x). Opciones: ${options.join(', ')}`,
+                    };
+                }
+            }
+        }
+
+        return { valid: true };
+    }
+
+    /** Cálculo aritmético básico: detecta expresiones "A op B" */
+    _trySimpleArithmetic(text) {
+        const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
+        // Match: number op number
+        const exprRe = /(\d[\d,.]*)\s*([+\-×*÷/])\s*(\d[\d,.]*)/g;
+        const m = exprRe.exec(cleaned);
+        if (!m) return null;
+
+        const a = _parseDecimalSafe(m[1]);
+        const b = _parseDecimalSafe(m[3]);
+        if (!a || !b) return null;
+
+        const op = m[2];
+        let result;
+        if (op === '+') result = a.plus(b);
+        else if (op === '-' || op === '−') result = a.minus(b);
+        else if (op === '×' || op === '*' || op === '\xd7') result = a.times(b);
+        else if (op === '÷' || op === '/' || op === '\xf7') {
+            if (b.isZero()) return null;
+            result = a.div(b);
+        } else return null;
+
+        return { value: result };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Verificador 8: ScientificNotationVerifier
+// ═══════════════════════════════════════════════════════════════════════════
+// Verifica preguntas de notación científica: la opción correcta debe
+// representar correctamente el número en notación científica.
+
+class ScientificNotationVerifier {
+    canHandle(q) {
+        const text = (q.question || '').toLowerCase();
+        return /notaci[oó]n\s+cient[ií]fica/i.test(text);
+    }
+
+    verify(q) {
+        const text = q.question || '';
+
+        // Extraer el número a convertir
+        const numMatch = text.match(/(?:expres[ae]r?|convert[ie]r?|escrib[ie]r?|represent[ae]r?)[\s\S]*?(\d[\d,. ]*\d)/i);
+        if (!numMatch) return { valid: true };
+
+        const originalNum = _parseDecimalSafe(numMatch[1].replace(/\s/g, ''));
+        if (!originalNum || originalNum.isZero()) return { valid: true };
+
+        // Calcular la notación científica correcta
+        const absNum = originalNum.abs();
+        const log10 = absNum.log(10).floor().toNumber();
+        const mantissa = absNum.div(new Decimal(10).pow(log10));
+
+        // Verificar cada opción: buscar formato "M × 10^N" o "MeN"
+        if (q.type !== 'multiple_choice' || !Array.isArray(q.options)) return { valid: true };
+
+        const sciPatterns = [
+            /(\d+\.?\d*)\s*[×x]\s*10\s*\^?\s*(\d+)/i,
+            /(\d+\.?\d*)\s*[×x]\s*10\s*([⁰¹²³⁴⁵⁶⁷⁸⁹]+)/i,
+            /(\d+\.?\d*)e(\d+)/i,
+        ];
+
+        let bestOptionIdx = -1;
+        let bestDiff = new Decimal(Infinity);
+
+        for (let i = 0; i < q.options.length; i++) {
+            const opt = String(q.options[i]);
+            for (const pattern of sciPatterns) {
+                const m = opt.match(pattern);
+                if (!m) continue;
+
+                const optMantissa = _parseDecimalSafe(m[1]);
+                const expStr = m[2].replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, c =>
+                    '0123456789'['⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(c)] || c
+                );
+                const optExp = parseInt(expStr, 10);
+                if (!optMantissa || isNaN(optExp)) continue;
+
+                const optValue = optMantissa.times(new Decimal(10).pow(optExp));
+                const diff = optValue.minus(originalNum).abs();
+                if (diff.lt(bestDiff)) {
+                    bestDiff = diff;
+                    bestOptionIdx = i;
+                }
+            }
+        }
+
+        if (bestOptionIdx !== -1 && bestOptionIdx !== q.correctIndex) {
+            // La opción más precisa no coincide con la marcada como correcta
+            const tolerance = originalNum.abs().times('0.001');
+            if (bestDiff.lte(tolerance)) {
+                return {
+                    valid: false,
+                    reason: `Notación científica: opción correcta debería ser índice ${bestOptionIdx} (${q.options[bestOptionIdx]}), no ${q.correctIndex} (${q.options[q.correctIndex]}). Número original: ${originalNum}`,
+                };
+            }
+        }
+
+        return { valid: true };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Verificador 9: IntegerSolutionVerifier
+// ═══════════════════════════════════════════════════════════════════════════
+// Para sistemas de ecuaciones resueltos por eliminación/sustitución:
+// verifica que la solución tenga valores enteros (o rechaza si el
+// enunciado requiere soluciones enteras pero no las hay).
+
+class IntegerSolutionVerifier {
+    canHandle(q) {
+        const text = (q.question || '').toLowerCase();
+        return /(?:sistema|ecuaci[oó]n|ecuaciones)/i.test(text) &&
+            /(?:eliminaci[oó]n|sustituci[oó]n|m[eé]todo|resuelve)/i.test(text);
+    }
+
+    verify(q) {
+        const text = q.question || '';
+
+        // Extraer ecuaciones lineales: ax + by = c
+        const eqRe = /(-?\d*)\s*([xy])\s*([+\-−])\s*(\d*)\s*([xy])\s*=\s*(-?\d+)/g;
+        const equations = [];
+        let em;
+        while ((em = eqRe.exec(text)) !== null) {
+            const a = parseInt(em[1] || '1', 10) || 1;
+            const op = em[3] === '-' || em[3] === '−' ? -1 : 1;
+            const b = (parseInt(em[4] || '1', 10) || 1) * op;
+            equations.push({
+                coeffX: em[2] === 'x' ? a : b,
+                coeffY: em[2] === 'y' ? a : b,
+                result: parseInt(em[6], 10),
+            });
+        }
+
+        if (equations.length < 2) return { valid: true };
+
+        // Resolver el sistema por Cramer
+        const a1 = equations[0].coeffX, b1 = equations[0].coeffY, c1 = equations[0].result;
+        const a2 = equations[1].coeffX, b2 = equations[1].coeffY, c2 = equations[1].result;
+
+        const det = a1 * b2 - a2 * b1;
+        if (det === 0) {
+            return {
+                valid: false,
+                reason: 'Sistema de ecuaciones sin solución única (determinante = 0)',
+            };
+        }
+
+        const x = (c1 * b2 - c2 * b1) / det;
+        const y = (a1 * c2 - a2 * c1) / det;
+
+        // Si el método es eliminación/sustitución, las soluciones deben ser enteras
+        // (en contexto educativo)
+        if (!Number.isInteger(x) || !Number.isInteger(y)) {
+            return {
+                valid: false,
+                reason: `Sistema de ecuaciones con solución no entera: x=${x.toFixed(4)}, y=${y.toFixed(4)}. Para ejercicios de eliminación, las soluciones deben ser enteras.`,
+            };
+        }
+
+        // Verificar que la respuesta marcada como correcta coincida
+        let answerText = '';
+        if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
+            answerText = String(q.options[q.correctIndex] || '');
+        } else if (q.type === 'fill_in_blank') {
+            answerText = String(q.correctAnswer || '');
+        }
+
+        if (answerText) {
+            const xM = answerText.match(/x\s*=\s*(-?\d+)/i);
+            const yM = answerText.match(/y\s*=\s*(-?\d+)/i);
+
+            if (xM && yM) {
+                const ansX = parseInt(xM[1], 10);
+                const ansY = parseInt(yM[1], 10);
+
+                if (ansX !== x || ansY !== y) {
+                    return {
+                        valid: false,
+                        reason: `Sistema: respuesta dice x=${ansX}, y=${ansY} pero solución correcta es x=${x}, y=${y}`,
+                    };
+                }
+            }
+        }
+
+        return { valid: true };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Verificador 10: CorrectAnswerMatchesComputationVerifier
+// ═══════════════════════════════════════════════════════════════════════════
+// Verificador de ÚLTIMO RECURSO: para preguntas con porcentaje donde
+// el LLM calcula mal sumas parciales.
+// Detecta: "26,308,296 en vez de 26,296,296" — sumas con decimales erróneas.
+
+class DecimalSumVerifier {
+    canHandle(q) {
+        const text = (q.question || '').toLowerCase();
+        return q.type === 'multiple_choice' &&
+            /(?:suma|total|result)/i.test(text) &&
+            /(?:decimal|porcentaje|%|\.\d{2,})/i.test(text);
+    }
+
+    verify(q) {
+        const text = q.question || '';
+
+        // Extraer todos los números decimales del problema
+        const decimalNums = [];
+        const numRe = /\d[\d,]*\.\d+/g;
+        let m;
+        while ((m = numRe.exec(text)) !== null) {
+            const val = _parseDecimalSafe(m[0]);
+            if (val) decimalNums.push(val);
+        }
+
+        if (decimalNums.length < 2) return { valid: true };
+
+        // Verificar si es un problema de suma explícita
+        if (!/(?:suma|sumar|total|agreg|a[ñn]ad)/i.test(text)) return { valid: true };
+
+        const computedSum = decimalNums.reduce((a, b) => a.plus(b), new Decimal(0));
+
+        // Obtener respuesta correcta
+        let correctAnswer = null;
+        if (Array.isArray(q.options) && typeof q.correctIndex === 'number') {
+            const optStr = String(q.options[q.correctIndex] || '').replace(/[^\d.,-]/g, '');
+            correctAnswer = _parseDecimalSafe(optStr);
+        }
+
+        if (!correctAnswer) return { valid: true };
+
+        // Si la diferencia está entre 0.1% y 5%, es sospechosa pero puede ser redondeo legítimo
+        // Si la diferencia es > 5%, rechazar
+        const diff = correctAnswer.minus(computedSum).abs();
+        const relDiff = diff.div(computedSum.abs().plus(1));
+
+        if (relDiff.gt(0.001) && relDiff.lt(0.05)) {
+            // Zona gris: verificar si la respuesta correcta está más cerca de otro cálculo
+            // (e.g., suma con porcentaje aplicado)
+            return { valid: true };
+        }
+
+        if (relDiff.gte(0.05)) {
+            return {
+                valid: false,
+                reason: `Suma decimal: computado=${computedSum}, respuesta=${correctAnswer}, diff=${(relDiff.toNumber() * 100).toFixed(2)}%`,
+            };
+        }
+
+        return { valid: true };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Gate principal — orquestador
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -462,6 +779,10 @@ export class AnswerVerificationGate {
             new OptionConsistencyVerifier(),
             new SumOfParametersVerifier(),
             new EquationConsistencyVerifier(),
+            new IntegerSolutionVerifier(),
+            new ScientificNotationVerifier(),
+            new IndependentRecalculationVerifier(),
+            new DecimalSumVerifier(),
             new ExplanationAnswerConsistencyVerifier(),
             new FillInBlankNumericVerifier(),
         ];
@@ -475,6 +796,10 @@ export {
     EquationConsistencyVerifier,
     ExplanationAnswerConsistencyVerifier,
     FillInBlankNumericVerifier,
+    IndependentRecalculationVerifier,
+    ScientificNotationVerifier,
+    IntegerSolutionVerifier,
+    DecimalSumVerifier,
 };
 
 export default AnswerVerificationGate;

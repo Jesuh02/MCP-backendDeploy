@@ -33,7 +33,7 @@ const OPTION_REL_TOLERANCE = new Decimal('0.01');
 const OPTION_ABS_TOLERANCE = new Decimal('0.5');
 // When a rigorous formula answer is > this factor larger than the max option,
 // the question is considered mathematically broken (LLM fabricated options).
-const BROKEN_QUESTION_FACTOR = new Decimal('100');
+const BROKEN_QUESTION_FACTOR = new Decimal('10');
 
 export class QuizMathValidator {
 
@@ -54,25 +54,26 @@ export class QuizMathValidator {
         try {
             var result = QuizMathValidator.computeExpectedAnswer(text);
 
-            // Only use LLM explanation as a fallback when the problem is NOT advanced formula-based.
-            // For geometric series, summations, etc. the LLM explanation may contain a fabricated answer —
-            // trusting it blindly would hide the real mathematical error.
-            if (!isAdvanced && q.explanation && typeof q.explanation === 'string') {
+            // SEGURIDAD: Solo usar explicación del LLM como ÚLTIMO recurso.
+            // NUNCA confiar en la explicación para problemas que PODEMOS calcular.
+            // La explicación del LLM puede contener respuestas FABRICADAS.
+            if (!result && !isAdvanced && q.explanation && typeof q.explanation === 'string') {
                 var explResult = QuizMathValidator._tryFromExplanation(q.explanation);
                 if (explResult) {
-                    result = QuizMathValidator._reconcileResults(result, explResult, q);
+                    explResult._unverified = true;
+                    result = explResult;
+                    console.warn('[MathVerify] WARNING: Using unverified LLM explanation as source for: "' + text.substring(0, 60) + '..."');
                 }
             }
 
             if (!result) return q;
 
-            // Sanity check: if the formula produced an astronomically large answer but the question
-            // options are small, the question itself is mathematically broken. Reject it so it doesn't
-            // reach students.
-            if (result.fromFormula && q.type === 'multiple_choice' && Array.isArray(q.options)) {
+            // Sanity check: if the computed answer is orders of magnitude different from ALL
+            // options, the question itself is mathematically broken. Reject it.
+            if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
                 if (QuizMathValidator._isBrokenQuestion(result.value, q.options)) {
-                    console.warn('[MathVerify] BROKEN QUESTION: formula gives ' + result.value.toExponential(4) +
-                        ' but all options are orders of magnitude smaller. Rejecting.');
+                    console.warn('[MathVerify] BROKEN QUESTION: computed gives ' + result.value.toExponential(4) +
+                        ' but all options are orders of magnitude different. Rejecting.');
                     return null;
                 }
             }

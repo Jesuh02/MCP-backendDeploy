@@ -78,6 +78,11 @@ export class SubjectDomainService {
         return Result.ok({ subjects, total });
     }
 
+    async getByCreator(userId) {
+        const subjects = await this.subjectRepo.findByCreator(userId);
+        return Result.ok(subjects);
+    }
+
     async getByCourse(courseId, requesterId) {
         const subjects = await this._getSubjectsByCourse(courseId);
         let result = subjects;
