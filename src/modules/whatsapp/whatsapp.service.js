@@ -1294,13 +1294,13 @@ export class WhatsAppDomainService {
      * Usa LLMDomainService.processPrompt() existente.
      */
     // internal helper shared by multiple intents.  Returns a chat response
-    // string if the user asked for an Excel file (role‑3 only) or `null` when the
+    // string if the user asked for an Excel file (roles 2 and 3) or `null` when the
     // message does not refer to Excel and normal handling should continue.
     async _maybeHandleExcel(text, user, userRoles = []) {
         if (!/\bexcel\b/i.test(text)) return null;
 
-        if (!this._hasPermission(userRoles, 'admin')) {
-            return '❌ Solo administradores pueden generar archivos Excel.';
+        if (!this._hasPermission(userRoles, 'teacher')) {
+            return '❌ Solo docentes y administradores pueden generar archivos Excel.';
         }
         if (!this.excelService) {
             return '❌ Servicio de generación de Excel no disponible.';
