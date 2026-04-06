@@ -9,6 +9,7 @@
 import { Result } from '../../shared/Result.js';
 import { QuizMathValidator } from '../../shared/math/QuizMathValidator.js';
 import { OrderingQuestionValidator } from '../../shared/math/OrderingQuestionValidator.js';
+import { AnswerVerificationGate } from '../../shared/math/AnswerVerificationGate.js';
 import { MCPService } from '../ai/mcp-legacy.service.js';
 import { RAGService } from '../ai/rag-legacy.service.js';
 import { SupabaseService } from '../../shared/database/SupabaseService.js';
@@ -1287,11 +1288,13 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
             try {
                 const parsed = JSON.parse(content.substring(start, end + 1));
                 if (Array.isArray(parsed)) {
+                    const gate = AnswerVerificationGate.getInstance();
                     const normalized = parsed
                         .map(q => this._normalizeQuestion(q))
                         .filter(Boolean)
                         .map(q => this._verifyMathAnswer(q))
-                        .filter(Boolean);
+                        .filter(Boolean)
+                        .filter(q => gate.verify(q) !== null);
                     if (normalized.length > 0) return normalized;
                 }
             } catch (_) { /* fall through to repair */ }
@@ -1302,11 +1305,13 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         const searchIn = start !== -1 ? content.substring(start) : content;
         const objects = this._extractObjectsFromBrokenArray(searchIn);
         if (objects.length > 0) {
+            const gate2 = AnswerVerificationGate.getInstance();
             const normalized = objects
                 .map(q => this._normalizeQuestion(q))
                 .filter(Boolean)
                 .map(q => this._verifyMathAnswer(q))
-                .filter(Boolean);
+                .filter(Boolean)
+                .filter(q => gate2.verify(q) !== null);
             if (normalized.length > 0) {
                 console.log(`[ReinforcementService] Repair recovered ${normalized.length} questions from broken JSON`);
                 return normalized;
