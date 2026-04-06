@@ -1129,6 +1129,7 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                 if (rawItems.length < 3) return null;
                 // Server-side shuffle: fixes LLM indexing errors
                 const fixed = QuizMathValidator.fixOrderingQuestion(rawItems, rawCorrectOrder);
+                if (!fixed) return null;
                 const llmExplanation = String(q.explanation ?? '').trim();
                 // Detect and log explanation ↔ correctOrder inconsistencies
                 const sanitized = QuizMathValidator._stripOrderingClaims(llmExplanation);
