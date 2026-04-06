@@ -293,7 +293,9 @@ export function publicRegisterRoutes() {
 
             if (usuarioError) {
                 // Rollback: eliminar persona recién creada
-                await client.from('personas').delete().eq('id', personaId).catch(() => {});
+                await Promise.resolve(
+                    client.from('personas').delete().eq('id', personaId)
+                ).catch(() => {});
 
                 if (
                     usuarioError.code === '23505' ||
@@ -312,10 +314,11 @@ export function publicRegisterRoutes() {
             const rolPayload = { usuario_id: usuarioId, rol_id: rol_id };
             if (asignado_en) rolPayload.asignado_en = asignado_en;
 
-            await client
-                .from('usuarios_roles')
-                .upsert(rolPayload, { onConflict: 'usuario_id,rol_id' })
-                .catch(() => {});
+            await Promise.resolve(
+                client
+                    .from('usuarios_roles')
+                    .upsert(rolPayload, { onConflict: 'usuario_id,rol_id' })
+            ).catch(() => {});
 
             // 7. Respuesta 201
             return res.status(201).json({
@@ -326,7 +329,9 @@ export function publicRegisterRoutes() {
         } catch (err) {
             // Defensive rollback
             if (personaId) {
-                await client.from('personas').delete().eq('id', personaId).catch(() => {});
+                await Promise.resolve(
+                    client.from('personas').delete().eq('id', personaId)
+                ).catch(() => {});
             }
             return res.status(500).json({ error: err.message || 'Error interno del servidor' });
         }
