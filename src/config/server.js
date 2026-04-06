@@ -17,6 +17,7 @@ export function createApp() {
     const ALLOWED_ORIGINS = [
         'https://coursevwebfrontend1.jdavidherazo.workers.dev',
         'https://coursevwebfrontend1.coursev.workers.dev',
+        'https://captacion-coursev.vercel.app',
         'http://localhost:5173',
         'http://127.0.0.1:5173',
         // Agrega aquí otros orígenes de confianza
