@@ -335,6 +335,15 @@ export class SupabaseProgressRepository {
         return error ? 0 : count;
     }
 
+    async countApprovedGuestsByCourse(courseId) {
+        const { count, error } = await this.client
+            .from('pre_enrollments')
+            .select('user_id', { count: 'exact', head: true })
+            .eq('course_id', courseId)
+            .eq('status', 'approved');
+        return error ? 0 : count;
+    }
+
     async findEnrolledCourseIds(userId) {
         const { data, error } = await this.client
             .from(this._courseProgressTable())
