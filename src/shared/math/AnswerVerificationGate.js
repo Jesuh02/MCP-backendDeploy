@@ -113,29 +113,41 @@ class SumOfParametersVerifier {
     canHandle(q) {
         if (q.type !== 'multiple_choice' && q.type !== 'fill_in_blank') return false;
         const text = (q.question || '').toLowerCase();
-        // Only for word problems with multiplication context
-        return /(?:art[ií]culos?|unidades?|productos?|libros?|cuadernos?|cajas?|piezas?)\s+(?:a|de|por)\s*\$?\s*\d/i.test(text) ||
-            /\d+\s+\w+\s+(?:a|de|por)\s*\$?\s*\d/i.test(text);
+        // For word problems with multiplication context (qty × price)
+        return /(?:art[ií]culos?|unidades?|productos?|libros?|cuadernos?|cajas?|piezas?|camisetas?|paquetes?|bolsas?|litros?|kilos?|metros?)\s+(?:a|de|por)\s*\$?\s*\d/i.test(text) ||
+            /\d+\s+\w+\s+(?:a|de|por|cada\s+un[oa])\s*\$?\s*\d/i.test(text) ||
+            /(?:vende|compra|produce|fabrica|tiene)\s+\d+/i.test(text);
     }
 
     verify(q) {
         const text = q.question || '';
 
-        // Extract all numbers from the problem
-        const allNumbers = [];
-        const numRe = /\d[\d,.]*\.?\d*/g;
-        let m;
-        while ((m = numRe.exec(text)) !== null) {
-            const val = _parseDecimalSafe(m[0]);
-            if (val !== null && val.gt(0)) allNumbers.push(val);
+        // Extract qty×price pairs from the problem text
+        const qtyPricePatterns = [
+            /(\d[\d,.]*)\s*(?:\w+\s+){0,3}(?:a|de|por|cada\s+un[oa]|cada\s+uno\s+a)\s*\$?\s*([\d,.]+)/g,
+            /(?:vende|compra|produce|fabrica|tiene)\s+(\d[\d,.]*)\s+\w+\s+(?:a|por)\s*\$?\s*([\d,.]+)/g,
+        ];
+
+        const pairs = [];
+        for (const re of qtyPricePatterns) {
+            re.lastIndex = 0;
+            let pm;
+            while ((pm = re.exec(text)) !== null) {
+                const qty = _parseDecimalSafe(pm[1]);
+                const price = _parseDecimalSafe(pm[2]);
+                if (qty && price && qty.gt(0) && price.gt(0)) {
+                    pairs.push({ qty, price });
+                }
+            }
+            if (pairs.length > 0) break;
         }
 
-        if (allNumbers.length < 3) return { valid: true };
+        if (pairs.length === 0) return { valid: true };
 
-        // Calculate naive sum of all parameters
-        const naiveSum = allNumbers.reduce((a, b) => a.plus(b), new Decimal(0));
+        // Calculate expected product
+        const expectedProduct = pairs.reduce((sum, p) => sum.plus(p.qty.times(p.price)), new Decimal(0));
 
-        // Check if the correct answer equals the naive sum
+        // Get the correct answer from the question
         let correctAnswer = null;
         if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
             const optStr = String(q.options[q.correctIndex] || '').replace(/[^\d.,-]/g, '');
@@ -146,30 +158,36 @@ class SumOfParametersVerifier {
 
         if (correctAnswer === null) return { valid: true };
 
-        // If the answer is exactly the sum of ALL parameters and the problem
-        // describes a qty×price scenario, it's likely wrong
-        if (correctAnswer.equals(naiveSum)) {
-            // Verify there's a multiplication context
-            const qtyPriceRe = /(\d[\d,.]*)\s*(?:\w+\s+){0,3}(?:a|de|por)\s*\$?\s*([\d,.]+)/g;
-            const pairs = [];
-            let pm;
-            while ((pm = qtyPriceRe.exec(text)) !== null) {
-                const qty = _parseDecimalSafe(pm[1]);
-                const price = _parseDecimalSafe(pm[2]);
-                if (qty && price && qty.gt(0) && price.gt(0)) {
-                    pairs.push({ qty, price });
-                }
+        // Check 1: If answer equals naive sum of ALL numbers (classic LLM error)
+        const allNumbers = [];
+        const numRe = /\d[\d,.]*\.?\d*/g;
+        let m;
+        while ((m = numRe.exec(text)) !== null) {
+            const val = _parseDecimalSafe(m[0]);
+            if (val !== null && val.gt(0)) allNumbers.push(val);
+        }
+        if (allNumbers.length >= 2) {
+            const naiveSum = allNumbers.reduce((a, b) => a.plus(b), new Decimal(0));
+            if (correctAnswer.equals(naiveSum) && !correctAnswer.equals(expectedProduct)) {
+                return {
+                    valid: false,
+                    reason: `Respuesta (${correctAnswer}) es la suma de parámetros del enunciado, no el producto. Esperado: ${expectedProduct}`,
+                    correctedAnswer: expectedProduct,
+                };
             }
+        }
 
-            if (pairs.length >= 1) {
-                const expectedProduct = pairs.reduce((sum, p) => sum.plus(p.qty.times(p.price)), new Decimal(0));
-                if (!expectedProduct.equals(naiveSum)) {
-                    return {
-                        valid: false,
-                        reason: `Respuesta (${correctAnswer}) es la suma de parámetros, no el producto. Esperado: ${expectedProduct}`,
-                        correctedAnswer: expectedProduct,
-                    };
-                }
+        // Check 2: If answer differs significantly from expected product
+        const relDiff = correctAnswer.minus(expectedProduct).abs().div(expectedProduct.abs().plus(1));
+        if (relDiff.gt(0.05)) {
+            // Allow if answer matches a different valid operation (e.g., the question asks for remainder)
+            const questionAsksProduct = /(?:total|recaud[oó]|gan[oó]|cost[oó]|valor\s+total|precio\s+total|cu[aá]nto.*total)/i.test(text);
+            if (questionAsksProduct) {
+                return {
+                    valid: false,
+                    reason: `Respuesta (${correctAnswer}) no coincide con el producto esperado (${expectedProduct}). Diferencia relativa: ${(relDiff.toNumber() * 100).toFixed(1)}%`,
+                    correctedAnswer: expectedProduct,
+                };
             }
         }
 
