@@ -27,7 +27,7 @@ import {
     formatProgressReport,
     MESSAGES,
 } from '../../utils/whatsappFormatter.js';
-import { getAllTenantEntries, TENANT_CONFIGS, runInTenantContext, getTenantClient, getCurrentTenantId } from '../../config/tenantRegistry.js';
+import { getAllTenantEntries, TENANT_CONFIGS, runInTenantContext, getTenantClient, getCurrentTenantId, getTenantMcpServerUrl } from '../../config/tenantRegistry.js';
 import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
 import { SupabasePersonaRepository } from '../persona/infrastructure/supabase.persona.repository.js';
 
@@ -653,6 +653,93 @@ export class WhatsAppDomainService {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // MCP tenant-aware routing
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Routes an MCP query to the correct MCP server based on the query tenant.
+     * - If the tenant's MCP server URL matches MCP_SELF_URL (or no URL is configured),
+     *   processes the query locally via this.mcpService.
+     * - Otherwise forwards the request via HTTP to the remote MCP server.
+     *
+     * @param {string} query - Natural language or SQL query.
+     * @param {string} tenantId - The resolved query tenant ID.
+     * @param {{ userId?: number, username?: string, userRoles?: number[] }} userContext
+     * @returns {Promise<string|object|null>}
+     */
+    async _callMcpForTenant(query, tenantId, userContext = {}) {
+        const tenantMcpUrl = getTenantMcpServerUrl(tenantId);
+        const selfUrl = (process.env.MCP_SELF_URL || '').replace(/\/$/, '');
+        const normalizedTenantUrl = tenantMcpUrl ? tenantMcpUrl.replace(/\/$/, '') : null;
+
+        // Use local service when: no URL configured for tenant, MCP_SELF_URL not set,
+        // or the tenant's MCP server URL matches this server's own URL.
+        const isLocal = !normalizedTenantUrl || !selfUrl || normalizedTenantUrl === selfUrl;
+
+        if (isLocal) {
+            if (!this.mcpService) return null;
+            if (typeof this.mcpService.processQueryWithAgent === 'function') {
+                return this.mcpService.processQueryWithAgent(query, userContext);
+            } else if (typeof this.mcpService.processQueryToData === 'function') {
+                return this.mcpService.processQueryToData(query, userContext.userId);
+            } else if (typeof this.mcpService.processQuery === 'function') {
+                return this.mcpService.processQuery(query, { ...userContext, includeSchema: true });
+            }
+            return null;
+        }
+
+        // ── Remote call to the tenant's dedicated MCP server ──────────────────
+        console.log(`[WhatsApp] Tenant='${tenantId}' → routing MCP query to remote server: ${normalizedTenantUrl}`);
+        const timeoutMs = Number(process.env.MCP_REMOTE_TIMEOUT_MS || 45000);
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+            const resp = await fetch(`${normalizedTenantUrl}/tools/call`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(process.env.MCP_INTER_SERVER_KEY
+                        ? { 'X-Inter-Server-Key': process.env.MCP_INTER_SERVER_KEY }
+                        : {}),
+                },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'tools/call',
+                    params: {
+                        name: 'query_database',
+                        arguments: {
+                            query,
+                            ...(userContext.userId != null ? { _userId: userContext.userId } : {}),
+                            ...(userContext.userRoles?.length ? { _userRoles: userContext.userRoles } : {}),
+                        },
+                        meta: {
+                            userId: userContext.userId ?? null,
+                            username: userContext.username ?? null,
+                            userRoles: userContext.userRoles ?? [],
+                        },
+                    },
+                }),
+                signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+
+            if (!resp.ok) {
+                throw new Error(`Remote MCP server at ${normalizedTenantUrl} returned HTTP ${resp.status}`);
+            }
+
+            const data = await resp.json().catch(() => null);
+            // JSON-RPC response: { result: { content: [{ type: 'text', text: '...' }] } }
+            const text = data?.result?.content?.[0]?.text;
+            if (text) return text;
+            return data?.result ?? null;
+        } catch (err) {
+            clearTimeout(timer);
+            throw err;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // Message processing inside the resolved tenant context
     // ═══════════════════════════════════════════════════════════
 
@@ -726,8 +813,10 @@ export class WhatsAppDomainService {
             // to ensure the DB schema persona and tool-calling behavior is used
             // instead of the generic LLM system prompt. This replicates the
             // client behaviour and avoids classifier LLM contamination.
+            // The query is routed to the MCP server that corresponds to queryTenantId
+            // (which may be a remote Railway instance for a different institution).
             try {
-                const canUseMCP = Boolean(this.mcpService);
+                const canUseMCP = Boolean(this.mcpService) || Boolean(getTenantMcpServerUrl(queryTenantId));
                 const looksLikeDbQuery = this._isMCPIntent(text) || (this.mcpService && typeof this.mcpService.isBusinessIntent === 'function' && this.mcpService.isBusinessIntent(text));
                 // Allow teachers (2) and admins (3) to use MCP queries from WhatsApp.
                 const roleAllows = userRoles.includes(3) || userRoles.includes(2);
@@ -740,13 +829,11 @@ export class WhatsAppDomainService {
                 if (canUseMCP && !isExcelRequest && (roleAllows || looksLikeDbQuery)) {
                     let mcpResult = null;
                     try {
-                        if (typeof this.mcpService.processQueryWithAgent === 'function') {
-                            mcpResult = await this.mcpService.processQueryWithAgent(text, { userId: user.id, username: user.username });
-                        } else if (typeof this.mcpService.processQueryToData === 'function') {
-                            mcpResult = await this.mcpService.processQueryToData(text, user.id);
-                        } else if (typeof this.mcpService.processQuery === 'function') {
-                            mcpResult = await this.mcpService.processQuery(text, { userId: user.id, username: user.username, includeSchema: true });
-                        }
+                        mcpResult = await this._callMcpForTenant(
+                            text,
+                            queryTenantId,
+                            { userId: user.id, username: user.username, userRoles },
+                        );
                     } catch (mErr) {
                         console.error('[WhatsApp] MCP direct call failed:', mErr && (mErr.message || mErr));
                         // fall through to normal classification/LLM path below
@@ -1621,11 +1708,14 @@ export class WhatsAppDomainService {
 
     /**
      * Handler: Consultas MCP (solo admin, rol 3).
-     * Usa MCPDomainService.processQuery() existente.
+     * Usa MCPDomainService.processQuery() existente, enrutando al servidor
+     * MCP que corresponde a la institución del usuario (getCurrentTenantId).
      */
     async _handleMCPQuery(text, user, userRoles = []) {
         try {
-            if (!this.mcpService) return 'El servicio MCP no está disponible.';
+            const tenantId = getCurrentTenantId() || 'qa-develop';
+            const hasMcpCapability = Boolean(this.mcpService) || Boolean(getTenantMcpServerUrl(tenantId));
+            if (!hasMcpCapability) return 'El servicio MCP no está disponible.';
 
             // check that caller has admin role just in case (intent logic should
             // have already enforced this).
@@ -1646,25 +1736,13 @@ export class WhatsAppDomainService {
                 return '❌ Consulta no permitida. Solo se permiten consultas de lectura (SELECT).';
             }
 
-            // Support two MCPService shapes:
-            // - Legacy MCPService.processQuery(query, options)
-            // - Domain-level MCPDomainService (not expected here)
             let result;
             try {
-                // Prefer agent-based processing when available so the LLM can call tools
-                if (typeof this.mcpService.processQueryWithAgent === 'function') {
-                    result = await this.mcpService.processQueryWithAgent(query, { userId: user.id, username: user.username });
-                } else if (typeof this.mcpService.processQuery === 'function') {
-                    // legacy signature (may accept query + options or an object)
-                    try {
-                        result = await this.mcpService.processQuery(query, { includeSchema: true, userId: user.id, username: user.username });
-                    } catch (e) {
-                        // fallback to object-shaped call
-                        result = await this.mcpService.processQuery({ query, includeSchema: true, userId: user.id, username: user.username });
-                    }
-                } else {
-                    return '❌ El servicio MCP no expone una API conocida.';
-                }
+                result = await this._callMcpForTenant(
+                    query,
+                    tenantId,
+                    { userId: user.id, username: user.username, userRoles },
+                );
             } catch (e) {
                 console.error('[WhatsApp] MCP processQuery failed:', e && (e.message || e));
                 return '❌ Error al ejecutar la consulta. Intenta con otra formulación.';

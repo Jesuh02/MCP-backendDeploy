@@ -27,6 +27,13 @@ const META_QUESTION_PATTERNS = [
     /cifra\s+(?:de|en)\s+(?:la\s+)?posici[o\xf3]n/i,
 ];
 
+// Tolerance for option matching: 1% relative OR 0.5 absolute
+const OPTION_REL_TOLERANCE = new Decimal('0.01');
+const OPTION_ABS_TOLERANCE = new Decimal('0.5');
+// When a rigorous formula answer is > this factor larger than the max option,
+// the question is considered mathematically broken (LLM fabricated options).
+const BROKEN_QUESTION_FACTOR = new Decimal('100');
+
 export class QuizMathValidator {
 
     static verify(q) {
@@ -35,9 +42,10 @@ export class QuizMathValidator {
         if (!text || typeof text !== 'string') return q;
         var lower = text.toLowerCase();
 
+        var isAdvanced = QuizMathValidator._isAdvancedMathProblem(text);
         var hasMathSignals = MATH_SIGNALS.test(lower)
             || HAS_SIGNIFICANT_NUMBERS.test(text.replace(/,/g, ''))
-            || QuizMathValidator._isAdvancedMathProblem(text);
+            || isAdvanced;
 
         if (!hasMathSignals) return q;
         if (META_QUESTION_PATTERNS.some(function(re) { return re.test(text); })) return q;
@@ -45,7 +53,10 @@ export class QuizMathValidator {
         try {
             var result = QuizMathValidator.computeExpectedAnswer(text);
 
-            if (q.explanation && typeof q.explanation === 'string') {
+            // Only use LLM explanation as a fallback when the problem is NOT advanced formula-based.
+            // For geometric series, summations, etc. the LLM explanation may contain a fabricated answer —
+            // trusting it blindly would hide the real mathematical error.
+            if (!isAdvanced && q.explanation && typeof q.explanation === 'string') {
                 var explResult = QuizMathValidator._tryFromExplanation(q.explanation);
                 if (explResult) {
                     result = QuizMathValidator._reconcileResults(result, explResult, q);
@@ -53,6 +64,17 @@ export class QuizMathValidator {
             }
 
             if (!result) return q;
+
+            // Sanity check: if the formula produced an astronomically large answer but the question
+            // options are small, the question itself is mathematically broken. Reject it so it doesn't
+            // reach students.
+            if (result.fromFormula && q.type === 'multiple_choice' && Array.isArray(q.options)) {
+                if (QuizMathValidator._isBrokenQuestion(result.value, q.options)) {
+                    console.warn('[MathVerify] BROKEN QUESTION: formula gives ' + result.value.toExponential(4) +
+                        ' but all options are orders of magnitude smaller. Rejecting.');
+                    return null;
+                }
+            }
 
             var finalAnswer = QuizMathValidator._applyDecimals(result.value, text);
 
@@ -66,6 +88,25 @@ export class QuizMathValidator {
             console.warn('[MathVerify] Error (non-blocking): ' + err.message);
         }
         return q;
+    }
+
+    /**
+     * Returns true when the rigorous formula answer is so much larger than all options
+     * that the question is definitively broken (e.g. geometric series with 25 terms r=3
+     * gives ~1.6 billion but all options are < 1000).
+     */
+    static _isBrokenQuestion(formulaResult, options) {
+        if (!formulaResult || !Array.isArray(options) || options.length === 0) return false;
+        var absResult = formulaResult.abs();
+        if (absResult.lt(1)) return false; // very small results are not "astronomical"
+        var maxOption = new Decimal(0);
+        for (var i = 0; i < options.length; i++) {
+            var optStr = String(options[i]).replace(/[^\d.,-]/g, '');
+            var opt = QuizMathValidator._parseDecimal(optStr);
+            if (opt && opt.abs().gt(maxOption)) maxOption = opt.abs();
+        }
+        if (maxOption.isZero()) return false;
+        return absResult.div(maxOption).gt(BROKEN_QUESTION_FACTOR);
     }
 
     static computeExpectedAnswer(text) {
@@ -89,7 +130,10 @@ export class QuizMathValidator {
         if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
             var cMatch = QuizMathValidator._findClosestOption(q.options, computed.value);
             var eMatch = QuizMathValidator._findClosestOption(q.options, explanation.value);
-            if (eMatch && !cMatch) return explanation;
+            // Null-safe: _findClosestOption can return null when no options parse as numbers
+            var eWithin = eMatch !== null && eMatch.within;
+            var cWithin = cMatch !== null && cMatch.within;
+            if (eWithin && !cWithin) return explanation;
         } else if (q.type === 'fill_in_blank') {
             return explanation;
         }
@@ -113,7 +157,9 @@ export class QuizMathValidator {
     static _verifyMultipleChoice(q, finalAnswer, steps) {
         if (!Array.isArray(q.options) || q.options.length === 0) return q;
         var match = QuizMathValidator._findClosestOption(q.options, finalAnswer);
-        if (match) {
+        // match is null when no option could be parsed as a number — skip validation
+        if (match === null) return q;
+        if (match.within) {
             if (match.index !== q.correctIndex) {
                 console.warn('[MathVerify] CORRECTED MC: index ' + q.correctIndex + ' -> ' + match.index);
                 q.correctIndex = match.index;
@@ -645,13 +691,14 @@ export class QuizMathValidator {
                 bestIdx = fi;
             }
         }
-        if (bestIdx === -1) return null;
+        if (bestIdx === -1) return null; // no option could be parsed as a number
         var optStr2 = String(options[bestIdx]).replace(/[^\d.,-]/g, '');
         var bestOpt = QuizMathValidator._parseDecimal(optStr2);
         if (!bestOpt) return null;
         var relErr = value.isZero() ? bestDiff : bestDiff.div(value.abs());
-        if (relErr.gt('0.01') && bestDiff.gt('0.5')) return null;
-        return { index: bestIdx, value: bestOpt };
+        // within = true means the closest option is within tolerance (1% relative AND/OR 0.5 absolute)
+        var within = !(relErr.gt(OPTION_REL_TOLERANCE) && bestDiff.gt(OPTION_ABS_TOLERANCE));
+        return { index: bestIdx, value: bestOpt, within: within };
     }
 
     // Ordering Helpers

@@ -28,8 +28,8 @@ export const TENANT_CONFIGS = [];
  * Add a new entry here when onboarding a new institution.
  */
 const PROJECT_REF_MAP = {
-    'vxuksizvwrkctrvpciyp': { id: 'qa-develop', name: 'QA - Develop' },
-    'gzckzrocfmhsizlrnqep': { id: 'incat', name: 'Politécnico Institucional del Caribe Incat' },
+    'vxuksizvwrkctrvpciyp': { id: 'qa-develop', name: 'QA - Develop', mcpServerUrl: 'https://mcp-backenddeploy-production-4ed0.up.railway.app' },
+    'gzckzrocfmhsizlrnqep': { id: 'incat', name: 'Politécnico Institucional del Caribe Incat', mcpServerUrl: 'https://mcp-backenddeploy-production.up.railway.app' },
 };
 
 /**
@@ -94,7 +94,8 @@ export function initializeTenantRegistry(primaryClientFromProvider) {
         };
 
         if (!tenantClients.has(tenantMeta.id)) {
-            TENANT_CONFIGS.push({ ...tenantMeta, supabaseUrl: effectiveUrl });
+            const primaryMcpUrl = process.env.MCP_SELF_URL || tenantMeta.mcpServerUrl || null;
+            TENANT_CONFIGS.push({ ...tenantMeta, supabaseUrl: effectiveUrl, mcpServerUrl: primaryMcpUrl });
             tenantClients.set(tenantMeta.id, primaryClient);
             primaryTenantId = tenantMeta.id;
             console.log(`  ✅ Primary tenant registered: ${tenantMeta.id} → ${effectiveUrl}`);
@@ -127,7 +128,8 @@ export function initializeTenantRegistry(primaryClientFromProvider) {
             auth: { autoRefreshToken: true, persistSession: false },
         });
 
-        TENANT_CONFIGS.push({ id: tenantMeta.id, name: tenantMeta.name, supabaseUrl: url });
+        const additionalMcpUrl = process.env[`TENANT_${envSuffix}_MCP_SERVER_URL`] || tenantMeta.mcpServerUrl || null;
+        TENANT_CONFIGS.push({ id: tenantMeta.id, name: tenantMeta.name, supabaseUrl: url, mcpServerUrl: additionalMcpUrl });
         tenantClients.set(tenantMeta.id, client);
         console.log(`  ✅ Tenant registered: ${tenantMeta.id} → ${url}`);
     }
@@ -208,4 +210,10 @@ export function runInTenantContext(tenantId, fn) {
 export function getCurrentTenantId() {
     const store = tenantContext.getStore();
     return store ? store.tenantId : null;
+}
+
+/** Returns the MCP server URL for the given tenantId (or null if not configured). */
+export function getTenantMcpServerUrl(tenantId) {
+    const cfg = TENANT_CONFIGS.find(t => t.id === tenantId);
+    return cfg?.mcpServerUrl || null;
 }
