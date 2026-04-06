@@ -21,6 +21,10 @@ export class SubjectDomainService {
         if (Number(course.creator_user_id) === Number(requesterId)) return true;
         if (subject.created_by && Number(subject.created_by) === Number(requesterId)) return true;
 
+        // Subject-level collaborator (owner of this specific subject)
+        const isSubjectCollab = await this.subjectRepo.isSubjectCollaborator(requesterId, subject.id);
+        if (isSubjectCollab) return true;
+
         if (!this.collaboratorRepo) return false;
         const isCollab = await this.collaboratorRepo.isCollaborator(requesterId, subject.course_id);
         return Boolean(isCollab && !subject.created_by);
@@ -148,6 +152,48 @@ export class SubjectDomainService {
         await this.subjectRepo.delete(id);
         this._invalidateSubject(id, subject.course_id);
         return Result.ok({ message: 'Materia eliminada', courseId: subject.course_id });
+    }
+
+    // ── Subject collaborators ──────────────────────────────────────────────
+
+    async getSubjectCollaborators(subjectId, requesterId) {
+        const subject = await this._getSubject(subjectId);
+        if (!subject) return Result.fail(new NotFoundError('Materia', subjectId));
+        const canManage = await this._canManageSubject(requesterId, subject);
+        if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso'));
+        const collabs = await this.subjectRepo.findCollaboratorsBySubject(subjectId);
+        return Result.ok(collabs);
+    }
+
+    async addSubjectCollaborator(subjectId, userId, requesterId) {
+        const subject = await this._getSubject(subjectId);
+        if (!subject) return Result.fail(new NotFoundError('Materia', subjectId));
+        const canManage = await this._canManageSubject(requesterId, subject);
+        if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para añadir colaboradores'));
+        if (Number(subject.created_by) === Number(userId)) {
+            return Result.fail(new ForbiddenError('El creador de la materia ya la gestiona'));
+        }
+        const collab = await this.subjectRepo.addSubjectCollaborator(subjectId, userId);
+        return Result.ok(collab);
+    }
+
+    async removeSubjectCollaborator(subjectId, userId, requesterId) {
+        const subject = await this._getSubject(subjectId);
+        if (!subject) return Result.fail(new NotFoundError('Materia', subjectId));
+        const canManage = await this._canManageSubject(requesterId, subject);
+        if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para eliminar colaboradores'));
+        await this.subjectRepo.removeSubjectCollaborator(subjectId, userId);
+        return Result.ok({ message: 'Colaborador eliminado de la materia' });
+    }
+
+    async syncSubjectCollaborators(subjectId, userIds, requesterId) {
+        const subject = await this._getSubject(subjectId);
+        if (!subject) return Result.fail(new NotFoundError('Materia', subjectId));
+        const canManage = await this._canManageSubject(requesterId, subject);
+        if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para gestionar colaboradores'));
+        const filtered = (userIds || []).filter(id => Number(id) !== Number(subject.created_by));
+        const collabs = await this.subjectRepo.syncSubjectCollaborators(subjectId, filtered);
+        return Result.ok(collabs);
     }
 }
 export default SubjectDomainService;

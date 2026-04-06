@@ -121,10 +121,99 @@ export class SupabaseSubjectRepository {
         // 3. Subject access blocks
         await this.client.from('subject_access_blocks').delete().eq('subject_id', id);
 
-        // 4. Delete the subject itself
+        // 4. Subject collaborators
+        await this.client.from('subject_collaborators').delete().eq('subject_id', id);
+
+        // 5. Delete the subject itself
         const { error } = await this.client.from('subjects').delete().eq('id', id);
         if (error) throw new Error(error.message);
         return true;
+    }
+
+    // ── Subject collaborators ──────────────────────────────────────────────
+
+    async findCollaboratorsBySubject(subjectId) {
+        const { data, error } = await this.client
+            .from('subject_collaborators')
+            .select('*, usuarios(id, username, email, avatar)')
+            .eq('subject_id', subjectId)
+            .order('created_at', { ascending: true });
+        if (error) throw new Error(error.message);
+        return (data || []).map(r => ({
+            id: r.id,
+            subjectId: r.subject_id,
+            userId: r.user_id,
+            createdAt: r.created_at,
+            user: r.usuarios ? {
+                id: r.usuarios.id,
+                username: r.usuarios.username,
+                email: r.usuarios.email,
+                avatar: r.usuarios.avatar,
+            } : null,
+        }));
+    }
+
+    async isSubjectCollaborator(userId, subjectId) {
+        const { count, error } = await this.client
+            .from('subject_collaborators')
+            .select('id', { count: 'exact', head: true })
+            .eq('subject_id', subjectId)
+            .eq('user_id', userId);
+        return !error && count > 0;
+    }
+
+    async addSubjectCollaborator(subjectId, userId) {
+        const { data, error } = await this.client
+            .from('subject_collaborators')
+            .upsert({ subject_id: subjectId, user_id: userId }, { onConflict: 'subject_id,user_id' })
+            .select('*, usuarios(id, username, email, avatar)')
+            .single();
+        if (error) throw new Error(error.message);
+        return {
+            id: data.id,
+            subjectId: data.subject_id,
+            userId: data.user_id,
+            createdAt: data.created_at,
+            user: data.usuarios ? {
+                id: data.usuarios.id,
+                username: data.usuarios.username,
+                email: data.usuarios.email,
+                avatar: data.usuarios.avatar,
+            } : null,
+        };
+    }
+
+    async removeSubjectCollaborator(subjectId, userId) {
+        const { error } = await this.client
+            .from('subject_collaborators')
+            .delete()
+            .eq('subject_id', subjectId)
+            .eq('user_id', userId);
+        if (error) throw new Error(error.message);
+        return true;
+    }
+
+    async syncSubjectCollaborators(subjectId, userIds) {
+        await this.client.from('subject_collaborators').delete().eq('subject_id', subjectId);
+        if (!userIds || userIds.length === 0) return [];
+        const rows = userIds.map(uid => ({ subject_id: subjectId, user_id: uid }));
+        const { data, error } = await this.client
+            .from('subject_collaborators')
+            .insert(rows)
+            .select('*, usuarios(id, username, email, avatar)');
+        if (error) throw new Error(error.message);
+        return (data || []).map(r => ({
+            id: r.id,
+            subjectId: r.subject_id,
+            userId: r.user_id,
+            createdAt: r.created_at,
+            user: r.usuarios ? {
+                id: r.usuarios.id,
+                username: r.usuarios.username,
+                email: r.usuarios.email,
+                avatar: r.usuarios.avatar,
+            } : null,
+        }));
     }
 }
 export default SupabaseSubjectRepository;
