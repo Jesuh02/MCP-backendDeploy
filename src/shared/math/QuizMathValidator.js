@@ -1349,4 +1349,3 @@ export class QuizMathValidator {
 }
 
 export default QuizMathValidator;
-export default QuizMathValidator;
