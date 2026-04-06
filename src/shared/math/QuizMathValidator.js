@@ -44,9 +44,9 @@ export class QuizMathValidator {
         var lower = text.toLowerCase();
 
         var isAdvanced = QuizMathValidator._isAdvancedMathProblem(text);
-        var hasMathSignals = MATH_SIGNALS.test(lower)
-            || HAS_SIGNIFICANT_NUMBERS.test(text.replace(/,/g, ''))
-            || isAdvanced;
+        var hasMathSignals = MATH_SIGNALS.test(lower) ||
+            HAS_SIGNIFICANT_NUMBERS.test(text.replace(/,/g, '')) ||
+            isAdvanced;
 
         if (!hasMathSignals) return q;
         if (META_QUESTION_PATTERNS.some(function(re) { return re.test(text); })) return q;
@@ -159,20 +159,34 @@ export class QuizMathValidator {
     }
 
     static _reconcileResults(computed, explanation, q) {
-        if (!computed) return explanation;
+        // PRINCIPIO: El cálculo independiente SIEMPRE tiene prioridad sobre la explicación del LLM.
+        // La explicación del LLM puede contener respuestas fabricadas.
+        // Solo se usa la explicación como FALLBACK cuando NO hay cálculo computado.
+        if (!computed && !explanation) return null;
+        if (!computed) {
+            // Sin cálculo computado: usar explicación pero marcar como no verificada
+            if (explanation) explanation._unverified = true;
+            return explanation;
+        }
         if (!explanation) return computed;
         if (computed.value.equals(explanation.value)) return computed;
+        // El cálculo computado siempre gana — la explicación puede estar fabricada
         if (computed.fromFormula) return computed;
+        // Para multiple_choice: solo preferir explicación si el cálculo no matchea
+        // ninguna opción Y la explicación sí matchea una.
         if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
             var cMatch = QuizMathValidator._findClosestOption(q.options, computed.value);
             var eMatch = QuizMathValidator._findClosestOption(q.options, explanation.value);
-            // Null-safe: _findClosestOption can return null when no options parse as numbers
             var eWithin = eMatch !== null && eMatch.within;
             var cWithin = cMatch !== null && cMatch.within;
-            if (eWithin && !cWithin) return explanation;
-        } else if (q.type === 'fill_in_blank') {
-            return explanation;
+            // SOLO caer a explicación si computed no matchea ninguna opción
+            if (eWithin && !cWithin) {
+                console.warn('[MathVerify] RECONCILE: Computed=' + computed.value + ' no matchea opciones, usando explicación=' + explanation.value);
+                explanation._fromExplanationFallback = true;
+                return explanation;
+            }
         }
+        // El cálculo computado gana por defecto
         return computed;
     }
 
@@ -197,13 +211,17 @@ export class QuizMathValidator {
         if (match === null) return q;
         if (match.within) {
             if (match.index !== q.correctIndex) {
-                console.warn('[MathVerify] CORRECTED MC: index ' + q.correctIndex + ' -> ' + match.index);
+                console.warn('[MathVerify] CORRECTED MC: index ' + q.correctIndex + ' -> ' + match.index +
+                    ' (computed=' + finalAnswer + ', option[' + match.index + ']=' + q.options[match.index] + ')');
                 q.correctIndex = match.index;
                 q.explanation = steps.join('. ') + '. Resultado final: ' + finalAnswer + '.';
             }
             return q;
         }
-        console.warn('[MathVerify] REJECTED: No option matches computed=' + finalAnswer);
+        // DOBLE CHECK: Si la respuesta viene de una fuente no verificada (explicación LLM),
+        // rechazar absolutamente. Si viene de cálculo propio y no matchea, también rechazar.
+        console.warn('[MathVerify] REJECTED MC: No option matches computed=' + finalAnswer +
+            '. Options: ' + JSON.stringify(q.options));
         return null;
     }
 
@@ -234,8 +252,7 @@ export class QuizMathValidator {
             else if (op === '\xf7' || op === '/') {
                 if (num.isZero()) return null;
                 result = result.div(num);
-            }
-            else return null;
+            } else return null;
             steps.push(prev + ' ' + op + ' ' + num + ' = ' + result);
         }
         var afterExpr = cleaned.substring(cleaned.indexOf(match[0]) + match[0].length);
@@ -467,42 +484,42 @@ export class QuizMathValidator {
     }
 
     static _tryArithmeticSeriesFormula(text) {
-        if (!/serie\s+aritm[e\xe9]trica|progresi[o\xf3]n\s+aritm[e\xe9]trica/i.test(text)) return null;
-        var a1, d, n;
-        var seqRe = /(?:primeros?\s+)?(\d+)\s+t[e\xe9]rminos?[^.]*?(\d+\.?\d*)\s*,\s*(\d+\.?\d*)\s*,\s*(\d+\.?\d*)/i;
-        var seqM = seqRe.exec(text);
-        if (seqM) {
-            n = parseInt(seqM[1], 10);
-            a1 = new Decimal(seqM[2]);
-            var second = new Decimal(seqM[3]);
-            var third = new Decimal(seqM[4]);
-            d = second.minus(a1);
-            if (!d.equals(third.minus(second))) return null;
-        }
-        if (!a1) {
-            var paramRe = /a[\u20811]\s*=\s*(\d+\.?\d*).*?d\s*=\s*(\d+\.?\d*)/i;
-            var paramM = paramRe.exec(text);
-            if (paramM) {
-                a1 = new Decimal(paramM[1]);
-                d = new Decimal(paramM[2]);
-                var nRe2 = /(?:primeros?\s+)?(\d+)\s+t[e\xe9]rminos?|n\s*=\s*(\d+)/i;
-                var nM = nRe2.exec(text);
-                if (nM) n = parseInt(nM[1] || nM[2], 10);
+            if (!/serie\s+aritm[e\xe9]trica|progresi[o\xf3]n\s+aritm[e\xe9]trica/i.test(text)) return null;
+            var a1, d, n;
+            var seqRe = /(?:primeros?\s+)?(\d+)\s+t[e\xe9]rminos?[^.]*?(\d+\.?\d*)\s*,\s*(\d+\.?\d*)\s*,\s*(\d+\.?\d*)/i;
+            var seqM = seqRe.exec(text);
+            if (seqM) {
+                n = parseInt(seqM[1], 10);
+                a1 = new Decimal(seqM[2]);
+                var second = new Decimal(seqM[3]);
+                var third = new Decimal(seqM[4]);
+                d = second.minus(a1);
+                if (!d.equals(third.minus(second))) return null;
             }
+            if (!a1) {
+                var paramRe = /a[\u20811]\s*=\s*(\d+\.?\d*).*?d\s*=\s*(\d+\.?\d*)/i;
+                var paramM = paramRe.exec(text);
+                if (paramM) {
+                    a1 = new Decimal(paramM[1]);
+                    d = new Decimal(paramM[2]);
+                    var nRe2 = /(?:primeros?\s+)?(\d+)\s+t[e\xe9]rminos?|n\s*=\s*(\d+)/i;
+                    var nM = nRe2.exec(text);
+                    if (nM) n = parseInt(nM[1] || nM[2], 10);
+                }
+            }
+            if (!a1 || !d || !n || n < 1) return null;
+            var nDec = new Decimal(n);
+            var seriesResult = nDec.div(2).times(a1.times(2).plus(d.times(nDec.minus(1))));
+            return {
+                value: seriesResult,
+                steps: ['Serie aritmetica: a1=' + a1 + ', d=' + d + ', n=' + n, 'S_n = ' + seriesResult],
+                fromFormula: true,
+            };
         }
-        if (!a1 || !d || !n || n < 1) return null;
-        var nDec = new Decimal(n);
-        var seriesResult = nDec.div(2).times(a1.times(2).plus(d.times(nDec.minus(1))));
-        return {
-            value: seriesResult,
-            steps: ['Serie aritmetica: a1=' + a1 + ', d=' + d + ', n=' + n, 'S_n = ' + seriesResult],
-            fromFormula: true,
-        };
-    }
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Strategy 3: Compound multi-step problems (multiple qty×price pairs)
-    // e.g. "3 libros a $50 y 5 cuadernos a $20" → 3×50 + 5×20 = 250
-    // ═══════════════════════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════════════════════
+        // Strategy 3: Compound multi-step problems (multiple qty×price pairs)
+        // e.g. "3 libros a $50 y 5 cuadernos a $20" → 3×50 + 5×20 = 250
+        // ═══════════════════════════════════════════════════════════════════════════
 
     static _tryCompoundProblem(text) {
         var steps = [];
@@ -719,8 +736,9 @@ export class QuizMathValidator {
             var dm = discountPatterns[di].exec(text);
             if (dm) {
                 var dBase, dPct;
-                if (di === 0) { dBase = QuizMathValidator._parseDecimal(dm[1]); dPct = QuizMathValidator._parseDecimal(dm[2]); }
-                else { dPct = QuizMathValidator._parseDecimal(dm[1]); dBase = QuizMathValidator._parseDecimal(dm[2]); }
+                if (di === 0) { dBase = QuizMathValidator._parseDecimal(dm[1]);
+                    dPct = QuizMathValidator._parseDecimal(dm[2]); } else { dPct = QuizMathValidator._parseDecimal(dm[1]);
+                    dBase = QuizMathValidator._parseDecimal(dm[2]); }
                 if (dBase && dPct && dBase.gt(0) && dPct.gt(0) && dPct.lte(100)) {
                     if (/precio\s+final|costo\s+final|pagar[a\xe1]?s?|total|valor\s+final|queda|despu[e\xe9]s/i.test(lower)) {
                         var factor = new Decimal(1).minus(dPct.div(100));
@@ -747,8 +765,9 @@ export class QuizMathValidator {
             var tm = taxPatterns[ti].exec(text);
             if (tm) {
                 var tBase, tPct;
-                if (ti === 0) { tBase = QuizMathValidator._parseDecimal(tm[1]); tPct = QuizMathValidator._parseDecimal(tm[2]); }
-                else { tPct = QuizMathValidator._parseDecimal(tm[1]); tBase = QuizMathValidator._parseDecimal(tm[2]); }
+                if (ti === 0) { tBase = QuizMathValidator._parseDecimal(tm[1]);
+                    tPct = QuizMathValidator._parseDecimal(tm[2]); } else { tPct = QuizMathValidator._parseDecimal(tm[1]);
+                    tBase = QuizMathValidator._parseDecimal(tm[2]); }
                 if (tBase && tPct && tBase.gt(0) && tPct.gt(0) && tPct.lte(200)) {
                     if (/precio\s+final|costo\s+final|total|pagar[a\xe1]?s?|monto\s+total|valor\s+final|monto\s+final/i.test(lower)) {
                         var tfactor = new Decimal(1).plus(tPct.div(100));
@@ -943,9 +962,9 @@ export class QuizMathValidator {
             var minC = sorted[0];
             if (maxC.div(Decimal.max(minC, 1)).lte(100)) {
                 var subtractionNums = QuizMathValidator._extractSubtractionNumbers(text);
-                var addNums = subtractionNums.length > 0
-                    ? allCurrencies.filter(function(n) { return !subtractionNums.some(function(s) { return s.equals(n); }); })
-                    : allCurrencies;
+                var addNums = subtractionNums.length > 0 ?
+                    allCurrencies.filter(function(n) { return !subtractionNums.some(function(s) { return s.equals(n); }); }) :
+                    allCurrencies;
                 result = addNums.reduce(function(a, b) { return a.plus(b); }, new Decimal(0));
                 steps.push('Suma: ' + addNums.map(function(n) { return '$' + n; }).join(' + ') + ' = $' + result);
                 for (var si = 0; si < subtractionNums.length; si++) {
@@ -1008,9 +1027,9 @@ export class QuizMathValidator {
             // e.g. "5 artículos a $200" → 5 and 200 should NOT be summed
             if (maxVal.div(Decimal.max(minVal, 1)).gt(50)) return null;
 
-            var addNumbers = subNums.length > 0
-                ? dataNums.filter(function(n) { return !subNums.some(function(s) { return s.equals(n); }); })
-                : dataNums;
+            var addNumbers = subNums.length > 0 ?
+                dataNums.filter(function(n) { return !subNums.some(function(s) { return s.equals(n); }); }) :
+                dataNums;
             if (addNumbers.length >= 2) {
                 result = addNumbers.reduce(function(a, b) { return a.plus(b); }, new Decimal(0));
                 steps.push('Suma: ' + addNumbers.join(' + ') + ' = ' + result);
@@ -1031,8 +1050,7 @@ export class QuizMathValidator {
 
     static _parseDecimal(str) {
         if (!str) return null;
-        try { var d = new Decimal(String(str).replace(/,/g, '')); return d.isFinite() ? d : null; }
-        catch (e) { return null; }
+        try { var d = new Decimal(String(str).replace(/,/g, '')); return d.isFinite() ? d : null; } catch (e) { return null; }
     }
 
     static _applyDecimals(value, text) {
@@ -1044,7 +1062,8 @@ export class QuizMathValidator {
 
     static _extractPercentages(text) {
         var pctRe = /([\d,.]+)\s*%/g;
-        var result = [], m;
+        var result = [],
+            m;
         while ((m = pctRe.exec(text)) !== null) {
             var d = QuizMathValidator._parseDecimal(m[1]);
             if (d) result.push(d);
@@ -1069,7 +1088,8 @@ export class QuizMathValidator {
     }
 
     static _extractDataNumbers(text) {
-        var dataNumbers = [], m;
+        var dataNumbers = [],
+            m;
         var labeledPat = /(?:[a-zA-Z\xe1\xe9\xed\xf3\xfa\xf1\xc1\xc9\xcd\xd3\xda\xd1][a-zA-Z\xe1\xe9\xed\xf3\xfa\xf1\xc1\xc9\xcd\xd3\xda\xd1\s]*[:=]\s*\$?)([\d,]+\.?\d*)/gi;
         while ((m = labeledPat.exec(text)) !== null) { var d = QuizMathValidator._parseDecimal(m[1]); if (d && d.gte(10)) dataNumbers.push(d); }
         if (dataNumbers.length < 2) { dataNumbers.length = 0; var currencyPat = /\$\s?([\d,]+\.?\d*)/gi; while ((m = currencyPat.exec(text)) !== null) { var d2 = QuizMathValidator._parseDecimal(m[1]); if (d2 && d2.gte(1)) dataNumbers.push(d2); } }
@@ -1104,7 +1124,8 @@ export class QuizMathValidator {
             if (rm) {
                 var rate = QuizMathValidator._parseDecimal(rm[1]);
                 if (rate && rate.gt(0) && rate.lt(result)) {
-                    var prev = result; result = result.times(rate);
+                    var prev = result;
+                    result = result.times(rate);
                     steps.push('Multiplicacion: ' + prev + ' x ' + rate + ' = ' + result);
                     break;
                 }
@@ -1120,10 +1141,12 @@ export class QuizMathValidator {
         if (!pct || pct.lte(0) || pct.gt(200)) return result;
         var prev = result;
         if (/descuento/i.test(pctMatch[0])) {
-            var f = new Decimal(1).minus(pct.div(100)); result = result.times(f);
+            var f = new Decimal(1).minus(pct.div(100));
+            result = result.times(f);
             steps.push('Descuento ' + pct + '%: ' + prev + ' x ' + f + ' = ' + result);
         } else {
-            var f2 = new Decimal(1).plus(pct.div(100)); result = result.times(f2);
+            var f2 = new Decimal(1).plus(pct.div(100));
+            result = result.times(f2);
             steps.push('+ ' + pct + '%: ' + prev + ' x ' + f2 + ' = ' + result);
         }
         return result;
@@ -1135,7 +1158,8 @@ export class QuizMathValidator {
         var subVal = QuizMathValidator._parseDecimal(subMatch[1]);
         if (!subVal || subVal.lte(0)) return result;
         if (excludeNumbers.some(function(n) { return (n instanceof Decimal ? n.equals(subVal) : new Decimal(n).equals(subVal)); })) return result;
-        var prev = result; result = result.minus(subVal);
+        var prev = result;
+        result = result.minus(subVal);
         steps.push('Sustraccion: ' + prev + ' - ' + subVal + ' = ' + result);
         return result;
     }
@@ -1146,42 +1170,46 @@ export class QuizMathValidator {
         var addVal = QuizMathValidator._parseDecimal(addMatch[1]);
         if (!addVal || addVal.lte(0)) return result;
         if (excludeNumbers.some(function(n) { return (n instanceof Decimal ? n.equals(addVal) : new Decimal(n).equals(addVal)); })) return result;
-        var prev = result; result = result.plus(addVal);
+        var prev = result;
+        result = result.plus(addVal);
         steps.push('Adicion: ' + prev + ' + ' + addVal + ' = ' + result);
         return result;
     }
 
     static _detectFollowUpOperations(text) {
-        if (!text) return [];
-        var operations = [];
-        var addRe = /(?:y\s+)?(?:se\s+(?:le\s+)?)?(?:agrega[rn]?|a\xf1ad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?|m\xe1s)\s+(?:(?:un|una|el|la|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/gi;
-        var m;
-        while ((m = addRe.exec(text)) !== null) {
-            var v = QuizMathValidator._parseDecimal(m[1]);
-            if (v && v.gt(0)) { (function(val, pos) { operations.push({ apply: function(x) { return x.plus(val); }, describe: function(p, r) { return 'Adicion: ' + p + ' + ' + val + ' = ' + r; }, position: pos }); })(v, m.index); }
-        }
-        var subRe = /(?:se\s+(?:le\s+)?)?(?:resta[rn]?|quit[ao]?[rn]?|descuent[ao]?[rn]?|deduc[ei][rn]?|sustrae[rn]?|rebaj[ao]?[rn]?|menos)\s+(?:(?:un|una|el|la|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/gi;
-        while ((m = subRe.exec(text)) !== null) {
-            var v2 = QuizMathValidator._parseDecimal(m[1]);
-            if (v2 && v2.gt(0)) { (function(val, pos) { operations.push({ apply: function(x) { return x.minus(val); }, describe: function(p, r) { return 'Sustraccion: ' + p + ' - ' + val + ' = ' + r; }, position: pos }); })(v2, m.index); }
-        }
-        var multRe = /(?:multiplic[a\xe1]r?\s+por|\xd7)\s*\$?([\d,.]+)/gi;
-        var m3 = multRe.exec(text);
-        if (m3) { var f = QuizMathValidator._parseDecimal(m3[1]); if (f && f.gt(0)) { (function(val, pos) { operations.push({ apply: function(x) { return x.times(val); }, describe: function(p, r) { return 'Multiplicacion: ' + p + ' x ' + val + ' = ' + r; }, position: pos }); })(f, m3.index); } }
-        var pctMatch = /(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i.exec(text);
-        if (pctMatch) {
-            var pct = QuizMathValidator._parseDecimal(pctMatch[1]);
-            if (pct && pct.gt(0)) {
-                var isDisc = /descuento/i.test(pctMatch[0]);
-                var pf = isDisc ? new Decimal(1).minus(pct.div(100)) : new Decimal(1).plus(pct.div(100));
-                var lbl = isDisc ? 'Descuento' : 'Incremento';
-                (function(factor, label, p, pos) { operations.push({ apply: function(x) { return x.times(factor); }, describe: function(prev, r) { return label + ' ' + p + '%: ' + prev + ' x ' + factor + ' = ' + r; }, position: pos }); })(pf, lbl, pct, pctMatch.index);
+            if (!text) return [];
+            var operations = [];
+            var addRe = /(?:y\s+)?(?:se\s+(?:le\s+)?)?(?:agrega[rn]?|a\xf1ad[aeir]+|suma[rn]?|adiciona[rn]?|incorpora[rn]?|m\xe1s)\s+(?:(?:un|una|el|la|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/gi;
+            var m;
+            while ((m = addRe.exec(text)) !== null) {
+                var v = QuizMathValidator._parseDecimal(m[1]);
+                if (v && v.gt(0)) {
+                    (function(val, pos) { operations.push({ apply: function(x) { return x.plus(val); }, describe: function(p, r) { return 'Adicion: ' + p + ' + ' + val + ' = ' + r; }, position: pos }); })(v, m.index); }
             }
+            var subRe = /(?:se\s+(?:le\s+)?)?(?:resta[rn]?|quit[ao]?[rn]?|descuent[ao]?[rn]?|deduc[ei][rn]?|sustrae[rn]?|rebaj[ao]?[rn]?|menos)\s+(?:(?:un|una|el|la|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/gi;
+            while ((m = subRe.exec(text)) !== null) {
+                var v2 = QuizMathValidator._parseDecimal(m[1]);
+                if (v2 && v2.gt(0)) {
+                    (function(val, pos) { operations.push({ apply: function(x) { return x.minus(val); }, describe: function(p, r) { return 'Sustraccion: ' + p + ' - ' + val + ' = ' + r; }, position: pos }); })(v2, m.index); }
+            }
+            var multRe = /(?:multiplic[a\xe1]r?\s+por|\xd7)\s*\$?([\d,.]+)/gi;
+            var m3 = multRe.exec(text);
+            if (m3) { var f = QuizMathValidator._parseDecimal(m3[1]); if (f && f.gt(0)) {
+                    (function(val, pos) { operations.push({ apply: function(x) { return x.times(val); }, describe: function(p, r) { return 'Multiplicacion: ' + p + ' x ' + val + ' = ' + r; }, position: pos }); })(f, m3.index); } }
+            var pctMatch = /(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i.exec(text);
+            if (pctMatch) {
+                var pct = QuizMathValidator._parseDecimal(pctMatch[1]);
+                if (pct && pct.gt(0)) {
+                    var isDisc = /descuento/i.test(pctMatch[0]);
+                    var pf = isDisc ? new Decimal(1).minus(pct.div(100)) : new Decimal(1).plus(pct.div(100));
+                    var lbl = isDisc ? 'Descuento' : 'Incremento';
+                    (function(factor, label, p, pos) { operations.push({ apply: function(x) { return x.times(factor); }, describe: function(prev, r) { return label + ' ' + p + '%: ' + prev + ' x ' + factor + ' = ' + r; }, position: pos }); })(pf, lbl, pct, pctMatch.index);
+                }
+            }
+            operations.sort(function(a, b) { return a.position - b.position; });
+            return operations;
         }
-        operations.sort(function(a, b) { return a.position - b.position; });
-        return operations;
-    }
-    // Explanation based validation
+        // Explanation based validation
 
     static _tryFromExplanation(text) {
         if (!text) return null;
@@ -1202,7 +1230,8 @@ export class QuizMathValidator {
 
     static _findClosestOption(options, value) {
         if (!options || !options.length || !value) return null;
-        var bestIdx = -1, bestDiff = null;
+        var bestIdx = -1,
+            bestDiff = null;
         for (var fi = 0; fi < options.length; fi++) {
             var optStr = String(options[fi]).replace(/[^\d.,-]/g, '');
             var opt = QuizMathValidator._parseDecimal(optStr);
@@ -1263,9 +1292,9 @@ export class QuizMathValidator {
         } else if (Array.isArray(rawCorrectOrder) && rawCorrectOrder.length === items.length) {
             // Non-numeric: use LLM-provided correctOrder indices
             var validIndices = rawCorrectOrder.every(function(i) { return Number.isInteger(i) && i >= 0 && i < items.length; });
-            correctSequence = validIndices
-                ? rawCorrectOrder.map(function(i) { return items[i]; })
-                : items.slice();
+            correctSequence = validIndices ?
+                rawCorrectOrder.map(function(i) { return items[i]; }) :
+                items.slice();
         } else {
             correctSequence = items.slice();
         }
@@ -1274,14 +1303,18 @@ export class QuizMathValidator {
         var shuffled = items.slice();
         for (var si = shuffled.length - 1; si > 0; si--) {
             var sj = Math.floor(Math.random() * (si + 1));
-            var tmp = shuffled[si]; shuffled[si] = shuffled[sj]; shuffled[sj] = tmp;
+            var tmp = shuffled[si];
+            shuffled[si] = shuffled[sj];
+            shuffled[sj] = tmp;
         }
         // Re-shuffle if identical to correctSequence (avoid presenting already-ordered items)
         var attempts = 5;
         while (attempts-- > 0 && shuffled.every(function(itm, idx) { return itm === correctSequence[idx]; })) {
             for (var si2 = shuffled.length - 1; si2 > 0; si2--) {
                 var sj2 = Math.floor(Math.random() * (si2 + 1));
-                var tmp2 = shuffled[si2]; shuffled[si2] = shuffled[sj2]; shuffled[sj2] = tmp2;
+                var tmp2 = shuffled[si2];
+                shuffled[si2] = shuffled[sj2];
+                shuffled[sj2] = tmp2;
             }
         }
 
@@ -1315,4 +1348,5 @@ export class QuizMathValidator {
 
 }
 
+export default QuizMathValidator;
 export default QuizMathValidator;

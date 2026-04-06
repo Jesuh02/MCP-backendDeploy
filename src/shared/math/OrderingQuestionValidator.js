@@ -186,6 +186,19 @@ class VerificationLastRule {
         /^validar\s+(?:el\s+)?resultado/i,
         /^hacer\s+(?:la\s+)?(?:prueba|verificaci[oó]n)/i,
         /^(?:la\s+)?prueba\s+(?:de\s+)?(?:verificaci[oó]n|resta|suma)/i,
+        /verificaci[oó]n\s+(?:independiente|por\s+partes|parcial|final|general|global|del\s+resultado)/i,
+    ];
+
+    /**
+     * Patrones para clasificar el TIPO de verificación y determinar el orden relativo.
+     * Prioridad más baja = va primero entre los pasos de verificación.
+     * "Verificar resultado total/general" va ANTES de "Verificación independiente por partes".
+     */
+    static VERIFY_PRIORITY = [
+        { pattern: /(?:resultado\s+(?:total|final|general|global|completo))|(?:verificar\s+(?:el\s+)?(?:total|resultado))/i, priority: 0 },
+        { pattern: /(?:comprobar|revisar|confirmar)\s+(?:el\s+)?resultado/i, priority: 1 },
+        { pattern: /(?:independiente|por\s+partes|parcial)/i, priority: 2 },
+        { pattern: /prueba\s+(?:de\s+)?(?:verificaci[oó]n|resta|suma)/i, priority: 3 },
     ];
 
     applies(question, items) {
@@ -194,24 +207,76 @@ class VerificationLastRule {
         );
     }
 
+    /**
+     * Mueve TODOS los pasos de verificación al final, preservando su orden
+     * relativo correcto (verificación total → verificación por partes).
+     */
     apply(question, items) {
-        const verifyIdx = items.findIndex(item =>
-            VerificationLastRule.VERIFY_PATTERNS.some(p => p.test(item))
-        );
+        // Encontrar TODOS los pasos de verificación
+        const verifyIndices = [];
+        for (let i = 0; i < items.length; i++) {
+            if (VerificationLastRule.VERIFY_PATTERNS.some(p => p.test(items[i]))) {
+                verifyIndices.push(i);
+            }
+        }
 
-        if (verifyIdx === -1 || verifyIdx === items.length - 1) {
+        if (verifyIndices.length === 0) return { modified: false };
+
+        // Si todos ya están al final y en orden, no modificar
+        const totalItems = items.length;
+        const expectedStart = totalItems - verifyIndices.length;
+        const alreadyAtEnd = verifyIndices.every((idx, i) => idx === expectedStart + i);
+
+        if (alreadyAtEnd && this._isCorrectlyOrdered(verifyIndices.map(i => items[i]))) {
             return { modified: false };
         }
 
-        const fixed = [...items];
-        const [step] = fixed.splice(verifyIdx, 1);
-        fixed.push(step);
+        // Separar pasos de verificación de los demás
+        const verifySteps = verifyIndices.map(i => items[i]);
+        const nonVerifySteps = items.filter((_, i) => !verifyIndices.includes(i));
+
+        // Ordenar pasos de verificación por prioridad semántica
+        const sortedVerify = this._sortByPriority(verifySteps);
+
+        const fixed = [...nonVerifySteps, ...sortedVerify];
+
+        const reasons = verifyIndices.map((idx, i) =>
+            `"${items[idx]}" (pos ${idx + 1} → ${nonVerifySteps.length + i + 1})`
+        );
+
+        console.warn(
+            `⚠️ [OrderingValidator] CORREGIDO: ${verifyIndices.length} paso(s) de verificación ` +
+            `movidos al final en orden correcto: ${sortedVerify.map(s => '"' + s.substring(0, 40) + '..."').join(' → ')}`
+        );
 
         return {
             modified: true,
             items: fixed,
-            reason: `Paso de verificación movido al final (estaba en posición ${verifyIdx + 1})`,
+            reason: `${verifyIndices.length} paso(s) de verificación reordenados al final: ${reasons.join('; ')}`,
         };
+    }
+
+    /** Asigna prioridad numérica a un paso de verificación */
+    _getPriority(step) {
+        for (const { pattern, priority } of VerificationLastRule.VERIFY_PRIORITY) {
+            if (pattern.test(step)) return priority;
+        }
+        return 10; // Prioridad por defecto (va al final entre verificaciones)
+    }
+
+    /** Ordena pasos de verificación por prioridad semántica */
+    _sortByPriority(verifySteps) {
+        return [...verifySteps].sort((a, b) => this._getPriority(a) - this._getPriority(b));
+    }
+
+    /** Verifica si los pasos ya están en orden correcto de prioridad */
+    _isCorrectlyOrdered(verifySteps) {
+        for (let i = 1; i < verifySteps.length; i++) {
+            if (this._getPriority(verifySteps[i]) < this._getPriority(verifySteps[i - 1])) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 
