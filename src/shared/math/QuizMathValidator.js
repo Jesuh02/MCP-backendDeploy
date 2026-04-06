@@ -221,8 +221,68 @@ export class QuizMathValidator {
         if (summation) return summation;
         var geo = QuizMathValidator._tryGeometricSeriesFormula(text);
         if (geo) return geo;
+        // Implicit geometric series: no keyword required, just detectable sequence + term count
+        var implicitGeo = QuizMathValidator._tryImplicitGeometricSeries(text);
+        if (implicitGeo) return implicitGeo;
         var arith = QuizMathValidator._tryArithmeticSeriesFormula(text);
         if (arith) return arith;
+        return null;
+    }
+
+    /**
+     * Detects a geometric series from the numbers in the text alone, WITHOUT requiring
+     * the keyword "serie geométrica". Requires ALL of:
+     *   1. At least 3 consecutive values with a consistent ratio (r ≠ 1)
+     *   2. An explicit term count ("primeros N términos" / "N terms" / similar)
+     *   3. The ratio to be an integer or simple fraction (avoids false positives)
+     * This catches questions like: "suma de los primeros 25 términos de la secuencia 4, 12, 36, 108"
+     */
+    static _tryImplicitGeometricSeries(text) {
+        // Must ask for a sum / total of terms
+        if (!/(?:suma|total|sumatoria|calcula)\b.*\bt[e\xe9]rminos?\b|\bt[e\xe9]rminos?\b.*(?:suma|total)/i.test(text)) return null;
+        // Extract term count
+        var nRe = /(?:primeros?\s+)?(\d+)\s+t[e\xe9]rminos?|n\s*=\s*(\d+)/i;
+        var nM = nRe.exec(text);
+        if (!nM) return null;
+        var n = parseInt(nM[1] || nM[2], 10);
+        if (!n || n < 2 || n > 10000) return null;
+        // Find a sequence of 3+ numbers with consistent ratio
+        var seqRe = /(\d+\.?\d*)\s*,\s*(\d+\.?\d*)\s*,\s*(\d+\.?\d*)(?:\s*,\s*(\d+\.?\d*))?/g;
+        var m;
+        while ((m = seqRe.exec(text)) !== null) {
+            var vals = [m[1], m[2], m[3], m[4]].filter(Boolean).map(function(v) { return new Decimal(v); });
+            if (vals.length < 3) continue;
+            if (vals[0].isZero()) continue;
+            var r = vals[1].div(vals[0]);
+            if (r.eq(1)) continue; // not geometric (would be arithmetic)
+            // Verify the ratio is consistent across all extracted values
+            var consistent = true;
+            for (var vi = 2; vi < vals.length; vi++) {
+                if (!vals[vi].div(vals[vi - 1]).toFixed(8) === r.toFixed(8)) { consistent = false; break; }
+            }
+            if (!consistent) continue;
+            // Ratio should be a simple integer or simple fraction to avoid false positives
+            var rNum = parseFloat(r.toFixed(6));
+            if (!Number.isFinite(rNum) || rNum <= 0) continue;
+            // Accept only if ratio is integer or simple fraction (e.g. 1.5, 2, 3, 0.5)
+            var isSimpleRatio = Math.abs(rNum - Math.round(rNum)) < 0.001 ||
+                Math.abs(rNum * 2 - Math.round(rNum * 2)) < 0.001 ||
+                Math.abs(rNum * 3 - Math.round(rNum * 3)) < 0.001;
+            if (!isSimpleRatio) continue;
+            // All checks passed: compute the sum S_n = a1*(r^n - 1)/(r - 1)
+            var a1 = vals[0];
+            var rPowN = r.pow(n);
+            var seriesResult = a1.times(rPowN.minus(1)).div(r.minus(1));
+            console.log('[MathVerify] Implicit geometric series detected: a1=' + a1 + ', r=' + r.toFixed(4) + ', n=' + n + ' → S_n=' + seriesResult.toExponential(4));
+            return {
+                value: seriesResult,
+                steps: [
+                    'Secuencia geométrica detectada: a1=' + a1 + ', r=' + r.toFixed(4) + ', n=' + n,
+                    'S_n = a1·(r^n − 1)/(r − 1) = ' + a1 + '·(' + r.toFixed(4) + '^' + n + ' − 1)/(' + r.toFixed(4) + ' − 1) = ' + seriesResult,
+                ],
+                fromFormula: true,
+            };
+        }
         return null;
     }
 
