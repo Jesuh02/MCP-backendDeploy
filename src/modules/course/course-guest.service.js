@@ -149,14 +149,28 @@ export class CourseGuestService {
 
     /**
      * List all approved pre-enrollments for a course (invited + manually approved).
+     * Visible para cualquier usuario autenticado que tenga acceso al curso
+     * (creador, colaborador, guest aprobado, o admin). Principio de mínimo privilegio:
+     * solo se exponen datos públicos (userId, username, avatar).
      */
     async getGuests(requesterId, courseId) {
-        const { allowed, course } = await this._canManageGuests(requesterId, courseId);
-        if (!allowed || !course) {
-            return Result.fail(course
-                ? new ForbiddenError('Sin acceso para ver invitados')
-                : new NotFoundError('Curso', courseId)
-            );
+        const course = await this.courseRepo.findById(courseId);
+        if (!course) {
+            return Result.fail(new NotFoundError('Curso', courseId));
+        }
+
+        // Permitir lectura a: creador, colaboradores, y el propio invitado/enrollado
+        const isCreator = Number(course.creator_user_id) === Number(requesterId);
+        if (!isCreator) {
+            const isCollab = await this.collaboratorRepo.isCollaborator(requesterId, courseId);
+            if (!isCollab) {
+                // Verificar si el solicitante tiene acceso aprobado al curso (guest o enrollado)
+                const approvedIds = await this.progressRepo.findApprovedEnrollmentCourseIds(requesterId);
+                const hasAccess = approvedIds.includes(Number(courseId));
+                if (!hasAccess) {
+                    return Result.fail(new ForbiddenError('Sin acceso para ver invitados'));
+                }
+            }
         }
 
         const rows = await this.progressRepo.findApprovedPreEnrollments(courseId);
