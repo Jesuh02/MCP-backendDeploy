@@ -16,6 +16,7 @@
  */
 
 import Decimal from 'decimal.js';
+import { MathEngine } from './MathEngine.js';
 
 Decimal.set({ precision: 64 });
 
@@ -444,27 +445,22 @@ class IndependentRecalculationVerifier {
         return { valid: true };
     }
 
-    /** Cálculo aritmético básico: detecta expresiones "A op B" */
+    /** Cálculo aritmético usando MathEngine (proper operator precedence) */
     _trySimpleArithmetic(text) {
         const cleaned = text.replace(/[$€¥£₡₿]\s*/g, '');
-        // Match: number op number
-        const exprRe = /(\d[\d,.]*)\s*([+\-×*÷/])\s*(\d[\d,.]*)/g;
+        // Match: number op number (potentially chained)
+        const exprRe = /(\d[\d,.]*\s*[+\-×*÷/^]\s*\d[\d,.]*(?:\s*[+\-×*÷/^]\s*\d[\d,.]*)*)/g;
         const m = exprRe.exec(cleaned);
         if (!m) return null;
 
-        const a = _parseDecimalSafe(m[1]);
-        const b = _parseDecimalSafe(m[3]);
-        if (!a || !b) return null;
+        // Normalize operators for MathEngine
+        const exprStr = m[1]
+            .replace(/×/g, '*')
+            .replace(/÷/g, '/')
+            .replace(/\u2212/g, '-');
 
-        const op = m[2];
-        let result;
-        if (op === '+') result = a.plus(b);
-        else if (op === '-' || op === '−') result = a.minus(b);
-        else if (op === '×' || op === '*' || op === '\xd7') result = a.times(b);
-        else if (op === '÷' || op === '/' || op === '\xf7') {
-            if (b.isZero()) return null;
-            result = a.div(b);
-        } else return null;
+        const result = MathEngine.tryEvaluate(exprStr);
+        if (!result) return null;
 
         return { value: result };
     }
@@ -699,6 +695,126 @@ class DecimalSumVerifier {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Verificador 11: OrderingStepDependencyVerifier
+// ═══════════════════════════════════════════════════════════════════════════
+// Detecta violaciones de dependencia lógica en preguntas de ordenamiento.
+// Ejemplo: "escribir coma" no puede ir antes de "sumar" si el resultado
+// aún no se ha calculado.
+
+class OrderingStepDependencyVerifier {
+    canHandle(q) {
+        return q.type === 'ordering' &&
+            Array.isArray(q.items) &&
+            Array.isArray(q.correctOrder) &&
+            q.items.length >= 2;
+    }
+
+    verify(q) {
+        const orderedItems = q.correctOrder.map(i => q.items[i]).filter(Boolean);
+        if (orderedItems.length < 2) return { valid: true };
+
+        const lowerItems = orderedItems.map(s => (s || '').toLowerCase());
+
+        // Dependency rules: [prerequisite, dependent, description]
+        // If 'dependent' appears BEFORE 'prerequisite' → VIOLATION
+        const rules = [
+            [/(?:sumar|restar|multiplicar|dividir|calcular|operar|resolver)/,
+                /(?:escribir|anotar|colocar|poner)\s+(?:(?:el|la|los|las|del|de)\s+)*(?:resultado|respuesta|coma|punto\s+decimal)/,
+                'No se puede escribir el resultado/coma antes de calcularlo'],
+            [/(?:sumar|restar|calcular|operar)/,
+                /(?:acarreo|llevar|reservar)/,
+                'Los acarreos son consecuencia de la operación'],
+            [/(?:alinear|ordenar|colocar|escribir)\s+(?:los\s+)?(?:números|cifras|dígitos)/,
+                /(?:sumar|restar|multiplicar|dividir|calcular|operar)/,
+                'Debe alinearse antes de operar'],
+            [/(?:calcular|obtener|determinar)\s+(?:el\s+)?(?:resultado|total|suma|producto)/,
+                /(?:verificar|comprobar|revisar)/,
+                'Debe calcularse antes de verificar'],
+            [/(?:identificar|leer|reconocer)\s+(?:el\s+)?(?:problema|datos|enunciado)/,
+                /(?:calcular|operar|resolver|aplicar)/,
+                'Debe identificar datos antes de calcular'],
+        ];
+
+        for (let i = 0; i < lowerItems.length; i++) {
+            for (let j = i + 1; j < lowerItems.length; j++) {
+                for (const [prereq, dependent, desc] of rules) {
+                    if (dependent.test(lowerItems[i]) && prereq.test(lowerItems[j])) {
+                        return {
+                            valid: false,
+                            reason: `Dependencia lógica violada: "${orderedItems[i]}" depende de "${orderedItems[j]}": ${desc}`,
+                        };
+                    }
+                }
+            }
+        }
+
+        return { valid: true };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Verificador 12: GeometricSeriesMagnitudeVerifier
+// ═══════════════════════════════════════════════════════════════════════════
+// Detecta series geométricas donde el resultado real es astronómicamente
+// mayor que las opciones (e.g. r=3, n=25 → ~1.6 billones, opciones ~200).
+
+class GeometricSeriesMagnitudeVerifier {
+    canHandle(q) {
+        const text = (q.question || '').toLowerCase();
+        return (q.type === 'multiple_choice') &&
+            (/serie|progresión|secuencia|sumatoria/i.test(text)) &&
+            (/términos?/i.test(text));
+    }
+
+    verify(q) {
+        const text = q.question || '';
+
+        // Try to detect geometric sequence in the text
+        const seqRe = /(\d+\.?\d*)\s*,\s*(\d+\.?\d*)\s*,\s*(\d+\.?\d*)(?:\s*,\s*(\d+\.?\d*))?/;
+        const seqM = seqRe.exec(text);
+        if (!seqM) return { valid: true };
+
+        const vals = [seqM[1], seqM[2], seqM[3], seqM[4]]
+            .filter(Boolean)
+            .map(v => MathEngine.parseDecimal(v))
+            .filter(Boolean);
+
+        if (vals.length < 3) return { valid: true };
+
+        const detected = MathEngine.detectGeometricSequence(vals);
+        if (!detected) return { valid: true };
+
+        // Extract term count
+        const nRe = /(?:primeros?\s+)?(\d+)\s+t[eé]rminos?|n\s*=\s*(\d+)/i;
+        const nM = nRe.exec(text);
+        if (!nM) return { valid: true };
+        const n = parseInt(nM[1] || nM[2], 10);
+        if (!n || n < 2) return { valid: true };
+
+        // Compute the real sum
+        const series = MathEngine.geometricSeries(detected.a1, detected.r, n);
+        const absResult = series.value.abs();
+
+        // Check if all options are orders of magnitude too small
+        if (Array.isArray(q.options)) {
+            let maxOption = new Decimal(0);
+            for (const opt of q.options) {
+                const val = _parseDecimalSafe(String(opt).replace(/[^\d.,-]/g, ''));
+                if (val && val.abs().gt(maxOption)) maxOption = val.abs();
+            }
+            if (!maxOption.isZero() && absResult.div(maxOption).gt(10)) {
+                return {
+                    valid: false,
+                    reason: `Serie geométrica: resultado real=${absResult.toExponential(4)} pero max opción=${maxOption}. Problema mal diseñado.`,
+                };
+            }
+        }
+
+        return { valid: true };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Gate principal — orquestador
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -781,6 +897,8 @@ export class AnswerVerificationGate {
             new EquationConsistencyVerifier(),
             new IntegerSolutionVerifier(),
             new ScientificNotationVerifier(),
+            new GeometricSeriesMagnitudeVerifier(),
+            new OrderingStepDependencyVerifier(),
             new IndependentRecalculationVerifier(),
             new DecimalSumVerifier(),
             new ExplanationAnswerConsistencyVerifier(),
@@ -800,6 +918,8 @@ export {
     ScientificNotationVerifier,
     IntegerSolutionVerifier,
     DecimalSumVerifier,
+    OrderingStepDependencyVerifier,
+    GeometricSeriesMagnitudeVerifier,
 };
 
 export default AnswerVerificationGate;

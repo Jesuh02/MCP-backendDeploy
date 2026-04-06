@@ -19,6 +19,7 @@ import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
 import { QuizMathValidator } from '../../shared/math/QuizMathValidator.js';
 import { OrderingQuestionValidator } from '../../shared/math/OrderingQuestionValidator.js';
+import { ValidationPipeline } from '../../shared/math/ValidationPipeline.js';
 import { TENANT_CONFIGS, runInTenantContext } from '../../config/tenantRegistry.js';
 
 /**
@@ -1463,16 +1464,17 @@ Responde de forma clara y constructiva.`;
             }
         }
 
-        // Math verification: recompute arithmetic answers programmatically
-        return sanitized.map(q => this._verifyMathAnswer(q)).filter(Boolean);
+        // Math verification: use ValidationPipeline for unified validation
+        const pipeline = ValidationPipeline.getInstance();
+        return pipeline.validateBatch(sanitized);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // MATH VERIFICATION — Delegates to QuizMathValidator (Decimal.js precision)
+    // MATH VERIFICATION — Delegates to ValidationPipeline (SOLID architecture)
     // ═══════════════════════════════════════════════════════════════════════════
 
     _verifyMathAnswer(q) {
-        return QuizMathValidator.verify(q);
+        return ValidationPipeline.getInstance().validate(q);
     }
 
     _normalizeQuizText(text = '') {

@@ -1,5 +1,6 @@
 import Decimal from 'decimal.js';
 import { OrderingQuestionValidator } from './OrderingQuestionValidator.js';
+import { MathEngine } from './MathEngine.js';
 
 Decimal.set({ precision: 64 });
 
@@ -54,17 +55,10 @@ export class QuizMathValidator {
         try {
             var result = QuizMathValidator.computeExpectedAnswer(text);
 
-            // SEGURIDAD: Solo usar explicación del LLM como ÚLTIMO recurso.
-            // NUNCA confiar en la explicación para problemas que PODEMOS calcular.
+            // REGLA CARDINAL: NUNCA usar la explicación del LLM como fuente de verdad.
             // La explicación del LLM puede contener respuestas FABRICADAS.
-            if (!result && !isAdvanced && q.explanation && typeof q.explanation === 'string') {
-                var explResult = QuizMathValidator._tryFromExplanation(q.explanation);
-                if (explResult) {
-                    explResult._unverified = true;
-                    result = explResult;
-                    console.warn('[MathVerify] WARNING: Using unverified LLM explanation as source for: "' + text.substring(0, 60) + '..."');
-                }
-            }
+            // Si no podemos calcular independientemente, NO intentamos corregir.
+            // Esto elimina el error raíz: respuestas inventadas hacia atrás.
 
             if (!result) return q;
 
@@ -160,34 +154,10 @@ export class QuizMathValidator {
     }
 
     static _reconcileResults(computed, explanation, q) {
-        // PRINCIPIO: El cálculo independiente SIEMPRE tiene prioridad sobre la explicación del LLM.
-        // La explicación del LLM puede contener respuestas fabricadas.
-        // Solo se usa la explicación como FALLBACK cuando NO hay cálculo computado.
-        if (!computed && !explanation) return null;
-        if (!computed) {
-            // Sin cálculo computado: usar explicación pero marcar como no verificada
-            if (explanation) explanation._unverified = true;
-            return explanation;
-        }
-        if (!explanation) return computed;
-        if (computed.value.equals(explanation.value)) return computed;
-        // El cálculo computado siempre gana — la explicación puede estar fabricada
-        if (computed.fromFormula) return computed;
-        // Para multiple_choice: solo preferir explicación si el cálculo no matchea
-        // ninguna opción Y la explicación sí matchea una.
-        if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
-            var cMatch = QuizMathValidator._findClosestOption(q.options, computed.value);
-            var eMatch = QuizMathValidator._findClosestOption(q.options, explanation.value);
-            var eWithin = eMatch !== null && eMatch.within;
-            var cWithin = cMatch !== null && cMatch.within;
-            // SOLO caer a explicación si computed no matchea ninguna opción
-            if (eWithin && !cWithin) {
-                console.warn('[MathVerify] RECONCILE: Computed=' + computed.value + ' no matchea opciones, usando explicación=' + explanation.value);
-                explanation._fromExplanationFallback = true;
-                return explanation;
-            }
-        }
-        // El cálculo computado gana por defecto
+        // REGLA CARDINAL: El cálculo independiente SIEMPRE gana.
+        // NUNCA usamos la explicación del LLM como fuente de verdad.
+        // Si no hay cálculo computado, retornamos null (no intentamos corregir).
+        if (!computed) return null;
         return computed;
     }
 
@@ -226,36 +196,47 @@ export class QuizMathValidator {
         return null;
     }
 
-    // Strategy 1: Explicit Arithmetic
+    // Strategy 1: Explicit Arithmetic (uses MathEngine for proper precedence)
 
     static _tryExplicitArithmetic(text) {
         var cleaned = text.replace(/[$\u20ac\xa5\xa3\u20a1\u20bf]\s*/g, '');
         cleaned = cleaned.replace(/(\d[\d,]*\.?\d*)\s*\(\s*(\d[\d,]*\.?\d*)\s*\)/g, '$1 \xd7 $2');
         var numberPat = '\\d[\\d,]*\\.?\\d*';
-        var opPat = '[+\\-\\xd7*\\xf7/]';
+        var opPat = '[+\\-\\xd7*\\xf7/\\^]';
         var exprRegex = new RegExp(
             '(' + numberPat + ')\\s*(' + opPat + ')\\s*(' + numberPat + '(?:\\s*' + opPat + '\\s*' + numberPat + ')*)', 'g'
         );
         var match = exprRegex.exec(cleaned);
         if (!match) return null;
-        var tokens = match[0].split(/\s*([+\-\xd7*\xf7/])\s*/).filter(function(t) { return t.trim(); });
-        var result = QuizMathValidator._parseDecimal(tokens[0]);
-        if (!result) return null;
-        var steps = [];
-        for (var i = 1; i < tokens.length; i += 2) {
-            var op = tokens[i];
-            var num = QuizMathValidator._parseDecimal(tokens[i + 1]);
-            if (!num) return null;
-            var prev = result;
-            if (op === '+') result = result.plus(num);
-            else if (op === '-') result = result.minus(num);
-            else if (op === '\xd7' || op === '*') result = result.times(num);
-            else if (op === '\xf7' || op === '/') {
-                if (num.isZero()) return null;
-                result = result.div(num);
-            } else return null;
-            steps.push(prev + ' ' + op + ' ' + num + ' = ' + result);
+
+        // Use MathEngine for proper operator precedence evaluation
+        var exprStr = match[0]
+            .replace(/\xd7/g, '*')
+            .replace(/\xf7/g, '/')
+            .replace(/\u2212/g, '-');
+
+        var result = MathEngine.tryEvaluate(exprStr);
+        if (!result) {
+            // Fallback to left-to-right evaluation for simple cases
+            var tokens = match[0].split(/\s*([+\-\xd7*\xf7/])\s*/).filter(function(t) { return t.trim(); });
+            result = QuizMathValidator._parseDecimal(tokens[0]);
+            if (!result) return null;
+            for (var i = 1; i < tokens.length; i += 2) {
+                var op = tokens[i];
+                var num = QuizMathValidator._parseDecimal(tokens[i + 1]);
+                if (!num) return null;
+                if (op === '+') result = result.plus(num);
+                else if (op === '-') result = result.minus(num);
+                else if (op === '\xd7' || op === '*') result = result.times(num);
+                else if (op === '\xf7' || op === '/') {
+                    if (num.isZero()) return null;
+                    result = result.div(num);
+                } else return null;
+            }
         }
+
+        var steps = ['Expresión: ' + match[0] + ' = ' + result];
+
         var afterExpr = cleaned.substring(cleaned.indexOf(match[0]) + match[0].length);
         var followUps = QuizMathValidator._detectFollowUpOperations(afterExpr);
         for (var fi = 0; fi < followUps.length; fi++) {
@@ -306,34 +287,17 @@ export class QuizMathValidator {
         while ((m = seqRe.exec(text)) !== null) {
             var vals = [m[1], m[2], m[3], m[4]].filter(Boolean).map(function(v) { return new Decimal(v); });
             if (vals.length < 3) continue;
-            if (vals[0].isZero()) continue;
-            var r = vals[1].div(vals[0]);
-            if (r.eq(1)) continue; // not geometric (would be arithmetic)
-            // Verify the ratio is consistent across all extracted values
-            var consistent = true;
-            for (var vi = 2; vi < vals.length; vi++) {
-                if (!vals[vi].div(vals[vi - 1]).toFixed(8) === r.toFixed(8)) { consistent = false; break; }
-            }
-            if (!consistent) continue;
-            // Ratio should be a simple integer or simple fraction to avoid false positives
-            var rNum = parseFloat(r.toFixed(6));
-            if (!Number.isFinite(rNum) || rNum <= 0) continue;
-            // Accept only if ratio is integer or simple fraction (e.g. 1.5, 2, 3, 0.5)
-            var isSimpleRatio = Math.abs(rNum - Math.round(rNum)) < 0.001 ||
-                Math.abs(rNum * 2 - Math.round(rNum * 2)) < 0.001 ||
-                Math.abs(rNum * 3 - Math.round(rNum * 3)) < 0.001;
-            if (!isSimpleRatio) continue;
-            // All checks passed: compute the sum S_n = a1*(r^n - 1)/(r - 1)
-            var a1 = vals[0];
-            var rPowN = r.pow(n);
-            var seriesResult = a1.times(rPowN.minus(1)).div(r.minus(1));
-            console.log('[MathVerify] Implicit geometric series detected: a1=' + a1 + ', r=' + r.toFixed(4) + ', n=' + n + ' → S_n=' + seriesResult.toExponential(4));
+
+            // Use MathEngine for robust geometric sequence detection
+            var detected = MathEngine.detectGeometricSequence(vals);
+            if (!detected) continue;
+
+            // All checks passed: compute via MathEngine
+            var seriesCalc = MathEngine.geometricSeries(detected.a1, detected.r, n);
+            console.log('[MathVerify] Implicit geometric series detected: a1=' + detected.a1 + ', r=' + detected.r.toFixed(4) + ', n=' + n + ' → S_n=' + seriesCalc.value.toExponential(4));
             return {
-                value: seriesResult,
-                steps: [
-                    'Secuencia geométrica detectada: a1=' + a1 + ', r=' + r.toFixed(4) + ', n=' + n,
-                    'S_n = a1·(r^n − 1)/(r − 1) = ' + a1 + '·(' + r.toFixed(4) + '^' + n + ' − 1)/(' + r.toFixed(4) + ' − 1) = ' + seriesResult,
-                ],
+                value: seriesCalc.value,
+                steps: seriesCalc.steps,
                 fromFormula: true,
             };
         }
@@ -475,11 +439,10 @@ export class QuizMathValidator {
             }
         }
         if (!a1 || !r || !n || r.eq(1) || n < 1) return null;
-        var rPowN = r.pow(n);
-        var seriesResult = a1.times(rPowN.minus(1)).div(r.minus(1));
+        var seriesCalc = MathEngine.geometricSeries(a1, r, n);
         return {
-            value: seriesResult,
-            steps: ['Serie geometrica: a1=' + a1 + ', r=' + r + ', n=' + n, 'S_n = ' + a1 + '(' + r + '^' + n + ' - 1)/(' + r + ' - 1) = ' + seriesResult],
+            value: seriesCalc.value,
+            steps: seriesCalc.steps,
             fromFormula: true,
         };
     }
@@ -509,11 +472,10 @@ export class QuizMathValidator {
                 }
             }
             if (!a1 || !d || !n || n < 1) return null;
-            var nDec = new Decimal(n);
-            var seriesResult = nDec.div(2).times(a1.times(2).plus(d.times(nDec.minus(1))));
+            var seriesCalc = MathEngine.arithmeticSeries(a1, d, n);
             return {
-                value: seriesResult,
-                steps: ['Serie aritmetica: a1=' + a1 + ', d=' + d + ', n=' + n, 'S_n = ' + seriesResult],
+                value: seriesCalc.value,
+                steps: seriesCalc.steps,
                 fromFormula: true,
             };
         }
@@ -893,31 +855,25 @@ export class QuizMathValidator {
 
         if (!capital || !rate || !time || capital.lte(0) || rate.lte(0) || time.lte(0)) return null;
 
-        var rateDecimal = rate.div(100);
-
         if (/inter[e\xe9]s\s+compuesto|compuesto/i.test(lower)) {
-            // Compound interest: M = C × (1 + r)^t
-            var factor = new Decimal(1).plus(rateDecimal).pow(time.toNumber());
-            var monto = capital.times(factor);
-            var interestAmount = monto.minus(capital);
-            steps.push('Inter\xe9s compuesto: C=' + capital + ', r=' + rate + '%, t=' + time);
-            steps.push('M = ' + capital + ' \xd7 (1 + ' + rateDecimal + ')^' + time + ' = ' + monto);
-            // Return the total amount or just the interest, depending on the question
+            // Compound interest via MathEngine
+            var compound = MathEngine.compoundInterest(capital, rate, time);
             if (/inter[e\xe9]s\s+(?:generado|ganado|acumulado|total)/i.test(lower)) {
-                steps.push('Inter\xe9s = ' + monto + ' - ' + capital + ' = ' + interestAmount);
-                result = interestAmount;
+                result = compound.interest;
+                steps = compound.steps.concat(['Interés generado: ' + compound.interest]);
             } else {
-                result = monto;
+                result = compound.total;
+                steps = compound.steps;
             }
         } else {
-            // Simple interest: I = C × r × t
-            var interest = capital.times(rateDecimal).times(time);
-            steps.push('Inter\xe9s simple: I = C \xd7 r \xd7 t = ' + capital + ' \xd7 ' + rateDecimal + ' \xd7 ' + time + ' = ' + interest);
+            // Simple interest via MathEngine
+            var simple = MathEngine.simpleInterest(capital, rate, time);
             if (/monto\s+(?:total|final)|total|pagar[a\xe1]?|acumulado/i.test(lower)) {
-                result = capital.plus(interest);
-                steps.push('Monto total = ' + capital + ' + ' + interest + ' = ' + result);
+                result = simple.total;
+                steps = simple.steps;
             } else {
-                result = interest;
+                result = simple.interest;
+                steps = simple.steps;
             }
         }
 
@@ -1212,20 +1168,13 @@ export class QuizMathValidator {
         }
         // Explanation based validation
 
-    static _tryFromExplanation(text) {
-        if (!text) return null;
-        var patterns = [
-            /(?:resultado?|respuesta|total|valor)\s*(?:es|=|:)\s*\$?\s*([\d,]+\.?\d*)/i,
-            /=\s*\$?\s*([\d,]+\.?\d*)\s*$/im,
-            /(?:obtenemos|da|encontramos|tenemos|queda)\s+\$?\s*([\d,]+\.?\d*)/i,
-        ];
-        for (var ei = 0; ei < patterns.length; ei++) {
-            var m = text.match(patterns[ei]);
-            if (m) {
-                var val = QuizMathValidator._parseDecimal(m[1]);
-                if (val && val.isFinite()) return { value: val, fromExplanation: true };
-            }
-        }
+    /**
+     * DEPRECATED: No longer used. LLM explanations are NEVER trusted as
+     * a source of truth. This was the root cause of fabricated answers.
+     * Kept as no-op for backward compatibility.
+     * @deprecated
+     */
+    static _tryFromExplanation(_text) {
         return null;
     }
 
