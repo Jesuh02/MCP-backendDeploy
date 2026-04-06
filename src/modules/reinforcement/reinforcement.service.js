@@ -539,10 +539,10 @@ export class ReinforcementDomainService {
             if (!questions || questions.length === 0) {
                 return Result.ok({ questions: [], count: 0, source: 'llm', message: 'LLM returned no valid questions' });
             }
-            const MIN_QUESTIONS_FOR_UI = 8;
-            if (questions.length < MIN_QUESTIONS_FOR_UI) {
-                console.warn(`⚠️ [ReinforcementService] Only ${questions.length} questions generated (min for UI: ${MIN_QUESTIONS_FOR_UI}). Returning empty to trigger retry.`);
-                return Result.ok({ questions: [], count: 0, source: 'llm', message: `Only ${questions.length} questions generated, minimum ${MIN_QUESTIONS_FOR_UI} required` });
+            // ✅ Always return whatever was generated — clients do padding/retry on their side.
+            // Never discard questions just because count < MIN_QUESTIONS_FOR_UI.
+            if (questions.length < 8) {
+                console.warn(`⚠️ [ReinforcementService] Only ${questions.length} questions generated (below ideal 8). Returning anyway — clients will pad.`);
             }
             console.log(`\n═══ preguntas enviadas al cliente (${questions.length}) ═══`);
             questions.forEach((q, i) => console.log(`  [${i + 1}] type=${q.type} | ${q.question?.substring(0, 100)}`));
@@ -628,57 +628,92 @@ export class ReinforcementDomainService {
 
         let consecutiveZero = 0; // Track consecutive iterations yielding 0 new questions
 
-        for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-            const remaining = targetCount - accumulated.length;
-            if (remaining <= 0) break;
+        // ── PARALLEL FIRST BATCH ─────────────────────────────────────────────────
+        // On iteration 0: fire 2 concurrent LLM calls to frontload generation speed.
+        // Each call asks for (targetCount + 3) questions; after filtering we usually
+        // reach targetCount in a single round, skipping all subsequent iterations.
+        const buildUserPrompt = (exclusionBlock, reqCount) =>
+            `${contextBlock}\n${exclusionBlock}\n\n${topicHint}${hardEnforcement}\n\nGenera EXACTAMENTE ${reqCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales y complejos. Cada ejercicio debe exigir razonamiento genuino acorde al nivel ${diffLabel}. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
 
-            // Only stop early if we have enough AND 2+ consecutive iterations yielded nothing
-            if (accumulated.length >= MIN_ACCEPTABLE && consecutiveZero >= 2) {
+        const callLLM = (temperature, reqCount, exclusionBlock) =>
+            this.llmPort.chat(systemPrompt, buildUserPrompt(exclusionBlock, reqCount), {
+                temperature,
+                maxTokens: 8000,
+            });
+
+        const applyFilters = (rawQuestions, excluded) => {
+            const deduped = this._localDedup(rawQuestions, excluded);
+            return diffLabel === 'HARD' ? deduped.filter(q => {
+                const trivial = this._isExerciseTrivialForHard(q, domain);
+                if (trivial) console.warn(`[ReinforcementService] HARD filter rejected: "${q.question.substring(0, 80)}..."`);
+                return !trivial;
+            }) : deduped;
+        };
+
+        // Parallel first batch: 2 concurrent calls, each asking for targetCount+3
+        {
+            const firstExclusionList = allExcludedTexts.slice(-50);
+            const firstExclusionBlock = firstExclusionList.length > 0
+                ? `\nPREGUNTAS YA EXISTENTES (NO REPETIR):\n${firstExclusionList.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
+                : '';
+            const firstReqCount = Math.min(targetCount + 3, 13);
+
+            const batchStart = Date.now();
+            const [resp1, resp2] = await Promise.allSettled([
+                callLLM(0.4, firstReqCount, firstExclusionBlock),
+                callLLM(0.55, firstReqCount, firstExclusionBlock),
+            ]);
+            console.log(`🤖 [ReinforcementService] Parallel first batch in ${Date.now() - batchStart}ms`);
+
+            for (const resp of [resp1, resp2]) {
+                if (resp.status !== 'fulfilled') continue;
+                const qs = this._parseQuestionsJson(resp.value?.content || '');
+                const filtered = applyFilters(qs, allExcludedTexts);
+                for (const q of filtered) {
+                    if (accumulated.length >= targetCount) break;
+                    accumulated.push(q);
+                    allExcludedTexts.push(q.question);
+                }
+            }
+            console.log(`🔄 [ReinforcementService] After parallel batch: accumulated=${accumulated.length}/${targetCount}`);
+        }
+
+        // ── SEQUENTIAL FILL-UP ITERATIONS ───────────────────────────────────────
+        // Only run if parallel batch didn't reach targetCount.
+        for (let iteration = 0; iteration < MAX_ITERATIONS && accumulated.length < targetCount; iteration++) {
+            const remaining = targetCount - accumulated.length;
+
+            // Stop early only if we meet MIN_ACCEPTABLE AND iterations are clearly unproductive
+            if (accumulated.length >= MIN_ACCEPTABLE && consecutiveZero >= 3) {
                 console.log(`✅ [ReinforcementService] Stopping early: ${accumulated.length}/${targetCount} (>= min ${MIN_ACCEPTABLE}) after ${consecutiveZero} empty iterations`);
                 break;
             }
 
-            // Build exclusion block including previously accumulated questions
+            // Build exclusion block
             const exclusionList = allExcludedTexts.slice(-50);
             const existingBlock = exclusionList.length > 0
                 ? `\nPREGUNTAS YA EXISTENTES (NO REPETIR):\n${exclusionList.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
                 : '';
 
-            // Ask for a minimum of 5 questions per iteration to maximize dedup yield
-            const requestCount = Math.min(Math.max(remaining + 2, 5), 10);
-
-            const userPrompt = `${contextBlock}\n${existingBlock}\n\n${topicHint}${hardEnforcement}\n\nGenera EXACTAMENTE ${requestCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales y complejos. Cada ejercicio debe exigir razonamiento genuino acorde al nivel ${diffLabel}. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
+            // Request 2× the shortfall (min 8) to compensate for filtering losses
+            const requestCount = Math.min(Math.max(remaining * 2 + 3, 8), 15);
 
             // Step 3: Call LLM (temperature increases on retries to encourage variety)
             const llmStartMs = Date.now();
-            const llmResponse = await this.llmPort.chat(systemPrompt, userPrompt, {
-                temperature: Math.min(0.4 + (iteration * 0.1), 0.9),
-                maxTokens: 8000,
-            });
-            console.log(`🤖 [ReinforcementService] LLM responded in ${Date.now() - llmStartMs}ms (iteration ${iteration + 1}/${MAX_ITERATIONS})`);
+            const llmResponse = await callLLM(Math.min(0.45 + (iteration * 0.1), 0.9), requestCount, existingBlock);
+            console.log(`🤖 [ReinforcementService] LLM responded in ${Date.now() - llmStartMs}ms (fill iteration ${iteration + 1})`);
 
             // Step 4: Parse JSON
             const content = llmResponse?.content || '';
             const questions = this._parseQuestionsJson(content);
 
             if (questions.length === 0) {
-                console.warn(`[ReinforcementService] Iteration ${iteration + 1}: LLM returned 0 parseable questions`);
+                console.warn(`[ReinforcementService] Fill iteration ${iteration + 1}: LLM returned 0 parseable questions`);
                 consecutiveZero++;
                 continue;
             }
 
-            // Local dedup against existing + accumulated
-            const deduped = this._localDedup(questions, allExcludedTexts);
-
-            // Server-side complexity filter: reject trivial exercises in HARD mode
-            const filtered = diffLabel === 'HARD' ? deduped.filter(q => {
-                const trivial = this._isExerciseTrivialForHard(q, domain);
-                if (trivial) {
-                    console.warn(`[ReinforcementService] HARD filter rejected trivial/off-domain exercise: "${q.question.substring(0, 80)}..."`);
-                }
-                return !trivial;
-            }) : deduped;
-
+            const filtered = applyFilters(questions, allExcludedTexts);
             const prevAccumulated = accumulated.length;
 
             for (const q of filtered) {
@@ -688,16 +723,9 @@ export class ReinforcementDomainService {
             }
 
             const newlyAdded = accumulated.length - prevAccumulated;
-            console.log(`🔄 [ReinforcementService] Iteration ${iteration + 1}: parsed=${questions.length}, afterDedup=${deduped.length}, afterComplexityFilter=${filtered.length}, newlyAdded=${newlyAdded}, accumulated=${accumulated.length}/${targetCount}`);
+            console.log(`🔄 [ReinforcementService] Fill it.${iteration + 1}: parsed=${questions.length}, afterFilters=${filtered.length}, newlyAdded=${newlyAdded}, accumulated=${accumulated.length}/${targetCount}`);
 
-            if (newlyAdded === 0) {
-                consecutiveZero++;
-            } else {
-                consecutiveZero = 0;
-            }
-
-            if (accumulated.length >= targetCount) break;
-            console.log(`⚠️ [ReinforcementService] Only ${accumulated.length}/${targetCount} after iteration ${iteration + 1}, retrying... (min acceptable: ${MIN_ACCEPTABLE})`);
+            consecutiveZero = newlyAdded === 0 ? consecutiveZero + 1 : 0;
         }
 
         console.log(`✅ [ReinforcementService] Final: ${accumulated.length}/${targetCount} unique questions (min acceptable: ${MIN_ACCEPTABLE}, total ${Date.now() - startMs}ms)`);
@@ -714,7 +742,7 @@ export class ReinforcementDomainService {
         console.log(`═══════════════════════════════════════════════════\n`);
 
         if (accumulated.length < MIN_ACCEPTABLE) {
-            console.warn(`⚠️ [ReinforcementService] WARNING: Only ${accumulated.length} questions generated (minimum acceptable: ${MIN_ACCEPTABLE}). Clients should NOT display until >= ${MIN_ACCEPTABLE}.`);
+            console.warn(`⚠️ [ReinforcementService] WARNING: Only ${accumulated.length} questions generated (minimum acceptable: ${MIN_ACCEPTABLE}). Returning anyway — clients will pad with fallback.`);
         }
 
         return accumulated.slice(0, targetCount);
