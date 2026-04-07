@@ -158,14 +158,12 @@ export class CourseGuestService {
 
     /**
      * List all approved pre-enrollments for a course (invited + manually approved).
+     * Any authenticated user can view the guest list.
      */
     async getGuests(requesterId, courseId) {
-        const { allowed, course } = await this._canManageGuests(requesterId, courseId);
-        if (!allowed || !course) {
-            return Result.fail(course
-                ? new ForbiddenError('Sin acceso para ver invitados')
-                : new NotFoundError('Curso', courseId)
-            );
+        const course = await this.courseRepo.findById(courseId);
+        if (!course) {
+            return Result.fail(new NotFoundError('Curso', courseId));
         }
 
         const rows = await this.progressRepo.findApprovedPreEnrollments(courseId);
