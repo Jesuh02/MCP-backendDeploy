@@ -397,6 +397,227 @@ class StepCountConsistencyRule {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Regla 6: ArithmeticProcedureOrderRule
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// En aritmética con acarreos (suma/resta de varios dígitos), los acarreos
+// ocurren SIMULTÁNEAMENTE con la suma de cada columna y ANTES de pasar
+// a la siguiente columna hacia la izquierda.
+//
+// Orden correcto:
+//   Operar columna → Llevar acarreo (si ≥10) → Continuar siguiente columna
+//
+// Este es el bug reportado:
+//   LLM genera: [Alinear, Sumar, CONTINUAR SUMANDO, llevar acarreos, Resultado]
+//   Correcto:   [Alinear, Sumar, LLEVAR ACARREOS, continuar sumando, Resultado]
+// ═══════════════════════════════════════════════════════════════════════════
+
+class ArithmeticProcedureOrderRule {
+    /** Patrones que identifican el paso de llevar/registrar acarreos */
+    static CARRY_PATTERNS = [
+        /^llevar\s+(?:el\s+)?acarreo/i,
+        /^registrar\s+(?:el\s+)?acarreo/i,
+        /^anotar\s+(?:el\s+)?acarreo/i,
+        /^escribir\s+(?:el\s+)?acarreo/i,
+        /^(?:el\s+)?acarreo\s+(?:se\s+)?(?:lleva|registra|anota|escribe)/i,
+        /^(?:aplicar|usar|considerar)\s+(?:el\s+)?acarreo/i,
+        /acarreos?\s+(?:a\s+la\s+)?(?:siguiente|pr[oó]xima)\s+columna/i,
+        /\bacarreos?\s+pendientes?\b/i,
+    ];
+
+    /** Patrones que identifican "continuar/pasar a la siguiente columna" */
+    static CONTINUE_PATTERNS = [
+        /^continuar\s+sumando/i,
+        /^continuar\s+restando/i,
+        /^continuar\s+(?:con\s+)?(?:la\s+)?(?:siguiente|pr[oó]xima)\s+columna/i,
+        /^seguir\s+sumando/i,
+        /^seguir\s+restando/i,
+        /^repetir\s+(?:el\s+)?(?:proceso|procedimiento|paso|pasos)\s+(?:para\s+)?(?:las\s+)?(?:otras|dem[aá]s|siguientes?)\s+columnas?/i,
+        /^pasar\s+a\s+la\s+(?:siguiente|pr[oó]xima)\s+columna/i,
+        /^(?:avanzar|moverse?|desplazarse?)\s+(?:a\s+)?(?:la\s+)?(?:siguiente|pr[oó]xima)\s+columna/i,
+        /^mover\s+a\s+la\s+(?:siguiente|pr[oó]xima)\s+columna/i,
+    ];
+
+    /** Patrones de contexto aritmético donde aplica esta regla */
+    static ARITHMETIC_CONTEXT_PATTERNS = [
+        /suma|adici[oó]n|a[ñn]adiendo/i,
+        /resta|sustracci[oó]n/i,
+        /acarreo/i,
+        /columna/i,
+        /d[ií]gito/i,
+    ];
+
+    applies(question, items) {
+        // Necesita al menos un paso de acarreo Y un paso de "continuar"
+        const hasCarry    = items.some(item => ArithmeticProcedureOrderRule.CARRY_PATTERNS.some(p => p.test(item)));
+        const hasContinue = items.some(item => ArithmeticProcedureOrderRule.CONTINUE_PATTERNS.some(p => p.test(item)));
+        if (!hasCarry || !hasContinue) return false;
+
+        // Verificar contexto aritmético (pregunta o items)
+        const context = question + ' ' + items.join(' ');
+        return ArithmeticProcedureOrderRule.ARITHMETIC_CONTEXT_PATTERNS.some(p => p.test(context));
+    }
+
+    apply(question, items) {
+        const carryIdx    = items.findIndex(item => ArithmeticProcedureOrderRule.CARRY_PATTERNS.some(p => p.test(item)));
+        const continueIdx = items.findIndex(item => ArithmeticProcedureOrderRule.CONTINUE_PATTERNS.some(p => p.test(item)));
+
+        if (carryIdx === -1 || continueIdx === -1) return { modified: false };
+
+        // Si acarreo ya está ANTES de continuar, el orden es correcto
+        if (carryIdx < continueIdx) return { modified: false };
+
+        // Corrección: intercambiar posiciones
+        const fixed = [...items];
+        [fixed[carryIdx], fixed[continueIdx]] = [fixed[continueIdx], fixed[carryIdx]];
+
+        console.warn(
+            `⚠️ [OrderingValidator] CORREGIDO (ArithmeticProcedureOrderRule): ` +
+            `"${items[continueIdx]}" (pos ${continueIdx + 1}) estaba ANTES de ` +
+            `"${items[carryIdx]}" (pos ${carryIdx + 1}). ` +
+            `Los acarreos ocurren ANTES de pasar a la siguiente columna.`
+        );
+
+        return {
+            modified: true,
+            items: fixed,
+            reason: `"${items[carryIdx]}" (llevar acarreos) debe ir en pos ${continueIdx + 1} antes que ` +
+                    `"${items[continueIdx]}" (continuar sumando). Los acarreos se registran al operar cada columna, ANTES de pasar a la siguiente.`,
+        };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Regla 7: WriteResultLastRule
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// En cualquier procedimiento matemático, el paso de ESCRIBIR/ANOTAR el
+// resultado final siempre debe ser el ÚLTIMO paso antes de la verificación.
+// Si el LLM lo insertó en medio del procedimiento, moverlo al final
+// (pero antes de los pasos de verificación).
+// ═══════════════════════════════════════════════════════════════════════════
+
+class WriteResultLastRule {
+    static WRITE_RESULT_PATTERNS = [
+        /^escribir\s+(?:el\s+)?resultado\s+final/i,
+        /^anotar\s+(?:el\s+)?resultado\s+final/i,
+        /^registrar\s+(?:el\s+)?resultado\s+final/i,
+        /^colocar\s+(?:el\s+)?resultado\s+final/i,
+        /^(?:el\s+)?resultado\s+final\s+(?:es|ser[aá]|queda)/i,
+        /^(?:obtener|calcular)\s+(?:el\s+)?resultado\s+final/i,
+    ];
+
+    static VERIFY_PATTERNS = [
+        /^verificar/i,
+        /^comprobar/i,
+        /^revisar\s+(?:el\s+)?resultado/i,
+        /^confirmar\s+(?:el\s+)?resultado/i,
+        /verificaci[oó]n/i,
+    ];
+
+    applies(question, items) {
+        return items.some(item => WriteResultLastRule.WRITE_RESULT_PATTERNS.some(p => p.test(item)));
+    }
+
+    apply(question, items) {
+        const resultIdx = items.findIndex(item =>
+            WriteResultLastRule.WRITE_RESULT_PATTERNS.some(p => p.test(item))
+        );
+        if (resultIdx === -1) return { modified: false };
+
+        // Find the first verification step (already moved to end by VerificationLastRule)
+        const firstVerifyIdx = items.findIndex(item =>
+            WriteResultLastRule.VERIFY_PATTERNS.some(p => p.test(item))
+        );
+
+        // Only act when "escribir resultado" appears AFTER a verification step
+        // (verification should already be at the end from VerificationLastRule)
+        if (firstVerifyIdx === -1 || resultIdx < firstVerifyIdx) return { modified: false };
+
+        // Move result to just BEFORE the first verification step
+        const fixed = [...items];
+        const [step] = fixed.splice(resultIdx, 1);
+        // firstVerifyIdx is now one position earlier since we removed an element before it
+        const insertAt = resultIdx > firstVerifyIdx ? firstVerifyIdx : firstVerifyIdx - 1;
+        fixed.splice(insertAt, 0, step);
+
+        console.warn(
+            `⚠️ [OrderingValidator] CORREGIDO (WriteResultLastRule): ` +
+            `"${items[resultIdx]}" (pos ${resultIdx + 1}) movido antes de verificación (pos ${firstVerifyIdx + 1})`
+        );
+
+        return {
+            modified: true,
+            items: fixed,
+            reason: `"${items[resultIdx]}" movido antes de la verificación (el resultado se escribe antes de comprobar)`,
+        };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Regla 8: OperationBeforeResultRule
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// En procedimientos de suma/resta con múltiples columnas, el resultado
+// se obtiene DESPUÉS de operar TODAS las columnas. Detecta cuando el
+// paso de "obtener resultado" está entre pasos de operación.
+// ═══════════════════════════════════════════════════════════════════════════
+
+class OperationBeforeResultRule {
+    static OPERATION_PATTERNS = [
+        /^sumar\s+(?:la\s+)?(?:primera|segunda|tercera|siguiente|cada)\s+columna/i,
+        /^sumar\s+(?:las\s+)?d[ií]gitos?\s+de/i,
+        /^multiplicar\s+por/i,
+        /^realizar\s+(?:la\s+)?(?:multiplicaci[oó]n|divisi[oó]n|suma|operaci[oó]n)/i,
+        /^operar\s+(?:cada|la[s]?)\s+columna/i,
+    ];
+
+    static RESULT_PATTERNS = [
+        /^(?:escribir|anotar|registrar|poner)\s+(?:el\s+)?resultado/i,
+        /^(?:el\s+)?resultado\s+(?:final|es|de\s+la\s+operaci[oó]n)/i,
+    ];
+
+    applies(question, items) {
+        const hasOp     = items.some(item => OperationBeforeResultRule.OPERATION_PATTERNS.some(p => p.test(item)));
+        const hasResult = items.some(item => OperationBeforeResultRule.RESULT_PATTERNS.some(p => p.test(item)));
+        return hasOp && hasResult;
+    }
+
+    apply(question, items) {
+        // Verificar que el resultado venga DESPUÉS de todas las operaciones
+        const resultIdx = items.findIndex(item =>
+            OperationBeforeResultRule.RESULT_PATTERNS.some(p => p.test(item))
+        );
+        if (resultIdx === -1) return { modified: false };
+
+        // Buscar si hay alguna operación DESPUÉS del resultado
+        const laterOpIdx = items.findIndex((item, i) =>
+            i > resultIdx && OperationBeforeResultRule.OPERATION_PATTERNS.some(p => p.test(item))
+        );
+        if (laterOpIdx === -1) return { modified: false }; // Ok: resultado después de todas las ops
+
+        // El resultado está antes de una operación — mover resultado al final de las operaciones
+        const lastOpIdx = [...items].reduce((last, item, i) => {
+            return OperationBeforeResultRule.OPERATION_PATTERNS.some(p => p.test(item)) ? i : last;
+        }, -1);
+
+        if (lastOpIdx <= resultIdx) return { modified: false };
+
+        const fixed = [...items];
+        const [step] = fixed.splice(resultIdx, 1);
+        // Insertar después del último paso de operación (índice decrementó por el splice)
+        const insertAt = lastOpIdx; // Ya ajustado porque eliminamos un elemento antes de lastOpIdx
+        fixed.splice(insertAt, 0, step);
+
+        return {
+            modified: true,
+            items: fixed,
+            reason: `"${items[resultIdx]}" movido después de "${items[lastOpIdx]}" (resultado va tras la última operación)`,
+        };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Orquestador principal
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -470,11 +691,14 @@ export class OrderingQuestionValidator {
     /** @private Reglas por defecto, en orden de prioridad */
     static _defaultRules() {
         return [
-            new DecimalCommaRule(),      // 1. Fusionar coma decimal con alineación
-            new RedundantStepRule(),      // 2. Eliminar pasos redundantes genéricos
-            new AlignmentFirstRule(),     // 3. Alineación siempre primero
-            new VerificationLastRule(),   // 4. Verificación siempre al final
-            new StepCountConsistencyRule(), // 5. Consistencia de conteo
+            new DecimalCommaRule(),            // 1. Fusionar coma decimal con alineación
+            new RedundantStepRule(),            // 2. Eliminar pasos redundantes genéricos
+            new ArithmeticProcedureOrderRule(), // 3. Acarreos ANTES de continuar (bug crítico)
+            new AlignmentFirstRule(),           // 4. Alineación siempre primero
+            new VerificationLastRule(),         // 5. Verificación siempre al final (debe ir ANTES de WriteResult)
+            new WriteResultLastRule(),          // 6. Resultado justo antes de verificación (corre tras VerificationLastRule)
+            new OperationBeforeResultRule(),    // 7. Todas las operaciones antes del resultado
+            new StepCountConsistencyRule(),     // 8. Consistencia de conteo
         ];
     }
 }
@@ -486,6 +710,9 @@ export {
     VerificationLastRule,
     RedundantStepRule,
     StepCountConsistencyRule,
+    ArithmeticProcedureOrderRule,
+    WriteResultLastRule,
+    OperationBeforeResultRule,
 };
 
 export default OrderingQuestionValidator;

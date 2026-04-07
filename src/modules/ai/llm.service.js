@@ -379,6 +379,27 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
 - Para "multiple_choice": campos "question", "type", "options" (array de 4), "correctIndex" (0-3), "explanation".
 - Para "fill_in_blank": campos "question", "type", "correctAnswer" (string), "hint" (string opcional), "explanation".
 - Para "ordering": campos "question", "type", "items" (array EN ORDEN CORRECTO — el servidor los baraja), "correctOrder": [0,1,2,...] (identidad — el servidor lo recalcula), "explanation".
+
+═══ REGLAS OBLIGATORIAS PARA PREGUNTAS DE ORDENAMIENTO PROCEDIMENTAL ═══
+CUANDO generes preguntas de tipo "ordering" sobre procedimientos matemáticos/aritméticos:
+
+1. ALINEACIÓN: El paso de ALINEAR los números SIEMPRE es el PRIMERO.
+2. ACARREOS: Los acarreos (llevar/registrar acarreos) se ejecutan DURANTE la suma de cada columna y ANTES de avanzar a la siguiente columna.
+   ✅ CORRECTO: Sumar columna → Llevar acarreo → Continuar con siguiente columna
+   ❌ INCORRECTO: Sumar columna → Continuar sumando → Llevar acarreos  ← ESTO ESTÁ MAL
+3. RESULTADO: El paso de ESCRIBIR/ANOTAR el resultado final siempre va DESPUÉS de todas las operaciones y ANTES de la verificación.
+4. VERIFICACIÓN: Los pasos de verificar/comprobar van siempre al FINAL.
+5. NUNCA pongas "Continuar sumando" o "Pasar a siguiente columna" antes de "Llevar acarreos".
+6. NUNCA inviertas causa y consecuencia: los acarreos son CAUSA de la columna actual, no EFECTO de la siguiente.
+
+EJEMPLO CORRECTO para suma con acarreos:
+items: [
+  "Alinear los números verticalmente por su valor posicional",
+  "Sumar la columna de las unidades de derecha a izquierda",
+  "Llevar los acarreos a la siguiente columna cuando el resultado sea ≥10",
+  "Continuar sumando la siguiente columna incorporando el acarreo",
+  "Escribir el resultado final"
+]
 - NUNCA mezcles campos de diferentes objetos. Completa un objeto completamente ANTES de iniciar el siguiente.
 - Asegúrate de poner comas entre campos y entre objetos.
 - Genera EXACTAMENTE 10 ejercicios que se puedan verificar DIRECTAMENTE en el contexto RAG proporcionado.
@@ -451,12 +472,16 @@ ERES un evaluador de nivel universitario avanzado / profesional.
 Reglas OBLIGATORIAS para TODOS los ejercicios:
 
 1. MATEMÁTICAS/ARITMÉTICA: Los números deben tener MÍNIMO 7 dígitos. Ejemplo válido: 1,023,232 + 12,213,456. Ejemplo PROHIBIDO: 24+18, 5×3.
+   - Para ejercicios de ORDENAMIENTO de pasos matemáticos: la secuencia debe tener al menos 5 pasos con interdependencias claras (ej: acarreos, redondeo, verificación).
+   - Los distractores numéricos en multiple_choice deben variar en menos del 30%: si el resultado es 1,234,567 los distractores podrían ser 1,234,000; 1,245,678; 1,213,567.
 2. SQL: OBLIGATORIO incluir JOINs, subqueries, window functions (OVER/PARTITION BY), CTEs o HAVING. SELECT simple sin JOIN está PROHIBIDO.
 3. PROGRAMACIÓN: Exigir algoritmos (búsqueda binaria, grafos, recursión, DP), NO ejercicios de sintaxis básica como console.log o print.
 4. CONCEPTOS: NO preguntar "¿Qué es X?" → preguntar "¿Qué implicaciones tiene X cuando se combina con Y en el contexto Z?"
 5. TODOS los ejercicios deben requerir razonamiento multi-paso. Si se puede responder de memoria o en 1 paso, es DEMASIADO FÁCIL.
+6. VALIDACIÓN MATEMÁTICA INTERNA: Antes de emitir cada pregunta numérica, VERIFICA mentalmente que la respuesta correcta coincide con el enunciado. NO generes "3 libros × $250 = $600" cuando el resultado real es $750.
+7. OPCIONES MATEMÁTICAS: Genera los distractores aplicando errores típicos de cálculo (error de un dígito, confusión de operación, olvido de un operando). NUNCA pongas el resultado correcto en otra opción.
 
-Si generas un ejercicio trivial, el sistema lo RECHAZARÁ. Maximiza la complejidad.`;
+Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo RECHAZARÁ. Maximiza la complejidad y la exactitud.`;
             }
 
             // 3. Build user prompt with file content if available

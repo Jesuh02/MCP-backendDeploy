@@ -200,13 +200,23 @@ class OrderingDependencyStage {
         const lowerItems = orderedItems.map(s => (s || '').toLowerCase());
 
         // Dependency rules: [prerequisite pattern, dependent pattern, description]
+        // Interpretation: DEPENDENT must come AFTER PREREQUISITE.
+        // Violation detected when dependent appears at index i and prerequisite at index j > i.
         const rules = [
             [/(?:sumar|restar|multiplicar|dividir|calcular|operar|resolver)/,
                 /(?:escribir|anotar|colocar|poner)\s+(?:(?:el|la|los|las|del|de)\s+)*(?:resultado|respuesta|coma|punto)/,
                 'No se puede escribir el resultado antes de calcularlo'
             ],
+            // ── REGLA CRÍTICA (BUG REPORTADO) ──────────────────────────────────
+            // Los acarreos ocurren al sumar cada columna y DEBEN registrarse
+            // ANTES de avanzar a la siguiente columna hacia la izquierda.
+            [/(?:llevar|registrar|anotar|escribir)\s+(?:el\s+)?acarreo|acarreos?\s+(?:a\s+la\s+)?(?:siguiente|pr[oó]xima)\s+columna|\bacarreos?\s+pendientes?\b/,
+                /(?:continuar|seguir|repetir)\s+sumando|(?:continuar|seguir|repetir)\s+restando|pasar\s+a\s+la\s+(?:siguiente|pr[oó]xima)\s+columna|avanzar\s+a\s+la\s+(?:siguiente|pr[oó]xima)\s+columna/,
+                'Los acarreos se deben registrar ANTES de continuar con la siguiente columna'
+            ],
+            // ── Acarreos son consecuencia de operar (regla original ampliada) ──
             [/(?:sumar|restar|calcular|operar)/,
-                /(?:acarreo|llevar|reservar)/,
+                /^(?:llevar|registrar)\s+(?:el\s+)?acarreo|^acarreos?\b/,
                 'Los acarreos son consecuencia de la operación, no pueden ir antes'
             ],
             [/(?:alinear|ordenar|colocar|escribir)\s+(?:los\s+)?(?:n[uú]meros|cifras|d[ií]gitos)/,
@@ -220,6 +230,16 @@ class OrderingDependencyStage {
             [/(?:identificar|leer|reconocer)\s+(?:el\s+)?(?:problema|datos|enunciado|valores)/,
                 /(?:calcular|operar|resolver|aplicar\s+f[oó]rmula)/,
                 'Debe identificar datos antes de calcular'
+            ],
+            // ── Escribir resultado es el penúltimo/último paso (antes de verificar) ──
+            [/(?:sumar|restar|multiplicar|dividir|calcular|operar|resolver)/,
+                /^(?:escribir|anotar|registrar|poner)\s+(?:el\s+)?resultado\s+final/,
+                'El resultado final se escribe después de completar la operación'
+            ],
+            // ── Identificar/plantear el problema antes de ejecutar ─────────────
+            [/(?:leer|analizar|identificar|comprender|plantear)\s+(?:el\s+)?(?:problema|enunciado|ejercicio)/,
+                /(?:sumar|restar|multiplicar|dividir|aplicar|calcular|resolver)/,
+                'Debe analizarse el problema antes de operarlo'
             ],
         ];
 
