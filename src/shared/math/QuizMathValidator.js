@@ -4,7 +4,7 @@ import { MathEngine } from './MathEngine.js';
 
 Decimal.set({ precision: 64 });
 
-const MATH_SIGNALS = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|\xbfcu\xe1nto|cu\xe1ntos|cu\xe1ntas|promedio|media|porcentaje|[a\xe1]rea|per[i\xed]metro|volumen|superficie|inter[e\xe9]s\s+(?:simple|compuesto)|descuento|impuesto|IVA|repartir|dividir|ganancia|utilidad|beneficio|derivada|extremo|m[i\xed]nimo\s+local|m[a\xe1]ximo\s+local|notaci[o\xf3]n\s+cient[i\xed]fica/i;
+const MATH_SIGNALS = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|\xbfcu\xe1nto|cu\xe1ntos|cu\xe1ntas|promedio|media|porcentaje|[a\xe1]rea|per[i\xed]metro|volumen|superficie|inter[e\xe9]s\s+(?:simple|compuesto)|descuento|impuesto|IVA|repartir|dividir|ganancia|utilidad|beneficio|derivada|extremo|m[i\xed]nimo\s+local|m[a\xe1]ximo\s+local|notaci[o\xf3]n\s+cient[i\xed]fica|fracci[o\xf3]n|fracciones|elevado|potencia|exponente|\d+\s*\/\s*\d+\s*[+\-×÷*]/i;
 const HAS_SIGNIFICANT_NUMBERS = /\d{3,}/;
 
 const ADVANCED_FORMULA_PATTERNS = [
@@ -39,9 +39,10 @@ const META_QUESTION_PATTERNS = [
     /cifra\s+(?:de|en)\s+(?:la\s+)?posici[o\xf3]n/i,
 ];
 
-// Tolerance for option matching: 1% relative OR 0.5 absolute
-const OPTION_REL_TOLERANCE = new Decimal('0.01');
-const OPTION_ABS_TOLERANCE = new Decimal('0.5');
+// Tolerance for option matching: 0.5% relative OR 0.01 absolute for large numbers
+// Tighter than before (was 1% / 0.5) to catch more fabricated answers.
+const OPTION_REL_TOLERANCE = new Decimal('0.005');
+const OPTION_ABS_TOLERANCE = new Decimal('0.01');
 // When a rigorous formula answer is > this factor larger than the max option,
 // the question is considered mathematically broken (LLM fabricated options).
 const BROKEN_QUESTION_FACTOR = new Decimal('10');
@@ -88,6 +89,10 @@ export class QuizMathValidator {
                 return QuizMathValidator._verifyFillInBlank(q, finalAnswer, result.steps);
             }
             if (q.type === 'multiple_choice') {
+                // Propagate fraction result for exact fraction matching in options
+                if (result.fractionResult) {
+                    result.steps._fractionResult = result.fractionResult;
+                }
                 return QuizMathValidator._verifyMultipleChoice(q, finalAnswer, result.steps);
             }
         } catch (err) {
@@ -119,6 +124,14 @@ export class QuizMathValidator {
         // Strategy 1: Explicit arithmetic expressions (highest confidence)
         var arithmetic = QuizMathValidator._tryExplicitArithmetic(text);
         if (arithmetic) return arithmetic;
+
+        // Strategy 1.5: Fraction arithmetic (3/8 + 1/9, operaciones con fracciones)
+        var fraction = QuizMathValidator._tryFractionArithmetic(text);
+        if (fraction) return fraction;
+
+        // Strategy 1.8: Exponentiation problems (2.8^40, a elevado a la b)
+        var exponent = QuizMathValidator._tryExponentiationProblem(text);
+        if (exponent) return exponent;
 
         // Strategy 2: Formula evaluation (series, summations, combined series)
         var formula = QuizMathValidator._tryFormulaEvaluation(text);
@@ -198,6 +211,27 @@ export class QuizMathValidator {
 
     static _verifyMultipleChoice(q, finalAnswer, steps) {
         if (!Array.isArray(q.options) || q.options.length === 0) return q;
+
+        // If we have a fraction result, also try to match fraction strings in options
+        var fractionResult = steps && steps._fractionResult;
+        if (fractionResult) {
+            var fracStr = MathEngine.fractionToString(fractionResult);
+            for (var fi = 0; fi < q.options.length; fi++) {
+                var optClean = String(q.options[fi]).trim();
+                // Match exact fraction string (e.g., "89/72")
+                var optFrac = MathEngine.parseFraction(optClean);
+                if (optFrac && optFrac.num.eq(fractionResult.num) && optFrac.den.eq(fractionResult.den)) {
+                    if (fi !== q.correctIndex) {
+                        console.warn('[MathVerify] CORRECTED MC (fraction match): index ' + q.correctIndex + ' -> ' + fi +
+                            ' (fraction=' + fracStr + ', option[' + fi + ']=' + q.options[fi] + ')');
+                        q.correctIndex = fi;
+                        q.explanation = steps.join('. ') + '. Resultado final: ' + fracStr + '.';
+                    }
+                    return q;
+                }
+            }
+        }
+
         var match = QuizMathValidator._findClosestOption(q.options, finalAnswer);
         // match is null when no option could be parsed as a number — skip validation
         if (match === null) return q;
@@ -279,6 +313,147 @@ export class QuizMathValidator {
             steps.push(followUps[fi].describe(prevF, result));
         }
         return { value: result, steps: steps };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Strategy 1.5: Fraction Arithmetic
+    // Detects fraction operations: "3/8 + 1/9", "suma de 3/8 y 1/9",
+    // "¿cuánto es 2/3 × 5/7?", "resta 1/4 de 3/5"
+    // Uses exact fraction arithmetic (GCD-based) for maximum precision.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    static _tryFractionArithmetic(text) {
+        // Detect fraction patterns in text
+        var fracPat = /(\d+)\s*\/\s*(\d+)/g;
+        var fractions = [];
+        var fm;
+        while ((fm = fracPat.exec(text)) !== null) {
+            var num = parseInt(fm[1], 10);
+            var den = parseInt(fm[2], 10);
+            // Filter out dates (dd/mm, mm/yy), percentages, and very large denominators
+            if (den === 0 || den > 10000 || num > 100000) continue;
+            // Skip if it looks like a date (1/12, 12/2024, etc.)
+            if ((num >= 1 && num <= 31) && (den >= 1 && den <= 12) && /\d{4}|\bfecha\b|\bmes\b|\baño\b|\bd[ií]a\b/i.test(text)) continue;
+            fractions.push({ num: num, den: den, pos: fm.index, raw: fm[0] });
+        }
+        if (fractions.length < 2) return null;
+
+        // Detect operation keywords
+        var lower = text.toLowerCase();
+        var isSuma = /suma|sumar|agregar|a[ñn]adir|\+/i.test(lower);
+        var isResta = /resta|restar|diferencia|sustrae|\-/i.test(lower) && !/resta\s+\d+\s*$/i.test(lower);
+        var isMulti = /multiplic|producto|×|\*/i.test(lower);
+        var isDiv = /divid|cociente|÷/i.test(lower);
+
+        // Also detect operators between fractions in the text
+        var ops = [];
+        for (var fi = 0; fi < fractions.length - 1; fi++) {
+            var between = text.substring(fractions[fi].pos + fractions[fi].raw.length, fractions[fi + 1].pos);
+            if (/\+|más|mas\b|sumad|agreg/i.test(between)) ops.push('+');
+            else if (/\-|−|menos|restando|sustrae/i.test(between)) ops.push('-');
+            else if (/×|\*|multiplic|por\b/i.test(between)) ops.push('*');
+            else if (/÷|÷|entre|dividid/i.test(between)) ops.push('÷');
+            else if (isSuma) ops.push('+');
+            else if (isResta) ops.push('-');
+            else if (isMulti) ops.push('*');
+            else if (isDiv) ops.push('÷');
+            else ops.push('+'); // Default to sum
+        }
+
+        if (ops.length !== fractions.length - 1) return null;
+
+        var steps = [];
+        var result = MathEngine.fraction(fractions[0].num, fractions[0].den);
+        steps.push('Inicio: ' + MathEngine.fractionToString(result));
+
+        for (var oi = 0; oi < ops.length; oi++) {
+            var operand = MathEngine.fraction(fractions[oi + 1].num, fractions[oi + 1].den);
+            var prev = MathEngine.fractionToString(result);
+
+            if (ops[oi] === '+') {
+                result = MathEngine.fractionAdd(result, operand);
+                steps.push(prev + ' + ' + MathEngine.fractionToString(operand) + ' = ' + MathEngine.fractionToString(result));
+            } else if (ops[oi] === '-') {
+                result = MathEngine.fractionSub(result, operand);
+                steps.push(prev + ' - ' + MathEngine.fractionToString(operand) + ' = ' + MathEngine.fractionToString(result));
+            } else if (ops[oi] === '*') {
+                result = MathEngine.fractionMul(result, operand);
+                steps.push(prev + ' × ' + MathEngine.fractionToString(operand) + ' = ' + MathEngine.fractionToString(result));
+            } else if (ops[oi] === '÷') {
+                result = MathEngine.fractionDiv(result, operand);
+                steps.push(prev + ' ÷ ' + MathEngine.fractionToString(operand) + ' = ' + MathEngine.fractionToString(result));
+            }
+        }
+
+        var decimalValue = MathEngine.fractionToDecimal(result);
+        steps.push('Resultado: ' + MathEngine.fractionToString(result) + ' = ' + decimalValue);
+
+        console.log('[MathVerify] Fraction arithmetic: ' + MathEngine.fractionToString(result) + ' = ' + decimalValue);
+
+        return { value: decimalValue, steps: steps, fractionResult: result };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Strategy 1.8: Exponentiation Problems
+    // Detects and independently computes a^b problems:
+    // "2.8^40", "calcula 2.8 elevado a la potencia 40",
+    // "¿cuánto es 3.5 elevado a 20?"
+    // Uses Decimal.js arbitrary precision to get exact results.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    static _tryExponentiationProblem(text) {
+        var lower = text.toLowerCase();
+
+        // Pattern A: Explicit "a^b" or "a ** b" notation
+        var patterns = [
+            // "2.8^40" or "2.8 ^ 40"
+            /(\d+\.?\d*)\s*\^\s*(\d+\.?\d*)/,
+            // "2.8 elevado a 40" or "2.8 elevado a la 40"
+            /(\d+\.?\d*)\s+elevad[oa]\s+(?:a\s+)?(?:la\s+)?(?:potencia\s+)?(\d+\.?\d*)/i,
+            // "potencia de 2.8 a 40" or "potencia 2.8, 40"
+            /potencia\s*(?:de\s+)?(\d+\.?\d*)\s*(?:,|a)\s*(\d+\.?\d*)/i,
+            // "calcula 2.8 a la 40" or "2.8 a la potencia 40"
+            /(\d+\.?\d*)\s+a\s+la\s+(?:potencia\s+)?(\d+\.?\d*)/i,
+        ];
+
+        for (var pi = 0; pi < patterns.length; pi++) {
+            var m = patterns[pi].exec(text);
+            if (!m) continue;
+
+            var base = QuizMathValidator._parseDecimal(m[1]);
+            var exponent = QuizMathValidator._parseDecimal(m[2]);
+
+            if (!base || !exponent) continue;
+            // Skip trivial cases (x^0, x^1, 0^x, 1^x)
+            if (exponent.eq(0) || exponent.eq(1) || base.eq(0) || base.eq(1)) continue;
+            // Skip if exponent is very large (> 1000) to avoid performance issues
+            if (exponent.gt(1000)) continue;
+
+            var result = MathEngine.verifyExponentiation(base, exponent);
+            var steps = result.steps.slice();
+
+            // Cross-verify: compute through ln/exp path for additional confidence
+            try {
+                var lnBase = base.ln();
+                var crossResult = lnBase.times(exponent).exp();
+                var crossDiff = result.value.minus(crossResult).abs();
+                var crossRelErr = result.value.isZero() ? crossDiff : crossDiff.div(result.value.abs());
+                if (crossRelErr.lt('0.0001')) {
+                    steps.push('Verificación cruzada (ln/exp): ✓ coinciden');
+                } else {
+                    steps.push('⚠ Verificación cruzada muestra discrepancia: ' + crossRelErr.toExponential(2));
+                }
+            } catch (e) {
+                // Cross-verify failed, just log
+                steps.push('Verificación cruzada no disponible');
+            }
+
+            console.log('[MathVerify] Exponentiation: ' + base + '^' + exponent + ' = ' + result.value.toExponential(6) + ' (magnitude: 10^' + result.magnitude + ')');
+
+            return { value: result.value, steps: steps };
+        }
+
+        return null;
     }
 
     // Strategy 2: Formula Evaluation
@@ -1292,8 +1467,21 @@ export class QuizMathValidator {
         var bestIdx = -1,
             bestDiff = null;
         for (var fi = 0; fi < options.length; fi++) {
-            var optStr = String(options[fi]).replace(/[^\d.,-]/g, '');
-            var opt = QuizMathValidator._parseDecimal(optStr);
+            var optStr = String(options[fi]);
+            var opt = null;
+
+            // Try parsing as fraction first (e.g., "89/72")
+            var parsedFrac = MathEngine.parseFraction(optStr.trim());
+            if (parsedFrac) {
+                opt = MathEngine.fractionToDecimal(parsedFrac);
+            }
+
+            // Fall back to decimal parsing
+            if (!opt) {
+                var cleaned = optStr.replace(/[^\d.,-]/g, '');
+                opt = QuizMathValidator._parseDecimal(cleaned);
+            }
+
             if (!opt) continue;
             var diff = value.minus(opt).abs();
             if (bestDiff === null || diff.lt(bestDiff)) {
@@ -1302,12 +1490,22 @@ export class QuizMathValidator {
             }
         }
         if (bestIdx === -1) return null; // no option could be parsed as a number
-        var optStr2 = String(options[bestIdx]).replace(/[^\d.,-]/g, '');
-        var bestOpt = QuizMathValidator._parseDecimal(optStr2);
+
+        var optStr2 = String(options[bestIdx]);
+        var bestOpt = null;
+        var parsedFrac2 = MathEngine.parseFraction(optStr2.trim());
+        if (parsedFrac2) {
+            bestOpt = MathEngine.fractionToDecimal(parsedFrac2);
+        }
+        if (!bestOpt) {
+            bestOpt = QuizMathValidator._parseDecimal(optStr2.replace(/[^\d.,-]/g, ''));
+        }
         if (!bestOpt) return null;
         var relErr = value.isZero() ? bestDiff : bestDiff.div(value.abs());
-        // within = true means the closest option is within tolerance (1% relative AND/OR 0.5 absolute)
-        var within = !(relErr.gt(OPTION_REL_TOLERANCE) && bestDiff.gt(OPTION_ABS_TOLERANCE));
+        // Dynamic tolerance: tighter for large numbers, more lenient for small
+        var dynAbsTol = value.abs().gt(1000) ? new Decimal('0.01') : OPTION_ABS_TOLERANCE;
+        // within = true means the closest option is within tolerance
+        var within = !(relErr.gt(OPTION_REL_TOLERANCE) && bestDiff.gt(dynAbsTol));
         return { index: bestIdx, value: bestOpt, within: within };
     }
 

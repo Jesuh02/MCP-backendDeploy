@@ -955,6 +955,32 @@ Antes de incluir CADA ejercicio en el JSON, verifica:
 5. PROHIBIDO generar respuestas con más de 8 dígitos significativos en fill_in_blank. Si el resultado natural tiene más, redondea y pide el resultado redondeado explícitamente.
 6. La explicación DEBE mostrar EXACTAMENTE los mismos pasos que producen el correctAnswer. Si hay discrepancia → la pregunta es INVÁLIDA.
 
+══ REGLAS ESPECÍFICAS POR TIPO DE OPERACIÓN MATEMÁTICA ══
+
+▸ FRACCIONES:
+  - NUNCA sumes numeradores y denominadores directamente. 3/8 + 1/9 ≠ 4/17.
+  - SIEMPRE busca el MCM de los denominadores primero.
+  - Ejemplo correcto: 3/8 + 1/9 = 27/72 + 8/72 = 35/72.
+  - SIEMPRE simplifica el resultado usando MCD.
+  - Si la respuesta es una fracción, escríbela como "numerador/denominador" (ej: "35/72").
+
+▸ EXPONENCIACIÓN / POTENCIAS:
+  - NUNCA inventes el resultado de a^b. CALCULA paso a paso.
+  - Para bases decimales con exponentes >10 (ej: 2.8^40), el resultado tiene órdenes de magnitud enormes.
+  - VERIFICA: log₁₀(resultado) ≈ exponente × log₁₀(base). Ej: log₁₀(2.8^40) = 40 × log₁₀(2.8) ≈ 40 × 0.447 ≈ 17.88, o sea ≈ 10^17.88.
+  - Si no puedes calcular el resultado exacto, pide el resultado en notación científica.
+  - PROHIBIDO: generar números "plausibles" sin calcularlos. Un error de 7 órdenes de magnitud es inaceptable.
+
+▸ SERIES GEOMÉTRICAS:
+  - S_n = a₁ × (r^n − 1) / (r − 1). NUNCA sumes los primeros términos manualmente si n > 5.
+  - VERIFICA la magnitud: si r > 1, el resultado crece exponencialmente.
+  - Si las opciones no reflejan la magnitud correcta → la pregunta es INVÁLIDA.
+
+▸ OPERACIONES CON DECIMALES:
+  - Alinea siempre por el punto decimal.
+  - Verifica el número de decimales en el resultado.
+  - 45.67 + 128.3 = 173.97, NO 173.70 ni 174.0.
+
 ══ CALIDAD DE DISTRACTORES (multiple_choice) ══
 ⚠️ NUNCA generes opciones con el mismo valor numérico o la misma explicación.
 Cada distractor DEBE representar un error conceptual plausible:

@@ -12,6 +12,7 @@ import { MathEngine } from './src/shared/math/MathEngine.js';
 import { ValidationPipeline } from './src/shared/math/ValidationPipeline.js';
 import { QuizMathValidator } from './src/shared/math/QuizMathValidator.js';
 import { AnswerVerificationGate } from './src/shared/math/AnswerVerificationGate.js';
+import Decimal from 'decimal.js';
 
 let passed = 0;
 let failed = 0;
@@ -205,8 +206,6 @@ assert(reconciled === null, '_reconcileResults returns null when no computed res
 
 console.log('\n═══ MathEngine: Geometric Sequence Detection ═══');
 
-import Decimal from 'decimal.js';
-
 const geoSeq = MathEngine.detectGeometricSequence([
     new Decimal(4), new Decimal(12), new Decimal(36), new Decimal(108),
 ]);
@@ -267,6 +266,152 @@ const qEqBad = {
 const rEqBad = gate.verify(qEqBad);
 // This might pass or fail depending on whether the solution is integer
 console.log(`    Non-integer system result: ${rEqBad ? 'passed' : 'rejected'}`);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MathEngine: Fraction Arithmetic
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log(`\n═══ MathEngine: Fraction Arithmetic ═══`);
+{
+    const ME = MathEngine;
+
+    // Basic fraction creation and simplification
+    const f1 = ME.fraction(6, 8);
+    assert(f1.num.eq(3) && f1.den.eq(4), 'fraction(6,8) simplifies to 3/4');
+
+    // Fraction addition: 3/8 + 1/9 = 27/72 + 8/72 = 35/72
+    const a = ME.fraction(3, 8);
+    const b = ME.fraction(1, 9);
+    const sum = ME.fractionAdd(a, b);
+    assert(sum.num.eq(35) && sum.den.eq(72), '3/8 + 1/9 = 35/72');
+
+    // Fraction subtraction: 3/8 - 1/9 = 27/72 - 8/72 = 19/72
+    const diff = ME.fractionSub(a, b);
+    assert(diff.num.eq(19) && diff.den.eq(72), '3/8 - 1/9 = 19/72');
+
+    // Fraction multiplication: 3/8 * 1/9 = 3/72 = 1/24
+    const prod = ME.fractionMul(a, b);
+    assert(prod.num.eq(1) && prod.den.eq(24), '3/8 × 1/9 = 1/24');
+
+    // Fraction division: (3/8) / (1/9) = 27/8
+    const quot = ME.fractionDiv(a, b);
+    assert(quot.num.eq(27) && quot.den.eq(8), '(3/8) ÷ (1/9) = 27/8');
+
+    // parseFraction
+    const pf1 = ME.parseFraction('3/8');
+    assert(pf1 && pf1.num.eq(3) && pf1.den.eq(8), 'parseFraction("3/8") works');
+
+    const pf2 = ME.parseFraction('2 3/4');
+    assert(pf2 && pf2.num.eq(11) && pf2.den.eq(4), 'parseFraction("2 3/4") = 11/4');
+
+    const pf3 = ME.parseFraction('5');
+    assert(pf3 && pf3.num.eq(5) && pf3.den.eq(1), 'parseFraction("5") = 5/1');
+
+    // evaluateFractionExpression (returns { fraction, decimal, steps })
+    const expr1 = ME.evaluateFractionExpression('3/8 + 1/9');
+    assert(expr1 && expr1.fraction.num.eq(35) && expr1.fraction.den.eq(72), 'evaluateFractionExpression("3/8 + 1/9") = 35/72');
+
+    // fractionToDecimal
+    const dec = ME.fractionToDecimal(ME.fraction(1, 3));
+    assert(Math.abs(dec - 0.3333333) < 0.0001, 'fractionToDecimal(1/3) ≈ 0.333');
+
+    // fractionToString
+    const str = ME.fractionToString(ME.fraction(35, 72));
+    assert(str === '35/72', 'fractionToString(35/72)');
+
+    // GCD / LCM (return Decimal objects)
+    assert(ME.gcd(12, 8).eq(4), 'gcd(12, 8) = 4');
+    assert(ME.lcm(8, 9).eq(72), 'lcm(8, 9) = 72');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MathEngine: Exponentiation Verification
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log(`\n═══ MathEngine: Exponentiation Verification ═══`);
+{
+    const ME = MathEngine;
+
+    // 2^10 = 1024
+    const r1 = ME.verifyExponentiation(2, 10);
+    assert(r1 && Math.abs(r1.value - 1024) < 0.01, 'verifyExponentiation(2, 10) = 1024');
+
+    // 2.8^40 — checking magnitude
+    const r2 = ME.verifyExponentiation(2.8, 40);
+    assert(r2 && r2.magnitude > 15 && r2.magnitude < 20, '2.8^40 magnitude is between 15 and 20');
+    console.log(`    2.8^40 value: ${r2 ? r2.value.toExponential(4) : 'null'}, magnitude: ${r2 ? r2.magnitude.toFixed(2) : 'null'}`);
+
+    // orderOfMagnitude (expects Decimal)
+    assert(ME.orderOfMagnitude(new Decimal(1000)) === 3, 'orderOfMagnitude(1000) = 3');
+    assert(ME.orderOfMagnitude(new Decimal(0.001)) === -3, 'orderOfMagnitude(0.001) = -3');
+
+    // sameOrderOfMagnitude (expects Decimal)
+    assert(ME.sameOrderOfMagnitude(new Decimal(1500), new Decimal(3000)) === true, '1500 and 3000 same magnitude');
+    assert(ME.sameOrderOfMagnitude(new Decimal(100), new Decimal(1e10)) === false, '100 and 1e10 NOT same magnitude');
+
+    // crossVerify (expects Decimal for expectedResult)
+    const cv = ME.crossVerify('2^10', new Decimal(1024));
+    assert(cv && cv.verified === true, 'crossVerify("2^10", 1024) verified');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QuizMathValidator: Fraction Strategy (1.5)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log(`\n═══ QuizMathValidator: Fraction Strategy ═══`);
+{
+    // Fraction addition question — should produce 35/72, not 103/72 or 4/17
+    const qFrac = {
+        type: 'multiple_choice',
+        question: '¿Cuál es el resultado de sumar 3/8 + 1/9?',
+        options: ['4/17', '103/72', '35/72', '1/3'],
+        correctIndex: 2,
+    };
+    const rFrac = QuizMathValidator.verify(qFrac);
+    assert(rFrac !== null && !rFrac.isRejected, 'Fraction sum 3/8 + 1/9 = 35/72 passes validation');
+    if (rFrac) {
+        console.log(`    Fraction result: correctIndex=${rFrac.correctedCorrectIndex ?? qFrac.correctIndex}, steps: ${rFrac.steps?.join(' → ') || 'N/A'}`);
+    }
+
+    // Fraction question with WRONG correctIndex — should correct to index 2
+    const qFracWrong = {
+        type: 'multiple_choice',
+        question: '¿Cuál es el resultado de sumar 3/8 + 1/9?',
+        options: ['4/17', '103/72', '35/72', '1/3'],
+        correctIndex: 1, // LLM says 103/72 — WRONG
+    };
+    const rFracWrong = QuizMathValidator.verify(qFracWrong);
+    // verify() mutates q.correctIndex directly and returns the modified q
+    assert(rFracWrong !== null && qFracWrong.correctIndex === 2, 'Fraction: LLM wrong answer 103/72 corrected to 35/72 (index 2)');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AnswerVerificationGate: Fraction & Exponentiation Verifiers
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log(`\n═══ AnswerVerificationGate: New Verifiers ═══`);
+{
+    // Fraction naive addition detection
+    const qNaiveFrac = {
+        type: 'multiple_choice',
+        question: 'Suma las fracciones 3/8 + 1/9',
+        options: ['4/17', '35/72', '1/3', '2/5'],
+        correctIndex: 0, // 4/17 is wrong — naive addition
+    };
+    const rNaiveFrac = gate.verify(qNaiveFrac);
+    // Should either reject or correct
+    console.log(`    Naive fraction result: ${rNaiveFrac ? (rNaiveFrac.correctedCorrectIndex !== undefined ? 'corrected to ' + rNaiveFrac.correctedCorrectIndex : 'passed') : 'rejected'}`);
+
+    // Exponentiation magnitude sanity check
+    const qExpBad = {
+        type: 'multiple_choice',
+        question: 'Calcula 2.8 elevado a la 40',
+        options: ['2.037e15', '5.619e22', '1.234e8', '9.876e5'],
+        correctIndex: 0, // 2.037e15 is wrong by ~7 orders of magnitude
+    };
+    const rExpBad = gate.verify(qExpBad);
+    console.log(`    Exponentiation bad magnitude result: ${rExpBad ? 'passed' : 'rejected'}`);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Results

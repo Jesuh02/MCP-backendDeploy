@@ -876,6 +876,349 @@ export class MathEngine {
         const factor = new Decimal(10).pow(sigFigs - 1 - exponent);
         return value.times(factor).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).div(factor);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GCD / LCM — Greatest Common Divisor / Least Common Multiple
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Computes the Greatest Common Divisor of two integers using Euclidean algorithm.
+     * @param {number|string|Decimal} a
+     * @param {number|string|Decimal} b
+     * @returns {Decimal}
+     */
+    static gcd(a, b) {
+        let da = new Decimal(a).abs().round();
+        let db = new Decimal(b).abs().round();
+        if (da.isZero()) return db;
+        if (db.isZero()) return da;
+        while (!db.isZero()) {
+            const temp = db;
+            db = da.mod(db);
+            da = temp;
+        }
+        return da;
+    }
+
+    /**
+     * Computes the Least Common Multiple of two integers.
+     * @param {number|string|Decimal} a
+     * @param {number|string|Decimal} b
+     * @returns {Decimal}
+     */
+    static lcm(a, b) {
+        const da = new Decimal(a).abs().round();
+        const db = new Decimal(b).abs().round();
+        if (da.isZero() || db.isZero()) return new Decimal(0);
+        return da.div(MathEngine.gcd(da, db)).times(db);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Fraction — Aritmética exacta de fracciones
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Creates a simplified fraction { num, den } from numerator and denominator.
+     * Always normalizes sign: denominator is always positive.
+     * @param {number|string|Decimal} numerator
+     * @param {number|string|Decimal} denominator
+     * @returns {{ num: Decimal, den: Decimal }}
+     */
+    static fraction(numerator, denominator) {
+        let num = new Decimal(numerator);
+        let den = new Decimal(denominator);
+        if (den.isZero()) throw new Error('Fraction: division by zero');
+        if (den.lt(0)) { num = num.neg(); den = den.neg(); }
+        const g = MathEngine.gcd(num.abs(), den.abs());
+        return { num: num.div(g), den: den.div(g) };
+    }
+
+    /**
+     * Adds two fractions: a/b + c/d = (a*d + c*b) / (b*d), simplified.
+     * @param {{ num: Decimal, den: Decimal }} f1
+     * @param {{ num: Decimal, den: Decimal }} f2
+     * @returns {{ num: Decimal, den: Decimal }}
+     */
+    static fractionAdd(f1, f2) {
+        const num = f1.num.times(f2.den).plus(f2.num.times(f1.den));
+        const den = f1.den.times(f2.den);
+        return MathEngine.fraction(num, den);
+    }
+
+    /**
+     * Subtracts two fractions: a/b - c/d = (a*d - c*b) / (b*d), simplified.
+     */
+    static fractionSub(f1, f2) {
+        const num = f1.num.times(f2.den).minus(f2.num.times(f1.den));
+        const den = f1.den.times(f2.den);
+        return MathEngine.fraction(num, den);
+    }
+
+    /**
+     * Multiplies two fractions: (a/b) * (c/d) = (a*c) / (b*d), simplified.
+     */
+    static fractionMul(f1, f2) {
+        const num = f1.num.times(f2.num);
+        const den = f1.den.times(f2.den);
+        return MathEngine.fraction(num, den);
+    }
+
+    /**
+     * Divides two fractions: (a/b) ÷ (c/d) = (a*d) / (b*c), simplified.
+     */
+    static fractionDiv(f1, f2) {
+        if (f2.num.isZero()) throw new Error('Fraction: division by zero');
+        const num = f1.num.times(f2.den);
+        const den = f1.den.times(f2.num);
+        return MathEngine.fraction(num, den);
+    }
+
+    /**
+     * Converts a fraction to its Decimal value.
+     * @param {{ num: Decimal, den: Decimal }} f
+     * @returns {Decimal}
+     */
+    static fractionToDecimal(f) {
+        return f.num.div(f.den);
+    }
+
+    /**
+     * Formats a fraction as a string "num/den" or as integer if den=1.
+     * @param {{ num: Decimal, den: Decimal }} f
+     * @returns {string}
+     */
+    static fractionToString(f) {
+        if (f.den.eq(1)) return f.num.toFixed();
+        return `${f.num.toFixed()}/${f.den.toFixed()}`;
+    }
+
+    /**
+     * Parses a fraction string like "3/8", "-1/9", "5" into { num, den }.
+     * Handles mixed numbers like "2 3/4" → 11/4.
+     * @param {string} str
+     * @returns {{ num: Decimal, den: Decimal } | null}
+     */
+    static parseFraction(str) {
+        if (!str || typeof str !== 'string') return null;
+        const s = str.trim();
+
+        // Mixed number: "2 3/4"
+        const mixedRe = /^(-?\d+)\s+(\d+)\s*\/\s*(\d+)$/;
+        const mixedM = mixedRe.exec(s);
+        if (mixedM) {
+            const whole = new Decimal(mixedM[1]);
+            const num = new Decimal(mixedM[2]);
+            const den = new Decimal(mixedM[3]);
+            if (den.isZero()) return null;
+            const sign = whole.lt(0) ? -1 : 1;
+            const totalNum = whole.abs().times(den).plus(num).times(sign);
+            return MathEngine.fraction(totalNum, den);
+        }
+
+        // Simple fraction: "3/8" or "-1/9"
+        const fracRe = /^(-?\d+\.?\d*)\s*\/\s*(-?\d+\.?\d*)$/;
+        const fracM = fracRe.exec(s);
+        if (fracM) {
+            const num = new Decimal(fracM[1]);
+            const den = new Decimal(fracM[2]);
+            if (den.isZero()) return null;
+            return MathEngine.fraction(num, den);
+        }
+
+        // Integer: "5"
+        const intRe = /^(-?\d+\.?\d*)$/;
+        const intM = intRe.exec(s);
+        if (intM) {
+            return MathEngine.fraction(new Decimal(intM[1]), 1);
+        }
+
+        return null;
+    }
+
+    /**
+     * Evaluates a fraction expression like "3/8 + 1/9" or "2/3 × 5/7 - 1/2".
+     * Returns both the exact fraction and its decimal value.
+     * Supports: +, -, ×, *, ÷, /  between fractions.
+     * @param {string} expression
+     * @returns {{ fraction: { num: Decimal, den: Decimal }, decimal: Decimal, steps: string[] } | null}
+     */
+    static evaluateFractionExpression(expression) {
+        if (!expression || typeof expression !== 'string') return null;
+
+        const s = expression.trim()
+            .replace(/[−–]/g, '-')
+            .replace(/×/g, '*')
+            .replace(/÷/g, '/')
+            .replace(/\s*\+\s*/g, ' + ')
+            .replace(/\s*-\s*/g, ' - ')
+            .replace(/\s*\*\s*/g, ' * ')
+            .replace(/\s*\/\s*/g, '/'); // Keep / within fractions
+
+        // Tokenize: split into fractions and operators
+        // A fraction is "num/den" or just a number
+        // An operator is +, -, * (for multiplication of fractions), or ÷ (division of fractions)
+        const tokens = [];
+        const tokenRe = /(-?\d+\.?\d*(?:\s*\/\s*\d+\.?\d*)?)\s*([+\-]|[*×](?!\s*\d+\s*\/)|÷)?\s*/g;
+        let m;
+        
+        // More robust tokenization for fraction expressions
+        const parts = s.split(/\s+/);
+        const fracs = [];
+        const ops = [];
+        let currentFrac = '';
+        
+        for (let i = 0; i < parts.length; i++) {
+            const p = parts[i];
+            if (p === '+' || p === '-' || p === '*' || p === '×' || p === '÷') {
+                if (currentFrac) {
+                    fracs.push(currentFrac.trim());
+                    currentFrac = '';
+                }
+                ops.push(p);
+            } else {
+                currentFrac += (currentFrac ? ' ' : '') + p;
+            }
+        }
+        if (currentFrac) fracs.push(currentFrac.trim());
+
+        if (fracs.length < 2 || fracs.length !== ops.length + 1) return null;
+
+        const steps = [];
+        const parsedFracs = fracs.map(f => MathEngine.parseFraction(f));
+        if (parsedFracs.some(f => f === null)) return null;
+
+        let result = parsedFracs[0];
+        steps.push(`Inicio: ${MathEngine.fractionToString(result)}`);
+
+        for (let i = 0; i < ops.length; i++) {
+            const op = ops[i];
+            const operand = parsedFracs[i + 1];
+            const prev = MathEngine.fractionToString(result);
+
+            if (op === '+') {
+                result = MathEngine.fractionAdd(result, operand);
+                steps.push(`${prev} + ${MathEngine.fractionToString(operand)} = ${MathEngine.fractionToString(result)}`);
+            } else if (op === '-') {
+                result = MathEngine.fractionSub(result, operand);
+                steps.push(`${prev} - ${MathEngine.fractionToString(operand)} = ${MathEngine.fractionToString(result)}`);
+            } else if (op === '*' || op === '×') {
+                result = MathEngine.fractionMul(result, operand);
+                steps.push(`${prev} × ${MathEngine.fractionToString(operand)} = ${MathEngine.fractionToString(result)}`);
+            } else if (op === '÷') {
+                result = MathEngine.fractionDiv(result, operand);
+                steps.push(`${prev} ÷ ${MathEngine.fractionToString(operand)} = ${MathEngine.fractionToString(result)}`);
+            }
+        }
+
+        const decimal = MathEngine.fractionToDecimal(result);
+        steps.push(`Resultado: ${MathEngine.fractionToString(result)} = ${decimal}`);
+
+        return { fraction: result, decimal, steps };
+    }
+
+    /**
+     * Cross-verifies a computation by evaluating in two independent ways.
+     * Returns true only if both methods agree within strict tolerance.
+     * @param {string} expression - Math expression
+     * @param {Decimal} expectedResult - The result to verify
+     * @returns {{ verified: boolean, method1: Decimal|null, method2: Decimal|null }}
+     */
+    static crossVerify(expression, expectedResult) {
+        // Method 1: Standard MathEngine evaluation
+        const method1 = MathEngine.tryEvaluate(expression);
+
+        // Method 2: Left-to-right manual evaluation (for detecting precedence bugs)
+        let method2 = null;
+        try {
+            // Parse into tokens and evaluate with explicit precedence
+            const tokens = tokenize(expression);
+            const parser = new Parser(tokens);
+            method2 = parser.parseExpression();
+        } catch {
+            method2 = null;
+        }
+
+        // Method 3: For simple a^b, use Decimal.pow directly
+        const powerMatch = expression.match(/^([\d.]+)\s*\^\s*([\d.]+)$/);
+        if (powerMatch) {
+            try {
+                const base = new Decimal(powerMatch[1]);
+                const exp = new Decimal(powerMatch[2]);
+                const directPow = base.pow(exp);
+                // Compare against expected
+                if (expectedResult) {
+                    const diff = directPow.minus(expectedResult).abs();
+                    const relErr = expectedResult.isZero() ? diff : diff.div(expectedResult.abs());
+                    return {
+                        verified: relErr.lt('0.0001'),
+                        method1: method1,
+                        method2: directPow,
+                    };
+                }
+            } catch { /* ignore */ }
+        }
+
+        if (!method1 || !method2) {
+            return { verified: false, method1, method2 };
+        }
+
+        const diff = method1.minus(method2).abs();
+        const relErr = method1.isZero() ? diff : diff.div(method1.abs());
+        
+        return {
+            verified: relErr.lt('0.0001'),
+            method1,
+            method2,
+        };
+    }
+
+    /**
+     * Verifies an exponentiation a^b with high precision.
+     * Returns the correct result and magnitude information.
+     * @param {number|string|Decimal} base
+     * @param {number|string|Decimal} exponent
+     * @returns {{ value: Decimal, magnitude: number, steps: string[] }}
+     */
+    static verifyExponentiation(base, exponent) {
+        const b = new Decimal(base);
+        const e = new Decimal(exponent);
+        const result = b.pow(e);
+        const magnitude = result.isZero() ? 0 : result.abs().log(10).floor().toNumber();
+        
+        const steps = [
+            `${b}^${e} = ${result.toExponential(6)}`,
+            `Magnitud: 10^${magnitude}`,
+            `Valor exacto (primeros 15 dígitos): ${result.toSignificantDigits(15)}`,
+        ];
+
+        return { value: result, magnitude, steps };
+    }
+
+    /**
+     * Computes the order of magnitude of a number (floor of log10).
+     * Useful for sanity-checking whether a result is plausible.
+     * @param {Decimal} value
+     * @returns {number}
+     */
+    static orderOfMagnitude(value) {
+        if (!value || value.isZero()) return 0;
+        return value.abs().log(10).floor().toNumber();
+    }
+
+    /**
+     * Checks if two values are within the same order of magnitude (±1).
+     * @param {Decimal} a
+     * @param {Decimal} b
+     * @returns {boolean}
+     */
+    static sameOrderOfMagnitude(a, b) {
+        if (!a || !b) return false;
+        if (a.isZero() && b.isZero()) return true;
+        if (a.isZero() || b.isZero()) return false;
+        const magA = MathEngine.orderOfMagnitude(a);
+        const magB = MathEngine.orderOfMagnitude(b);
+        return Math.abs(magA - magB) <= 1;
+    }
 }
 
 export default MathEngine;
