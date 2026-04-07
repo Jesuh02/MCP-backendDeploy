@@ -1415,7 +1415,8 @@ export class QuizMathValidator {
         if (!DERIVATIVE_PATTERNS.some(function(re) { return re.test(text); })) return null;
 
         // Must have f(x) = polynomial
-        var fxMatch = text.match(/f\s*\(\s*x\s*\)\s*=\s*([^.]+?)(?:\.\s|$)/i);
+        // Stop at comma or period NOT part of a decimal number
+        var fxMatch = text.match(/f\s*\(\s*x\s*\)\s*=\s*((?:[^.,]|\.(?=\d))+)/i);
         if (!fxMatch) return null;
 
         var polyText = fxMatch[1].trim();
