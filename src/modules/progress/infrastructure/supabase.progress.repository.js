@@ -1298,17 +1298,22 @@ export class SupabaseProgressRepository {
     }
 
     async findApprovedEnrollments() {
-        // 1. Pre-enrollments with status approved/revoked
+        // 1. Load ALL pre_enrollments (any status) so we can correctly exclude
+        // rejected/pending users from directRows (avoids ghost entries).
         const { data: preData, error } = await this.client
             .from('pre_enrollments')
             .select('user_id, course_id, status, requested_at, reviewed_at, revoke_reason')
-            .in('status', ['approved', 'revoked'])
             .order('course_id', { ascending: true });
-        // Deduplicate preRows by user_id+course_id: prefer 'approved' over 'revoked',
-        // and among same-status rows keep the most recently reviewed one.
         const preRowsRaw = (!error && preData) ? preData : [];
+
+        // allPreKeys: every user_id-course_id that has ANY pre_enrollment record.
+        // Used to prevent rejected/pending users appearing as "direct enrollment".
+        const allPreKeys = new Set(preRowsRaw.map(r => `${r.user_id}-${r.course_id}`));
+
+        // Deduplicate for display: prefer 'approved' over 'revoked', ignore rejected/pending.
         const preRowsByKey = new Map();
         for (const r of preRowsRaw) {
+            if (r.status !== 'approved' && r.status !== 'revoked') continue;
             const key = `${r.user_id}-${r.course_id}`;
             const existing = preRowsByKey.get(key);
             if (!existing) { preRowsByKey.set(key, r); continue; }
@@ -1323,11 +1328,12 @@ export class SupabaseProgressRepository {
         }
         const preRows = Array.from(preRowsByKey.values());
 
-        // 2. Users with course progress but NO pre_enrollment record (direct enrollment)
+        // 2. Users with course progress but NO pre_enrollment record at all (direct enrollment).
+        // Exclude enrollment_status='revocado' so removed guests don't reappear.
         const { data: progressRows } = await this.client
             .from(SupabaseProgressRepository.COURSE_PROGRESS_TABLE)
-            .select('usuario_estudiante, curso_id');
-        const preKeys = new Set(preRows.map(r => `${r.user_id}-${r.course_id}`));
+            .select('usuario_estudiante, curso_id')
+            .neq('enrollment_status', 'revocado');
         const seenProgress = new Set();
         const directRows = [];
         for (const p of (progressRows || [])) {
@@ -1335,7 +1341,8 @@ export class SupabaseProgressRepository {
             const cid = Number(p.curso_id);
             if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(cid) || cid <= 0) continue;
             const key = `${uid}-${cid}`;
-            if (preKeys.has(key) || seenProgress.has(key)) continue;
+            // Exclude if they have any pre_enrollment (any status) — avoids showing rejected users
+            if (allPreKeys.has(key) || seenProgress.has(key)) continue;
             seenProgress.add(key);
             directRows.push({
                 user_id: uid,
