@@ -1385,15 +1385,34 @@ export class QuizMathValidator {
 
     static buildOrderingExplanation(correctSequence, llmExplanation) {
         if (!correctSequence || !correctSequence.length) return llmExplanation || '';
-        var isDesc = false;
-        if (correctSequence.length >= 2) {
+
+        // Determine if this is a NUMERIC SORTING question or a PROCEDURAL STEPS question
+        var allNumeric = correctSequence.every(function(item) {
+            var cleaned = String(item).replace(/[^\d.,-]/g, '');
+            return cleaned.length > 0 && QuizMathValidator._parseDecimal(cleaned) !== null;
+        });
+
+        if (allNumeric) {
+            // Numeric sorting: indicate direction (ascending / descending)
             var f = QuizMathValidator._parseDecimal(String(correctSequence[0]).replace(/[^\d.,-]/g, ''));
             var l = QuizMathValidator._parseDecimal(String(correctSequence[correctSequence.length - 1]).replace(/[^\d.,-]/g, ''));
-            if (f && l) isDesc = f.gt(l);
+            var isDesc = f && l ? f.gt(l) : false;
+            var direction = isDesc ? 'descendente (mayor a menor)' : 'ascendente (menor a mayor)';
+            var numExplanation = 'El orden correcto ' + direction + ' es: ' + correctSequence.join(' → ');
+            return llmExplanation
+                ? (llmExplanation + '\n' + numExplanation)
+                : numExplanation;
         }
-        var direction = isDesc ? 'descendente (mayor a menor)' : 'ascendente (menor a mayor)';
-        var explanation = 'El orden correcto ' + direction + ' es: ' + correctSequence.join(' > ');
-        return explanation;
+
+        // Procedural steps: list them numbered
+        var stepsText = correctSequence.map(function(s, i) { return (i + 1) + '. ' + s; }).join('\n');
+        var procExplanation = 'El orden correcto de los pasos es:\n' + stepsText;
+
+        // Append LLM explanation (without its ordering claims, which may be wrong)
+        var stripped = QuizMathValidator._stripOrderingClaims(llmExplanation || '');
+        return stripped
+            ? (procExplanation + '\n\n' + stripped)
+            : procExplanation;
     }
 
     static _stripOrderingClaims(text) {
