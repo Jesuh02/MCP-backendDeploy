@@ -140,37 +140,32 @@ export class CourseGuestService {
         // 2. They lose course access immediately
         // 3. They can re-request enrollment via the normal flow (requestEnrollment
         //    allows re-request when existing status is 'rejected')
-        // progreso_curso is intentionally NOT modified so requestEnrollment is not
-        // blocked by enrollment_status='inactivo'.
         await this.progressRepo.updateEnrollmentStatus(guestUserId, courseId, 'rejected');
+
+        // Also mark progreso_curso as revocado so:
+        // - isEnrolled() returns false (it filters enrollment_status != 'revocado')
+        // - findApprovedEnrollments() excludes this user from the enrollment panel
+        // Note: requestEnrollment only checks pre_enrollment status, not progreso_curso,
+        // so this does NOT block re-enrollment requests.
+        try {
+            await this.progressRepo.setCourseEnrollmentStatus(guestUserId, courseId, 'revocado');
+        } catch (progressErr) {
+            console.warn(`[CourseGuestService] Could not update progreso_curso for userId=${guestUserId}:`, progressErr?.message);
+        }
 
         return Result.ok({ message: 'Invitado eliminado del curso' });
     }
 
     /**
      * List all approved pre-enrollments for a course (invited + manually approved).
-     * Visible para cualquier usuario autenticado que tenga acceso al curso
-     * (creador, colaborador, guest aprobado, o admin). Principio de mínimo privilegio:
-     * solo se exponen datos públicos (userId, username, avatar).
      */
     async getGuests(requesterId, courseId) {
-        const course = await this.courseRepo.findById(courseId);
-        if (!course) {
-            return Result.fail(new NotFoundError('Curso', courseId));
-        }
-
-        // Permitir lectura a: creador, colaboradores, y el propio invitado/enrollado
-        const isCreator = Number(course.creator_user_id) === Number(requesterId);
-        if (!isCreator) {
-            const isCollab = await this.collaboratorRepo.isCollaborator(requesterId, courseId);
-            if (!isCollab) {
-                // Verificar si el solicitante tiene acceso aprobado al curso (guest o enrollado)
-                const approvedIds = await this.progressRepo.findApprovedEnrollmentCourseIds(requesterId);
-                const hasAccess = approvedIds.includes(Number(courseId));
-                if (!hasAccess) {
-                    return Result.fail(new ForbiddenError('Sin acceso para ver invitados'));
-                }
-            }
+        const { allowed, course } = await this._canManageGuests(requesterId, courseId);
+        if (!allowed || !course) {
+            return Result.fail(course
+                ? new ForbiddenError('Sin acceso para ver invitados')
+                : new NotFoundError('Curso', courseId)
+            );
         }
 
         const rows = await this.progressRepo.findApprovedPreEnrollments(courseId);
