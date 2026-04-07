@@ -449,6 +449,104 @@ class ScientificNotationCrossCheckStage {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Etapa 7.5: FractionVerificationStage — Verifica aritmética de fracciones
+// ═══════════════════════════════════════════════════════════════════════════
+
+class FractionVerificationStage {
+    process(q) {
+        if (!q || (q.type !== 'multiple_choice' && q.type !== 'fill_in_blank')) {
+            return { action: 'pass', question: q };
+        }
+
+        const text = q.question || '';
+        // Only process questions that contain fractions
+        const fracPat = /(\d+)\s*\/\s*(\d+)/g;
+        const fracs = [];
+        let fm;
+        while ((fm = fracPat.exec(text)) !== null) {
+            const den = parseInt(fm[2], 10);
+            if (den > 0 && den <= 10000) {
+                fracs.push({ num: parseInt(fm[1], 10), den });
+            }
+        }
+        if (fracs.length < 2) return { action: 'pass', question: q };
+
+        // If the question asks for a fraction result, verify correctAnswer is valid
+        if (q.type === 'fill_in_blank') {
+            const answer = String(q.correctAnswer || '');
+            const parsedFrac = MathEngine.parseFraction(answer);
+            if (parsedFrac) {
+                // Verify it's in simplified form
+                const gcd = MathEngine.gcd(parsedFrac.num.abs(), parsedFrac.den);
+                if (!gcd.eq(1)) {
+                    // Simplify and correct
+                    const simplified = MathEngine.fraction(parsedFrac.num, parsedFrac.den);
+                    console.warn(
+                        `[ValidationPipeline] FRACTION SIMPLIFIED: ${answer} → ${MathEngine.fractionToString(simplified)}`
+                    );
+                    q.correctAnswer = MathEngine.fractionToString(simplified);
+                }
+            }
+        }
+
+        return { action: 'pass', question: q };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Etapa 7.8: ExponentiationMagnitudeStage — Verifica magnitud de potencias
+// ═══════════════════════════════════════════════════════════════════════════
+
+class ExponentiationMagnitudeStage {
+    process(q) {
+        if (!q || q.type !== 'multiple_choice') return { action: 'pass', question: q };
+
+        const text = q.question || '';
+        // Detect exponentiation pattern
+        const powMatch = text.match(/(\d+\.?\d*)\s*\^\s*(\d+\.?\d*)/);
+        if (!powMatch) return { action: 'pass', question: q };
+
+        const base = MathEngine.parseDecimal(powMatch[1]);
+        const exponent = MathEngine.parseDecimal(powMatch[2]);
+        if (!base || !exponent || base.lte(1) || exponent.lte(1)) {
+            return { action: 'pass', question: q };
+        }
+
+        // Compute the real result
+        try {
+            const result = base.pow(exponent);
+            const magnitude = MathEngine.orderOfMagnitude(result);
+
+            // Check if any option is in the right magnitude
+            let maxOptMag = -Infinity;
+            let minOptMag = Infinity;
+            for (const opt of q.options) {
+                const val = MathEngine.parseDecimal(String(opt).replace(/[^\d.eE+\-]/g, ''));
+                if (val && val.gt(0)) {
+                    const optMag = MathEngine.orderOfMagnitude(val);
+                    maxOptMag = Math.max(maxOptMag, optMag);
+                    minOptMag = Math.min(minOptMag, optMag);
+                }
+            }
+
+            // If the real result's magnitude differs by >3 orders from ALL options → broken
+            if (maxOptMag !== -Infinity && Math.abs(magnitude - maxOptMag) > 3) {
+                console.warn(
+                    `[ValidationPipeline] EXPONENTIATION MAGNITUDE MISMATCH: ` +
+                    `${base}^${exponent} = 10^${magnitude}, but options are around 10^${maxOptMag}. ` +
+                    `REJECTING question.`
+                );
+                return { action: 'reject', question: null };
+            }
+        } catch (e) {
+            // Computation might overflow for extreme exponents
+        }
+
+        return { action: 'pass', question: q };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Pipeline principal
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -461,6 +559,8 @@ export class ValidationPipeline {
         this.paramSumStage = new ParameterSumDetectionStage();
         this.fillBlankSanityStage = new FillInBlankSanityStage();
         this.sciNotationStage = new ScientificNotationCrossCheckStage();
+        this.fractionStage = new FractionVerificationStage();
+        this.expMagnitudeStage = new ExponentiationMagnitudeStage();
     }
 
     /**
@@ -487,22 +587,32 @@ export class ValidationPipeline {
             if (paramResult.action === 'reject') return null;
             q = paramResult.question;
 
-            // Stage 3.5: Fill-in-blank sanity check (coefficient range, round powers of 10)
+            // Stage 3.5: Fill-in-blank sanity check
             const fillSanity = this.fillBlankSanityStage.process(q);
             if (fillSanity.action === 'reject') return null;
             q = fillSanity.question;
 
-            // Stage 4: Scientific notation cross-check
+            // Stage 4: Fraction verification
+            const fracResult = this.fractionStage.process(q);
+            if (fracResult.action === 'reject') return null;
+            q = fracResult.question;
+
+            // Stage 4.5: Exponentiation magnitude check
+            const expResult = this.expMagnitudeStage.process(q);
+            if (expResult.action === 'reject') return null;
+            q = expResult.question;
+
+            // Stage 5: Scientific notation cross-check
             const sciResult = this.sciNotationStage.process(q);
             if (sciResult.action === 'reject') return null;
             q = sciResult.question;
 
-            // Stage 5: Ordering dependency validation
+            // Stage 6: Ordering dependency validation
             const orderResult = this.orderingStage.process(q);
             if (orderResult.action === 'reject') return null;
             q = orderResult.question;
 
-            // Stage 6: Structural verification gate (existing verifiers)
+            // Stage 7: Structural verification gate (existing verifiers)
             const structResult = this.structuralStage.process(q);
             if (structResult.action === 'reject') return null;
             q = structResult.question;
@@ -510,7 +620,7 @@ export class ValidationPipeline {
             return q;
         } catch (err) {
             console.warn(`[ValidationPipeline] Error (non-blocking): ${err.message}`);
-            return q; // Don't reject on internal errors
+            return q;
         }
     }
 

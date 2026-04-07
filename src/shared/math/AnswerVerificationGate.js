@@ -898,12 +898,158 @@ export class AnswerVerificationGate {
             new IntegerSolutionVerifier(),
             new ScientificNotationVerifier(),
             new GeometricSeriesMagnitudeVerifier(),
+            new FractionArithmeticVerifier(),
+            new ExponentiationSanityVerifier(),
             new OrderingStepDependencyVerifier(),
             new IndependentRecalculationVerifier(),
             new DecimalSumVerifier(),
             new ExplanationAnswerConsistencyVerifier(),
             new FillInBlankNumericVerifier(),
         ];
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Verificador 13: FractionArithmeticVerifier
+// ═══════════════════════════════════════════════════════════════════════════
+// Verifica que las operaciones con fracciones en el enunciado produzcan
+// la respuesta correcta. Detecta el error típico del LLM de sumar
+// numeradores y denominadores directamente (e.g., 3/8 + 1/9 = 4/17)
+// en lugar de usar MCM (3/8 + 1/9 = 27/72 + 8/72 = 35/72).
+
+class FractionArithmeticVerifier {
+    canHandle(q) {
+        const text = (q.question || '');
+        // Must have at least 2 fractions in the text
+        const fracPat = /\d+\s*\/\s*\d+/g;
+        const matches = text.match(fracPat);
+        return matches && matches.length >= 2 &&
+            (q.type === 'multiple_choice' || q.type === 'fill_in_blank');
+    }
+
+    verify(q) {
+        const text = q.question || '';
+
+        // Extract fractions
+        const fracPat = /(\d+)\s*\/\s*(\d+)/g;
+        const fracs = [];
+        let fm;
+        while ((fm = fracPat.exec(text)) !== null) {
+            const den = parseInt(fm[2], 10);
+            if (den > 0 && den <= 10000) {
+                fracs.push({ num: parseInt(fm[1], 10), den });
+            }
+        }
+        if (fracs.length < 2) return { valid: true };
+
+        // Check for the classic LLM error: naive sum of numerators/denominators
+        // e.g., 3/8 + 1/9 → (3+1)/(8+9) = 4/17 (WRONG)
+        // Correct: 3/8 + 1/9 = 27/72 + 8/72 = 35/72
+        const naiveNum = fracs.reduce((s, f) => s + f.num, 0);
+        const naiveDen = fracs.reduce((s, f) => s + f.den, 0);
+        const naiveResult = naiveNum / naiveDen;
+
+        // Get the correct answer
+        let correctAnswer = null;
+        if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
+            const optStr = String(q.options[q.correctIndex] || '');
+            // Try fraction parse first
+            const parsedFrac = MathEngine.parseFraction(optStr.trim());
+            if (parsedFrac) {
+                correctAnswer = MathEngine.fractionToDecimal(parsedFrac).toNumber();
+            } else {
+                correctAnswer = parseFloat(optStr.replace(/[^\d.,-]/g, ''));
+            }
+        } else if (q.type === 'fill_in_blank') {
+            const parsedFrac = MathEngine.parseFraction(String(q.correctAnswer || '').trim());
+            if (parsedFrac) {
+                correctAnswer = MathEngine.fractionToDecimal(parsedFrac).toNumber();
+            } else {
+                correctAnswer = parseFloat(String(q.correctAnswer || ''));
+            }
+        }
+
+        if (correctAnswer === null || isNaN(correctAnswer)) return { valid: true };
+
+        // If the answer matches the naive sum → REJECT (classic LLM fabrication)
+        if (Math.abs(correctAnswer - naiveResult) < 0.001) {
+            return {
+                valid: false,
+                reason: `Aritmética de fracciones incorrecta: respuesta ${correctAnswer} parece ser suma ingenua de numeradores/denominadores (${naiveNum}/${naiveDen} = ${naiveResult.toFixed(4)}). Las fracciones requieren MCM.`,
+            };
+        }
+
+        return { valid: true };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Verificador 14: ExponentiationSanityVerifier
+// ═══════════════════════════════════════════════════════════════════════════
+// Verifica que las respuestas a problemas de exponenciación tengan
+// la magnitud correcta. Detecta errores como 2.8^40 ≈ 2×10¹⁵ (LLM)
+// cuando el valor real es ≈ 5.6×10²².
+
+class ExponentiationSanityVerifier {
+    canHandle(q) {
+        const text = (q.question || '');
+        return /\d+\.?\d*\s*\^\s*\d+|\belevar?\s|\bpotencia\b|\bexponente\b/i.test(text) &&
+            (q.type === 'multiple_choice' || q.type === 'fill_in_blank');
+    }
+
+    verify(q) {
+        const text = q.question || '';
+
+        // Extract base^exponent pattern
+        const powMatch = text.match(/(\d+\.?\d*)\s*\^\s*(\d+\.?\d*)/);
+        if (!powMatch) return { valid: true };
+
+        const base = parseFloat(powMatch[1]);
+        const exponent = parseFloat(powMatch[2]);
+
+        if (isNaN(base) || isNaN(exponent) || base <= 1 || exponent <= 1 || exponent > 1000) {
+            return { valid: true };
+        }
+
+        // Compute the correct magnitude
+        const correctMagnitude = exponent * Math.log10(base);
+
+        // Get the answer's magnitude
+        let answerMagnitude = null;
+        let answer = null;
+
+        if (q.type === 'multiple_choice' && Array.isArray(q.options)) {
+            const optStr = String(q.options[q.correctIndex] || '').replace(/[^\d.eE+\-×^]/g, '');
+            // Try scientific notation: "5.619 × 10^22" or "5.619e22"
+            const sciMatch = String(q.options[q.correctIndex] || '').match(/(\d+\.?\d*)\s*[×x]\s*10\s*\^?\s*(\d+)/i) ||
+                String(q.options[q.correctIndex] || '').match(/(\d+\.?\d*)[eE](\d+)/);
+            if (sciMatch) {
+                answerMagnitude = parseInt(sciMatch[2], 10) + Math.log10(parseFloat(sciMatch[1]));
+            } else {
+                answer = parseFloat(optStr);
+                if (!isNaN(answer) && answer > 0) {
+                    answerMagnitude = Math.log10(answer);
+                }
+            }
+        } else if (q.type === 'fill_in_blank') {
+            answer = parseFloat(String(q.correctAnswer || ''));
+            if (!isNaN(answer) && answer > 0) {
+                answerMagnitude = Math.log10(answer);
+            }
+        }
+
+        if (answerMagnitude === null) return { valid: true };
+
+        // If the magnitude differs by more than 3 orders → REJECT
+        const magDiff = Math.abs(correctMagnitude - answerMagnitude);
+        if (magDiff > 3) {
+            return {
+                valid: false,
+                reason: `Exponenciación: ${base}^${exponent} debería tener magnitud ~10^${Math.floor(correctMagnitude)}, pero la respuesta tiene magnitud ~10^${Math.floor(answerMagnitude)}. Diferencia de ${Math.floor(magDiff)} órdenes de magnitud.`,
+            };
+        }
+
+        return { valid: true };
     }
 }
 
@@ -920,6 +1066,8 @@ export {
     DecimalSumVerifier,
     OrderingStepDependencyVerifier,
     GeometricSeriesMagnitudeVerifier,
+    FractionArithmeticVerifier,
+    ExponentiationSanityVerifier,
 };
 
 export default AnswerVerificationGate;
