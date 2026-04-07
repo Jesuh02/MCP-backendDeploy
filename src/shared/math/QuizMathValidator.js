@@ -1221,10 +1221,15 @@ export class QuizMathValidator {
 
             // Special: "se le resta la suma de los primeros N números"
             // This means: from the total sum, subtract the sum of the first N addends
-            var restaSumaRe = /resta[rn]?\s+(?:la\s+)?suma\s+de\s+los\s+primeros?\s+(\d+)\s+n[u\xfa]meros?/i;
+            // Supports both digit ("4") and Spanish word ("cuatro") for N
+            var restaSumaRe = /resta[rn]?\s+(?:la\s+)?suma\s+de\s+los\s+primeros?\s+(\d+|un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\s+n[u\xfa]meros?/i;
             var restaSumaM = restaSumaRe.exec(text);
             if (restaSumaM) {
-                var nRestar = parseInt(restaSumaM[1], 10);
+                var _wtn = { 'un': 1, 'uno': 1, 'una': 1, 'dos': 2, 'tres': 3, 'cuatro': 4,
+                    'cinco': 5, 'seis': 6, 'siete': 7, 'ocho': 8, 'nueve': 9, 'diez': 10,
+                    'once': 11, 'doce': 12 };
+                var _cap = restaSumaM[1].toLowerCase();
+                var nRestar = _wtn[_cap] || parseInt(_cap, 10);
                 (function(count, pos) {
                     operations.push({
                         apply: function(total, allNumbers) {

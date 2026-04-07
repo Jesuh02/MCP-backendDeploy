@@ -291,7 +291,74 @@ class ParameterSumDetectionStage {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Etapa 6: ScientificNotationCrossCheckStage
+// Etapa 6: FillInBlankSanityStage — Rechaza fill_in_blank con respuestas absurdas
+// ═══════════════════════════════════════════════════════════════════════════
+
+class FillInBlankSanityStage {
+    process(q) {
+        if (!q || q.type !== 'fill_in_blank') return { action: 'pass', question: q };
+
+        const text = q.question || '';
+        const answer = MathEngine.parseDecimal(String(q.correctAnswer || ''));
+        if (!answer) return { action: 'pass', question: q };
+
+        const isSciNotation = /notaci[oó]n\s+cient[ií]fica/i.test(text);
+        const wantsCoefficient = /coeficiente|mantisa/i.test(text);
+        const wantsExponent = /exponente/i.test(text);
+
+        // Check 1: Scientific notation coefficient must be in [1, 10)
+        if (isSciNotation && wantsCoefficient) {
+            const abs = answer.abs();
+            if (abs.gte(10) || abs.isZero()) {
+                console.warn(
+                    `[ValidationPipeline] SANITY REJECT: fill_in_blank coefficient=${answer} ` +
+                    `not in [1,10). Question: "${text.substring(0, 80)}..."`
+                );
+                return { action: 'reject', question: null };
+            }
+        }
+
+        // Check 2: Scientific notation exponent must be a small integer
+        if (isSciNotation && wantsExponent) {
+            if (!answer.isInteger() || answer.abs().gt(50)) {
+                console.warn(
+                    `[ValidationPipeline] SANITY REJECT: fill_in_blank exponent=${answer} ` +
+                    `is not a reasonable integer. Question: "${text.substring(0, 80)}..."`
+                );
+                return { action: 'reject', question: null };
+            }
+        }
+
+        // Check 3: If answer is a round power of 10 in a sci-notation question
+        // that asks for a "resultado" or "suma", it's likely the base not the answer
+        if (isSciNotation && !wantsExponent && !wantsCoefficient) {
+            const abs = answer.abs();
+            if (abs.gte(1000)) {
+                try {
+                    const log10 = abs.log(10);
+                    const rounded = log10.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+                    if (log10.minus(rounded).abs().lt('0.0001') && /resultado|suma|total/i.test(text)) {
+                        // Answer is exactly 10^N — very suspicious for a sum question
+                        console.warn(
+                            `[ValidationPipeline] SANITY WARNING: fill_in_blank answer=${answer} ` +
+                            `is exactly 10^${rounded} in scientific notation question. ` +
+                            `Checking if it could be a confused exponent response.`
+                        );
+                        // Only reject if the question explicitly mentions summing sci-notation numbers
+                        if (/suma[rn]?\s+.*notaci[oó]n\s+cient[ií]fica|notaci[oó]n\s+cient[ií]fica.*suma/i.test(text)) {
+                            return { action: 'reject', question: null };
+                        }
+                    }
+                } catch (_) { /* log might fail for edge cases */ }
+            }
+        }
+
+        return { action: 'pass', question: q };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Etapa 7: ScientificNotationCrossCheckStage
 // ═══════════════════════════════════════════════════════════════════════════
 
 class ScientificNotationCrossCheckStage {
@@ -372,6 +439,7 @@ export class ValidationPipeline {
         this.structuralStage = new StructuralVerificationStage();
         this.orderingStage = new OrderingDependencyStage();
         this.paramSumStage = new ParameterSumDetectionStage();
+        this.fillBlankSanityStage = new FillInBlankSanityStage();
         this.sciNotationStage = new ScientificNotationCrossCheckStage();
     }
 
@@ -398,6 +466,11 @@ export class ValidationPipeline {
             const paramResult = this.paramSumStage.process(q);
             if (paramResult.action === 'reject') return null;
             q = paramResult.question;
+
+            // Stage 3.5: Fill-in-blank sanity check (coefficient range, round powers of 10)
+            const fillSanity = this.fillBlankSanityStage.process(q);
+            if (fillSanity.action === 'reject') return null;
+            q = fillSanity.question;
 
             // Stage 4: Scientific notation cross-check
             const sciResult = this.sciNotationStage.process(q);
