@@ -885,6 +885,22 @@ export class ProgressDomainService {
 
         const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
 
+        // Crear registro en progreso_curso para que isEnrolled() retorne true
+        // y el estudiante aparezca correctamente en el curso.
+        try {
+            await this.progressRepo.upsert({
+                userId,
+                courseId,
+                completedTasks: 0,
+                totalTasks: 0,
+                averageGrade: 0,
+                progressPercentage: 0,
+                enrollment_status: 'activo',
+            });
+        } catch (progressErr) {
+            console.warn(`[ProgressService] Could not create progreso_curso for approved enrollment userId=${userId}:`, progressErr?.message);
+        }
+
         // Notify the student about enrollment approval
         if (this._notificationService) {
             try {
@@ -1179,6 +1195,16 @@ export class ProgressDomainService {
                 enrolled: true,
                 status: 'admin',
                 enrollmentStatus: 'admin',
+            });
+        }
+
+        // Colaboradores y creadores tienen acceso directo sin matrícula
+        const isCreatorOrCollab = await this._isCreatorOrCollaborator(userId, courseId);
+        if (isCreatorOrCollab) {
+            return Result.ok({
+                enrolled: true,
+                status: 'approved',
+                enrollmentStatus: 'approved',
             });
         }
 

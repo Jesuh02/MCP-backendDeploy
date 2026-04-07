@@ -1200,6 +1200,8 @@ export class SupabaseProgressRepository {
             .select('*')
             .eq('user_id', userId)
             .eq('course_id', courseId)
+            .order('requested_at', { ascending: false })
+            .limit(1)
             .maybeSingle();
         if (error || !data) return null;
         return this._mapPreEnrollmentRecord(data);
