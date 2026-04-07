@@ -31,6 +31,8 @@ export function createApp() {
             // Allow any *.jdavidherazo.workers.dev or *.coursev.workers.dev subdomain
             /^https:\/\/[a-z0-9-]+\.jdavidherazo\.workers\.dev$/.test(origin) ||
             /^https:\/\/[a-z0-9-]+\.coursev\.workers\.dev$/.test(origin) ||
+            // Allow captacion-coursev Vercel previews
+            /^https:\/\/captacion-coursev[a-z0-9-]*\.vercel\.app$/.test(origin) ||
             // Allow localhost for development
             /^https?:\/\/localhost(:\d+)?$/.test(origin)
         );
