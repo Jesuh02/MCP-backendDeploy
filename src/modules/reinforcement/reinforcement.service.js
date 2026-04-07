@@ -981,6 +981,13 @@ Antes de incluir CADA ejercicio en el JSON, verifica:
   - Verifica el número de decimales en el resultado.
   - 45.67 + 128.3 = 173.97, NO 173.70 ni 174.0.
 
+▸ PREGUNTAS DE POSICIÓN DE DÍGITOS:
+  - Si preguntas "¿cuál es el dígito en la posición de las centenas?", la respuesta SIEMPRE es un solo dígito (0-9).
+  - NUNCA generes una explicación con operaciones aritméticas como "0-9 = -9". Eso NO TIENE SENTIDO.
+  - La explicación DEBE mostrar: 1) El resultado numérico calculado, 2) Las posiciones: unidades, decenas, centenas, miles, etc., 3) El dígito exacto en la posición solicitada.
+  - Ejemplo correcto: "29,999,999 → posición de decenas de millón → dígito 2".
+  - PROHIBIDO confundir posiciones: unidades=10⁰, decenas=10¹, centenas=10², miles=10³, decenas de mil=10⁴, centenas de mil=10⁵, unidades de millón=10⁶, decenas de millón=10⁷.
+
 ══ CALIDAD DE DISTRACTORES (multiple_choice) ══
 ⚠️ NUNCA generes opciones con el mismo valor numérico o la misma explicación.
 Cada distractor DEBE representar un error conceptual plausible:

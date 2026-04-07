@@ -414,6 +414,57 @@ console.log(`\n═══ AnswerVerificationGate: New Verifiers ═══`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// QuizMathValidator: Digit-Position Strategy (Strategy 0)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log(`\n═══ QuizMathValidator: Digit-Position Strategy ═══`);
+{
+    // Test 1: Digit in "decenas de millón" of a sum
+    const qDigit1 = {
+        type: 'multiple_choice',
+        question: '¿Cuál es el dígito en la posición de las decenas de millón de la suma de 12,345,678.9123 + 9,876,543.2187 + 5,555,555.5555 + 2,222,222.2222?',
+        options: ['9', '2', '0', '5'],
+        correctIndex: 1, // LLM says 2
+    };
+    const rDigit1 = QuizMathValidator.verify(qDigit1);
+    // Sum = 29,999,999.9087, decenas de millón (10^7) = 2
+    assert(rDigit1 !== null, 'Digit-position: question not rejected');
+    // The digit at 10^7 in 29,999,999 is 2
+    console.log(`    Digit-position result: correctIndex=${qDigit1.correctIndex}`);
+
+    // Test 2: Digit position with fill_in_blank
+    const qDigit2 = {
+        type: 'fill_in_blank',
+        question: '¿Cuál es el dígito de las centenas en el número 12,345?',
+        correctAnswer: '3',
+    };
+    const rDigit2 = QuizMathValidator.verify(qDigit2);
+    assert(rDigit2 !== null, 'Digit-position fill_in_blank: question not rejected');
+    assert(rDigit2 && String(rDigit2.correctAnswer) === '3', 'Digit-position fill_in_blank: centenas of 12345 = 3');
+
+    // Test 3: Wrong LLM answer corrected
+    const qDigit3 = {
+        type: 'multiple_choice',
+        question: '¿Cuál es el dígito en las unidades de millón del número 87,654,321?',
+        options: ['8', '7', '6', '5'],
+        correctIndex: 0, // LLM says 8 — WRONG, unidades de millón is 7
+    };
+    const rDigit3 = QuizMathValidator.verify(qDigit3);
+    assert(rDigit3 !== null && qDigit3.correctIndex === 1, 'Digit-position: unidades de millón of 87654321 corrected to 7 (index 1)');
+
+    // Test 4: Doesn't produce nonsense like "0-9 = -9"
+    const qDigit4 = {
+        type: 'multiple_choice',
+        question: '¿Cuál es el dígito en la posición de las decenas de millón del resultado de 12,345,678 + 9,876,543?',
+        options: ['2', '1', '9', '0'],
+        correctIndex: 0,
+    };
+    const rDigit4 = QuizMathValidator.verify(qDigit4);
+    // Sum = 22,222,221, decenas de millón = 2
+    assert(rDigit4 !== null && qDigit4.correctIndex === 0, 'Digit-position sum: produces correct index, no nonsense explanation');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Results
 // ═══════════════════════════════════════════════════════════════════════════
 

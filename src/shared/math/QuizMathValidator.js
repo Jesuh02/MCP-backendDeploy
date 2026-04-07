@@ -33,10 +33,14 @@ const DERIVATIVE_PATTERNS = [
 ];
 
 const META_QUESTION_PATTERNS = [
-    /d[i\xed]gito\s+(?:de\s+las?\s+)?(?:centenas?|decenas?|unidades?|miles?|millones?)/i,
+    /d[i\xed]gito\s+(?:(?:de|en|que\s+ocupa)\s+)?(?:las?\s+)?(?:posici[o\xf3]n\s+(?:de\s+(?:las?\s+)?)?)?(?:centenas?|decenas?|unidades?|miles?|millones?|millares?)/i,
+    /posici[o\xf3]n\s+(?:de\s+(?:las?\s+)?)?(?:centenas?|decenas?|unidades?|miles?|millones?|millares?)/i,
     /posici[o\xf3]n\s+10[\u2070\xb9\xb2\xb3\u2074\u2075\u2076\u2077\u2078\u2079]+/i,
     /\xbfcu[a\xe1]l\s+es\s+el\s+d[i\xed]gito/i,
     /cifra\s+(?:de|en)\s+(?:la\s+)?posici[o\xf3]n/i,
+    /d[i\xed]gito\s+(?:que\s+)?(?:est[a\xe1]|se\s+encuentra|ocupa)\s+en/i,
+    /qu[e\xe9]\s+(?:d[i\xed]gito|n[u\xfa]mero|cifra)\s+(?:hay|est[a\xe1]|se\s+encuentra|ocupa)/i,
+    /(?:centenas?|decenas?|unidades?)\s+de\s+(?:mill[o\xf3]n|millar)/i,
 ];
 
 // Tolerance for option matching: 0.5% relative OR 0.01 absolute for large numbers
@@ -61,7 +65,26 @@ export class QuizMathValidator {
             isAdvanced;
 
         if (!hasMathSignals) return q;
-        if (META_QUESTION_PATTERNS.some(function(re) { return re.test(text); })) return q;
+
+        // Meta-questions about digit positions: handle with dedicated strategy
+        // instead of skipping (which left bad LLM explanations uncorrected).
+        if (META_QUESTION_PATTERNS.some(function(re) { return re.test(text); })) {
+            try {
+                var digitResult = QuizMathValidator._tryDigitPositionProblem(text);
+                if (digitResult) {
+                    var digitAnswer = digitResult.value;
+                    if (q.type === 'fill_in_blank') {
+                        return QuizMathValidator._verifyFillInBlank(q, digitAnswer, digitResult.steps);
+                    }
+                    if (q.type === 'multiple_choice') {
+                        return QuizMathValidator._verifyMultipleChoice(q, digitAnswer, digitResult.steps);
+                    }
+                }
+            } catch (err) {
+                console.warn('[MathVerify] Digit-position error: ' + err.message);
+            }
+            return q;
+        }
 
         try {
             var result = QuizMathValidator.computeExpectedAnswer(text);
@@ -121,6 +144,11 @@ export class QuizMathValidator {
     }
 
     static computeExpectedAnswer(text) {
+        // Strategy 0: Digit-position meta-questions (highest priority — prevents
+        // downstream strategies from misinterpreting digit position text as arithmetic)
+        var digit = QuizMathValidator._tryDigitPositionProblem(text);
+        if (digit) return digit;
+
         // Strategy 1: Explicit arithmetic expressions (highest confidence)
         var arithmetic = QuizMathValidator._tryExplicitArithmetic(text);
         if (arithmetic) return arithmetic;
@@ -249,6 +277,148 @@ export class QuizMathValidator {
         console.warn('[MathVerify] REJECTED MC: No option matches computed=' + finalAnswer +
             '. Options: ' + JSON.stringify(q.options));
         return null;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Strategy 0: Digit-Position Problems
+    // Detects meta-questions asking about specific digits in a number or result:
+    // "¿Cuál es el dígito en la posición de las decenas de millón de la suma
+    //  12,345,678.9123 + 9,876,543.2187 + ...?"
+    // Computes the sum/result, then extracts the digit at the requested position.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    static _tryDigitPositionProblem(text) {
+        if (!META_QUESTION_PATTERNS.some(function(re) { return re.test(text); })) return null;
+
+        // Map Spanish position names to powers of 10
+        var positionMap = {
+            'unidades': 0,
+            'unidad': 0,
+            'decenas': 1,
+            'decena': 1,
+            'centenas': 2,
+            'centena': 2,
+            'miles': 3,
+            'mil': 3,
+            'millares': 3,
+            'millar': 3,
+            'decenas de mil': 4,
+            'decenas de millar': 4,
+            'centenas de mil': 5,
+            'centenas de millar': 5,
+            'millones': 6,
+            'millon': 6,
+            'millón': 6,
+            'unidades de millón': 6,
+            'unidades de millon': 6,
+            'decenas de millón': 7,
+            'decenas de millon': 7,
+            'centenas de millón': 8,
+            'centenas de millon': 8,
+            'miles de millón': 9,
+            'miles de millon': 9,
+            'millones de millón': 12,
+        };
+
+        // Also handle "posición 10^N" notation with Unicode superscripts
+        var superscriptMap = { '\u2070': 0, '\xb9': 1, '\xb2': 2, '\xb3': 3,
+            '\u2074': 4, '\u2075': 5, '\u2076': 6, '\u2077': 7, '\u2078': 8, '\u2079': 9 };
+
+        var lower = text.toLowerCase()
+            .replace(/í/g, 'i').replace(/ó/g, 'o').replace(/á/g, 'a')
+            .replace(/é/g, 'e').replace(/ú/g, 'u');
+        var position = -1;
+        var posName = '';
+
+        // Try matching position names from longest to shortest
+        var sortedKeys = Object.keys(positionMap).sort(function(a, b) { return b.length - a.length; });
+        for (var ki = 0; ki < sortedKeys.length; ki++) {
+            var key = sortedKeys[ki];
+            var normalizedKey = key.replace(/í/g, 'i').replace(/ó/g, 'o').replace(/á/g, 'a')
+                .replace(/é/g, 'e').replace(/ú/g, 'u');
+            if (lower.indexOf(normalizedKey) !== -1) {
+                position = positionMap[key];
+                posName = key;
+                break;
+            }
+        }
+
+        // Try 10^N notation
+        if (position < 0) {
+            var powMatch = text.match(/10[\u2070\xb9\xb2\xb3\u2074\u2075\u2076\u2077\u2078\u2079]+/);
+            if (powMatch) {
+                var exp = 0;
+                for (var ci = 2; ci < powMatch[0].length; ci++) {
+                    var digitChar = powMatch[0][ci];
+                    if (superscriptMap[digitChar] !== undefined) {
+                        exp = exp * 10 + superscriptMap[digitChar];
+                    }
+                }
+                position = exp;
+                posName = 'posición 10^' + exp;
+            }
+        }
+
+        if (position < 0) return null;
+
+        // Now compute the base number (sum, product, etc.)
+        // Extract all substantial numbers from the text
+        var cleaned = text.replace(/[$\u20ac\xa5\xa3\u20a1\u20bf]\s*/g, '');
+        var allNums = [];
+        var numRe = /\d[\d,]*\.?\d*/g;
+        var nm;
+        while ((nm = numRe.exec(cleaned)) !== null) {
+            var parsed = QuizMathValidator._parseDecimal(nm[0]);
+            if (parsed !== null) allNums.push(parsed);
+        }
+
+        // Determine what operation to perform on the numbers
+        var steps = [];
+        var baseNumber = null;
+
+        // Check if there's an explicit arithmetic expression
+        var exprResult = QuizMathValidator._tryExplicitArithmetic(text);
+        if (exprResult) {
+            baseNumber = exprResult.value;
+            steps = exprResult.steps.slice();
+        }
+
+        // If no explicit arithmetic, try sum of significant numbers
+        if (!baseNumber && allNums.length >= 2) {
+            // Filter out small numbers that are likely not data (e.g., position references, years)
+            var dataNums = allNums.filter(function(n) { return n.abs().gte(10); });
+            if (dataNums.length >= 2) {
+                baseNumber = dataNums.reduce(function(a, b) { return a.plus(b); }, new Decimal(0));
+                steps.push('Suma: ' + dataNums.join(' + ') + ' = ' + baseNumber);
+            }
+        }
+
+        // If still no result, check if there's a single large number
+        if (!baseNumber && allNums.length === 1 && allNums[0].abs().gte(10)) {
+            baseNumber = allNums[0];
+            steps.push('Número base: ' + baseNumber);
+        }
+
+        if (!baseNumber) return null;
+
+        // Round to integer part for digit extraction
+        var integerPart = baseNumber.abs().floor();
+        var intStr = integerPart.toFixed(0);
+
+        // Extract the digit at the requested position (0 = ones, 1 = tens, etc.)
+        var digitIndex = intStr.length - 1 - position;
+        var digit;
+        if (digitIndex < 0) {
+            digit = 0; // position exceeds the number's length
+        } else {
+            digit = parseInt(intStr[digitIndex], 10);
+        }
+
+        steps.push('Número resultado: ' + baseNumber.toFixed(baseNumber.dp() || 0));
+        steps.push('Parte entera: ' + intStr);
+        steps.push('Posición ' + posName + ' (10^' + position + '): dígito = ' + digit);
+
+        return { value: new Decimal(digit), steps: steps };
     }
 
     // Strategy 1: Explicit Arithmetic (uses MathEngine for proper precedence)
