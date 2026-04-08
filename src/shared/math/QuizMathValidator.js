@@ -1860,12 +1860,36 @@ export class QuizMathValidator {
         if (numbers.length < 2) return null;
 
         var steps = [];
-        var sum = new Decimal(0);
+
+        // ═══════════════════════════════════════════════════════════════════
+        // Paso 1: Identificar los números en notación científica
+        // ═══════════════════════════════════════════════════════════════════
+        steps.push('Paso 1: Identificar los números en notación científica');
         for (var i = 0; i < numbers.length; i++) {
-            sum = sum.plus(numbers[i]);
-            steps.push('Número ' + (i + 1) + ': ' + numbers[i].toExponential(6));
+            steps.push('  Número ' + (i + 1) + ': ' + numbers[i].toExponential(6));
         }
-        steps.push('Suma: ' + sum.toExponential(6));
+
+        // ═══════════════════════════════════════════════════════════════════
+        // Paso 2: Convertir cada número a forma decimal completa
+        // (DEBE hacerse ANTES de alinear/sumar — no se puede alinear
+        //  por punto decimal si los números están en notación científica)
+        // ═══════════════════════════════════════════════════════════════════
+        steps.push('Paso 2: Convertir a forma decimal');
+        for (var j = 0; j < numbers.length; j++) {
+            var dp = numbers[j].dp() || 0;
+            steps.push('  ' + numbers[j].toExponential(6) + ' = ' + numbers[j].toFixed(dp));
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // Paso 3: Sumar los valores decimales
+        // ═══════════════════════════════════════════════════════════════════
+        var sum = new Decimal(0);
+        for (var k = 0; k < numbers.length; k++) {
+            sum = sum.plus(numbers[k]);
+        }
+        steps.push('Paso 3: Sumar los valores convertidos');
+        steps.push('  ' + numbers.map(function(n) { return n.toFixed(n.dp() || 0); }).join(' + ') +
+            ' = ' + sum.toFixed(sum.dp() || 0));
 
         // Check if the question asks for a coefficient (mantissa)
         var wantsCoefficient = /coeficiente|mantisa/i.test(text);
@@ -1875,11 +1899,13 @@ export class QuizMathValidator {
         if (wantsCoefficient || sigFigs) {
             var sciNot = MathEngine.toScientificNotation(sum);
             var mantissa = sciNot.mantissa;
+            steps.push('Paso 4: Expresar en notación científica');
+            steps.push('  Suma = ' + sum.toExponential(6));
             if (sigFigs) {
                 mantissa = MathEngine.roundToSignificantFigures(mantissa, sigFigs);
-                steps.push('Coeficiente redondeado a ' + sigFigs + ' cifras significativas: ' + mantissa);
+                steps.push('  Coeficiente redondeado a ' + sigFigs + ' cifras significativas: ' + mantissa);
             } else {
-                steps.push('Coeficiente: ' + mantissa + ' × 10^' + sciNot.exponent);
+                steps.push('  Coeficiente: ' + mantissa + ' × 10^' + sciNot.exponent);
             }
             return { value: mantissa, steps: steps };
         }
