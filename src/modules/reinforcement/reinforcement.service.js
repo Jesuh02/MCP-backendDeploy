@@ -581,7 +581,7 @@ export class ReinforcementDomainService {
      */
     async _generateQuestionsInternal(userId, courseId, topicId, taskId, difficulty, targetCount) {
         const startMs = Date.now();
-        const MAX_ITERATIONS = 15;
+        const MAX_ITERATIONS = 8;
         const MIN_ACCEPTABLE = Math.max(targetCount - 2, 1); // Accept minimum targetCount-2 (e.g. 8 of 10)
 
         // Step 1: Get learning context (parallel DB queries + RAG)
@@ -656,16 +656,17 @@ export class ReinforcementDomainService {
             const firstExclusionBlock = firstExclusionList.length > 0
                 ? `\nPREGUNTAS YA EXISTENTES (NO REPETIR):\n${firstExclusionList.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
                 : '';
-            const firstReqCount = Math.min(targetCount + 3, 13);
+            const firstReqCount = Math.min(targetCount + 5, 15);
 
             const batchStart = Date.now();
-            const [resp1, resp2] = await Promise.allSettled([
+            const [resp1, resp2, resp3] = await Promise.allSettled([
                 callLLM(0.4, firstReqCount, firstExclusionBlock),
                 callLLM(0.55, firstReqCount, firstExclusionBlock),
+                callLLM(0.7, firstReqCount, firstExclusionBlock),
             ]);
-            console.log(`🤖 [ReinforcementService] Parallel first batch in ${Date.now() - batchStart}ms`);
+            console.log(`🤖 [ReinforcementService] Parallel first batch (3 calls) in ${Date.now() - batchStart}ms`);
 
-            for (const resp of [resp1, resp2]) {
+            for (const resp of [resp1, resp2, resp3]) {
                 if (resp.status !== 'fulfilled') continue;
                 const qs = this._parseQuestionsJson(resp.value?.content || '');
                 const filtered = applyFilters(qs, allExcludedTexts);
@@ -678,13 +679,15 @@ export class ReinforcementDomainService {
             console.log(`🔄 [ReinforcementService] After parallel batch: accumulated=${accumulated.length}/${targetCount}`);
         }
 
-        // ── SEQUENTIAL FILL-UP ITERATIONS ───────────────────────────────────────
+        // ── PARALLEL FILL-UP ITERATIONS ─────────────────────────────────────────
+        // Fire 2 concurrent LLM calls per iteration (like the first batch) to
+        // cut wall-clock time roughly in half versus sequential single calls.
         // Only run if parallel batch didn't reach targetCount.
         for (let iteration = 0; iteration < MAX_ITERATIONS && accumulated.length < targetCount; iteration++) {
             const remaining = targetCount - accumulated.length;
 
             // Stop early only if we meet MIN_ACCEPTABLE AND iterations are clearly unproductive
-            if (accumulated.length >= MIN_ACCEPTABLE && consecutiveZero >= 3) {
+            if (accumulated.length >= MIN_ACCEPTABLE && consecutiveZero >= 2) {
                 console.log(`✅ [ReinforcementService] Stopping early: ${accumulated.length}/${targetCount} (>= min ${MIN_ACCEPTABLE}) after ${consecutiveZero} empty iterations`);
                 break;
             }
@@ -698,32 +701,37 @@ export class ReinforcementDomainService {
             // Request 2× the shortfall (min 8) to compensate for filtering losses
             const requestCount = Math.min(Math.max(remaining * 2 + 3, 8), 15);
 
-            // Step 3: Call LLM (temperature increases on retries to encourage variety)
+            // Fire 2 parallel LLM calls with slightly different temperatures
+            const baseTemp = Math.min(0.45 + (iteration * 0.15), 0.9);
+            const temp2 = Math.min(baseTemp + 0.1, 0.95);
             const llmStartMs = Date.now();
-            const llmResponse = await callLLM(Math.min(0.45 + (iteration * 0.1), 0.9), requestCount, existingBlock);
-            console.log(`🤖 [ReinforcementService] LLM responded in ${Date.now() - llmStartMs}ms (fill iteration ${iteration + 1})`);
 
-            // Step 4: Parse JSON
-            const content = llmResponse?.content || '';
-            const questions = this._parseQuestionsJson(content);
+            const fillResults = await Promise.allSettled([
+                callLLM(baseTemp, requestCount, existingBlock),
+                callLLM(temp2, requestCount, existingBlock),
+            ]);
+            console.log(`🤖 [ReinforcementService] Parallel fill batch in ${Date.now() - llmStartMs}ms (fill iteration ${iteration + 1})`);
 
-            if (questions.length === 0) {
-                console.warn(`[ReinforcementService] Fill iteration ${iteration + 1}: LLM returned 0 parseable questions`);
-                consecutiveZero++;
-                continue;
-            }
-
-            const filtered = applyFilters(questions, allExcludedTexts);
             const prevAccumulated = accumulated.length;
+            let anyParsed = false;
 
-            for (const q of filtered) {
+            for (const resp of fillResults) {
                 if (accumulated.length >= targetCount) break;
-                accumulated.push(q);
-                allExcludedTexts.push(q.question);
+                if (resp.status !== 'fulfilled') continue;
+                const content = resp.value?.content || '';
+                const questions = this._parseQuestionsJson(content);
+                if (questions.length > 0) anyParsed = true;
+
+                const filtered = applyFilters(questions, allExcludedTexts);
+                for (const q of filtered) {
+                    if (accumulated.length >= targetCount) break;
+                    accumulated.push(q);
+                    allExcludedTexts.push(q.question);
+                }
             }
 
             const newlyAdded = accumulated.length - prevAccumulated;
-            console.log(`🔄 [ReinforcementService] Fill it.${iteration + 1}: parsed=${questions.length}, afterFilters=${filtered.length}, newlyAdded=${newlyAdded}, accumulated=${accumulated.length}/${targetCount}`);
+            console.log(`🔄 [ReinforcementService] Fill it.${iteration + 1}: newlyAdded=${newlyAdded}, accumulated=${accumulated.length}/${targetCount}`);
 
             consecutiveZero = newlyAdded === 0 ? consecutiveZero + 1 : 0;
         }
