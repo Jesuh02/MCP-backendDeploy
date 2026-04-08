@@ -145,6 +145,18 @@ class AlignmentFirstRule {
         /^(?:escribir|colocar).*(?:uno\s+debajo|vertical)/i,
     ];
 
+    /** Pasos que son prerequisitos de la alineación — si alguno aparece
+     *  ANTES de la alineación, NO se debe mover la alineación al inicio. */
+    static PREREQUISITE_PATTERNS = [
+        /convertir\s+(?:a|en)\s*(?:forma\s+)?decimal/i,
+        /(?:pasar|transformar|expresar|cambiar)\s+(?:a|en)\s*(?:forma\s+)?decimal/i,
+        /(?:expandir|desarrollar)\s+(?:la\s+)?notaci[oó]n\s+cient[ií]fica/i,
+        /notaci[oó]n\s+cient[ií]fica\s+a\s+(?:forma\s+)?(?:decimal|est[aá]ndar)/i,
+        /(?:forma|notaci[oó]n)\s+est[aá]ndar/i,
+        /convertir\s+(?:las?\s+)?fracci[oó]n/i,
+        /fracci[oó]n\s+a\s+decimal/i,
+    ];
+
     applies(question, items) {
         return AlignmentFirstRule.ARITHMETIC_QUESTION.test(question) &&
             items.some(item => AlignmentFirstRule.ALIGN_PATTERNS.some(p => p.test(item)));
@@ -156,6 +168,13 @@ class AlignmentFirstRule {
         );
 
         if (alignIdx <= 0) return { modified: false }; // Already first or not found
+
+        // Check if there's a prerequisite step BEFORE the alignment —
+        // if so, don't move alignment to position 0 (the dependency is correct).
+        const hasPrereqBefore = items.slice(0, alignIdx).some(item =>
+            AlignmentFirstRule.PREREQUISITE_PATTERNS.some(p => p.test(item))
+        );
+        if (hasPrereqBefore) return { modified: false };
 
         const fixed = [...items];
         const [step] = fixed.splice(alignIdx, 1);
@@ -618,6 +637,230 @@ class OperationBeforeResultRule {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Regla 9: StepDependencyOrderRule
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Regla genérica de DEPENDENCIAS LÓGICAS entre pasos.
+//
+// Principio: "No puedes ejecutar un paso que depende del resultado de otro
+// paso que aún no se ha realizado."
+//
+// Ejemplo clásico: notación científica
+//   ❌ Incorrecto: [Alinear decimales, Convertir a decimal, Sumar]
+//   ✅ Correcto:   [Convertir a decimal, Alinear decimales, Sumar]
+//   Razón: Alinear decimales REQUIERE que los números ya estén en decimal.
+//
+// La regla define pares (prerequisito → dependiente) con patrones.
+// Si el dependiente aparece ANTES del prerequisito, los intercambia.
+// ═══════════════════════════════════════════════════════════════════════════
+
+class StepDependencyOrderRule {
+    /**
+     * Cada entrada define: un paso prerequisito y un paso que DEPENDE de él.
+     * Si el dependiente está antes del prerequisito, se reordena.
+     *
+     * contextPatterns (opcional): patrones en la pregunta o en los items que
+     * indican que esta dependencia aplica. Si se omite, aplica siempre que
+     * se detecten ambos patrones en los items.
+     */
+    static DEPENDENCY_PAIRS = [
+        // ── Notación científica: convertir ANTES de alinear ──────────────
+        {
+            prerequisite: [
+                /convertir\s+(?:a|en|los?\s+n[uú]meros?\s+(?:a|en))?\s*(?:forma\s+)?decimal/i,
+                /(?:pasar|transformar|expresar|cambiar)\s+(?:a|en)\s*(?:forma\s+)?decimal/i,
+                /(?:expandir|desarrollar)\s+(?:la\s+)?notaci[oó]n\s+cient[ií]fica/i,
+                /(?:eliminar|quitar|remover)\s+(?:la\s+)?notaci[oó]n\s+cient[ií]fica/i,
+                /notaci[oó]n\s+cient[ií]fica\s+a\s+(?:forma\s+)?(?:decimal|est[aá]ndar|normal)/i,
+                /(?:forma|notaci[oó]n)\s+est[aá]ndar/i,
+            ],
+            dependent: [
+                /aline(?:ar|aci[oó]n)\s+(?:(?:los?\s+)?(?:puntos?\s+)?decimal|(?:por\s+)?(?:el\s+)?(?:punto|coma)\s+decimal)/i,
+                /alinear\s+(?:los\s+)?n[uú]meros?\s+(?:por|seg[uú]n)\s+(?:el\s+)?(?:punto|coma)/i,
+                /(?:colocar|poner|escribir)\s+(?:los\s+)?n[uú]meros?\s+(?:en\s+)?columna/i,
+            ],
+            contextPatterns: [
+                /notaci[oó]n\s+cient[ií]fica/i,
+                /\d+\.?\d*\s*[×x]\s*10\s*\^/i,
+                /\d+\.?\d*[eE]\d+/i,
+            ],
+            reason: 'Convertir a decimal ANTES de alinear (no se puede alinear notación científica)',
+        },
+        // ── Fracciones: convertir a decimal ANTES de operar con decimales ─
+        {
+            prerequisite: [
+                /convertir\s+(?:las?\s+)?fracci[oó]n/i,
+                /(?:pasar|transformar|expresar)\s+(?:las?\s+)?fracci[oó]n/i,
+                /fracci[oó]n\s+a\s+decimal/i,
+                /dividir\s+(?:el\s+)?numerador/i,
+            ],
+            dependent: [
+                /aline(?:ar|aci[oó]n)\s+(?:(?:los?\s+)?(?:puntos?\s+)?decimal)/i,
+                /sumar?\s+(?:los\s+)?(?:valores?\s+)?decimal/i,
+                /operar\s+(?:con\s+)?(?:los\s+)?decimal/i,
+            ],
+            contextPatterns: [
+                /fracci[oó]n|fracciones/i,
+                /\d+\s*\/\s*\d+/,
+            ],
+            reason: 'Convertir fracciones a decimal ANTES de operar con decimales',
+        },
+        // ── Identificar datos ANTES de plantear ecuación ──────────────────
+        {
+            prerequisite: [
+                /identificar\s+(?:los\s+)?(?:datos|variables|inc[oó]gnitas|valores)/i,
+                /extraer\s+(?:los\s+)?(?:datos|valores|informaci[oó]n)/i,
+                /leer\s+(?:el\s+)?(?:problema|enunciado)/i,
+                /analizar\s+(?:el\s+)?(?:problema|enunciado)/i,
+            ],
+            dependent: [
+                /plantear\s+(?:la\s+)?ecuaci[oó]n/i,
+                /(?:escribir|formular|armar)\s+(?:la\s+)?ecuaci[oó]n/i,
+                /(?:establecer|definir)\s+(?:la\s+)?(?:ecuaci[oó]n|f[oó]rmula|expresi[oó]n)/i,
+            ],
+            reason: 'Identificar datos ANTES de plantear la ecuación',
+        },
+        // ── Plantear ecuación ANTES de resolver/despejar ──────────────────
+        {
+            prerequisite: [
+                /plantear\s+(?:la\s+)?ecuaci[oó]n/i,
+                /(?:escribir|formular|armar)\s+(?:la\s+)?ecuaci[oó]n/i,
+                /(?:establecer|definir)\s+(?:la\s+)?(?:ecuaci[oó]n|f[oó]rmula)/i,
+            ],
+            dependent: [
+                /(?:resolver|despejar|simplificar)\s+(?:la\s+)?ecuaci[oó]n/i,
+                /despejar\s+(?:la\s+)?(?:variable|inc[oó]gnita|x)/i,
+                /sustituir\s+(?:en\s+)?(?:la\s+)?(?:ecuaci[oó]n|f[oó]rmula)/i,
+            ],
+            reason: 'Plantear ecuación ANTES de resolver/despejar',
+        },
+        // ── Derivar ANTES de igualar a cero/encontrar puntos críticos ─────
+        {
+            prerequisite: [
+                /(?:calcular|obtener|hallar|encontrar)\s+(?:la\s+)?derivada/i,
+                /derivar\s+(?:la\s+)?funci[oó]n/i,
+                /(?:aplicar|usar)\s+(?:las?\s+)?(?:reglas?\s+de\s+)?derivaci[oó]n/i,
+            ],
+            dependent: [
+                /igualar\s+(?:la\s+)?(?:derivada\s+)?(?:a\s+)?(?:cero|0)/i,
+                /(?:encontrar|hallar|buscar)\s+(?:los?\s+)?(?:puntos?\s+)?cr[ií]tic/i,
+                /(?:resolver|encontrar)\s+(?:f'|f\s*'\s*)\(?x\)?\s*=\s*0/i,
+            ],
+            contextPatterns: [
+                /derivada/i,
+                /extremo|m[ií]nimo|m[aá]ximo/i,
+                /punto\s+cr[ií]tic/i,
+            ],
+            reason: 'Calcular derivada ANTES de igualar a cero',
+        },
+        // ── Factorizar/simplificar ANTES de encontrar raíces ──────────────
+        {
+            prerequisite: [
+                /factorizar/i,
+                /simplificar\s+(?:la\s+)?(?:expresi[oó]n|ecuaci[oó]n)/i,
+            ],
+            dependent: [
+                /(?:encontrar|hallar|obtener)\s+(?:las?\s+)?ra[ií]ces?/i,
+                /(?:encontrar|hallar|obtener)\s+(?:los?\s+)?(?:valores?\s+de\s+)?x/i,
+            ],
+            reason: 'Factorizar/simplificar ANTES de encontrar raíces',
+        },
+        // ── Sumar/operar ANTES de redondear ───────────────────────────────
+        {
+            prerequisite: [
+                /(?:sumar|restar|multiplicar|dividir|operar|calcular)\s+(?:los?\s+)?/i,
+                /(?:realizar|ejecutar|efectuar)\s+(?:la\s+)?(?:operaci[oó]n|suma|resta|multiplicaci[oó]n|divisi[oó]n)/i,
+                /(?:obtener|calcular)\s+(?:el\s+)?(?:resultado|total|valor)/i,
+            ],
+            dependent: [
+                /redonde(?:ar|o)\s+(?:(?:el\s+)?resultado|a\s+\d+\s+decimal)/i,
+                /(?:aproximar|truncar)\s+(?:el\s+)?resultado/i,
+            ],
+            reason: 'Calcular resultado ANTES de redondear',
+        },
+        // ── Calcular cada serie ANTES de combinar resultados ──────────────
+        {
+            prerequisite: [
+                /(?:calcular|resolver|obtener)\s+(?:la\s+)?(?:suma\s+(?:de\s+)?(?:la\s+)?)?serie\s+(?:aritm[eé]tica|geom[eé]trica)/i,
+                /(?:aplicar|usar)\s+(?:la\s+)?f[oó]rmula\s+(?:de\s+)?(?:la\s+)?serie/i,
+                /(?:sumar|calcular)\s+(?:la\s+)?(?:progresi[oó]n|sumatoria)/i,
+            ],
+            dependent: [
+                /(?:sumar|combinar|agregar)\s+(?:los?\s+)?(?:resultados?|series?|valores?)/i,
+                /(?:resultado|total)\s+(?:final|combinado|global)/i,
+                /S\s*[₁1]\s*\+\s*S\s*[₂2]/i,
+            ],
+            reason: 'Calcular cada serie individualmente ANTES de combinar resultados',
+        },
+    ];
+
+    applies(question, items) {
+        return StepDependencyOrderRule.DEPENDENCY_PAIRS.some(pair => {
+            // Check context patterns if defined
+            if (pair.contextPatterns) {
+                const contextMatch = pair.contextPatterns.some(p =>
+                    p.test(question) || items.some(item => p.test(item))
+                );
+                if (!contextMatch) return false;
+            }
+            // Check if both prerequisite and dependent patterns exist in items
+            const hasPrereq = items.some(item =>
+                pair.prerequisite.some(p => p.test(item))
+            );
+            const hasDep = items.some(item =>
+                pair.dependent.some(p => p.test(item))
+            );
+            return hasPrereq && hasDep;
+        });
+    }
+
+    apply(question, items) {
+        let currentItems = [...items];
+        let modified = false;
+        const reasons = [];
+
+        for (const pair of StepDependencyOrderRule.DEPENDENCY_PAIRS) {
+            // Check context
+            if (pair.contextPatterns) {
+                const contextMatch = pair.contextPatterns.some(p =>
+                    p.test(question) || currentItems.some(item => p.test(item))
+                );
+                if (!contextMatch) continue;
+            }
+
+            // Find prerequisite and dependent indices
+            const prereqIdx = currentItems.findIndex(item =>
+                pair.prerequisite.some(p => p.test(item))
+            );
+            const depIdx = currentItems.findIndex(item =>
+                pair.dependent.some(p => p.test(item))
+            );
+
+            if (prereqIdx === -1 || depIdx === -1) continue;
+
+            // If dependent comes BEFORE prerequisite → wrong order
+            if (depIdx < prereqIdx) {
+                // Move prerequisite to just before the dependent
+                const [prereqStep] = currentItems.splice(prereqIdx, 1);
+                currentItems.splice(depIdx, 0, prereqStep);
+                modified = true;
+                reasons.push(
+                    `${pair.reason}: "${prereqStep}" movido antes de "${currentItems[depIdx + 1]}"`
+                );
+            }
+        }
+
+        if (!modified) return { modified: false };
+
+        return {
+            modified: true,
+            items: currentItems,
+            reason: reasons.join('; '),
+        };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Orquestador principal
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -691,14 +934,15 @@ export class OrderingQuestionValidator {
     /** @private Reglas por defecto, en orden de prioridad */
     static _defaultRules() {
         return [
-            new DecimalCommaRule(),            // 1. Fusionar coma decimal con alineación
-            new RedundantStepRule(),            // 2. Eliminar pasos redundantes genéricos
-            new ArithmeticProcedureOrderRule(), // 3. Acarreos ANTES de continuar (bug crítico)
-            new AlignmentFirstRule(),           // 4. Alineación siempre primero
-            new VerificationLastRule(),         // 5. Verificación siempre al final (debe ir ANTES de WriteResult)
-            new WriteResultLastRule(),          // 6. Resultado justo antes de verificación (corre tras VerificationLastRule)
-            new OperationBeforeResultRule(),    // 7. Todas las operaciones antes del resultado
-            new StepCountConsistencyRule(),     // 8. Consistencia de conteo
+            new StepDependencyOrderRule(),      // 1. Dependencias lógicas (convertir → alinear, derivar → igualar a 0, etc.)
+            new DecimalCommaRule(),              // 2. Fusionar coma decimal con alineación
+            new RedundantStepRule(),             // 3. Eliminar pasos redundantes genéricos
+            new ArithmeticProcedureOrderRule(),  // 4. Acarreos ANTES de continuar (bug crítico)
+            new AlignmentFirstRule(),            // 5. Alineación siempre primero
+            new VerificationLastRule(),          // 6. Verificación siempre al final (debe ir ANTES de WriteResult)
+            new WriteResultLastRule(),           // 7. Resultado justo antes de verificación (corre tras VerificationLastRule)
+            new OperationBeforeResultRule(),     // 8. Todas las operaciones antes del resultado
+            new StepCountConsistencyRule(),      // 9. Consistencia de conteo
         ];
     }
 }
@@ -713,6 +957,7 @@ export {
     ArithmeticProcedureOrderRule,
     WriteResultLastRule,
     OperationBeforeResultRule,
+    StepDependencyOrderRule,
 };
 
 export default OrderingQuestionValidator;

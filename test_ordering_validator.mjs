@@ -180,6 +180,125 @@ console.log('\n═══ Test 8: Alineación en posición incorrecta ═══')
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Test 9: Notación científica — convertir a decimal ANTES de alinear
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 9: Notación científica — dependencia lógica ═══');
+{
+    const question = 'Ordena los pasos para sumar números en notación científica: 5.678912 × 10^8 + 3.456789 × 10^7';
+    const items = [
+        'Alinear los números por el punto decimal',
+        'Convertir a forma decimal estándar',
+        'Sumar los valores alineados',
+        'Redondear el resultado',
+        'Verificar el resultado',
+    ];
+
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid === true, 'Should be valid after correction');
+    assert(result.corrections && result.corrections.length > 0, 'Should report corrections');
+
+    const convertIdx = result.items.findIndex(i => /convertir/i.test(i));
+    const alignIdx = result.items.findIndex(i => /alinear/i.test(i));
+    assert(convertIdx >= 0, 'Convertir step should exist');
+    assert(alignIdx >= 0, 'Alinear step should exist');
+    assert(convertIdx < alignIdx,
+        `Convertir (${convertIdx}) debe estar ANTES de Alinear (${alignIdx}). Items: ${JSON.stringify(result.items)}`
+    );
+    console.log('  Items corregidos:', result.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 10: Derivada — derivar ANTES de igualar a cero
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 10: Derivada — dependencia lógica ═══');
+{
+    const question = 'Ordena los pasos para encontrar el mínimo local de f(x) = x³ - 12x² + 45x - 10';
+    const items = [
+        'Igualar la derivada a cero',
+        'Calcular la derivada f\'(x)',
+        'Evaluar f(x) en los puntos críticos',
+        'Clasificar con la segunda derivada',
+        'Verificar el resultado',
+    ];
+
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid === true, 'Should be valid after correction');
+
+    const derivIdx = result.items.findIndex(i => /calcular\s+la\s+derivada/i.test(i));
+    const zeroIdx = result.items.findIndex(i => /igualar/i.test(i));
+    assert(derivIdx < zeroIdx,
+        `Derivar (${derivIdx}) debe estar ANTES de Igualar a cero (${zeroIdx})`
+    );
+    console.log('  Items corregidos:', result.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 11: Ecuación — identificar datos ANTES de plantear ecuación
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 11: Ecuación — dependencia lógica ═══');
+{
+    const question = 'Ordena los pasos para resolver el problema';
+    const items = [
+        'Plantear la ecuación',
+        'Identificar los datos del problema',
+        'Resolver la ecuación',
+        'Verificar el resultado',
+    ];
+
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid === true, 'Should be valid after correction');
+
+    const identIdx = result.items.findIndex(i => /identificar/i.test(i));
+    const plantIdx = result.items.findIndex(i => /plantear/i.test(i));
+    assert(identIdx < plantIdx,
+        `Identificar (${identIdx}) debe estar ANTES de Plantear (${plantIdx})`
+    );
+    console.log('  Items corregidos:', result.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 12: Orden ya correcto — NO debe modificarse
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 12: Notación científica en orden correcto ═══');
+{
+    const question = 'Ordena los pasos para sumar en notación científica';
+    const items = [
+        'Convertir a forma decimal',
+        'Alinear los números por el punto decimal',
+        'Sumar columnas de derecha a izquierda',
+        'Verificar el resultado',
+    ];
+
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid === true, 'Should be valid');
+    // StepDependencyOrderRule should NOT produce corrections for this
+    const hasDependencyCorrection = result.corrections?.some(c => /convertir/i.test(c));
+    assert(!hasDependencyCorrection, 'Should NOT have dependency corrections when order is already correct');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 13: Operación ANTES de redondeo
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 13: Redondear DESPUÉS de calcular ═══');
+{
+    const question = 'Ordena los pasos para calcular el total de la compra';
+    const items = [
+        'Redondear el resultado a 2 decimales',
+        'Calcular el total multiplicando cantidad por precio',
+        'Verificar el resultado',
+    ];
+
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid === true, 'Should be valid after correction');
+
+    const calcIdx = result.items.findIndex(i => /calcular/i.test(i));
+    const roundIdx = result.items.findIndex(i => /redondear/i.test(i));
+    assert(calcIdx < roundIdx,
+        `Calcular (${calcIdx}) debe estar ANTES de Redondear (${roundIdx})`
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Summary
 // ═══════════════════════════════════════════════════════════════════════════
 console.log(`\n═══ RESULTADO: ${passed} passed, ${failed} failed ═══\n`);
