@@ -76,6 +76,7 @@ export class SupabaseSubmissionRepository {
             student_id: subData.userId,
             file_uri: subData.fileUri || null,
             file_name: subData.fileName || null,
+            additional_files: subData.additionalFiles ? JSON.stringify(subData.additionalFiles) : null,
             submission_date: Date.now(),
         };
         const { data, error } = await this.client.from('task_submissions').insert(payload).select().single();
@@ -89,6 +90,7 @@ export class SupabaseSubmissionRepository {
         if (updateData.feedback !== undefined) payload.feedback = updateData.feedback;
         if (updateData.fileUri !== undefined) payload.file_uri = updateData.fileUri;
         if (updateData.fileName !== undefined) payload.file_name = updateData.fileName;
+        if (updateData.additionalFiles !== undefined) payload.additional_files = updateData.additionalFiles ? JSON.stringify(updateData.additionalFiles) : null;
         if (updateData.submissionDate !== undefined) payload.submission_date = updateData.submissionDate;
         if (updateData.gradedBy !== undefined) payload.graded_by = updateData.gradedBy;
         if (updateData.gradedAt !== undefined) payload.graded_at = updateData.gradedAt;

@@ -196,6 +196,12 @@ export const createSubmissionSchema = Joi.object({
     content: Joi.string().max(255).allow(null, '').optional(),
     textContent: Joi.string().max(50000).allow(null, '').optional(),
     text: Joi.string().max(50000).allow(null, '').optional(),
+    additionalFiles: Joi.array().items(
+        Joi.object({
+            fileUri: Joi.string().allow(null, '').optional(),
+            fileName: Joi.string().max(255).allow(null, '').optional(),
+        })
+    ).max(20).allow(null).optional(),
     status: Joi.any().strip().optional(),
 }).custom((value, helpers) => {
     if (!value.taskId && value.task_id) value.taskId = value.task_id;
