@@ -45,6 +45,9 @@ export class SubmissionDomainService {
                 s.submissionDate = s.submission_date;
                 s.fileUri = s.file_uri;
                 s.fileName = s.file_name;
+                s.additionalFiles = s.additional_files
+                    ? (typeof s.additional_files === 'string' ? JSON.parse(s.additional_files) : s.additional_files)
+                    : null;
                 s.gradedBy = s.graded_by;
                 s.gradedAt = s.graded_at;
             }
@@ -84,6 +87,12 @@ export class SubmissionDomainService {
 
         // Normalize fileUri to full R2 public URL if it's a relative key
         data.fileUri = this._normalizeFileUri(data.fileUri);
+        if (Array.isArray(data.additionalFiles)) {
+            data.additionalFiles = data.additionalFiles.map(f => ({
+                ...f,
+                fileUri: this._normalizeFileUri(f.fileUri),
+            }));
+        }
 
         // Check if submission already exists for this user and task
         const existingSubmission = await this.subRepo.findByUserAndTask(data.userId, data.taskId);
@@ -93,6 +102,7 @@ export class SubmissionDomainService {
             const updated = await this.subRepo.update(existingSubmission.id, {
                 fileUri: data.fileUri,
                 fileName: data.fileName,
+                additionalFiles: data.additionalFiles || null,
                 submissionDate: Date.now()
             });
 
@@ -415,6 +425,9 @@ export class SubmissionDomainService {
                 s.submissionDate = s.submission_date;
                 s.fileUri = s.file_uri;
                 s.fileName = s.file_name;
+                s.additionalFiles = s.additional_files
+                    ? (typeof s.additional_files === 'string' ? JSON.parse(s.additional_files) : s.additional_files)
+                    : null;
                 s.gradedBy = s.graded_by;
                 s.gradedAt = s.graded_at;
                 // Extract taskName from joined tasks object (findByCourse does a JOIN)
