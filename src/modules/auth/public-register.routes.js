@@ -248,7 +248,7 @@ export function publicRegisterRoutes() {
                 apellidos: apellidos || '',
                 identificacion: Number.isFinite(numericCedula) ? numericCedula : null,
                 identificacion_original: hashCedula(cedulaDigits),
-                telefono: telefono ? sha256(telefono) : '',
+                telefono: telefono || '',
                 direccion: direccion ? sha256(direccion) : '',
                 fecha_nacimiento: fecha_nacimiento || null,
             };
@@ -276,7 +276,7 @@ export function publicRegisterRoutes() {
             // 5. Insertar en "usuarios"
             const usuarioPayload = {
                 username,
-                email: hashEmail(email),
+                email: email,
                 contrasena: hashedPassword,
                 persona_id: personaId,
                 is_active,

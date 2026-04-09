@@ -1,14 +1,9 @@
 import crypto from 'crypto';
 
-/**
- * Hash determinístico SHA-256 para correos electrónicos.
- * Normaliza a minúsculas antes de hashear para consistencia.
- */
-function hashEmail(email) {
+function normalizeEmail(email) {
     if (!email) return null;
     const normalized = String(email).trim().toLowerCase();
-    if (!normalized) return null;
-    return crypto.createHash('sha256').update(normalized).digest('hex');
+    return normalized || null;
 }
 
 /**
@@ -119,21 +114,15 @@ export class SupabaseUserRepository {
     }
 
     async findByEmail(email) {
-        const hashed = hashEmail(email);
-        if (!hashed) return null;
-        const normalized = String(email).trim().toLowerCase();
+        const normalized = normalizeEmail(email);
+        if (!normalized) return null;
 
-        // 1. Buscar por hash SHA-256 (formato nuevo)
-        const { data, error } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').eq('email', hashed).maybeSingle();
+        // 1. Buscar por email en texto plano
+        const { data, error } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').ilike('email', normalized).maybeSingle();
         if (!error && data) return this._enrichWithRoles(this._mapUser(data));
-        if (error) console.warn(`[UserRepo] findByEmail hashed error: ${error.message}`);
+        if (error) console.warn(`[UserRepo] findByEmail error: ${error.message}`);
 
-        // 2. Fallback: buscar por email en texto plano (usuarios legacy)
-        const { data: plain, error: plainErr } = await this.client.from('usuarios').select('*, personas!fk_usuarios_persona(*)').ilike('email', normalized).maybeSingle();
-        if (!plainErr && plain) return this._enrichWithRoles(this._mapUser(plain));
-        if (plainErr) console.warn(`[UserRepo] findByEmail plain fallback error: ${plainErr.message}`);
-
-        // 3. Último intento sin join (por si falla la FK)
+        // 2. Fallback sin join (por si falla la FK)
         const { data: d2, error: e2 } = await this.client.from('usuarios').select('*').ilike('email', normalized).maybeSingle();
         if (e2 || !d2) return null;
         return this._enrichWithRoles(this._mapUser(d2));
@@ -190,9 +179,7 @@ export class SupabaseUserRepository {
 
             if (!personaId) {
                 const hashedCedula = hashCedula(cedulaDigits);
-                const hashedTelefono = userData.persona.telefono
-                    ? crypto.createHash('sha256').update(String(userData.persona.telefono).trim()).digest('hex')
-                    : null;
+                const telefonoPlain = userData.persona.telefono ? String(userData.persona.telefono).trim() : null;
                 const numericCedula = cedulaDigits ? Number(cedulaDigits) : null;
                 const identificacionValue = Number.isFinite(numericCedula) ? numericCedula : null;
                 console.log(`[UserRepo] Creating persona: cedulaDigits=${cedulaDigits}, numericCedula=${numericCedula}, isFinite=${Number.isFinite(numericCedula)}, identificacion=${identificacionValue}`);
@@ -201,7 +188,7 @@ export class SupabaseUserRepository {
                     apellidos: userData.persona.apellidos || userData.persona.apellido || '',
                     identificacion: identificacionValue,
                     identificacion_original: hashedCedula || null,
-                    telefono: hashedTelefono || '',
+                    telefono: telefonoPlain || '',
                     direccion: '',
                     fecha_nacimiento: userData.persona.fecha_nacimiento || null,
                     ...(userData.persona.institucion_id != null && { institucion_id: userData.persona.institucion_id }),
@@ -226,7 +213,7 @@ export class SupabaseUserRepository {
         // 2. Create usuario (sin fingerprint para máxima compatibilidad)
         const { data, error } = await this.client.from('usuarios').insert({
             username: userData.username,
-            email: hashEmail(userData.email),
+            email: normalizeEmail(userData.email),
             contrasena: userData.password,
             avatar: userData.avatar || null,
             persona_id: personaId,
@@ -249,7 +236,7 @@ export class SupabaseUserRepository {
     async update(id, data) {
         const updatePayload = {};
         if (data.username !== undefined) updatePayload.username = data.username;
-        if (data.email !== undefined) updatePayload.email = hashEmail(data.email);
+        if (data.email !== undefined) updatePayload.email = normalizeEmail(data.email);
         if (data.avatar !== undefined) updatePayload.avatar = data.avatar;
         if (data.password !== undefined) updatePayload.contrasena = data.password;
         if (data.is_active !== undefined) updatePayload.is_active = data.is_active;
