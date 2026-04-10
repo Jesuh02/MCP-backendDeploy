@@ -23,6 +23,8 @@ let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch (_) { pdfParse = null; }
 let mammoth;
 try { mammoth = require('mammoth'); } catch (_) { mammoth = null; }
+let JSZip;
+try { JSZip = require('jszip'); } catch (_) { JSZip = null; }
 
 export class LearningContextService {
     /**
@@ -340,12 +342,15 @@ export class LearningContextService {
                             ctLower.includes('openxmlformats') ||
                             ctLower.includes('msword');
 
+                        const isPptx = nameLower.endsWith('.pptx') || nameLower.endsWith('.ppt') ||
+                            ctLower.includes('presentationml') || ctLower.includes('powerpoint');
+
                         // Magic-byte detection: if content is binary, check ZIP header (docx/xlsx/pptx are ZIP)
-                        if (!isPdf && !isDocx && fileData.buffer) {
+                        if (!isPdf && !isDocx && !isPptx && fileData.buffer) {
                             const magic = fileData.buffer.slice(0, 4);
                             if (magic[0] === 0x50 && magic[1] === 0x4B && magic[2] === 0x03 && magic[3] === 0x04) {
                                 // ZIP magic bytes — likely a .docx/.xlsx/.pptx
-                                if (nameLower.endsWith('.xlsx') || nameLower.endsWith('.pptx')) {
+                                if (nameLower.endsWith('.xlsx')) {
                                     console.warn(`[LearningContextService] Skipping unsupported Office format: ${urlFileName}`);
                                     return;
                                 }
@@ -369,6 +374,30 @@ export class LearningContextService {
                                 if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
                             } catch (pdfErr) {
                                 result.errors.push({ file: fileName, error: `PDF parse: ${pdfErr.message}` });
+                            }
+                        } else if (isPptx && JSZip) {
+                            try {
+                                const buffer = fileData.buffer || Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'binary');
+                                const zip = await JSZip.loadAsync(buffer);
+                                const slideEntries = Object.keys(zip.files)
+                                    .filter(name => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
+                                    .sort((a, b) => {
+                                        const numA = parseInt(a.match(/(\d+)/)?.[1] || '0', 10);
+                                        const numB = parseInt(b.match(/(\d+)/)?.[1] || '0', 10);
+                                        return numA - numB;
+                                    });
+                                const slideTexts = [];
+                                for (const entry of slideEntries) {
+                                    const xml = await zip.files[entry].async('text');
+                                    const matches = xml.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || [];
+                                    const texts = matches.map(m => m.replace(/<[^>]+>/g, '').trim()).filter(Boolean);
+                                    if (texts.length > 0) slideTexts.push(texts.join(' '));
+                                }
+                                textToIngest = slideTexts.join('\n\n');
+                                if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
+                                console.log(`[LearningContextService] PPTX extracted ${textToIngest?.length ?? 0} chars from "${urlFileName}"`);
+                            } catch (pptxErr) {
+                                result.errors.push({ file: fileName, error: `PPTX parse: ${pptxErr.message}` });
                             }
                         } else if (isDocxFinal && mammoth) {
                             try {

@@ -22,6 +22,8 @@ let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch (_) { pdfParse = null; }
 let mammoth;
 try { mammoth = require('mammoth'); } catch (_) { mammoth = null; }
+let JSZip;
+try { JSZip = require('jszip'); } catch (_) { JSZip = null; }
 
 // ─── Semaphore: máximo de llamadas LLM simultáneas en todo el proceso ───────
 const MAX_CONCURRENT_LLM = 3;
@@ -196,6 +198,9 @@ export class ReinforcementDomainService {
                             ctLower.includes('openxmlformats') ||
                             ctLower.includes('msword');
 
+                        const isPptx = nameLower.endsWith('.pptx') || nameLower.endsWith('.ppt') ||
+                            ctLower.includes('presentationml') || ctLower.includes('powerpoint');
+
                         // Magic-byte detection: if content is binary, check ZIP header (docx/xlsx/pptx are ZIP)
                         const isDocxFinal = isDocx || (
                             fileData.buffer &&
@@ -212,6 +217,30 @@ export class ReinforcementDomainService {
                                 if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
                             } catch (pdfErr) {
                                 console.warn(`[ReinforcementService] PDF parse error for ${fileName}: ${pdfErr.message}`);
+                            }
+                        } else if (isPptx && JSZip) {
+                            try {
+                                const buffer = fileData.buffer || Buffer.from(fileData.content, fileData.isBase64 ? 'base64' : 'binary');
+                                const zip = await JSZip.loadAsync(buffer);
+                                const slideEntries = Object.keys(zip.files)
+                                    .filter(name => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
+                                    .sort((a, b) => {
+                                        const numA = parseInt(a.match(/(\d+)/)?.[1] || '0', 10);
+                                        const numB = parseInt(b.match(/(\d+)/)?.[1] || '0', 10);
+                                        return numA - numB;
+                                    });
+                                const slideTexts = [];
+                                for (const entry of slideEntries) {
+                                    const xml = await zip.files[entry].async('text');
+                                    const matches = xml.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || [];
+                                    const texts = matches.map(m => m.replace(/<[^>]+>/g, '').trim()).filter(Boolean);
+                                    if (texts.length > 0) slideTexts.push(texts.join(' '));
+                                }
+                                textToIngest = slideTexts.join('\n\n');
+                                if (!textToIngest || textToIngest.trim().length < 50) textToIngest = null;
+                                console.log(`[ReinforcementService] PPTX extracted ${textToIngest?.length ?? 0} chars from "${urlFileName}"`);
+                            } catch (pptxErr) {
+                                console.warn(`[ReinforcementService] PPTX parse error for ${fileName}: ${pptxErr.message}`);
                             }
                         } else if (isDocxFinal && mammoth) {
                             try {
