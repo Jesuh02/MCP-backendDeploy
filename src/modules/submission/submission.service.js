@@ -63,6 +63,19 @@ export class SubmissionDomainService {
                                 if (user) {
                                     s.studentUsername = user.username || null;
                                     s.studentAvatar = user.avatar || null;
+                                    const persona = user.persona || null;
+                                    if (persona) {
+                                        const nombres = persona.nombres || '';
+                                        const apellidos = persona.apellidos || '';
+                                        s.studentFullName = [nombres, apellidos].filter(Boolean).join(' ') || null;
+                                        s.studentCedula = persona.cedula?.toString()
+                                            || persona.identificacion_original?.toString()
+                                            || persona.identificacion?.toString()
+                                            || null;
+                                    } else {
+                                        s.studentFullName = null;
+                                        s.studentCedula = null;
+                                    }
                                 }
                             }
                         }
@@ -447,6 +460,19 @@ export class SubmissionDomainService {
                                 if (user) {
                                     s.studentUsername = user.username || null;
                                     s.studentAvatar = user.avatar || null;
+                                    const persona = user.persona || null;
+                                    if (persona) {
+                                        const nombres = persona.nombres || '';
+                                        const apellidos = persona.apellidos || '';
+                                        s.studentFullName = [nombres, apellidos].filter(Boolean).join(' ') || null;
+                                        s.studentCedula = persona.cedula?.toString()
+                                            || persona.identificacion_original?.toString()
+                                            || persona.identificacion?.toString()
+                                            || null;
+                                    } else {
+                                        s.studentFullName = null;
+                                        s.studentCedula = null;
+                                    }
                                 }
                             }
                         }
