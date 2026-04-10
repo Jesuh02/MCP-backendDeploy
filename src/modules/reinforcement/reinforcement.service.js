@@ -606,10 +606,12 @@ export class ReinforcementDomainService {
         // Step 2: Build shared context
         const contextBlock = this._buildContextBlock(topicName, ctx.topic?.description, taskName, ctx.task?.description, ragContent, ctx.ragFiles || []);
         const diffLabel = (difficulty || 'HARD').toUpperCase();
-        const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount);
 
         // Step 2b: Detect domain to enforce topic boundary and prevent cross-domain contamination
+        // (moved BEFORE systemPrompt so we can pass domain to it)
         const domain = this._inferDomain(topicName, taskName, ragContent);
+        const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount, domain);
+
         const domainLockBlock = this._buildDomainLockBlock(domain, topicName, taskName);
         console.log(`🎯 [ReinforcementService] Detected domain: ${domain} (topic='${topicName}', task='${taskName}')`);
 
@@ -618,9 +620,16 @@ export class ReinforcementDomainService {
             : `\n${domainLockBlock}`;
 
         // Complexity enforcement added to the user prompt for HARD difficulty
-        const hardEnforcement = diffLabel === 'HARD'
-            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: El dominio YA FUE DETERMINADO: ${domain}. NO cambies de dominio.\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado del dominio ${domain}.\n\nREGLAS INQUEBRANTABLES PARA DOMINIO ${domain}:\n${domain === 'MATH' ? '- SUMAS: genera sumas de 7+ dígitos (ej: 1,023,232 + 12,213,456 + 987,654 = ___), sumas encadenadas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de matrices, series aritméticas/geométricas. NUNCA sumas de 1-3 dígitos. NUNCA algoritmos de programación (Kahan, etc.).' : ''}\n${domain === 'MATH' ? '- ÁLGEBRA: ecuaciones cuadráticas, sistemas de ecuaciones, derivadas, integrales definidas. NUNCA ecuaciones lineales de un solo paso.' : ''}\n${domain === 'SQL' ? '- JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK, ROW_NUMBER), CTEs (WITH), GROUP BY con HAVING. NUNCA SELECT simple sin JOIN.' : ''}\n${domain === 'PROGRAMMING' ? '- Algoritmos con análisis de complejidad O(n log n), recursión con memoización, programación dinámica, grafos. NUNCA sintaxis básica ni Hello World.' : ''}\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional.\n\nTEST DE COMPLEJIDAD: Si un ejercicio se resuelve en <30 segundos de pensamiento activo → DESCÁRTALO y genera uno más complejo.`
+        const MATH_ADJACENT_DOMAINS = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING'];
+        const isMathDomain = domain === 'MATH';
+        const isMathAdjacent = MATH_ADJACENT_DOMAINS.includes(domain);
+        const antiMathBlock = (!isMathAdjacent && domain !== 'GENERAL')
+            ? `\n\n🚫🚫🚫 PROHIBICIÓN ABSOLUTA DE MATEMÁTICAS 🚫🚫🚫\nEl dominio detectado es ${domain}. Este tema NO es de matemáticas.\nPROHIBIDO TOTAL generar ejercicios de: cálculo aritmético, álgebra, ecuaciones, fracciones, series, integrales, derivadas, sumas de números, geometría, trigonometría, o CUALQUIER problema numérico/matemático puro.\nSi el material menciona un número o dato numérico como contexto, NO lo conviertas en un problema matemático.\nTODOS los ejercicios deben evaluar la COMPRENSIÓN DEL CONTENIDO del tema "${topicName}"${taskName ? ` y la tarea "${taskName}"` : ''}, NO habilidades matemáticas.\n🚫🚫🚫 FIN PROHIBICIÓN DE MATEMÁTICAS 🚫🚫🚫`
             : '';
+
+        const hardEnforcement = diffLabel === 'HARD'
+            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: El dominio YA FUE DETERMINADO: ${domain}. NO cambies de dominio.\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado del dominio ${domain}.\n\nREGLAS INQUEBRANTABLES PARA DOMINIO ${domain}:\n${isMathDomain ? '- SUMAS: genera sumas de 7+ dígitos (ej: 1,023,232 + 12,213,456 + 987,654 = ___), sumas encadenadas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de matrices, series aritméticas/geométricas. NUNCA sumas de 1-3 dígitos. NUNCA algoritmos de programación (Kahan, etc.).' : ''}\n${isMathDomain ? '- ÁLGEBRA: ecuaciones cuadráticas, sistemas de ecuaciones, derivadas, integrales definidas. NUNCA ecuaciones lineales de un solo paso.' : ''}\n${domain === 'SQL' ? '- JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK, ROW_NUMBER), CTEs (WITH), GROUP BY con HAVING. NUNCA SELECT simple sin JOIN.' : ''}\n${domain === 'PROGRAMMING' ? '- Algoritmos con análisis de complejidad O(n log n), recursión con memoización, programación dinámica, grafos. NUNCA sintaxis básica ni Hello World.' : ''}\n${!isMathAdjacent && domain !== 'GENERAL' && domain !== 'SQL' && domain !== 'PROGRAMMING' ? `- DOMINIO ${domain}: Genera ejercicios que evalúen EXCLUSIVAMENTE conocimientos de ${domain}. PROHIBIDO incluir problemas matemáticos puros, cálculos aritméticos, ecuaciones o fórmulas que no pertenezcan directamente a ${domain}.` : ''}\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional.\n${antiMathBlock}\n\nTEST DE COMPLEJIDAD: Si un ejercicio se resuelve en <30 segundos de pensamiento activo → DESCÁRTALO y genera uno más complejo.`
+            : (antiMathBlock || '');
 
         // Accumulate unique questions across iterations
         const accumulated = [];
@@ -917,8 +926,8 @@ VERIFICACIÓN OBLIGATORIA antes de cada ejercicio:
 🔒🔒🔒 FIN BLOQUEO DE DOMINIO 🔒🔒🔒`.trim();
     }
 
-    /** @private Build system prompt based on difficulty */
-    _buildSystemPrompt(difficulty, targetCount) {
+    /** @private Build system prompt based on difficulty and domain */
+    _buildSystemPrompt(difficulty, targetCount, domain = 'GENERAL') {
         const groundingRule = `REGLA: Basa los ejercicios EXCLUSIVAMENTE en el material proporcionado. NO inventes información.`;
 
         const difficultyInstructions = {
@@ -954,7 +963,7 @@ Antes de incluir CADA ejercicio en el JSON, verifica:
 ✓ ¿Involucra solo una operación/concepto aislado? Si SÍ → RECHAZAR.
 ✓ ¿Es del nivel más avanzado posible dentro del dominio? Si NO → escalar complejidad.
 
-══ VERIFICACIÓN MATEMÁTICA RIGUROSA (OBLIGATORIA) ══
+${['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING', 'GENERAL'].includes(domain) ? `══ VERIFICACIÓN MATEMÁTICA RIGUROSA (OBLIGATORIA) ══
 ⚠️ NO asumas que tu primer cálculo es correcto. DEBES hacer doble verificación:
 1. Realiza el cálculo paso a paso.
 2. VERIFICA el resultado repitiendo el cálculo con un método diferente (ej: suma en orden inverso, descomposición, etc.).
@@ -994,15 +1003,26 @@ Antes de incluir CADA ejercicio en el JSON, verifica:
   - NUNCA generes una explicación con operaciones aritméticas como "0-9 = -9". Eso NO TIENE SENTIDO.
   - La explicación DEBE mostrar: 1) El resultado numérico calculado, 2) Las posiciones: unidades, decenas, centenas, miles, etc., 3) El dígito exacto en la posición solicitada.
   - Ejemplo correcto: "29,999,999 → posición de decenas de millón → dígito 2".
-  - PROHIBIDO confundir posiciones: unidades=10⁰, decenas=10¹, centenas=10², miles=10³, decenas de mil=10⁴, centenas de mil=10⁵, unidades de millón=10⁶, decenas de millón=10⁷.
+  - PROHIBIDO confundir posiciones: unidades=10⁰, decenas=10¹, centenas=10², miles=10³, decenas de mil=10⁴, centenas de mil=10⁵, unidades de millón=10⁶, decenas de millón=10⁷.` : `══ DOMINIO NO MATEMÁTICO — PROHIBICIÓN DE EJERCICIOS MATEMÁTICOS ══
+Este material pertenece al dominio: ${domain}.
+🚫 PROHIBIDO TOTAL generar ejercicios de cálculo aritmético, álgebra, ecuaciones, fracciones, series,
+integrales, derivadas, sumas/restas/multiplicaciones/divisiones de números, geometría, trigonometría,
+o CUALQUIER tipo de problema matemático puro.
+Los ejercicios deben evaluar EXCLUSIVAMENTE la comprensión, análisis y aplicación del contenido
+del material proporcionado dentro del dominio ${domain}.
+Si necesitas incluir datos numéricos, úsalos como CONTEXTO (fechas, cantidades históricas, estadísticas),
+NO como problemas a resolver.`}
 
 ══ CALIDAD DE DISTRACTORES (multiple_choice) ══
 ⚠️ NUNCA generes opciones con el mismo valor numérico o la misma explicación.
 Cada distractor DEBE representar un error conceptual plausible:
-- Error de acarreo (ej: olvidar llevar 1 en una suma)
+${['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING', 'GENERAL'].includes(domain) ? `- Error de acarreo (ej: olvidar llevar 1 en una suma)
 - Error de fórmula (ej: usar suma en vez de resta)
 - Error de redondeo (ej: redondear hacia arriba vs abajo)
-- Error de orden de operaciones (ej: sumar antes de multiplicar)
+- Error de orden de operaciones (ej: sumar antes de multiplicar)` : `- Confusión de conceptos similares dentro del dominio ${domain}
+- Información parcialmente correcta pero incompleta
+- Inversión de causa y efecto
+- Generalización excesiva o aplicación incorrecta de un principio`}
 Si NO puedes generar 3 distractores plausibles y DISTINTOS → convierte la pregunta a fill_in_blank.
 VERIFICACIÓN: Las 4 opciones DEBEN ser valores DIFERENTES entre sí. Si dos opciones son iguales → la pregunta es INVÁLIDA.
 
@@ -1015,31 +1035,35 @@ VERIFICACIÓN: Las 4 opciones DEBEN ser valores DIFERENTES entre sí. Si dos opc
         };
 
         // Domain-specific complexity rules conditioned on difficulty
+        const MATH_DOMAINS = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING', 'GENERAL'];
+        const isMathRelevant = MATH_DOMAINS.includes(domain);
         const hardComplexityOverrides = difficulty === 'HARD' ? `
 ══════════════════════════════════════════════════
 REGLAS DE COMPLEJIDAD MÁXIMA PARA NIVEL HARD
 ══════════════════════════════════════════════════
 DETECTA el dominio del material y aplica estas reglas SIN EXCEPCIÓN:
-
+${isMathRelevant ? `
 ▸ MATEMÁTICAS / CÁLCULO:
   - fill_in_blank: ecuaciones cuadráticas (x²+5x-6=0, x=___), derivadas (d/dx[x³·ln(x)] = ___), integrales definidas, optimización (máximo/mínimo), sistemas 2×2 o 3×3.
   - ordering: pasos completos de demostración matemática o resolución de ecuaciones complejas.
   - multiple_choice: análisis de comportamiento de funciones, convergencia de series, interpretación gráfica de derivadas.
-  - EJEMPLO fill_in_blank CORRECTO: { question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x")=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). f(3)=27-54+27+2=2." }
   - PROHIBIDO: "Resuelve: 234 + 567 = ___" o cualquier aritmética pura.
-
+` : `
+▸ ⚠️ ESTE MATERIAL NO ES DE MATEMÁTICAS (dominio: ${domain}) ⚠️
+  - NO generes ejercicios de cálculo, aritmética, álgebra, ecuaciones, series, integrales ni derivadas.
+  - Si el material contiene números o datos cuantitativos, úsalos como CONTEXTO, no como problemas a resolver.
+  - Concentra TODOS los ejercicios en el contenido conceptual del dominio ${domain}.
+`}
 ▸ SQL / BASES DE DATOS:
   - fill_in_blank: completar CTEs, cláusulas WINDOW, subconsultas correlacionadas, GROUP BY + HAVING complejos.
   - ordering: pasos de optimización de consulta, diseño de índices, plan de ejecución.
   - multiple_choice: análisis de planes de ejecución, normalización avanzada (3NF vs BCNF), estrategias de indexación, transacciones ACID, aislamiento.
-  - EJEMPLO fill_in_blank CORRECTO: { question: "Completa la función de ventana para calcular el salario acumulado por departamento ordenado por fecha:\nSELECT nombre, departamento, salario,\n  ___(salario) OVER (PARTITION BY departamento ORDER BY fecha_contratacion) AS salario_acum\nFROM empleados;", correctAnswer: "SUM", hint: "Función de agregado que suma progresivamente", explanation: "SUM() OVER(PARTITION BY ... ORDER BY ...) calcula una suma acumulada (running total) dentro de cada partición, reiniciándose por departamento." }
   - PROHIBIDO: "SELECT * FROM tabla WHERE id = ___" o cualquier consulta trivial sin JOIN.
 
 ▸ PROGRAMACIÓN:
   - fill_in_blank: completar algoritmos recursivos, implementar funciones de complejidad O(n log n), resolver casos de recursión mutua, completar implementaciones de estructuras de datos.
   - ordering: pasos de un algoritmo complejo (QuickSort, BFS/DFS, programación dinámica).
   - multiple_choice: analizar complejidad temporal/espacial de un fragmento de código dado, identificar patrones de diseño, razonar sobre condiciones de carrera o deadlocks.
-  - EJEMPLO fill_in_blank CORRECTO: { question: "Completa la implementación de búsqueda binaria recursiva:\nfunction binarySearch(arr, target, lo, hi) {\n  if (lo > hi) return -1;\n  const mid = Math.floor((lo + hi) / 2);\n  if (arr[mid] === target) return mid;\n  if (arr[mid] < target) return binarySearch(arr, target, ___, hi);\n  return binarySearch(arr, target, lo, mid - 1);\n}", correctAnswer: "mid + 1", hint: "Si el elemento del medio es menor, busca en la mitad derecha", explanation: "Si arr[mid] < target, el objetivo está en [mid+1, hi]. Pasar lo=mid+1 descarta la mitad izquierda ya revisada." }
 
 ▸ FÍSICA / QUÍMICA:
   - fill_in_blank: problemas donde se encadenan 3+ fórmulas, análisis de circuitos RC/RL, equilibrio químico con Kp/Kc, termodinámica (ΔG=ΔH-TΔS).
@@ -1051,13 +1075,25 @@ DETECTA el dominio del material y aplica estas reglas SIN EXCEPCIÓN:
   - ordering: reordenar párrafos argumentativos, reconstruir secuencia de eventos en voz pasiva.
   - multiple_choice: análisis de registro formal/informal, corrección de errores sutiles en párrafos técnicos.
 
-REGLA UNIVERSAL HARD: Si puedes describir el ejercicio en una línea simple ("suma X+Y", "SELECT * FROM tabla", "¿Qué hace console.log?"), NO es suficientemente complejo. El enunciado del ejercicio HARD debe presentar un escenario real, un fragmento de código no trivial, o una expresión matemática que requiera análisis.
+▸ HISTORIA / CIENCIAS SOCIALES:
+  - fill_in_blank: completar análisis causal de eventos históricos, fechas clave en contexto, citas de documentos primarios.
+  - ordering: secuencia cronológica de eventos complejos, cadenas causales multi-factor.
+  - multiple_choice: análisis crítico de interpretaciones históricas, comparación de movimientos sociales, evaluación de fuentes primarias vs secundarias.
+
+▸ BIOLOGÍA / CIENCIAS NATURALES:
+  - fill_in_blank: completar procesos celulares complejos, cadenas metabólicas, nomenclatura avanzada.
+  - ordering: etapas de procesos biológicos multi-paso (mitosis, ciclo de Krebs, transcripción-traducción).
+  - multiple_choice: análisis de experimentos, predicción de resultados genéticos, interpretación de datos ecológicos.
+
+REGLA UNIVERSAL HARD: Si puedes describir el ejercicio en una línea simple, NO es suficientemente complejo. El enunciado del ejercicio HARD debe presentar un escenario real y requerir análisis profundo.
 
 ▸ REGLA DE ESCALADO POR DOMINIO (APLICA A CUALQUIER TEMA):
   - Identifica el NÚCLEO del contenido RAG.
-  - Pregúntate: "¿Cuál es la versión más avanzada y profesional de aplicar este conocimiento?"
-  - Genera ejercicios a ESE nivel. Ejemplos:
-    * Tema "sumas" → sumatorias Σ, series geométricas, sumas parciales, sumas de Riemann
+  - Pregúntate: "¿Cuál es la versión más avanzada y profesional de aplicar este conocimiento DENTRO DEL MISMO DOMINIO?"
+  - Genera ejercicios a ESE nivel DENTRO del dominio ${domain}. NUNCA cambies de dominio.
+  ${isMathRelevant ? `Ejemplos:
+    * Tema "sumas" → sumatorias Σ, series geométricas, sumas parciales, sumas de Riemann` : `Ejemplos:
+    * Tema de historia → análisis multicausal, comparación de fuentes primarias, evaluación historiográfica`}
     * Tema "variables en Python" → closures, scope chains, generadores, decoradores con estado
     * Tema "SELECT en SQL" → window functions con PARTITION BY, CTEs recursivos, subconsultas correlacionadas
     * Tema "fuerzas en física" → sistemas de poleas con fricción, planos inclinados con resortes
@@ -1066,10 +1102,10 @@ REGLA UNIVERSAL HARD: Si puedes describir el ejercicio en una línea simple ("su
 
 ▸ AUTO-CHECK FINAL (OBLIGATORIO antes de emitir el JSON):
   Para cada ejercicio, verifica mentalmente:
-  1. ¿El enunciado tiene MÁS de 2 líneas o incluye código/fórmulas? ✓
+  1. ¿El ejercicio pertenece al dominio ${domain}? Si NO → DESCÁRTALO y genera uno del dominio correcto. ✓
   2. ¿Requiere combinar 2+ conceptos del material? ✓
   3. ¿Un profesional del área tardaría >30 segundos en resolverlo? ✓
-  Si algún ejercicio no cumple los 3 puntos, REEMPLÁZALO por uno más complejo.
+  Si algún ejercicio no cumple los 3 puntos, REEMPLÁZALO por uno más complejo del dominio ${domain}.
 ══════════════════════════════════════════════════
 ` : '';
 
@@ -1080,19 +1116,25 @@ TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
    Campos: { type: "multiple_choice", question, options (array de 4), correctIndex (0-3), explanation }
 
 2. "fill_in_blank" — Ejercicio PRÁCTICO donde el estudiante resuelve y escribe la respuesta.
-   OBLIGATORIO para: cálculos matemáticos, resolver operaciones, completar código, completar frases, traducciones.
+   OBLIGATORIO para: ${isMathRelevant ? 'cálculos matemáticos, resolver operaciones, ' : ''}completar código, completar frases, traducciones, respuestas conceptuales.
    Campos: { type: "fill_in_blank", question (usa "___" para marcar el espacio), correctAnswer (string), hint (pista opcional), explanation }
-   Ejemplos por dominio y dificultad:
+   ${isMathRelevant ? `Ejemplos por dominio y dificultad:
    EASY:
    - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 24 + 18 = ___", correctAnswer: "42", hint: "Suma las unidades primero", explanation: "24 + 18 = 42" }
    INTERMEDIATE:
    - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 4,827 + 3,695 = ___", correctAnswer: "8522", hint: "Suma columna por columna con acarreo", explanation: "7+5=12 (lleva 1), 2+9+1=12 (lleva 1), 8+6+1=15 (lleva 1), 4+3+1=8. Resultado: 8,522" }
    HARD (COMPLEJIDAD MÁXIMA — los ejemplos para HARD son los que debes seguir):
    - Matemáticas/Suma: { type: "fill_in_blank", question: "Una empresa tiene 3 sucursales con ventas mensuales de $45,230, $78,945 y $63,120. Calcula el total de ventas y luego aplica un impuesto del 16%. ¿Cuál es el monto total con impuesto? (redondea a entero)", correctAnswer: "217422", hint: "Primero suma las 3 cantidades, luego multiplica por 1.16", explanation: "Paso 1: 45230 + 78945 + 63120 = 187295. Paso 2: 187295 × 1.16 = 217262.2 → redondeado: 217262. VERIFICACIÓN: 187295 × 0.16 = 29967.2, + 187295 = 217262." }
-   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el valor de x donde ocurre el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x)=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). VERIFICACIÓN: f''(x)=6x-12, f''(3)=6>0 confirma mínimo local. f(3)=27-54+27+2=2." }
+   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el valor de x donde ocurre el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x)=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). VERIFICACIÓN: f''(x)=6x-12, f''(3)=6>0 confirma mínimo local. f(3)=27-54+27+2=2." }` : `Ejemplos por dominio y dificultad:
+   EASY:
+   - General: { type: "fill_in_blank", question: "El proceso por el cual las plantas convierten la luz solar en energía se llama ___", correctAnswer: "fotosíntesis", hint: "Es un proceso que ocurre en los cloroplastos", explanation: "La fotosíntesis es el proceso por el cual las plantas convierten CO₂ y H₂O en glucosa usando luz solar." }
+   INTERMEDIATE:
+   - General: { type: "fill_in_blank", question: "En el contexto de la Segunda Guerra Mundial, el desembarco aliado en Normandía el 6 de junio de 1944 se conoce como ___", correctAnswer: "Día D", hint: "Es una letra del alfabeto seguida de su nombre", explanation: "El Día D (D-Day) fue la operación Overlord, el mayor desembarco anfibio de la historia." }
+   HARD:
+   - General: { type: "fill_in_blank", question: "Según el material proporcionado, el concepto clave que se aplica en este contexto es ___", correctAnswer: "(basado en el material RAG)", hint: "Revisa el material de referencia", explanation: "Basado en el contenido del material proporcionado." }`}
    - SQL: { type: "fill_in_blank", question: "Completa la función de ventana para calcular el salario acumulado por departamento:\nSELECT nombre, departamento, salario,\n  ___(salario) OVER (PARTITION BY departamento ORDER BY fecha_contratacion) AS salario_acum\nFROM empleados;", correctAnswer: "SUM", hint: "Función de agregado que suma progresivamente", explanation: "SUM() OVER(PARTITION BY ... ORDER BY ...) calcula una suma acumulada (running total) dentro de cada partición." }
    - Programación: { type: "fill_in_blank", question: "Completa la búsqueda binaria recursiva:\nfunction binarySearch(arr, target, lo, hi) {\n  if (lo > hi) return -1;\n  const mid = Math.floor((lo + hi) / 2);\n  if (arr[mid] === target) return mid;\n  if (arr[mid] < target) return binarySearch(arr, target, ___, hi);\n  return binarySearch(arr, target, lo, mid - 1);\n}", correctAnswer: "mid + 1", hint: "Si el elemento del medio es menor, busca en la mitad derecha", explanation: "Si arr[mid] < target, el objetivo está en [mid+1, hi]. Pasar lo=mid+1 descarta la mitad izquierda." }
-   - Física: { type: "fill_in_blank", question: "Un proyectil se lanza a 30° con v₀=40m/s. Su alcance horizontal R = v₀²·sin(2θ)/g = ___ m (g=10m/s², sin(60°)≈0.866)", correctAnswer: "138.56", hint: "R=1600·0.866/10", explanation: "R = (40²·sin(60°))/10 = (1600·0.866)/10 ≈ 138.56 m" }
+   ${isMathRelevant ? `- Física: { type: "fill_in_blank", question: "Un proyectil se lanza a 30° con v₀=40m/s. Su alcance horizontal R = v₀²·sin(2θ)/g = ___ m (g=10m/s², sin(60°)≈0.866)", correctAnswer: "138.56", hint: "R=1600·0.866/10", explanation: "R = (40²·sin(60°))/10 = (1600·0.866)/10 ≈ 138.56 m" }` : ''}
 
 3. "ordering" — Ordenar elementos en la secuencia correcta.
    Ideal para: pasos de un algoritmo, líneas de código, procesos complejos, pasos de demostración.
@@ -1104,7 +1146,7 @@ TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
    Si tienes 5 items, la explanation DEBE decir "5 pasos" o simplemente no enumerar. NUNCA escribas "4 fases" si hay 5 items.
    VERIFICA: cuenta los items y asegúrate de que la explanation sea coherente antes de emitir el JSON.
 
-   ⚠️ REGLA PEDAGÓGICA PARA ARITMÉTICA CON DECIMALES — OBLIGATORIA:
+   ${isMathRelevant ? `⚠️ REGLA PEDAGÓGICA PARA ARITMÉTICA CON DECIMALES — OBLIGATORIA:
    La "coma decimal" (o "punto decimal") en operaciones de suma/resta con decimales se coloca PRIMERO, junto con la alineación.
    NUNCA debe aparecer como paso final. El orden correcto es SIEMPRE:
      PASO 1 (PRIMERO): Alinear los números verticalmente por la coma decimal Y marcar la posición de la coma en el resultado.
@@ -1113,7 +1155,7 @@ TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
    PROHIBIDO: "Bajar la coma decimal", "Colocar la coma decimal" o equivalentes como PASO FINAL.
 
    Ejemplo EASY (enteros): { type: "ordering", question: "Ordena los pasos para resolver 234 + 178", items: ["Sumar unidades: 4+8=12, escribir 2, llevar 1", "Sumar decenas: 3+7+1=11, escribir 1, llevar 1", "Sumar centenas: 2+1+1=4", "Obtener resultado: 412"], correctOrder: [0, 1, 2, 3], explanation: "Se suman 4 columnas de derecha a izquierda propagando el acarreo." }
-   Ejemplo EASY (decimales): { type: "ordering", question: "Ordena los pasos para sumar 45.67 + 128.3", items: ["Alinear los números por la coma decimal y marcar su posición en el resultado", "Sumar centésimas: 7+0=7", "Sumar décimas: 6+3=9", "Sumar unidades: 5+8=13, escribir 3, llevar 1", "Sumar decenas y centenas con acarreo; resultado final: 173.97"], correctOrder: [0, 1, 2, 3, 4], explanation: "5 pasos: la coma decimal se fija PRIMERO por alineación; luego se opera columna por columna de derecha a izquierda." }
+   Ejemplo EASY (decimales): { type: "ordering", question: "Ordena los pasos para sumar 45.67 + 128.3", items: ["Alinear los números por la coma decimal y marcar su posición en el resultado", "Sumar centésimas: 7+0=7", "Sumar décimas: 6+3=9", "Sumar unidades: 5+8=13, escribir 3, llevar 1", "Sumar decenas y centenas con acarreo; resultado final: 173.97"], correctOrder: [0, 1, 2, 3, 4], explanation: "5 pasos: la coma decimal se fija PRIMERO por alineación; luego se opera columna por columna de derecha a izquierda." }` : ''}
    Ejemplo HARD: { type: "ordering", question: "Ordena los pasos de QuickSort para el arreglo [3,8,1,5,2,7]", items: ["Seleccionar pivote (ej: 5)", "Particionar: [3,1,2] [5] [8,7]", "Recursión izquierda: [1,2,3]", "Recursión derecha: [7,8]", "Combinar: [1,2,3,5,7,8]"], correctOrder: [0, 1, 2, 3, 4], explanation: "5 pasos — QuickSort: selecciona pivote, particiona O(n), aplica recursión en cada mitad. Complejidad promedio O(n log n)." }
 
 DECISIÓN INTELIGENTE DE TIPOS — PRIORIZA EJERCICIOS PRÁCTICOS:
@@ -1122,12 +1164,13 @@ DECISIÓN INTELIGENTE DE TIPOS — PRIORIZA EJERCICIOS PRÁCTICOS:
 - PRINCIPIO CLAVE: Si el tema involucra HACER (calcular, resolver, programar, escribir), usa "fill_in_blank" para que el estudiante HAGA, no solo elija respuestas.
 
 REGLAS POR DOMINIO (AJUSTA COMPLEJIDAD según dificultad seleccionada):
-- MATEMÁTICAS: MÍNIMO 5 de ${targetCount} deben ser "fill_in_blank". Escala de complejidad: EASY (1-2 dígitos: 3+5), INTERMEDIATE (3-4 dígitos: 4827+3695), HARD (7+ dígitos, 3+ operandos, operaciones mezcladas: 1023232+12213456+987654, o sumatorias Σ, series, sistemas de ecuaciones, derivadas, integrales). PROHIBIDO EN HARD: sumas de menos de 5 dígitos o de solo 2 números simples.
+${isMathRelevant ? `- MATEMÁTICAS: MÍNIMO 5 de ${targetCount} deben ser "fill_in_blank". Escala de complejidad: EASY (1-2 dígitos: 3+5), INTERMEDIATE (3-4 dígitos: 4827+3695), HARD (7+ dígitos, 3+ operandos, operaciones mezcladas: 1023232+12213456+987654, o sumatorias Σ, series, sistemas de ecuaciones, derivadas, integrales). PROHIBIDO EN HARD: sumas de menos de 5 dígitos o de solo 2 números simples.
+- CIENCIAS: MÍNIMO 3 "fill_in_blank" con problemas multi-fórmula. HARD: 3+ ecuaciones encadenadas. NUNCA cálculos de un solo paso.` : `- ⚠️ DOMINIO ${domain}: NO generes ejercicios matemáticos. TODOS los ejercicios deben ser sobre el contenido del material.`}
 - SQL/BASES DE DATOS: MÍNIMO 4 "fill_in_blank". EASY: SELECTs con WHERE. INTERMEDIATE: JOINs simples, GROUP BY. HARD: CTEs, window functions, subconsultas correlacionadas — NUNCA SELECTs sin JOIN.
 - PROGRAMACIÓN: MÍNIMO 4 "fill_in_blank" para completar código, 2 "ordering" para algoritmos. HARD: algoritmos avanzados (recursión, grafos, programación dinámica), análisis de complejidad. NUNCA sintaxis básica.
 - IDIOMAS: MÍNIMO 4 "fill_in_blank". HARD: gramática avanzada (subjuntivo, condicionales mixtos), traducción técnica. NUNCA vocabulario básico.
-- CIENCIAS: MÍNIMO 3 "fill_in_blank" con problemas multi-fórmula. HARD: 3+ ecuaciones encadenadas. NUNCA cálculos de un solo paso.
 - HISTORIA, SOCIALES: 2-3 "ordering" para causalidad compleja, resto "multiple_choice" para análisis crítico.
+- BIOLOGÍA, NATURALES: MÍNIMO 3 "fill_in_blank" con procesos multi-etapa, 2 "ordering" para secuencias biológicas.
 - OTROS DOMINIOS: MÍNIMO 3 "fill_in_blank", 1-2 "ordering". HARD: Lleva el tema a su expresión práctica más compleja y profesional.
 
 REGLAS DE CALIDAD:
@@ -1436,6 +1479,27 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
             // Pure math/science questions are off-domain for SQL topics
             const mathOnlySignals = [/\b\d+\s*[+\-*\/]\s*\d+\s*=\s*___/, /calcula\s+la\s+(integral|derivada|sumatoria)/i];
             if (mathOnlySignals.some(r => r.test(text))) return true;
+        }
+
+        // Cross-domain: reject pure math questions in non-math domains
+        const MATH_ADJACENT = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING', 'GENERAL'];
+        if (!MATH_ADJACENT.includes(domain)) {
+            // Detect pure math/arithmetic questions that don't belong in this domain
+            const pureMathSignals = [
+                /\b\d+\s*[+\-*\/]\s*\d+\s*=\s*___/,                          // arithmetic: "234 + 567 = ___"
+                /calcula\s+(la\s+)?(integral|derivada|sumatoria|suma|raíz)/i,   // "calcula la integral..."
+                /resuelve\s+(la\s+)?ecuaci[oó]n/i,                              // "resuelve la ecuación..."
+                /\b(sen|cos|tan|log|ln|sqrt|\u222b|\u2211|\u03c0|\u221a)\b/i,  // trig/calc symbols
+                /\bx\s*[\^²³]\s*[+\-]\s*\d/,                                  // polynomial: "x² + 3"
+                /\b\d+\s*\/\s*\d+\s*[+\-]\s*\d+\s*\/\s*\d+/,                  // fractions: "3/8 + 1/9"
+                /serie\s+(geom[eé]trica|aritm[eé]tica)/i,                       // "serie geométrica"
+                /sistema\s+de\s+ecuaciones/i,                                   // "sistema de ecuaciones"
+                /\bmatriz|matrices|determinante\b/i,                             // matrices
+            ];
+            if (pureMathSignals.some(r => r.test(text))) {
+                console.warn(`[ReinforcementService] Cross-domain MATH rejected in ${domain}: "${text.substring(0, 80)}..."`);
+                return true;
+            }
         }
 
         // 1. Simple arithmetic: reject if ALL numbers have < 5 digits in MATH domain
