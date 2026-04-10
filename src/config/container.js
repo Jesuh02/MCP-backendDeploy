@@ -147,6 +147,7 @@ import { ExcelDomainService } from '../modules/excel/excel.service.js';
 
 import { InstitucionDomainService } from '../modules/institucion/institucion.service.js';
 import { SupabaseInstitucionRepository } from '../modules/institucion/infrastructure/supabase.institucion.repository.js';
+import { SupabaseInstitutionPaymentRepository } from '../modules/institucion/infrastructure/supabase.institution-payment.repository.js';
 import { InstitucionController } from '../modules/institucion/institucion.controller.js';
 import { ExcelController } from '../modules/excel/excel.controller.js';
 
@@ -254,6 +255,7 @@ export function createContainer() {
     const crossTenantWhatsAppSessionRepo = new CrossTenantWhatsAppSessionRepository();
     const collaboratorRepo = new SupabaseCollaboratorRepository(client);
     const institucionRepo = new SupabaseInstitucionRepository(client);
+    const institutionPaymentRepo = new SupabaseInstitutionPaymentRepository(client);
 
     // ═══════════════════════════════════════════════════════════
     // 3. SERVICIOS DE DOMINIO — Inyectar repositorios y adaptadores
@@ -301,7 +303,7 @@ export function createContainer() {
     const reinforcementResultService = new ReinforcementResultService({ reinforcementResultRepository: reinforcementResultRepo });
 
     const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
-    const institucionService = new InstitucionDomainService({ institucionRepository: institucionRepo });
+    const institucionService = new InstitucionDomainService({ institucionRepository: institucionRepo, institutionPaymentRepository: institutionPaymentRepo, paymentGatewayPort: paymentGateway, userRepository: userRepo });
 
     // Nivel 1: servicios que dependen de servicios del Nivel 0
     const videoService = new VideoDomainService({
@@ -451,7 +453,7 @@ export function createContainer() {
 
     // Excel
     const excelController = new ExcelController({ excelService });
-    const institucionController = new InstitucionController({ institucionService });
+    const institucionController = new InstitucionController({ institucionService, userRepository: userRepo });
 
     // WhatsApp
     const whatsAppController = safeInit('WhatsAppController', () => new WhatsAppController({
