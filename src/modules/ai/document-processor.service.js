@@ -26,6 +26,14 @@ try {
     console.warn("⚠️ mammoth not available, DOCX processing will be skipped");
 }
 
+// Lazy load JSZip for PPTX extraction
+let JSZip = null;
+try {
+    JSZip = require('jszip');
+} catch (e) {
+    console.warn("⚠️ jszip not available, PPTX processing will be skipped");
+}
+
 export class DocumentProcessor extends IDocumentProcessor {
     constructor(options = {}) {
         super();
@@ -66,6 +74,9 @@ export class DocumentProcessor extends IDocumentProcessor {
             case 'docx':
             case 'doc':
                 return this._extractFromDocx(content);
+            case 'pptx':
+            case 'ppt':
+                return this._extractFromPptx(content);
             case 'txt':
             case 'sql':
             case 'js':
@@ -176,6 +187,62 @@ export class DocumentProcessor extends IDocumentProcessor {
             return this._cleanText(result.value);
         } catch (error) {
             console.error('❌ DOCX extraction error:', error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * Extract text from a PPTX file by reading slide XML entries.
+     * PPTX files are ZIP archives; text lives in <a:t> tags inside ppt/slides/slideN.xml.
+     * @param {Buffer|string} content - PPTX binary content or base64 string
+     * @returns {Promise<string>} - Extracted plain text
+     */
+    async _extractFromPptx(content) {
+        if (!JSZip) {
+            throw new Error('PPTX parsing not available. Install jszip: npm install jszip');
+        }
+        try {
+            let buffer = content;
+            if (typeof content === 'string') {
+                buffer = Buffer.from(content, 'base64');
+                if (buffer[0] !== 0x50 || buffer[1] !== 0x4B) {
+                    buffer = Buffer.from(content, 'binary');
+                }
+            }
+
+            const zip = await JSZip.loadAsync(buffer);
+
+            // Collect slide entries sorted numerically
+            const slideEntries = Object.keys(zip.files)
+                .filter(name => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
+                .sort((a, b) => {
+                    const numA = parseInt(a.match(/(\d+)/)?.[1] || '0', 10);
+                    const numB = parseInt(b.match(/(\d+)/)?.[1] || '0', 10);
+                    return numA - numB;
+                });
+
+            if (slideEntries.length === 0) {
+                throw new Error('PPTX contains no slide entries');
+            }
+
+            const slideTexts = [];
+            for (const entry of slideEntries) {
+                const xml = await zip.files[entry].async('text');
+                // Extract all <a:t>…</a:t> text nodes
+                const matches = xml.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || [];
+                const texts = matches.map(m => m.replace(/<[^>]+>/g, '').trim()).filter(Boolean);
+                if (texts.length > 0) {
+                    slideTexts.push(texts.join(' '));
+                }
+            }
+
+            const fullText = slideTexts.join('\n\n');
+            if (!fullText || fullText.trim().length === 0) {
+                throw new Error('PPTX appears to be empty or contains no extractable text');
+            }
+            return this._cleanText(fullText);
+        } catch (error) {
+            console.error('❌ PPTX extraction error:', error.message);
             throw error;
         }
     }
