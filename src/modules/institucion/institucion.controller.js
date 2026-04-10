@@ -174,40 +174,88 @@ export class InstitucionController {
     // SuperAdmin endpoints (role 4)
     // ═══════════════════════════════════════════════════════
 
-    /** List ALL institutions including suspended/inactive (superadmin). */
+    /** Helper: get repo for a specific tenant by its id. */
+    _tenantRepo(tenantId) {
+        const entries = getAllTenantEntries();
+        const entry = entries.find(e => e.id === tenantId);
+        if (!entry?.client) return null;
+        return new SupabaseInstitucionRepository(entry.client);
+    }
+
+    /** List ALL institutions across ALL tenant databases (superadmin). */
     listAllAdmin = async (req, res, next) => {
         try {
-            const result = await this.service.listAll(req.query);
-            if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const entries = getAllTenantEntries();
+            const perTenant = await Promise.all(
+                entries.map(async (entry) => {
+                    if (!entry.client) return [];
+                    try {
+                        const repo = new SupabaseInstitucionRepository(entry.client);
+                        const items = await repo.findAllUnfiltered({ limit: 500 });
+                        return items.map(inst => ({
+                            ...inst,
+                            tenantId: entry.id,
+                            tenantName: entry.name,
+                        }));
+                    } catch { return []; }
+                }),
+            );
+            const all = perTenant.flat().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+            res.json({ success: true, data: all });
         } catch (err) { next(err); }
     };
 
-    /** Set payment due date for an institution. */
+    /** Set payment due date for an institution (cross-tenant). */
     setPaymentDueDate = async (req, res, next) => {
         try {
-            const { payment_due_date } = req.body;
-            const result = await this.service.setPaymentDueDate(parseInt(req.params.id), payment_due_date);
+            const { payment_due_date, tenantId } = req.body;
+            const instId = parseInt(req.params.id);
+            const repo = tenantId ? this._tenantRepo(tenantId) : null;
+            if (repo) {
+                if (payment_due_date && isNaN(new Date(payment_due_date).getTime())) {
+                    return next(new ValidationError('Fecha de pago inválida'));
+                }
+                const updated = await repo.setPaymentDueDate(instId, payment_due_date || null);
+                return res.json({ success: true, data: { ...updated, tenantId } });
+            }
+            // Fallback: local tenant
+            const result = await this.service.setPaymentDueDate(instId, payment_due_date);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
 
-    /** Suspend an institution (block all user logins). */
+    /** Suspend an institution (cross-tenant). */
     suspend = async (req, res, next) => {
         try {
-            const { reason } = req.body || {};
-            const result = await this.service.suspend(parseInt(req.params.id), reason);
+            const { reason, tenantId } = req.body || {};
+            const instId = parseInt(req.params.id);
+            const repo = tenantId ? this._tenantRepo(tenantId) : null;
+            if (repo) {
+                const updated = await repo.suspend(instId, reason);
+                return res.json({ success: true, data: { ...updated, tenantId } });
+            }
+            const result = await this.service.suspend(instId, reason);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
 
-    /** Unsuspend an institution (allow logins again). */
+    /** Unsuspend an institution (cross-tenant). */
     unsuspend = async (req, res, next) => {
         try {
-            const result = await this.service.unsuspend(parseInt(req.params.id));
+            const { tenantId } = req.body || {};
+            const instId = parseInt(req.params.id);
+            const repo = tenantId ? this._tenantRepo(tenantId) : null;
+            if (repo) {
+                const updated = await repo.unsuspend(instId);
+                return res.json({ success: true, data: { ...updated, tenantId } });
+            }
+            const result = await this.service.unsuspend(instId);
             if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
