@@ -81,7 +81,7 @@ export class LLMDomainService {
 
                 // Resolve the effective institution name for the system prompt
                 let effectiveInstitutionName = institutionName || (tenantId ?
-                    (userTenants.find(t => t.id === tenantId) ? .name ? ? tenantId) :
+                    (userTenants.find(t => t.id === tenantId)?.name ?? tenantId) :
                     null);
                 // The tenant whose DB should actually serve queries (may differ from JWT tenantId
                 // when user explicitly names a different institution in the prompt).
@@ -108,7 +108,7 @@ export class LLMDomainService {
                         const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
                         if (cached && (Date.now() - cached.askedAt) < TWENTY_FOUR_HOURS) {
                             // Use the previously selected tenant
-                            effectiveInstitutionName = userTenants.find(t => t.id === cached.tenantId) ? .name ? ? cached.tenantId;
+                            effectiveInstitutionName = userTenants.find(t => t.id === cached.tenantId)?.name ?? cached.tenantId;
                             effectiveTenantId = cached.tenantId;
                         } else {
                             // Must ask the user which institution to query
@@ -501,7 +501,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 // 3. Build user prompt with file content if available
                 // Cap file content to ~50 000 chars (≈ 20 000 tokens) to stay well under
                 // the DeepSeek context limit of 128K tokens once the system prompt is added.
-                const MAX_FILE_CHARS = 50 _000;
+                const MAX_FILE_CHARS = 50_000;
                 let fullPrompt = prompt;
                 if (resolvedFileContent) {
                     const safeContent = resolvedFileContent.length > MAX_FILE_CHARS ?
