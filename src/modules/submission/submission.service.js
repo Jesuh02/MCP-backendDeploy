@@ -432,6 +432,8 @@ export class SubmissionDomainService {
                 s.gradedAt = s.graded_at;
                 // Extract taskName from joined tasks object (findByCourse does a JOIN)
                 s.taskName = s.tasks?.title || null;
+                // Extract subjectId from topic joins
+                s.subjectId = s.tasks?.topics?.subject_id || s.tasks?.topics?.materia_id || null;
             }
             if (this.userService) {
                 const studentIds = [...new Set(subs.map(s => s.student_id).filter(id => id))];
@@ -450,6 +452,44 @@ export class SubmissionDomainService {
                         }
                     } catch (err) {
                         console.warn('[SubmissionService] Error enriching submissions with usernames:', err.message);
+                    }
+                }
+
+                // Resolve gradedByUsername for submissions that have been graded
+                const graderIds = [...new Set(subs.map(s => s.graded_by).filter(id => id))];
+                if (graderIds.length > 0) {
+                    try {
+                        const gradersResult = await this.userService.getByIds(graderIds);
+                        if (gradersResult.isOk()) {
+                            const gradersById = new Map((gradersResult.getValue() || []).map(u => [Number(u.id), u]));
+                            for (const s of subs) {
+                                if (s.graded_by) {
+                                    const grader = gradersById.get(Number(s.graded_by));
+                                    s.gradedByUsername = grader?.username || null;
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        console.warn('[SubmissionService] Error enriching submissions with grader usernames:', err.message);
+                    }
+                }
+            }
+
+            // Resolve subjectName from subjectService (batch)
+            if (this.subjectService) {
+                const subjectIds = [...new Set(subs.map(s => s.subjectId).filter(id => id))];
+                if (subjectIds.length > 0) {
+                    try {
+                        const subjectMap = new Map();
+                        await Promise.all(subjectIds.map(async id => {
+                            const result = await this.subjectService.getById(id);
+                            if (result.isOk()) subjectMap.set(Number(id), result.getValue().name || null);
+                        }));
+                        for (const s of subs) {
+                            if (s.subjectId) s.subjectName = subjectMap.get(Number(s.subjectId)) || null;
+                        }
+                    } catch (err) {
+                        console.warn('[SubmissionService] Error enriching submissions with subject names:', err.message);
                     }
                 }
             }
