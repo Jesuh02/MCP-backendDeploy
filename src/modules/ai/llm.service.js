@@ -56,270 +56,284 @@ export class LLMDomainService {
      * @returns {Promise<Result>}
      */
     async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null }) {
-        if (!prompt || prompt.trim().length === 0) {
-            return Result.fail(new ValidationError('El prompt es requerido'));
-        }
+            if (!prompt || prompt.trim().length === 0) {
+                return Result.fail(new ValidationError('El prompt es requerido'));
+            }
 
-        try {
-            // ── MULTI-TENANT INSTITUTION AWARENESS ────────────────────────────────
-            // Determine institution context for this request.
-            // Rules:
-            //   A) Single tenant → use it directly, inform the LLM.
-            //   B) Multiple tenants + prompt explicitly names an institution → match it.
-            //   C) Multiple tenants + already asked within 24h → use the cached selection.
-            //   D) Multiple tenants + not asked yet → ask the user (return early).
-            const allTenantConfigs = TENANT_CONFIGS.map(t => ({ id: t.id, name: t.name }));
-            // Limit to tenants the user is actually enrolled in (from JWT availableTenants).
-            // If availableTenants is empty (old client/WhatsApp), fall back to all configs.
-            // availableTenants may be strings ["qa-develop"] or objects [{id:"qa-develop",name:"..."}]
-            const normalizedAvailable = (Array.isArray(availableTenants) && availableTenants.length > 0)
-                ? availableTenants.map(t => typeof t === 'string' ? t : t?.id).filter(Boolean)
-                : [];
-            const userTenants = (normalizedAvailable.length > 0)
-                ? allTenantConfigs.filter(t => normalizedAvailable.includes(t.id))
-                : allTenantConfigs;
+            try {
+                // ── MULTI-TENANT INSTITUTION AWARENESS ────────────────────────────────
+                // Determine institution context for this request.
+                // Rules:
+                //   A) Single tenant → use it directly, inform the LLM.
+                //   B) Multiple tenants + prompt explicitly names an institution → match it.
+                //   C) Multiple tenants + already asked within 24h → use the cached selection.
+                //   D) Multiple tenants + not asked yet → ask the user (return early).
+                const allTenantConfigs = TENANT_CONFIGS.map(t => ({ id: t.id, name: t.name }));
+                // Limit to tenants the user is actually enrolled in (from JWT availableTenants).
+                // If availableTenants is empty (old client/WhatsApp), fall back to all configs.
+                // availableTenants may be strings ["qa-develop"] or objects [{id:"qa-develop",name:"..."}]
+                const normalizedAvailable = (Array.isArray(availableTenants) && availableTenants.length > 0) ?
+                    availableTenants.map(t => typeof t === 'string' ? t : t ? .id).filter(Boolean) :
+                    [];
+                const userTenants = (normalizedAvailable.length > 0) ?
+                    allTenantConfigs.filter(t => normalizedAvailable.includes(t.id)) :
+                    allTenantConfigs;
 
-            // Resolve the effective institution name for the system prompt
-            let effectiveInstitutionName = institutionName || (tenantId
-                ? (userTenants.find(t => t.id === tenantId)?.name ?? tenantId)
-                : null);
-            // The tenant whose DB should actually serve queries (may differ from JWT tenantId
-            // when user explicitly names a different institution in the prompt).
-            let effectiveTenantId = tenantId;
+                // Resolve the effective institution name for the system prompt
+                let effectiveInstitutionName = institutionName || (tenantId ?
+                    (userTenants.find(t => t.id === tenantId) ? .name ? ? tenantId) :
+                    null);
+                // The tenant whose DB should actually serve queries (may differ from JWT tenantId
+                // when user explicitly names a different institution in the prompt).
+                let effectiveTenantId = tenantId;
 
-            if (userTenants.length > 1 && !fromWhatsApp) {
-                // Check if the prompt explicitly names one of the institutions
-                const promptLower = prompt.toLowerCase();
-                const explicitTenant = userTenants.find(t =>
-                    promptLower.includes(t.name.toLowerCase()) ||
-                    promptLower.includes(t.id.toLowerCase()),
-                );
+                if (userTenants.length > 1 && !fromWhatsApp) {
+                    // Check if the prompt explicitly names one of the institutions
+                    const promptLower = prompt.toLowerCase();
+                    const explicitTenant = userTenants.find(t =>
+                        promptLower.includes(t.name.toLowerCase()) ||
+                        promptLower.includes(t.id.toLowerCase()),
+                    );
 
-                if (explicitTenant) {
-                    // User named a specific institution — use it and cache for 24h
-                    effectiveInstitutionName = explicitTenant.name;
-                    effectiveTenantId = explicitTenant.id;
-                    if (userId) {
-                        _tenantAskCache.set(`${tenantId || 'default'}:${userId}`, { tenantId: explicitTenant.id, askedAt: Date.now() });
-                    }
-                } else {
-                    // Check 24-hour cache
-                    const cached = userId ? _tenantAskCache.get(`${tenantId || 'default'}:${userId}`) : null;
-                    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-                    if (cached && (Date.now() - cached.askedAt) < TWENTY_FOUR_HOURS) {
-                        // Use the previously selected tenant
-                        effectiveInstitutionName = userTenants.find(t => t.id === cached.tenantId)?.name ?? cached.tenantId;
-                        effectiveTenantId = cached.tenantId;
-                    } else {
-                        // Must ask the user which institution to query
+                    if (explicitTenant) {
+                        // User named a specific institution — use it and cache for 24h
+                        effectiveInstitutionName = explicitTenant.name;
+                        effectiveTenantId = explicitTenant.id;
                         if (userId) {
-                            _tenantAskCache.set(`${tenantId || 'default'}:${userId}`, { tenantId: tenantId || userTenants[0].id, askedAt: Date.now() });
+                            _tenantAskCache.set(`${tenantId || 'default'}:${userId}`, { tenantId: explicitTenant.id, askedAt: Date.now() });
                         }
-                        const menuLines = userTenants.map((t, i) => `${i + 1}. *${t.name}*`).join('\n');
-                        const askMsg = `🏫 Tienes acceso a múltiples instituciones. ¿De cuál deseas consultar la información?\n\n${menuLines}\n\nResponde con el número o el nombre de la institución y luego repite tu pregunta.`;
-                        return Result.ok({
-                            response: askMsg,
-                            model: null,
-                            usage: null,
-                            esCalificacion: false,
-                            nota: null,
-                            requiresTenantSelection: true,
-                        });
+                    } else {
+                        // Check 24-hour cache
+                        const cached = userId ? _tenantAskCache.get(`${tenantId || 'default'}:${userId}`) : null;
+                        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+                        if (cached && (Date.now() - cached.askedAt) < TWENTY_FOUR_HOURS) {
+                            // Use the previously selected tenant
+                            effectiveInstitutionName = userTenants.find(t => t.id === cached.tenantId) ? .name ? ? cached.tenantId;
+                            effectiveTenantId = cached.tenantId;
+                        } else {
+                            // Must ask the user which institution to query
+                            if (userId) {
+                                _tenantAskCache.set(`${tenantId || 'default'}:${userId}`, { tenantId: tenantId || userTenants[0].id, askedAt: Date.now() });
+                            }
+                            const menuLines = userTenants.map((t, i) => `${i + 1}. *${t.name}*`).join('\n');
+                            const askMsg = `🏫 Tienes acceso a múltiples instituciones. ¿De cuál deseas consultar la información?\n\n${menuLines}\n\nResponde con el número o el nombre de la institución y luego repite tu pregunta.`;
+                            return Result.ok({
+                                response: askMsg,
+                                model: null,
+                                usage: null,
+                                esCalificacion: false,
+                                nota: null,
+                                requiresTenantSelection: true,
+                            });
+                        }
                     }
                 }
-            }
-            // ── END MULTI-TENANT AWARENESS ─────────────────────────────────────────
+                // ── END MULTI-TENANT AWARENESS ─────────────────────────────────────────
 
-            // ── CROSS-TENANT CONTEXT SWITCH ────────────────────────────────────────
-            // When the resolved institution differs from the JWT tenant, re-run the
-            // entire prompt inside that tenant's AsyncLocalStorage context so all
-            // repository / MCP calls transparently query the correct Supabase DB.
-            if (effectiveTenantId && effectiveTenantId !== tenantId) {
-                return runInTenantContext(effectiveTenantId, () =>
-                    this.processPrompt({
-                        prompt, model, courseId, taskDescription, fileContent, fileUri,
-                        studentId, userId, username, submissionId, taskId, topicId,
-                        freeLearning, forceMCPTools, difficulty, userRoles, fromWhatsApp,
-                        tenantId: effectiveTenantId,   // now matches context → no re-dispatch
-                        availableTenants,
-                        institutionName: effectiveInstitutionName,
-                        imageBase64,
-                    }),
-                );
-            }
+                // ── CROSS-TENANT CONTEXT SWITCH ────────────────────────────────────────
+                // When the resolved institution differs from the JWT tenant, re-run the
+                // entire prompt inside that tenant's AsyncLocalStorage context so all
+                // repository / MCP calls transparently query the correct Supabase DB.
+                if (effectiveTenantId && effectiveTenantId !== tenantId) {
+                    return runInTenantContext(effectiveTenantId, () =>
+                        this.processPrompt({
+                            prompt,
+                            model,
+                            courseId,
+                            taskDescription,
+                            fileContent,
+                            fileUri,
+                            studentId,
+                            userId,
+                            username,
+                            submissionId,
+                            taskId,
+                            topicId,
+                            freeLearning,
+                            forceMCPTools,
+                            difficulty,
+                            userRoles,
+                            fromWhatsApp,
+                            tenantId: effectiveTenantId, // now matches context → no re-dispatch
+                            availableTenants,
+                            institutionName: effectiveInstitutionName,
+                            imageBase64,
+                        }),
+                    );
+                }
 
-            // 0. Auto-fetch file content from R2 when not provided by the client
-            let resolvedFileContent = fileContent || '';
-            if (!resolvedFileContent) {
-                resolvedFileContent = await this._resolveFileContent({ fileUri, submissionId, taskId, studentId });
-            }
+                // 0. Auto-fetch file content from R2 when not provided by the client
+                let resolvedFileContent = fileContent || '';
+                if (!resolvedFileContent) {
+                    resolvedFileContent = await this._resolveFileContent({ fileUri, submissionId, taskId, studentId });
+                }
 
-            // 1. Build RAG context if available — pass topicId/taskId for scoped retrieval
-            // For reinforcement requests, use HYBRID RETRIEVAL to combine semantic search
-            // with window expansion and progressive coverage for maximum relevance.
-            let ragContext = '';
-            if (this.rag && courseId) {
-                try {
-                    if (this._isReinforcementRequest(prompt) && userId) {
-                        const isEasyDifficulty = String(difficulty || '').toUpperCase() === 'EASY';
-                        let existingCount = 0;
-                        if (!isEasyDifficulty) {
-                            try {
-                                const { MCPService } = await
-                                import ('./mcp-legacy.service.js');
-                                const mcpService = new MCPService();
-                                const history = await mcpService.getReinforcementHistory(
-                                    userId, courseId, topicId || null, taskId || null
-                                );
-                                existingCount = (history && history.length) || 0;
-                            } catch (_) { /* ignore — will use page 0 */ }
-                        }
-
-                        const sessionIndex = Math.floor(existingCount / 10);
-
-                        // ═══ HYBRID RETRIEVAL v2: Semantic + Window ONLY ═══
-                        // Progressive is used as fallback ONLY when semantic returns 0 results.
-                        // This prevents polluting relevant context with unrelated document chunks.
-                        const compositeQuery = this._buildCompositeSearchQuery(prompt, topicId, taskId);
-
-                        if (typeof this.rag.getHybridRagContent === 'function') {
-                            const filter = { courseId };
-                            if (!freeLearning) {
-                                if (topicId) filter.topicId = topicId;
-                                if (taskId) filter.taskId = taskId;
+                // 1. Build RAG context if available — pass topicId/taskId for scoped retrieval
+                // For reinforcement requests, use HYBRID RETRIEVAL to combine semantic search
+                // with window expansion and progressive coverage for maximum relevance.
+                let ragContext = '';
+                if (this.rag && courseId) {
+                    try {
+                        if (this._isReinforcementRequest(prompt) && userId) {
+                            const isEasyDifficulty = String(difficulty || '').toUpperCase() === 'EASY';
+                            let existingCount = 0;
+                            if (!isEasyDifficulty) {
+                                try {
+                                    const { MCPService } = await
+                                    import ('./mcp-legacy.service.js');
+                                    const mcpService = new MCPService();
+                                    const history = await mcpService.getReinforcementHistory(
+                                        userId, courseId, topicId || null, taskId || null
+                                    );
+                                    existingCount = (history && history.length) || 0;
+                                } catch (_) { /* ignore — will use page 0 */ }
                             }
 
-                            const hybridData = await this.rag.getHybridRagContent(compositeQuery, filter, {
-                                semanticTopK: 5,
-                                windowSize: 2,
-                                semanticThreshold: 0.45,
-                                sessionIndex, // Only used as progressive fallback if semantic=0
-                                maxTokens: 4000,
-                                maxChunks: 12,
-                            });
+                            const sessionIndex = Math.floor(existingCount / 10);
 
-                            if (hybridData && hybridData.content) {
-                                ragContext = `═══════════════════════════════════════════════════════════\n`;
-                                ragContext += `📚 CONTEXTO DEL MATERIAL — Hybrid Retrieval\n`;
-                                ragContext += `   Búsqueda semántica: ${hybridData.semanticHits || 0} coincidencias\n`;
-                                ragContext += `   Contexto expandido: ${hybridData.expandedChunks || 0} fragmentos\n`;
-                                if (hybridData.totalPages > 1) {
-                                    ragContext += `   Cobertura progresiva: Sección ${(hybridData.page ?? 0) + 1}/${hybridData.totalPages}\n`;
+                            // ═══ HYBRID RETRIEVAL v2: Semantic + Window ONLY ═══
+                            // Progressive is used as fallback ONLY when semantic returns 0 results.
+                            // This prevents polluting relevant context with unrelated document chunks.
+                            const compositeQuery = this._buildCompositeSearchQuery(prompt, topicId, taskId);
+
+                            if (typeof this.rag.getHybridRagContent === 'function') {
+                                const filter = { courseId };
+                                if (!freeLearning) {
+                                    if (topicId) filter.topicId = topicId;
+                                    if (taskId) filter.taskId = taskId;
                                 }
-                                ragContext += `═══════════════════════════════════════════════════════════\n\n`;
-                                ragContext += hybridData.content;
-                                ragContext += `\n═══════════════════════════════════════════════════════════\n`;
-                                ragContext += `Total: ${hybridData.chunks} fragmentos de ${hybridData.totalChunks} totales.\n`;
-                                ragContext += `═══════════════════════════════════════════════════════════\n`;
 
-                                console.log(`[LLMDomainService] Hybrid RAG context: semanticHits=${hybridData.semanticHits}, expanded=${hybridData.expandedChunks}, chunks=${hybridData.chunks}/${hybridData.totalChunks}, session=${sessionIndex}`);
+                                const hybridData = await this.rag.getHybridRagContent(compositeQuery, filter, {
+                                    semanticTopK: 5,
+                                    windowSize: 2,
+                                    semanticThreshold: 0.45,
+                                    sessionIndex, // Only used as progressive fallback if semantic=0
+                                    maxTokens: 4000,
+                                    maxChunks: 12,
+                                });
+
+                                if (hybridData && hybridData.content) {
+                                    ragContext = `═══════════════════════════════════════════════════════════\n`;
+                                    ragContext += `📚 CONTEXTO DEL MATERIAL — Hybrid Retrieval\n`;
+                                    ragContext += `   Búsqueda semántica: ${hybridData.semanticHits || 0} coincidencias\n`;
+                                    ragContext += `   Contexto expandido: ${hybridData.expandedChunks || 0} fragmentos\n`;
+                                    if (hybridData.totalPages > 1) {
+                                        ragContext += `   Cobertura progresiva: Sección ${(hybridData.page ?? 0) + 1}/${hybridData.totalPages}\n`;
+                                    }
+                                    ragContext += `═══════════════════════════════════════════════════════════\n\n`;
+                                    ragContext += hybridData.content;
+                                    ragContext += `\n═══════════════════════════════════════════════════════════\n`;
+                                    ragContext += `Total: ${hybridData.chunks} fragmentos de ${hybridData.totalChunks} totales.\n`;
+                                    ragContext += `═══════════════════════════════════════════════════════════\n`;
+
+                                    console.log(`[LLMDomainService] Hybrid RAG context: semanticHits=${hybridData.semanticHits}, expanded=${hybridData.expandedChunks}, chunks=${hybridData.chunks}/${hybridData.totalChunks}, session=${sessionIndex}`);
+                                }
                             }
-                        }
 
-                        // Fallback to progressive context if hybrid didn't produce results
-                        if (!ragContext && typeof this.rag.getProgressiveRagContent === 'function') {
-                            const filter = { courseId };
-                            if (!freeLearning) {
-                                if (topicId) filter.topicId = topicId;
-                                if (taskId) filter.taskId = taskId;
+                            // Fallback to progressive context if hybrid didn't produce results
+                            if (!ragContext && typeof this.rag.getProgressiveRagContent === 'function') {
+                                const filter = { courseId };
+                                if (!freeLearning) {
+                                    if (topicId) filter.topicId = topicId;
+                                    if (taskId) filter.taskId = taskId;
+                                }
+
+                                const progressiveData = await this.rag.getProgressiveRagContent(filter, sessionIndex);
+
+                                if (progressiveData && progressiveData.content) {
+                                    ragContext = `═══════════════════════════════════════════════════════════\n`;
+                                    ragContext += `📚 CONTEXTO DEL MATERIAL (Sección ${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages ?? '?'})\n`;
+                                    ragContext += `═══════════════════════════════════════════════════════════\n\n`;
+                                    ragContext += progressiveData.content;
+                                    ragContext += `\n═══════════════════════════════════════════════════════════\n`;
+                                    ragContext += `Total: ${progressiveData.chunks} fragmentos de ${progressiveData.totalChunks} totales.\n`;
+                                    ragContext += `═══════════════════════════════════════════════════════════\n`;
+
+                                    console.log(`[LLMDomainService] Progressive RAG context: page=${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages}, chunks=${progressiveData.chunks}/${progressiveData.totalChunks}, session=${sessionIndex}`);
+                                }
                             }
 
-                            const progressiveData = await this.rag.getProgressiveRagContent(filter, sessionIndex);
-
-                            if (progressiveData && progressiveData.content) {
-                                ragContext = `═══════════════════════════════════════════════════════════\n`;
-                                ragContext += `📚 CONTEXTO DEL MATERIAL (Sección ${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages ?? '?'})\n`;
-                                ragContext += `═══════════════════════════════════════════════════════════\n\n`;
-                                ragContext += progressiveData.content;
-                                ragContext += `\n═══════════════════════════════════════════════════════════\n`;
-                                ragContext += `Total: ${progressiveData.chunks} fragmentos de ${progressiveData.totalChunks} totales.\n`;
-                                ragContext += `═══════════════════════════════════════════════════════════\n`;
-
-                                console.log(`[LLMDomainService] Progressive RAG context: page=${(progressiveData.page ?? 0) + 1}/${progressiveData.totalPages}, chunks=${progressiveData.chunks}/${progressiveData.totalChunks}, session=${sessionIndex}`);
+                            // Fallback to standard context if progressive didn't produce results
+                            if (!ragContext) {
+                                ragContext = await this.rag.buildContext(prompt, {
+                                    courseId,
+                                    topicId: freeLearning ? null : (topicId || null),
+                                    taskId: freeLearning ? null : (taskId || null),
+                                    maxTokens: 4000
+                                });
                             }
-                        }
-
-                        // Fallback to standard context if progressive didn't produce results
-                        if (!ragContext) {
+                        } else {
                             ragContext = await this.rag.buildContext(prompt, {
                                 courseId,
                                 topicId: freeLearning ? null : (topicId || null),
                                 taskId: freeLearning ? null : (taskId || null),
-                                maxTokens: 4000
+                                maxTokens: 2000
                             });
                         }
-                    } else {
-                        ragContext = await this.rag.buildContext(prompt, {
-                            courseId,
-                            topicId: freeLearning ? null : (topicId || null),
-                            taskId: freeLearning ? null : (taskId || null),
-                            maxTokens: 2000
-                        });
+                    } catch (ragErr) {
+                        console.warn('[LLMDomainService] RAG context failed, proceeding without:', ragErr.message);
                     }
-                } catch (ragErr) {
-                    console.warn('[LLMDomainService] RAG context failed, proceeding without:', ragErr.message);
                 }
-            }
 
-            // 2. Build system prompt with context
-            let systemPrompt = 'Eres un asistente educativo experto y también un asistente de conocimiento general. Responde de manera clara, precisa y útil. Puedes responder tanto preguntas sobre la plataforma educativa y sus datos como preguntas de conocimiento general (historia, ciencia, cultura, etc.).';
+                // 2. Build system prompt with context
+                let systemPrompt = 'Eres un asistente educativo experto y también un asistente de conocimiento general. Responde de manera clara, precisa y útil. Puedes responder tanto preguntas sobre la plataforma educativa y sus datos como preguntas de conocimiento general (historia, ciencia, cultura, etc.).';
 
-            // ── Inject user identity so the LLM always knows who it is talking to ──
-            if (username) {
-                systemPrompt += `\n\nUSUARIO ACTUAL: ${username}. Dirígete al usuario por su nombre cuando sea apropiado.`;
-            }
+                // ── Inject user identity so the LLM always knows who it is talking to ──
+                if (username) {
+                    systemPrompt += `\n\nUSUARIO ACTUAL: ${username}. Dirígete al usuario por su nombre cuando sea apropiado.`;
+                }
 
-            systemPrompt += `\n\nREGLA DE PREGUNTAS GENERALES:\n- Si el usuario hace una pregunta de conocimiento general (historia, ciencia, matemáticas, cultura, idiomas, etc.) que NO requiere datos de la base de datos, responde directamente con tu conocimiento. NO uses herramientas de base de datos para este tipo de preguntas.\n- Solo usa las herramientas de base de datos cuando el usuario pregunte sobre datos de la plataforma (estudiantes, cursos, progreso, entregas, etc.).\n- Ejemplo de pregunta general: "¿Cuáles fueron los aportes de Marie Curie en física?" → Responde directamente.\n- Ejemplo de pregunta de datos: "¿Cuántos estudiantes tengo?" → Usa la herramienta query_database.`;
+                systemPrompt += `\n\nREGLA DE PREGUNTAS GENERALES:\n- Si el usuario hace una pregunta de conocimiento general (historia, ciencia, matemáticas, cultura, idiomas, etc.) que NO requiere datos de la base de datos, responde directamente con tu conocimiento. NO uses herramientas de base de datos para este tipo de preguntas.\n- Solo usa las herramientas de base de datos cuando el usuario pregunte sobre datos de la plataforma (estudiantes, cursos, progreso, entregas, etc.).\n- Ejemplo de pregunta general: "¿Cuáles fueron los aportes de Marie Curie en física?" → Responde directamente.\n- Ejemplo de pregunta de datos: "¿Cuántos estudiantes tengo?" → Usa la herramienta query_database.`;
 
-            // ── Inject user identity so the LLM always knows who it is talking to ──
-            if (username) {
-                systemPrompt += `\n\nUSUARIO ACTUAL: ${username}. Dirígete al usuario por su nombre cuando sea apropiado.`;
-            }
+                // ── Inject user identity so the LLM always knows who it is talking to ──
+                if (username) {
+                    systemPrompt += `\n\nUSUARIO ACTUAL: ${username}. Dirígete al usuario por su nombre cuando sea apropiado.`;
+                }
 
-            // ── Inject institution context so the LLM always knows which tenant it serves ──
-            if (effectiveInstitutionName) {
-                systemPrompt += `\n\nINSTITUCIÓN ACTIVA: ${effectiveInstitutionName}. ` +
-                    `Todas las consultas, datos y respuestas corresponden a esta institución. ` +
-                    `Si el usuario pregunta sobre otra institución, indícale que para eso debe seleccionarla desde el selector de institución en la interfaz.`;
-            }
+                // ── Inject institution context so the LLM always knows which tenant it serves ──
+                if (effectiveInstitutionName) {
+                    systemPrompt += `\n\nINSTITUCIÓN ACTIVA: ${effectiveInstitutionName}. ` +
+                        `Todas las consultas, datos y respuestas corresponden a esta institución. ` +
+                        `Si el usuario pregunta sobre otra institución, indícale que para eso debe seleccionarla desde el selector de institución en la interfaz.`;
+                }
 
-            systemPrompt += `\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos de base de datos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.) al usuario.\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra siempre el username o nombre (first_name, last_name). Haz JOIN con la tabla usuarios.\n- Para cursos: muestra siempre el título (title). Haz JOIN con courses.\n- Para temas: muestra siempre el nombre (name). Para tareas: muestra siempre el título (title).\n- Si una columna es una FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible (username, title, name).\n- Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos" o "id: 5" o SELECT user_id, course_id FROM ...\n- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o SELECT u.username, c.title FROM ... JOIN usuarios u ON ...\n- Esta regla aplica a TODAS las respuestas y consultas SQL sin excepción.`;
+                systemPrompt += `\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos de base de datos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.) al usuario.\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra siempre el username o nombre (first_name, last_name). Haz JOIN con la tabla usuarios.\n- Para cursos: muestra siempre el título (title). Haz JOIN con courses.\n- Para temas: muestra siempre el nombre (name). Para tareas: muestra siempre el título (title).\n- Si una columna es una FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible (username, title, name).\n- Ejemplo PROHIBIDO: "Usuario 42 tiene 3 cursos" o "id: 5" o SELECT user_id, course_id FROM ...\n- Ejemplo CORRECTO: "El usuario juanperez tiene 3 cursos" o SELECT u.username, c.title FROM ... JOIN usuarios u ON ...\n- Esta regla aplica a TODAS las respuestas y consultas SQL sin excepción.`;
 
-            systemPrompt += `\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR SQL AL USUARIO:\n- PROHIBIDO mostrar código SQL, consultas SQL o bloques de código SQL en tu respuesta.\n- El usuario NO debe ver SELECT, FROM, WHERE, JOIN, ni ninguna sentencia SQL.\n- Cuando necesites datos de la base de datos, usa la herramienta internamente, pero tu respuesta final debe ser en lenguaje natural claro (Markdown).\n- Si la herramienta devuelve datos, presenta un resumen legible. NUNCA copies el SQL que usaste.`;
+                systemPrompt += `\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR SQL AL USUARIO:\n- PROHIBIDO mostrar código SQL, consultas SQL o bloques de código SQL en tu respuesta.\n- El usuario NO debe ver SELECT, FROM, WHERE, JOIN, ni ninguna sentencia SQL.\n- Cuando necesites datos de la base de datos, usa la herramienta internamente, pero tu respuesta final debe ser en lenguaje natural claro (Markdown).\n- Si la herramienta devuelve datos, presenta un resumen legible. NUNCA copies el SQL que usaste.`;
 
-            systemPrompt += `\n\nREGLA DE EXCEL — GENERACIÓN AUTOMÁTICA:
+                systemPrompt += `\n\nREGLA DE EXCEL — GENERACIÓN AUTOMÁTICA:
 - Cuando el usuario solicite un archivo Excel, un reporte en Excel o una hoja de cálculo, el SISTEMA se encarga de generarlo automáticamente. TÚ NO generas el archivo.
 - NUNCA digas "No puedo generar archivos Excel" ni "no tengo la capacidad de crear Excel". El sistema SÍ genera el Excel y el usuario recibirá un botón de descarga automáticamente.
 - Tu trabajo cuando el usuario pide un Excel: presenta los datos en una TABLA MARKDOWN bien formateada y añade un resumen breve. El archivo Excel se adjuntará automáticamente por el sistema.
 - Ejemplo de respuesta CORRECTA cuando piden Excel: "Aquí tienes el progreso de tus estudiantes: [tabla markdown] El archivo Excel está listo para descargar."
 - Ejemplo de respuesta PROHIBIDA: "No puedo generar archivos Excel, pero aquí tienes los datos..."`;
 
-            // ── EXCEL DATA CONTEXT INJECTION ──────────────────────────────────────
-            // When the controller already generated an Excel file, inject the raw data
-            // so the LLM text response describes EXACTLY the same rows as the Excel.
-            // This prevents the inconsistency where text and Excel show different data.
-            if (excelDataContext && Array.isArray(excelDataContext) && excelDataContext.length > 0) {
-                // Limit to first 200 rows to avoid exceeding context window
-                const previewRows = excelDataContext.slice(0, 200);
-                const columnNames = Object.keys(previewRows[0]);
-                // Build a compact Markdown table for the LLM to reference
-                let dataTable = `| ${columnNames.join(' | ')} |\n| ${columnNames.map(() => '---').join(' | ')} |\n`;
-                for (const row of previewRows) {
-                    dataTable += `| ${columnNames.map(c => String(row[c] ?? '')).join(' | ')} |\n`;
-                }
-                const truncatedNote = excelDataContext.length > 200
-                    ? `\n(Mostrando 200 de ${excelDataContext.length} filas totales en el Excel)`
-                    : '';
-                systemPrompt += `\n\n══════════ DATOS DEL EXCEL GENERADO ══════════
+                // ── EXCEL DATA CONTEXT INJECTION ──────────────────────────────────────
+                // When the controller already generated an Excel file, inject the raw data
+                // so the LLM text response describes EXACTLY the same rows as the Excel.
+                // This prevents the inconsistency where text and Excel show different data.
+                if (excelDataContext && Array.isArray(excelDataContext) && excelDataContext.length > 0) {
+                    // Limit to first 200 rows to avoid exceeding context window
+                    const previewRows = excelDataContext.slice(0, 200);
+                    const columnNames = Object.keys(previewRows[0]);
+                    // Build a compact Markdown table for the LLM to reference
+                    let dataTable = `| ${columnNames.join(' | ')} |\n| ${columnNames.map(() => '---').join(' | ')} |\n`;
+                    for (const row of previewRows) {
+                        dataTable += `| ${columnNames.map(c => String(row[c] ?? '')).join(' | ')} |\n`;
+                    }
+                    const truncatedNote = excelDataContext.length > 200 ?
+                        `\n(Mostrando 200 de ${excelDataContext.length} filas totales en el Excel)` :
+                        '';
+                    systemPrompt += `\n\n══════════ DATOS DEL EXCEL GENERADO ══════════
 Los siguientes datos son los que YA se exportaron al archivo Excel que el usuario va a descargar.
 Tu respuesta de texto DEBE describir y presentar EXACTAMENTE estos mismos datos. NO consultes la base de datos nuevamente; usa estos datos directamente.
 Presenta estos datos en una tabla Markdown bien formateada en tu respuesta.${truncatedNote}
 
 ${dataTable}
 ══════════ FIN DATOS EXCEL ══════════`;
-            }
+                }
 
-            systemPrompt += `\n\nREGLA DE FORMATO DE TABLAS — MARKDOWN:
+                systemPrompt += `\n\nREGLA DE FORMATO DE TABLAS — MARKDOWN:
 - Cuando presentes datos tabulares, usa SIEMPRE tablas Markdown correctamente formateadas.
 - Formato obligatorio:
   | Columna 1 | Columna 2 | Columna 3 |
@@ -329,9 +343,9 @@ ${dataTable}
 - Alinea las columnas para que sea legible.
 - NO uses formato de lista o texto plano para datos que tienen estructura tabular.`;
 
-            // INSTRUCCIÓN SEMÁNTICA: Detección de intención de calificación (Requerimiento estricto: NO usar regex en input usuario)
-            // El LLM es responsable de señalizar si es una solicitud de nota válida.
-            systemPrompt += `\n\nREGLA CRÍTICA — ETIQUETA [GRADING_REQUEST]:
+                // INSTRUCCIÓN SEMÁNTICA: Detección de intención de calificación (Requerimiento estricto: NO usar regex en input usuario)
+                // El LLM es responsable de señalizar si es una solicitud de nota válida.
+                systemPrompt += `\n\nREGLA CRÍTICA — ETIQUETA [GRADING_REQUEST]:
 Usa esta etiqueta ÚNICAMENTE cuando el usuario te pida de forma DIRECTA e IMPERATIVA que asignes una nota numérica a la entrega/tarea que está adjunta en este contexto.
 Ejemplos que SÍ activan la etiqueta: "califica esta tarea", "ponle nota", "dame una calificación numérica", "¿qué nota le pondrías a esta entrega?", "evalúa y asigna puntaje".
 Ejemplos que NUNCA activan la etiqueta (preguntas informativas, hipotéticas o sobre metodología):
@@ -343,12 +357,12 @@ Ejemplos que NUNCA activan la etiqueta (preguntas informativas, hipotéticas o s
 Regla semántica: la intención debe ser una ACCIÓN DIRECTA de asignación de nota a ESTA entrega concreta, no una consulta, comparación, criterio o pregunta hipotética.
 Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] (escala 0-10 siempre, NUNCA 0-100).`;
 
-            if (taskDescription) {
-                systemPrompt += `\n\nContexto de la tarea: ${taskDescription}`;
-            }
-            if (ragContext) {
-                systemPrompt += `\n\nContexto relevante del curso (extraído de rag_documents):\n${ragContext}`;
-                systemPrompt += `\nINSTRUCCIÓN DE GROUNDING ESTRICTO:
+                if (taskDescription) {
+                    systemPrompt += `\n\nContexto de la tarea: ${taskDescription}`;
+                }
+                if (ragContext) {
+                    systemPrompt += `\n\nContexto relevante del curso (extraído de rag_documents):\n${ragContext}`;
+                    systemPrompt += `\nINSTRUCCIÓN DE GROUNDING ESTRICTO:
 - Usa EXCLUSIVAMENTE la información contenida en los fragmentos RAG anteriores.
 - Cada pregunta y cada respuesta correcta DEBE poder verificarse en el texto de los fragmentos.
 - NO inventes ni añadas información que NO aparezca en los fragmentos.
@@ -361,19 +375,19 @@ Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] 
 - PROHIBIDO ABSOLUTO preguntas de memorización de eventos: NO preguntar "¿Qué ocurrió?", "¿Quién hizo X?", "¿Cuándo sucedió?", "¿Dónde se realizó?", "¿Qué evento causó X?". El estudiante NUNCA debe responder recordando un hecho, fecha, nombre o evento del documento.
 - TODAS las preguntas deben premiar la COMPRENSIÓN y el PENSAMIENTO CRÍTICO: el estudiante debe demostrar que ENTIENDE relaciones, mecanismos, consecuencias e implicaciones — no que memorizó hechos.
 - Usa la Taxonomía de Bloom niveles superiores: APLICAR, ANALIZAR, EVALUAR, CREAR. PROHIBIDO niveles inferiores: RECORDAR, IDENTIFICAR.`;
-            }
+                }
 
-            if (freeLearning) {
-                systemPrompt += `\n\nMODO APRENDIZAJE LIBRE ACTIVADO:
-- Las preguntas DEBEN cubrir TODOS los temas presentes en el material, no solo uno.
+                if (freeLearning) {
+                    systemPrompt += `\n\nMODO APRENDIZAJE LIBRE ACTIVADO:
+- Las preguntas DEBEN cubrir TODOS los temas presen{tes en el material, no solo uno.
 - Si el documento contiene múltiples temas (ej: SQL y Python), genera preguntas que cubran AMBOS.
 - NO te limites al título del tema o tarea. Explora TODO el contenido disponible.
 - Distribuye las preguntas equitativamente entre los distintos temas del material.`;
-            }
+                }
 
-            // 2.5. JSON format enforcement for reinforcement/quiz requests
-            if (this._isReinforcementRequest(prompt)) {
-                systemPrompt += `\n\nINSTRUCCIÓN CRÍTICA DE FORMATO JSON:
+                // 2.5. JSON format enforcement for reinforcement/quiz requests
+                if (this._isReinforcementRequest(prompt)) {
+                    systemPrompt += `\n\nINSTRUCCIÓN CRÍTICA DE FORMATO JSON:
 - Tu respuesta DEBE ser ÚNICAMENTE un array JSON válido. Sin texto antes ni después.
 - Cada objeto DEBE tener un campo "type" que sea "multiple_choice", "fill_in_blank" o "ordering".
 - Para "multiple_choice": campos "question", "type", "options" (array de 4), "correctIndex" (0-3), "explanation".
@@ -413,8 +427,8 @@ items: [
   * Si la correcta es corta (número, palabra), TODAS deben ser igual de cortas.
   * VERIFICA: Cuenta los caracteres de cada opción antes de finalizar. Si alguna difiere >15% del promedio, REESCRIBE.`;
 
-                // 2.6. PEDAGOGICAL QUALITY: 10/10 questions — thinking, not searching
-                systemPrompt += `\n\nINSTRUCCIÓN PEDAGÓGICA — NIVEL 10/10 (OBLIGATORIO ESTRICTO):
+                    // 2.6. PEDAGOGICAL QUALITY: 10/10 questions — thinking, not searching
+                    systemPrompt += `\n\nINSTRUCCIÓN PEDAGÓGICA — NIVEL 10/10 (OBLIGATORIO ESTRICTO):
 
 ═══ PRINCIPIO #1: EL ESTUDIANTE DEBE PENSAR, NO BUSCAR NI RECORDAR EVENTOS ═══
 - PROHIBIDO preguntas donde el estudiante solo localiza un dato en el material (ej: "¿Qué modelo tiene menor tiempo?").
@@ -463,11 +477,11 @@ items: [
 | Preguntar "¿Cuál es el valor?"    | Preguntar "¿Qué implica ese valor?"          |
 | Distractores obvios               | Trampas conceptuales donde TODO parece válido|
 | Responder sin entender            | Imposible responder sin comprender           |`;
-            }
+                }
 
-            // 2.7. HARD difficulty complexity enforcement for reinforcement
-            if (String(difficulty || '').toUpperCase() === 'HARD' && this._isReinforcementRequest(prompt)) {
-                systemPrompt += `\n\n═══ ENFORCEMENT DE COMPLEJIDAD HARD ═══
+                // 2.7. HARD difficulty complexity enforcement for reinforcement
+                if (String(difficulty || '').toUpperCase() === 'HARD' && this._isReinforcementRequest(prompt)) {
+                    systemPrompt += `\n\n═══ ENFORCEMENT DE COMPLEJIDAD HARD ═══
 ERES un evaluador de nivel universitario avanzado / profesional.
 Reglas OBLIGATORIAS para TODOS los ejercicios:
 
@@ -482,141 +496,141 @@ Reglas OBLIGATORIAS para TODOS los ejercicios:
 7. OPCIONES MATEMÁTICAS: Genera los distractores aplicando errores típicos de cálculo (error de un dígito, confusión de operación, olvido de un operando). NUNCA pongas el resultado correcto en otra opción.
 
 Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo RECHAZARÁ. Maximiza la complejidad y la exactitud.`;
-            }
-
-            // 3. Build user prompt with file content if available
-            // Cap file content to ~50 000 chars (≈ 20 000 tokens) to stay well under
-            // the DeepSeek context limit of 128K tokens once the system prompt is added.
-            const MAX_FILE_CHARS = 50_000;
-            let fullPrompt = prompt;
-            if (resolvedFileContent) {
-                const safeContent = resolvedFileContent.length > MAX_FILE_CHARS
-                    ? resolvedFileContent.slice(0, MAX_FILE_CHARS) +
-                      `\n\n[... contenido truncado: el archivo supera el límite de contexto. Se muestran los primeros ${MAX_FILE_CHARS} caracteres de ${resolvedFileContent.length} totales ...]`
-                    : resolvedFileContent;
-                if (resolvedFileContent.length > MAX_FILE_CHARS) {
-                    console.warn(`[LLMDomainService] ⚠️ fileContent truncated from ${resolvedFileContent.length} to ${MAX_FILE_CHARS} chars to avoid context overflow`);
                 }
-                fullPrompt = `Contenido del archivo:\n${safeContent}\n\nPregunta/Instrucción: ${prompt}`;
-            }
 
-            // 4. Check reinforcement history to avoid repetitions (skip for EASY — allow repeats for fast loading)
-            const isEasyMode = String(difficulty || '').toUpperCase() === 'EASY';
-            if (!isEasyMode && userId && courseId && this._isReinforcementRequest(prompt)) {
-                try {
-                    // Use MCPService WITHOUT topic/task filter to match the duplicate detection scope
-                    const { MCPService } = await
-                    import ('./mcp-legacy.service.js');
-                    const mcpService = new MCPService();
-                    // Pass null for topicId and taskId to get ALL questions for this user+course
-                    const history = await mcpService.getReinforcementHistory(
-                        userId, courseId, null, null
-                    );
-                    console.log(`[LLMDomainService] � Reinforcement history retrieved: ${history?.length || 0} questions for user=${userId} course=${courseId}`);
-                    if (history && history.length > 0) {
-                        const historyTexts = history.map(h => h.question || h.text || '').filter(Boolean);
-                        systemPrompt += `\n\n═══ PREGUNTAS YA GENERADAS EN ESTE CURSO (PROHIBIDO REPETIR O PARAFRASEAR) ═══`;
-                        systemPrompt += `\nHay ${historyTexts.length} preguntas existentes. Cada nueva pregunta DEBE cubrir un ASPECTO COMPLETAMENTE DIFERENTE:`;
-                        historyTexts.forEach((q, i) => { systemPrompt += `\n${i + 1}. ${q}`; });
-                        systemPrompt += `\n═══ FIN DEL HISTORIAL ═══`;
-                        systemPrompt += `\nIMPORTANTE: NO reformules ni parafrasees ninguna de las preguntas anteriores. Genera preguntas sobre conceptos, funciones o secciones que NO aparezcan arriba.`;
-                        systemPrompt += `\nSi el material ya fue cubierto por las preguntas existentes, busca DETALLES ESPECÍFICOS, EJEMPLOS CONCRETOS o APLICACIONES PRÁCTICAS que aún no se hayan preguntado.`;
+                // 3. Build user prompt with file content if available
+                // Cap file content to ~50 000 chars (≈ 20 000 tokens) to stay well under
+                // the DeepSeek context limit of 128K tokens once the system prompt is added.
+                const MAX_FILE_CHARS = 50 _000;
+                let fullPrompt = prompt;
+                if (resolvedFileContent) {
+                    const safeContent = resolvedFileContent.length > MAX_FILE_CHARS ?
+                        resolvedFileContent.slice(0, MAX_FILE_CHARS) +
+                        `\n\n[... contenido truncado: el archivo supera el límite de contexto. Se muestran los primeros ${MAX_FILE_CHARS} caracteres de ${resolvedFileContent.length} totales ...]` :
+                        resolvedFileContent;
+                    if (resolvedFileContent.length > MAX_FILE_CHARS) {
+                        console.warn(`[LLMDomainService] ⚠️ fileContent truncated from ${resolvedFileContent.length} to ${MAX_FILE_CHARS} chars to avoid context overflow`);
                     }
-                } catch (histErr) {
-                    console.warn('[LLMDomainService] Reinforcement history failed:', histErr.message);
-                    // Fallback to legacy repo method
-                    try {
-                        const history = await this.reinforcementRepo.getHistory(userId, courseId);
-                        if (history && history.length > 0) {
-                            systemPrompt += `\n\nPreguntas ya generadas (NO repetir):\n${JSON.stringify(history)}`;
-                        }
-                    } catch (_) { /* ignore */ }
+                    fullPrompt = `Contenido del archivo:\n${safeContent}\n\nPregunta/Instrucción: ${prompt}`;
                 }
-            }
 
-            // 5. Call LLM
-            // If the prompt asks for database queries or BI instructions, expose MCP tools
-            const promptLc = String(fullPrompt || '').toLowerCase();
-            // Allow caller to force enabling MCP tools (useful for channel integrations)
-            // Roles: 1=estudiante, 2=docente, 3=admin
-            const isAdmin = Array.isArray(userRoles) && userRoles.map(Number).includes(3);
-            const isTeacher = Array.isArray(userRoles) && userRoles.map(Number).includes(2);
-            // Gate MCP tool access to teachers and admins only.
-            // When fromWhatsApp=true, all authenticated users can query their OWN data (scoped by userId).
-            // Students (role 1) get limited MCP access only when authenticated via WhatsApp.
-            const roleAllowsMCPTools = isAdmin || isTeacher || (fromWhatsApp && !!userId);
-            // ── Detect if the prompt needs MCP database tools ──
-            // Broad detection: table names (Spanish & English), counting, records,
-            // general data queries, student progress patterns, and explicit tool requests.
-            const DB_TABLE_NAMES = /\b(usuarios|courses|cursos|videos|subjects|materias|topics|temas|tasks|tareas|task_submissions|entregas|submissions|subscriptions|suscripciones|transactions|transacciones|notifications|notificaciones|progreso_curso|progreso_materia|progreso|collaborators|colaboradores|personas|reinforcement_results|refuerzo|pr[aá]ctica)\b/i;
-            const DB_QUERY_PATTERNS = /query[_ ]database|consulta de business inteli?gencia|usa ['"]?query_database['"]?|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n|cu[aá]nto|cu[aá]ntas|cu[aá]ntos|registros|total de|contar|conteo|cantidad|estad[ií]stica|reporte|datos de|d[ií]me|mu[eé]stra|lista|consulta|base de datos|tabla|schema|esquema|dashboard|m[eé]trica|ingresos|pagos|ventas|suscri|crear reporte|generar reporte|exportar|nota.*estudiante|estudiante.*nota|practican|pr[aá]ctica.*refuerzo/i;
-            // Detect if the prompt matches DB patterns explicitly
-            const promptMatchesDB = DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc);
-            // When forceMCPTools is on but the prompt doesn't match DB patterns,
-            // enable tools in 'auto' mode so the LLM can answer general knowledge questions
-            // directly without being forced to call a DB tool.
-            let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || promptMatchesDB);
-            // Track whether tools were forced without an explicit DB pattern — use 'auto' toolChoice
-            const toolsAvailableButOptional = needsMCPTools && forceMCPTools && !promptMatchesDB;
-            if (needsMCPTools) {
-                console.log(`[LLMDomainService] 🔐 MCP tools enabled — userId=${userId}, roles=${JSON.stringify(userRoles)}, isTeacher=${isTeacher}, isAdmin=${isAdmin}`);
-            } else if (!roleAllowsMCPTools && (DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc))) {
-                // Prompt looks like a DB query but roles block access — log to help diagnose empty-roles issues
-                console.warn(`[LLMDomainService] ⚠️ DB query detected but MCP tools BLOCKED — userId=${userId}, roles=${JSON.stringify(userRoles)} (empty roles = no DB access). Check that JWT contains roles or client sends userRoles in body.`);
-            }
-            // When tools are required we also augment the system prompt with explicit
-            // instructions to use them.  This is important because some LLM models
-            // (including deepseek-chat) may otherwise ignore the tool definitions.
-            if (needsMCPTools) {
-                systemPrompt += `\n\nINSTRUCCIONES DE HERRAMIENTA (OBLIGATORIAS):\n` +
-                    `REGLA #1 — SIEMPRE CONSULTA ANTES DE AFIRMAR:\n` +
-                    `- PROHIBIDO decir que una tabla, columna o dato "no existe" sin antes verificar con \`get_database_schema\` o \`query_database\`.\n` +
-                    `- Si el usuario menciona un nombre de tabla en español (ej: "transacciones", "suscripciones", "tareas"), busca la tabla equivalente en inglés (transactions, subscriptions, tasks) o viceversa.\n` +
-                    `- Si no estás seguro del nombre exacto de una tabla o columna, usa PRIMERO \`get_database_schema\` para ver todas las tablas disponibles.\n` +
-                    `- Solo después de consultar la base de datos y confirmar que no hay resultados puedes informar al usuario.\n\n` +
-                    `REGLA #2 — FLUJO OBLIGATORIO:\n` +
-                    `1. Si tienes duda sobre el esquema → llama \`get_database_schema\`\n` +
-                    `2. Construye tu SQL con los nombres reales de las tablas/columnas\n` +
-                    `3. Ejecuta con \`query_database\`\n` +
-                    `4. Formula tu respuesta en Markdown con los datos reales\n\n` +
-                    `REGLA #3 — CÓMO USAR LAS HERRAMIENTAS:\n` +
-                    `Emite exactamente un bloque JSON como el siguiente:\n\n` +
-                    "```json\n" +
-                    "{\"tool\": \"query_database\", \"arguments\": {\"query\": \"<tu SQL aquí>\"}}\n" +
-                    "```\n" +
-                    `O para ver el esquema:\n` +
-                    "```json\n" +
-                    "{\"tool\": \"get_database_schema\", \"arguments\": {}}\n" +
-                    "```\n\n" +
-                    `REGLA #4 — MAPEO DE NOMBRES ESPAÑOL↔INGLÉS:\n` +
-                    `- transacciones = transactions\n` +
-                    `- suscripciones = subscriptions\n` +
-                    `- tareas = tasks\n` +
-                    `- entregas = task_submissions\n` +
-                    `- temas = topics\n` +
-                    `- materias = subjects\n` +
-                    `- cursos = courses\n` +
-                    `- notificaciones = notifications\n` +
-                    `- usuarios = usuarios (ya está en español)\n` +
-                    `- Si el usuario dice un nombre que no coincide exactamente, busca la tabla más similar en el schema.\n\n` +
-                    `No inventes valores. No respondas sin consultar la base de datos primero.`;
+                // 4. Check reinforcement history to avoid repetitions (skip for EASY — allow repeats for fast loading)
+                const isEasyMode = String(difficulty || '').toUpperCase() === 'EASY';
+                if (!isEasyMode && userId && courseId && this._isReinforcementRequest(prompt)) {
+                    try {
+                        // Use MCPService WITHOUT topic/task filter to match the duplicate detection scope
+                        const { MCPService } = await
+                        import ('./mcp-legacy.service.js');
+                        const mcpService = new MCPService();
+                        // Pass null for topicId and taskId to get ALL questions for this user+course
+                        const history = await mcpService.getReinforcementHistory(
+                            userId, courseId, null, null
+                        );
+                        console.log(`[LLMDomainService] � Reinforcement history retrieved: ${history?.length || 0} questions for user=${userId} course=${courseId}`);
+                        if (history && history.length > 0) {
+                            const historyTexts = history.map(h => h.question || h.text || '').filter(Boolean);
+                            systemPrompt += `\n\n═══ PREGUNTAS YA GENERADAS EN ESTE CURSO (PROHIBIDO REPETIR O PARAFRASEAR) ═══`;
+                            systemPrompt += `\nHay ${historyTexts.length} preguntas existentes. Cada nueva pregunta DEBE cubrir un ASPECTO COMPLETAMENTE DIFERENTE:`;
+                            historyTexts.forEach((q, i) => { systemPrompt += `\n${i + 1}. ${q}`; });
+                            systemPrompt += `\n═══ FIN DEL HISTORIAL ═══`;
+                            systemPrompt += `\nIMPORTANTE: NO reformules ni parafrasees ninguna de las preguntas anteriores. Genera preguntas sobre conceptos, funciones o secciones que NO aparezcan arriba.`;
+                            systemPrompt += `\nSi el material ya fue cubierto por las preguntas existentes, busca DETALLES ESPECÍFICOS, EJEMPLOS CONCRETOS o APLICACIONES PRÁCTICAS que aún no se hayan preguntado.`;
+                        }
+                    } catch (histErr) {
+                        console.warn('[LLMDomainService] Reinforcement history failed:', histErr.message);
+                        // Fallback to legacy repo method
+                        try {
+                            const history = await this.reinforcementRepo.getHistory(userId, courseId);
+                            if (history && history.length > 0) {
+                                systemPrompt += `\n\nPreguntas ya generadas (NO repetir):\n${JSON.stringify(history)}`;
+                            }
+                        } catch (_) { /* ignore */ }
+                    }
+                }
 
-                // ── Role-based data-access restriction ──────────────────────────────
+                // 5. Call LLM
+                // If the prompt asks for database queries or BI instructions, expose MCP tools
+                const promptLc = String(fullPrompt || '').toLowerCase();
+                // Allow caller to force enabling MCP tools (useful for channel integrations)
                 // Roles: 1=estudiante, 2=docente, 3=admin
-                // Sanitize JWT username for safe SQL embedding (prevent injection)
-                const safeUsername = (username || '').replace(/'/g, "''");
-                // Build user-id resolution: prefer userId, but also resolve from authenticated username
-                // This handles cases where JWT userId doesn't match courses.creator_user_id
-                const userIdResolution = safeUsername
-                    ? `(SELECT id FROM usuarios WHERE id = ${userId} UNION SELECT id FROM usuarios WHERE username = '${safeUsername}')`
-                    : `${userId}`;
-                if (isAdmin && userId) {
-                    if (fromWhatsApp) {
-                        // WhatsApp channel: even admins are restricted to their own data
-                        systemPrompt += `\n\nACCESO VÍA WHATSAPP — SOLO TUS PROPIOS DATOS (ADMIN):\n` +
-                            `En este canal ÚNICAMENTE puedes consultar TUS datos (cursos que creaste, tus estudiantes, tu actividad).\n` +
-                            `⚠️ PROHIBIDO: consultar datos de otros usuarios. PROHIBIDO: usar auth.uid().\n\n` +
-                            `IDENTIDAD AUTENTICADA: userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +
+                const isAdmin = Array.isArray(userRoles) && userRoles.map(Number).includes(3);
+                const isTeacher = Array.isArray(userRoles) && userRoles.map(Number).includes(2);
+                // Gate MCP tool access to teachers and admins only.
+                // When fromWhatsApp=true, all authenticated users can query their OWN data (scoped by userId).
+                // Students (role 1) get limited MCP access only when authenticated via WhatsApp.
+                const roleAllowsMCPTools = isAdmin || isTeacher || (fromWhatsApp && !!userId);
+                // ── Detect if the prompt needs MCP database tools ──
+                // Broad detection: table names (Spanish & English), counting, records,
+                // general data queries, student progress patterns, and explicit tool requests.
+                const DB_TABLE_NAMES = /\b(usuarios|courses|cursos|videos|subjects|materias|topics|temas|tasks|tareas|task_submissions|entregas|submissions|subscriptions|suscripciones|transactions|transacciones|notifications|notificaciones|progreso_curso|progreso_materia|progreso|collaborators|colaboradores|personas|reinforcement_results|refuerzo|pr[aá]ctica)\b/i;
+                const DB_QUERY_PATTERNS = /query[_ ]database|consulta de business inteli?gencia|usa ['"]?query_database['"]?|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n|cu[aá]nto|cu[aá]ntas|cu[aá]ntos|registros|total de|contar|conteo|cantidad|estad[ií]stica|reporte|datos de|d[ií]me|mu[eé]stra|lista|consulta|base de datos|tabla|schema|esquema|dashboard|m[eé]trica|ingresos|pagos|ventas|suscri|crear reporte|generar reporte|exportar|nota.*estudiante|estudiante.*nota|practican|pr[aá]ctica.*refuerzo/i;
+                // Detect if the prompt matches DB patterns explicitly
+                const promptMatchesDB = DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc);
+                // When forceMCPTools is on but the prompt doesn't match DB patterns,
+                // enable tools in 'auto' mode so the LLM can answer general knowledge questions
+                // directly without being forced to call a DB tool.
+                let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || promptMatchesDB);
+                // Track whether tools were forced without an explicit DB pattern — use 'auto' toolChoice
+                const toolsAvailableButOptional = needsMCPTools && forceMCPTools && !promptMatchesDB;
+                if (needsMCPTools) {
+                    console.log(`[LLMDomainService] 🔐 MCP tools enabled — userId=${userId}, roles=${JSON.stringify(userRoles)}, isTeacher=${isTeacher}, isAdmin=${isAdmin}`);
+                } else if (!roleAllowsMCPTools && (DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc))) {
+                    // Prompt looks like a DB query but roles block access — log to help diagnose empty-roles issues
+                    console.warn(`[LLMDomainService] ⚠️ DB query detected but MCP tools BLOCKED — userId=${userId}, roles=${JSON.stringify(userRoles)} (empty roles = no DB access). Check that JWT contains roles or client sends userRoles in body.`);
+                }
+                // When tools are required we also augment the system prompt with explicit
+                // instructions to use them.  This is important because some LLM models
+                // (including deepseek-chat) may otherwise ignore the tool definitions.
+                if (needsMCPTools) {
+                    systemPrompt += `\n\nINSTRUCCIONES DE HERRAMIENTA (OBLIGATORIAS):\n` +
+                        `REGLA #1 — SIEMPRE CONSULTA ANTES DE AFIRMAR:\n` +
+                        `- PROHIBIDO decir que una tabla, columna o dato "no existe" sin antes verificar con \`get_database_schema\` o \`query_database\`.\n` +
+                        `- Si el usuario menciona un nombre de tabla en español (ej: "transacciones", "suscripciones", "tareas"), busca la tabla equivalente en inglés (transactions, subscriptions, tasks) o viceversa.\n` +
+                        `- Si no estás seguro del nombre exacto de una tabla o columna, usa PRIMERO \`get_database_schema\` para ver todas las tablas disponibles.\n` +
+                        `- Solo después de consultar la base de datos y confirmar que no hay resultados puedes informar al usuario.\n\n` +
+                        `REGLA #2 — FLUJO OBLIGATORIO:\n` +
+                        `1. Si tienes duda sobre el esquema → llama \`get_database_schema\`\n` +
+                        `2. Construye tu SQL con los nombres reales de las tablas/columnas\n` +
+                        `3. Ejecuta con \`query_database\`\n` +
+                        `4. Formula tu respuesta en Markdown con los datos reales\n\n` +
+                        `REGLA #3 — CÓMO USAR LAS HERRAMIENTAS:\n` +
+                        `Emite exactamente un bloque JSON como el siguiente:\n\n` +
+                        "```json\n" +
+                        "{\"tool\": \"query_database\", \"arguments\": {\"query\": \"<tu SQL aquí>\"}}\n" +
+                        "```\n" +
+                        `O para ver el esquema:\n` +
+                        "```json\n" +
+                        "{\"tool\": \"get_database_schema\", \"arguments\": {}}\n" +
+                        "```\n\n" +
+                        `REGLA #4 — MAPEO DE NOMBRES ESPAÑOL↔INGLÉS:\n` +
+                        `- transacciones = transactions\n` +
+                        `- suscripciones = subscriptions\n` +
+                        `- tareas = tasks\n` +
+                        `- entregas = task_submissions\n` +
+                        `- temas = topics\n` +
+                        `- materias = subjects\n` +
+                        `- cursos = courses\n` +
+                        `- notificaciones = notifications\n` +
+                        `- usuarios = usuarios (ya está en español)\n` +
+                        `- Si el usuario dice un nombre que no coincide exactamente, busca la tabla más similar en el schema.\n\n` +
+                        `No inventes valores. No respondas sin consultar la base de datos primero.`;
+
+                    // ── Role-based data-access restriction ──────────────────────────────
+                    // Roles: 1=estudiante, 2=docente, 3=admin
+                    // Sanitize JWT username for safe SQL embedding (prevent injection)
+                    const safeUsername = (username || '').replace(/'/g, "''");
+                    // Build user-id resolution: prefer userId, but also resolve from authenticated username
+                    // This handles cases where JWT userId doesn't match courses.creator_user_id
+                    const userIdResolution = safeUsername ?
+                        `(SELECT id FROM usuarios WHERE id = ${userId} UNION SELECT id FROM usuarios WHERE username = '${safeUsername}')` :
+                        `${userId}`;
+                    if (isAdmin && userId) {
+                        if (fromWhatsApp) {
+                            // WhatsApp channel: even admins are restricted to their own data
+                            systemPrompt += `\n\nACCESO VÍA WHATSAPP — SOLO TUS PROPIOS DATOS (ADMIN):\n` +
+                                `En este canal ÚNICAMENTE puedes consultar TUS datos (cursos que creaste, tus estudiantes, tu actividad).\n` +
+                                `⚠️ PROHIBIDO: consultar datos de otros usuarios. PROHIBIDO: usar auth.uid().\n\n` +
+                                `IDENTIDAD AUTENTICADA: userId=${userId}${safeUsername ? `, username='${safeUsername}'` : ''}.\n` +
                             `Filtra SIEMPRE usando:\n` +
                             `  WHERE creator_user_id IN ${userIdResolution}\n` +
                             `  O: WHERE user_id IN ${userIdResolution}\n\n` +
@@ -963,19 +977,28 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                     }
                 }
 
-                // Final safety net: strip any SQL or tool call JSON that leaked into the response
+            }
+
+            // ── GLOBAL SAFETY NET: strip any SQL or tool call JSON that leaked into the response ──
+            // This runs ALWAYS, regardless of whether tool loops executed or fallbacks ran.
+            {
                 let finalContent = String(response?.content || '');
-                if (/"tool"\s*:\s*"query_database"/.test(finalContent)) {
-                    console.warn('[LLMDomainService] Response still contains raw tool call after all fallbacks — suppressing.');
+                if (/"tool"\s*:\s*"query_database"/.test(finalContent) || /"arguments"\s*:\s*\{[\s\S]*?"query"\s*:/.test(finalContent)) {
+                    console.warn('[LLMDomainService] Response contains raw tool call JSON — suppressing.');
                     response = { ...response, content: 'Lo siento, no pude obtener los datos en este momento. Por favor intenta de nuevo.' };
                 } else {
                     // Strip SQL code blocks that leaked through (user must never see raw SQL)
                     let cleaned = finalContent;
+                    cleaned = cleaned.replace(/```json[\s\S]*?"query_database"[\s\S]*?```/gi, '');
                     cleaned = cleaned.replace(/```sql[\s\S]*?```/gi, '');
-                    cleaned = cleaned.replace(/```\s*SELECT[\s\S]*?```/gi, '');
+                    cleaned = cleaned.replace(/```\s*(SELECT|WITH)\b[\s\S]*?```/gi, '');
+                    // Strip bare SQL statements not in code blocks (SELECT/WITH at line start)
+                    cleaned = cleaned.replace(/^\s*(SELECT|WITH)\b[\s\S]*?(?=\n\n|$)/gim, '');
                     if (cleaned !== finalContent) {
-                        console.warn('[LLMDomainService] Stripped leaked SQL blocks from response.');
-                        response = { ...response, content: cleaned.trim() };
+                        console.warn('[LLMDomainService] Stripped leaked SQL/tool-call blocks from response.');
+                        // If stripping left almost no content, provide a fallback message
+                        const trimmed = cleaned.trim();
+                        response = { ...response, content: trimmed.length > 20 ? trimmed : 'Lo siento, no pude obtener los datos en este momento. Por favor intenta de nuevo.' };
                     }
                 }
             }
@@ -1597,7 +1620,8 @@ Responde de forma clara y constructiva.`;
             } catch { /* not valid JSON */ }
         }
         // Match bare JSON objects containing "tool" and "arguments" keys
-        const bare = text.match(/\{[^{}]*"tool"\s*:[^{}]*"arguments"\s*:[^{}]*\}/s);
+        // Support one level of nested braces for the arguments object
+        const bare = text.match(/\{[^{}]*"tool"\s*:[^{}]*"arguments"\s*:\s*\{[^{}]*\}[^{}]*\}/s);
         if (bare) {
             try {
                 const parsed = JSON.parse(bare[0]);
