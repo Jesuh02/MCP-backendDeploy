@@ -73,7 +73,7 @@ export class LLMDomainService {
                 // If availableTenants is empty (old client/WhatsApp), fall back to all configs.
                 // availableTenants may be strings ["qa-develop"] or objects [{id:"qa-develop",name:"..."}]
                 const normalizedAvailable = (Array.isArray(availableTenants) && availableTenants.length > 0) ?
-                    availableTenants.map(t => typeof t === 'string' ? t : t ? .id).filter(Boolean) :
+                    availableTenants.map(t => typeof t === 'string' ? t : t?.id).filter(Boolean) :
                     [];
                 const userTenants = (normalizedAvailable.length > 0) ?
                     allTenantConfigs.filter(t => normalizedAvailable.includes(t.id)) :
