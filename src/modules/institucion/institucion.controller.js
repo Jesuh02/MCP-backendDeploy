@@ -20,8 +20,9 @@ const updateSchema = Joi.object({
 }).min(1);
 
 export class InstitucionController {
-    constructor({ institucionService }) {
+    constructor({ institucionService, userRepository }) {
         this.service = institucionService;
+        this.userRepo = userRepository || null;
     }
 
     list = async (req, res, next) => {
@@ -77,6 +78,27 @@ export class InstitucionController {
     delete = async (req, res, next) => {
         try {
             const result = await this.service.delete(parseInt(req.params.id));
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * Returns the current user's institution billing status.
+     * Used by the frontend to show the payment-overdue banner.
+     */
+    myInstitutionStatus = async (req, res, next) => {
+        try {
+            const userId = req.user?.userId;
+            if (!userId) return res.json({ success: true, data: { allowed: true } });
+
+            if (!this.userRepo) return res.json({ success: true, data: { allowed: true } });
+            const user = await this.userRepo.findById(userId);
+            const persona = user?.persona ?? user?.personas ?? null;
+            const instId = persona?.institucion_id ?? null;
+            if (!instId) return res.json({ success: true, data: { allowed: true } });
+
+            const result = await this.service.checkInstitutionAccess(instId);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -145,6 +167,108 @@ export class InstitucionController {
             // Flatten: institutions from all tenants in a single array, sorted by name
             const all = perTenant.flat().sort((a, b) => a.nombre.localeCompare(b.nombre));
             res.json({ success: true, data: all });
+        } catch (err) { next(err); }
+    };
+
+    // ═══════════════════════════════════════════════════════
+    // SuperAdmin endpoints (role 4)
+    // ═══════════════════════════════════════════════════════
+
+    /** List ALL institutions including suspended/inactive (superadmin). */
+    listAllAdmin = async (req, res, next) => {
+        try {
+            const result = await this.service.listAll(req.query);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Set payment due date for an institution. */
+    setPaymentDueDate = async (req, res, next) => {
+        try {
+            const { payment_due_date } = req.body;
+            const result = await this.service.setPaymentDueDate(parseInt(req.params.id), payment_due_date);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Suspend an institution (block all user logins). */
+    suspend = async (req, res, next) => {
+        try {
+            const { reason } = req.body || {};
+            const result = await this.service.suspend(parseInt(req.params.id), reason);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Unsuspend an institution (allow logins again). */
+    unsuspend = async (req, res, next) => {
+        try {
+            const result = await this.service.unsuspend(parseInt(req.params.id));
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Check if an institution is accessible (for login guards). */
+    checkAccess = async (req, res, next) => {
+        try {
+            const result = await this.service.checkInstitutionAccess(parseInt(req.params.id));
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Initiate billing payment for an institution. */
+    initiateBillingPayment = async (req, res, next) => {
+        try {
+            const { amount, redirectUrl } = req.body;
+            const userId = req.user?.userId;
+            const result = await this.service.initiateBillingPayment({
+                institutionId: parseInt(req.params.id),
+                userId,
+                amount,
+                redirectUrl,
+            });
+            if (result.isFail()) return next(result.getError());
+            const data = result.getValue();
+            res.json({
+                success: true,
+                data,
+                urlBankPayment: data.checkoutUrl,
+            });
+        } catch (err) { next(err); }
+    };
+
+    /** Get billing payment history for an institution. */
+    getBillingPayments = async (req, res, next) => {
+        try {
+            const result = await this.service.getBillingPayments(parseInt(req.params.id));
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /** Wompi webhook for institution billing. */
+    billingWebhook = async (req, res, next) => {
+        try {
+            const result = await this.service.handleBillingWebhook(req.body);
+            if (result.isFail()) return res.status(200).json({ success: false, message: result.getError().message });
+            res.status(200).json({ success: true, data: result.getValue() });
+        } catch (err) {
+            console.error('❌ Institution billing webhook exception:', err);
+            res.status(200).json({ success: false, message: err.message });
+        }
+    };
+
+    /** Check institution status (public, for login pages). */
+    checkInstitutionStatus = async (req, res, next) => {
+        try {
+            const result = await this.service.checkInstitutionAccess(parseInt(req.params.id));
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
 }

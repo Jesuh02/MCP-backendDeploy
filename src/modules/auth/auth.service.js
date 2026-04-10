@@ -84,6 +84,11 @@ export class AuthService {
         }
 
         await this._enrichWithInstitution(user);
+
+        // Check if user's institution is suspended
+        const instSuspendCheck = await this._checkInstitutionSuspended(user);
+        if (instSuspendCheck) return instSuspendCheck;
+
         const tokens = this._generateTokens(user, getCurrentTenantId() || getPrimaryTenantId());
         return Result.ok({ user: this._safeUser(user), ...tokens });
     }
@@ -95,6 +100,12 @@ export class AuthService {
             const user = await this.userRepo.findById(result.decoded.userId);
             if (!user) return Result.fail(new UnauthorizedError('Usuario no encontrado'));
             if (user.isActive === false) return Result.fail(new ForbiddenError('Tu usuario ha sido desactivado, por favor contactar a soporte'));
+
+            // Check institution suspension on token refresh too
+            await this._enrichWithInstitution(user);
+            const instCheck = await this._checkInstitutionSuspended(user);
+            if (instCheck) return instCheck;
+
             const tokens = this._generateTokens(user, result.decoded.tenantId);
             return Result.ok(tokens);
         } catch {
@@ -148,6 +159,23 @@ export class AuthService {
     }
 
     /**
+     * Checks if the user's institution is suspended.
+     * Returns a Result.fail if suspended, null if OK.
+     */
+    async _checkInstitutionSuspended(user) {
+        if (!user) return null;
+        const inst = user.institucion;
+        if (!inst) return null;
+        if (inst.is_suspended) {
+            console.log(`[AuthService] Institution '${inst.nombre}' (id: ${inst.id}) is suspended`);
+            return Result.fail(new ForbiddenError(
+                'Tu institución ha sido suspendida. Contacta al administrador.'
+            ));
+        }
+        return null;
+    }
+
+    /**
      * Login with Google - finds or creates user by email and returns JWT tokens.
      * This ensures the Android client gets proper authentication for the correct user.
      */
@@ -177,6 +205,11 @@ export class AuthService {
             }
 
             await this._enrichWithInstitution(user);
+
+            // Check institution suspension for Google login
+            const instCheck = await this._checkInstitutionSuspended(user);
+            if (instCheck) return instCheck;
+
             const tokens = this._generateTokens(user);
             return Result.ok({ user: this._safeUser(user), ...tokens, isNewUser: false });
         }
