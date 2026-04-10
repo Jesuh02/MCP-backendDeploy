@@ -271,5 +271,14 @@ export class InstitucionController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    /** Get ALL service payments across all institutions (superadmin). */
+    getAllServicePayments = async (req, res, next) => {
+        try {
+            const result = await this.service.getAllServicePayments();
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default InstitucionController;

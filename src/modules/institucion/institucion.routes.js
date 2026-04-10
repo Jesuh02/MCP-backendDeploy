@@ -22,6 +22,7 @@ export function institucionRoutes({ institucionController, authMiddleware, requi
     // Must be BEFORE /:id to avoid route conflicts with /admin/all
     if (authMiddleware && requireRoles) {
         router.get('/admin/all', authMiddleware, requireRoles(4), institucionController.listAllAdmin);
+        router.get('/admin/service-payments', authMiddleware, requireRoles(4), institucionController.getAllServicePayments);
     }
 
     router.get('/:id', institucionController.getById);

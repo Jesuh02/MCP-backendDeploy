@@ -172,6 +172,64 @@ export class SupabaseTransactionRepository {
         console.warn(`⚠️ Transaction not found by reference: ${reference}`);
         return false;
     }
+
+    // ═══════════════════════════════════════════════════════
+    // Service payments (institution billing via transactions)
+    // ═══════════════════════════════════════════════════════
+
+    async findServicePaymentsByInstitution(institutionId, { offset = 0, limit = 50 } = {}) {
+        const { data, error } = await this.client
+            .from('transactions')
+            .select('*')
+            .eq('institution_id', institutionId)
+            .eq('payment_type', 'service')
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+        if (error) return [];
+        return data || [];
+    }
+
+    async findPendingServicePayment(institutionId) {
+        const { data, error } = await this.client
+            .from('transactions')
+            .select('*')
+            .eq('institution_id', institutionId)
+            .eq('payment_type', 'service')
+            .ilike('status', 'pending')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        return (error || !data) ? null : data;
+    }
+
+    async createServicePayment(payload) {
+        const { data, error } = await this.client.from('transactions').insert({
+            user_id: payload.userId || null,
+            course_id: null,
+            institution_id: payload.institutionId,
+            external_reference: payload.externalReference || null,
+            amount: payload.amount || 0,
+            currency: payload.currency || 'COP',
+            status: payload.status || 'PENDING',
+            payment_method: payload.paymentMethod || 'wompi',
+            payment_type: 'service',
+            billing_period_start: payload.billingPeriodStart || null,
+            billing_period_end: payload.billingPeriodEnd || null,
+        }).select().single();
+        if (error) throw new Error(`Error creando pago de servicio: ${error.message}`);
+        return data;
+    }
+
+    async findAllServicePayments({ offset = 0, limit = 200 } = {}) {
+        const { data, error } = await this.client
+            .from('transactions')
+            .select('*')
+            .eq('payment_type', 'service')
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+        if (error) return [];
+        return data || [];
+    }
 }
 export default SupabaseTransactionRepository;
 

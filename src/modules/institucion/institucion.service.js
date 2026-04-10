@@ -2,9 +2,9 @@ import { Result } from '../../shared/Result.js';
 import { NotFoundError, ValidationError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class InstitucionDomainService {
-    constructor({ institucionRepository, institutionPaymentRepository, paymentGatewayPort, userRepository }) {
+    constructor({ institucionRepository, transactionRepository, paymentGatewayPort, userRepository }) {
         this.repo = institucionRepository;
-        this.paymentRepo = institutionPaymentRepository || null;
+        this.txRepo = transactionRepository || null;
         this.gateway = paymentGatewayPort || null;
         this.userRepo = userRepository || null;
     }
@@ -108,12 +108,12 @@ export class InstitucionDomainService {
     }
 
     // ═══════════════════════════════════════════════════════
-    // Institution billing payments (Wompi)
+    // Institution billing payments (Wompi via transactions table)
     // ═══════════════════════════════════════════════════════
 
-    /** Initiate a billing payment for an institution. */
+    /** Initiate a billing payment for an institution (stored as payment_type='service' in transactions). */
     async initiateBillingPayment({ institutionId, userId, amount, redirectUrl }) {
-        if (!this.paymentRepo) return Result.fail(new ValidationError('Payment repository not available'));
+        if (!this.txRepo) return Result.fail(new ValidationError('Transaction repository not available'));
         if (!this.gateway) return Result.fail(new ValidationError('Payment gateway not available'));
 
         const inst = await this.repo.findById(institutionId);
@@ -127,25 +127,24 @@ export class InstitucionDomainService {
         const periodEnd = new Date(now);
         periodEnd.setMonth(periodEnd.getMonth() + 1);
 
-        // Reuse pending payment if exists
-        let payment = await this.paymentRepo.findPending(institutionId);
+        // Reuse pending service payment if exists
+        let payment = await this.txRepo.findPendingServicePayment(institutionId);
         if (payment) {
-            payment = await this.paymentRepo.update(payment.id, {
-                external_reference: reference,
+            payment = await this.txRepo.update(payment.id, {
+                externalReference: reference,
                 amount,
-                paid_by_user_id: userId,
             });
         } else {
-            payment = await this.paymentRepo.create({
-                institution_id: institutionId,
+            payment = await this.txRepo.createServicePayment({
+                institutionId,
                 amount,
                 currency: 'COP',
                 status: 'PENDING',
-                payment_method: 'wompi',
-                external_reference: reference,
-                paid_by_user_id: userId,
-                billing_period_start: now.toISOString(),
-                billing_period_end: periodEnd.toISOString(),
+                paymentMethod: 'wompi',
+                externalReference: reference,
+                userId,
+                billingPeriodStart: now.toISOString(),
+                billingPeriodEnd: periodEnd.toISOString(),
             });
         }
 
@@ -166,7 +165,7 @@ export class InstitucionDomainService {
         });
     }
 
-    /** Handle Wompi webhook for institution billing. */
+    /** Handle Wompi webhook for institution billing (payment_type='service'). */
     async handleBillingWebhook(payload) {
         let transaction = payload?.data?.transaction || payload?.event?.data?.transaction || payload?.transaction;
         if (!transaction) return Result.fail(new ValidationError('Webhook inválido'));
@@ -175,37 +174,46 @@ export class InstitucionDomainService {
         const status = transaction.status;
         if (!reference || !reference.startsWith('INST-')) return Result.ok({ handled: false });
 
-        const payment = await this.paymentRepo.findByReference(reference);
+        if (!this.txRepo) return Result.ok({ handled: false });
+        const payment = await this.txRepo.findByReference(reference);
         if (!payment) return Result.ok({ handled: false });
 
         const dbStatus = status === 'APPROVED' ? 'APPROVED' :
             status === 'DECLINED' ? 'DECLINED' : 'PENDING';
 
-        await this.paymentRepo.update(payment.id, {
+        await this.txRepo.update(payment.id, {
             status: dbStatus,
-            wompi_transaction_id: transaction.id,
+            wompiTransactionId: transaction.id,
         });
 
         if (dbStatus === 'APPROVED') {
             // Extend payment due date by one month
             const newDueDate = new Date();
             newDueDate.setMonth(newDueDate.getMonth() + 1);
-            await this.repo.setPaymentDueDate(payment.institution_id, newDueDate.toISOString());
+            const instId = payment.institution_id;
+            await this.repo.setPaymentDueDate(instId, newDueDate.toISOString());
             // Unsuspend if was suspended for payment
-            const inst = await this.repo.findById(payment.institution_id);
+            const inst = await this.repo.findById(instId);
             if (inst && inst.is_suspended && inst.suspended_reason === 'Pago vencido') {
-                await this.repo.unsuspend(payment.institution_id);
+                await this.repo.unsuspend(instId);
             }
-            console.log(`🏛️ Institution ${payment.institution_id} payment APPROVED. Due extended to ${newDueDate.toISOString()}`);
+            console.log(`🏛️ Institution ${instId} payment APPROVED. Due extended to ${newDueDate.toISOString()}`);
         }
 
         return Result.ok({ handled: true, status: dbStatus });
     }
 
-    /** Get billing payments for an institution. */
+    /** Get billing payments for an institution (payment_type='service'). */
     async getBillingPayments(institutionId) {
-        if (!this.paymentRepo) return Result.ok([]);
-        const payments = await this.paymentRepo.findByInstitution(institutionId);
+        if (!this.txRepo) return Result.ok([]);
+        const payments = await this.txRepo.findServicePaymentsByInstitution(institutionId);
+        return Result.ok(payments);
+    }
+
+    /** Get ALL service payments across all institutions (superadmin). */
+    async getAllServicePayments() {
+        if (!this.txRepo) return Result.ok([]);
+        const payments = await this.txRepo.findAllServicePayments();
         return Result.ok(payments);
     }
 }
