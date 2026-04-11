@@ -208,7 +208,7 @@ export class InstitucionController {
     /** Set payment due date for an institution (cross-tenant). */
     setPaymentDueDate = async (req, res, next) => {
         try {
-            const { payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, clear_billing_cycle, tenantId } = req.body;
+            const { payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, billing_cycle_months, clear_billing_cycle, tenantId } = req.body;
             const instId = parseInt(req.params.id);
 
             if (clear_billing_cycle) {
@@ -227,16 +227,17 @@ export class InstitucionController {
                 const repo = tenantId ? this._tenantRepo(tenantId) : null;
                 if (repo) {
                     // Cross-tenant: compute next due date and update directly
-                    const validTypes = ['monthly_start', 'biweekly', 'monthly_day'];
+                    const validTypes = ['monthly_start', 'biweekly', 'monthly_day', 'specific_months'];
                     if (!validTypes.includes(billing_cycle_type)) {
                         return next(new ValidationError('Tipo de ciclo inválido'));
                     }
-                    const nextDue = this.service._computeNextDueDate(billing_cycle_type, billing_cycle_day, billing_cycle_hour);
+                    const nextDue = this.service._computeNextDueDate(billing_cycle_type === 'specific_months' ? 'monthly_day' : billing_cycle_type, billing_cycle_day, billing_cycle_hour);
                     const updated = await repo.setBillingCycle(instId, {
                         billing_cycle_type,
-                        billing_cycle_day: billing_cycle_type === 'monthly_day' ? parseInt(billing_cycle_day) : (billing_cycle_type === 'biweekly' ? 15 : 1),
+                        billing_cycle_day: billing_cycle_type === 'monthly_day' || billing_cycle_type === 'specific_months' ? parseInt(billing_cycle_day) : (billing_cycle_type === 'biweekly' ? 15 : 1),
                         billing_cycle_hour: Math.min(23, Math.max(0, parseInt(billing_cycle_hour) || 8)),
                         payment_due_date: nextDue.toISOString(),
+                        ...(Array.isArray(billing_cycle_months) ? { billing_cycle_months: billing_cycle_months } : {}),
                     });
                     return res.json({ success: true, data: { ...updated, tenantId } });
                 }
@@ -244,6 +245,7 @@ export class InstitucionController {
                     type: billing_cycle_type,
                     day: billing_cycle_day,
                     hour: billing_cycle_hour,
+                    ...(Array.isArray(billing_cycle_months) ? { months: billing_cycle_months } : {}),
                 });
                 if (result.isFail()) return next(result.getError());
                 return res.json({ success: true, data: result.getValue() });

@@ -79,15 +79,15 @@ export class InstitucionDomainService {
      * @param {number|null} cycle.day - Day of month (1-28) for 'monthly_day'
      * @param {number} [cycle.hour=8] - Hour of day (0-23) when billing triggers
      */
-    async setBillingCycle(institutionId, { type, day, hour = 8 }) {
+    async setBillingCycle(institutionId, { type, day, hour = 8, months }) {
         const item = await this.repo.findById(institutionId);
         if (!item) return Result.fail(new NotFoundError('Institucion', institutionId));
 
-        const validTypes = ['monthly_start', 'biweekly', 'monthly_day'];
+        const validTypes = ['monthly_start', 'biweekly', 'monthly_day', 'specific_months'];
         if (!validTypes.includes(type)) {
             return Result.fail(new ValidationError(`Tipo de ciclo inválido. Valores válidos: ${validTypes.join(', ')}`));
         }
-        if (type === 'monthly_day') {
+        if (type === 'monthly_day' || type === 'specific_months') {
             const d = parseInt(day);
             if (!d || d < 1 || d > 28) {
                 return Result.fail(new ValidationError('El día debe ser entre 1 y 28'));
@@ -95,13 +95,17 @@ export class InstitucionDomainService {
         }
 
         const safeHour = Math.min(23, Math.max(0, parseInt(hour) || 8));
-        const nextDueDate = this._computeNextDueDate(type, day, safeHour);
-        const updated = await this.repo.setBillingCycle(institutionId, {
+        const nextDueDate = this._computeNextDueDate(type === 'specific_months' ? 'monthly_day' : type, day, safeHour);
+        const cycleData = {
             billing_cycle_type: type,
-            billing_cycle_day: type === 'monthly_day' ? parseInt(day) : (type === 'biweekly' ? 15 : 1),
+            billing_cycle_day: type === 'monthly_day' || type === 'specific_months' ? parseInt(day) : (type === 'biweekly' ? 15 : 1),
             billing_cycle_hour: safeHour,
             payment_due_date: nextDueDate.toISOString(),
-        });
+        };
+        if (Array.isArray(months)) {
+            cycleData.billing_cycle_months = months;
+        }
+        const updated = await this.repo.setBillingCycle(institutionId, cycleData);
         return Result.ok(updated);
     }
 

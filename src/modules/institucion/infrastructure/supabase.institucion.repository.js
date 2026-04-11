@@ -110,10 +110,11 @@ export class SupabaseInstitucionRepository {
     }
 
     /** Set billing cycle for an institution. */
-    async setBillingCycle(id, { billing_cycle_type, billing_cycle_day, billing_cycle_hour, payment_due_date }) {
-        const updatePayload = { billing_cycle_type, billing_cycle_day };
+    async setBillingCycle(id, { billing_cycle_type, billing_cycle_day, billing_cycle_hour, payment_due_date, billing_cycle_months }) {
+        const updatePayload = { billing_cycle_type, billing_cycle_day };        
         if (billing_cycle_hour !== undefined) updatePayload.billing_cycle_hour = billing_cycle_hour;
         if (payment_due_date !== undefined) updatePayload.payment_due_date = payment_due_date;
+        if (billing_cycle_months !== undefined) updatePayload.billing_cycle_months = billing_cycle_months;
         const { data, error } = await this.client
             .from(TABLE)
             .update(updatePayload)
@@ -132,6 +133,7 @@ export class SupabaseInstitucionRepository {
                 billing_cycle_type: null,
                 billing_cycle_day: null,
                 billing_cycle_hour: null,
+                billing_cycle_months: null,
                 payment_due_date: null,
             })
             .eq('id', id)
