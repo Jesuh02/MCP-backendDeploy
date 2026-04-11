@@ -352,7 +352,7 @@ export class CrossTenantAuthService {
                     institutionId: inst.id,
                     institutionName: inst.nombre,
                     monthlyPrice: inst.monthly_price || 0,
-                    serverUrl: entry.serverUrl || '',
+                    serverUrl: entry.mcpServerUrl || '',
                 };
             }
 
@@ -427,7 +427,7 @@ export class CrossTenantAuthService {
                     institutionId: inst.id,
                     institutionName: inst.nombre,
                     monthlyPrice: inst.monthly_price || 0,
-                    serverUrl: entry.serverUrl || '',
+                    serverUrl: entry.mcpServerUrl || '',
                 };
             }
 
@@ -458,10 +458,18 @@ export class CrossTenantAuthService {
     async _enrichWithInstitution(user, instRepo) {
         const persona = user.persona ?? user.personas ?? null;
         const institucionId = persona?.institucion_id ?? null;
-        if (!institucionId) return;
+        if (institucionId) {
+            try {
+                const inst = await instRepo.findById(institucionId);
+                if (inst) { user.institucion = inst; return; }
+            } catch { /* ignore */ }
+        }
+        // Fallback: if institution was not loaded via persona (missing institucion_id),
+        // load the primary institution from this tenant's database so the suspension
+        // check is never silently skipped.
         try {
-            const inst = await instRepo.findById(institucionId);
-            if (inst) user.institucion = inst;
+            const allInst = await instRepo.findAllUnfiltered({ limit: 1 });
+            if (allInst.length > 0) user.institucion = allInst[0];
         } catch { /* ignore */ }
     }
 
