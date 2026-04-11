@@ -1132,7 +1132,7 @@ export class SupabaseProgressRepository {
     async findPendingEnrollments(courseId = null) {
         let query = this.client
             .from('pre_enrollments')
-            .select('user_id, course_id, status, requested_at')
+            .select('user_id, course_id, status, requested_at, requested_role')
             .eq('status', 'pending');
         if (courseId) query = query.eq('course_id', courseId);
         const { data, error } = await query.order('requested_at', { ascending: false });
@@ -1207,7 +1207,7 @@ export class SupabaseProgressRepository {
         return this._mapPreEnrollmentRecord(data);
     }
 
-    async upsertPreEnrollment(userId, courseId, status = 'pending', reviewedBy = null) {
+    async upsertPreEnrollment(userId, courseId, status = 'pending', reviewedBy = null, requestedRole = 'student') {
         const now = new Date().toISOString();
         
         // 🛡️ Defensive approach: Find existing record first
@@ -1216,7 +1216,7 @@ export class SupabaseProgressRepository {
         
         if (existing) {
             // UPDATE existing record
-            const updatePayload = { status };
+            const updatePayload = { status, requested_role: requestedRole };
             if (status === 'pending') {
                 // Reset requested_at so the panel shows when this new request was made,
                 // not when the original record was created (e.g. a past invitation).
@@ -1244,6 +1244,7 @@ export class SupabaseProgressRepository {
                 course_id:    courseId,
                 status,
                 requested_at: now,
+                requested_role: requestedRole,
             };
             if (status === 'approved') {
                 insertPayload.reviewed_at = now;
@@ -1828,6 +1829,7 @@ export class SupabaseProgressRepository {
     _mapPreEnrollmentRecord(record, extras = {}) {
         if (!record) return null;
         const status = record.enrollmentStatus || record.enrollment_status || record.status || null;
+        const requestedRole = record.requestedRole || record.requested_role || 'student';
         return {
             userId:           record.userId     ?? record.user_id     ?? null,
             courseId:         record.courseId   ?? record.course_id   ?? null,
@@ -1836,6 +1838,8 @@ export class SupabaseProgressRepository {
             enrollment_status: status,
             requestedAt:  record.requestedAt  || record.requested_at  || null,
             requested_at: record.requestedAt  || record.requested_at  || null,
+            requestedRole,
+            requested_role: requestedRole,
             ...extras,
         };
     }

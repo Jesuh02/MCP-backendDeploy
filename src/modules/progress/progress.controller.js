@@ -280,7 +280,11 @@ export class ProgressController {
             if (!courseId || isNaN(courseId) || courseId <= 0) {
                 return res.status(400).json({ success: false, error: 'courseId must be a positive integer' });
             }
-            const result = await this.progressService.requestEnrollment(req.user.userId, courseId);
+            const requestedRole = req.body?.requestedRole || req.body?.requested_role || 'student';
+            if (!['student', 'docente'].includes(requestedRole)) {
+                return res.status(400).json({ success: false, error: 'requestedRole must be "student" or "docente"' });
+            }
+            const result = await this.progressService.requestEnrollment(req.user.userId, courseId, requestedRole);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
