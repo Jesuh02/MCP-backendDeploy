@@ -201,8 +201,12 @@ export class CrossTenantAuthService {
         // Role 4 users can bypass institution suspension and still log in
         const suspendedRole4Matches = suspendedMatches.filter(m => {
             const roles = m._payload?.roles || [];
+            console.log(`[CrossTenantAuth] Suspended match userId=${m._payload?.userId} roles=[${roles}] hasRole4=${roles.includes(4)}`);
             return roles.includes(4);
         });
+        if (suspendedRole4Matches.length > 0) {
+            console.log(`[CrossTenantAuth] Role 4 bypass: allowing ${suspendedRole4Matches.length} suspended match(es) to log in`);
+        }
 
         // If there are active (non-suspended) matches, use them exclusively.
         // The user can log into a non-suspended institution even if another is suspended
