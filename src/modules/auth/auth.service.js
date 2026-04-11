@@ -148,13 +148,21 @@ export class AuthService {
         if (!this.institucionRepo || !user) return user;
         const persona = user.persona ?? user.personas ?? null;
         const institucionId = persona?.institucion_id ?? null;
-        if (!institucionId) return user;
-        try {
-            const inst = await this.institucionRepo.findById(institucionId);
-            if (inst) user.institucion = inst;
-        } catch (e) {
-            console.warn('[AuthService] Could not enrich institution:', e.message);
+        if (institucionId) {
+            try {
+                const inst = await this.institucionRepo.findById(institucionId);
+                if (inst) { user.institucion = inst; return user; }
+            } catch (e) {
+                console.warn('[AuthService] Could not enrich institution:', e.message);
+            }
         }
+        // Fallback: if institution was not loaded via persona (missing institucion_id),
+        // load the primary institution from this tenant's database so the suspension
+        // check is never silently skipped.
+        try {
+            const allInst = await this.institucionRepo.findAllUnfiltered({ limit: 1 });
+            if (allInst.length > 0) user.institucion = allInst[0];
+        } catch { /* ignore */ }
         return user;
     }
 
