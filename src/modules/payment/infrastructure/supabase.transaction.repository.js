@@ -204,8 +204,8 @@ export class SupabaseTransactionRepository {
 
     async createServicePayment(payload) {
         const { data, error } = await this.client.from('transactions').insert({
-            user_id: payload.userId || null,
-            course_id: null,
+            user_id: payload.userId || 0,
+            course_id: 0,
             institution_id: payload.institutionId,
             external_reference: payload.externalReference || null,
             amount: payload.amount || 0,
