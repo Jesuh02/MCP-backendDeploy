@@ -175,10 +175,17 @@ export class AuthService {
         const inst = user.institucion;
         if (!inst) return null;
         if (inst.is_suspended) {
-            console.log(`[AuthService] Institution '${inst.nombre}' (id: ${inst.id}) is suspended`);
             const roleIds = (user.roles || [])
                 .map(r => Number(r.id || r.rol_id))
                 .filter(id => Number.isInteger(id) && id > 0);
+
+            // Role 4 users can bypass institution suspension (same as CrossTenantAuthService)
+            if (roleIds.includes(4)) {
+                console.log(`[AuthService] Role 4 bypass: allowing user '${user.username}' to log into suspended institution '${inst.nombre}'`);
+                return null;
+            }
+
+            console.log(`[AuthService] Institution '${inst.nombre}' (id: ${inst.id}) is suspended`);
             const meta = JSON.stringify({
                 institutionId: inst.id,
                 institutionName: inst.nombre,
