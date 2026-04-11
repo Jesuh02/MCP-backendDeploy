@@ -208,7 +208,7 @@ export class InstitucionController {
     /** Set payment due date for an institution (cross-tenant). */
     setPaymentDueDate = async (req, res, next) => {
         try {
-            const { payment_due_date, billing_cycle_type, billing_cycle_day, tenantId } = req.body;
+            const { payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, tenantId } = req.body;
             const instId = parseInt(req.params.id);
 
             // If billing cycle data is provided, use the cycle flow
@@ -220,10 +220,11 @@ export class InstitucionController {
                     if (!validTypes.includes(billing_cycle_type)) {
                         return next(new ValidationError('Tipo de ciclo inválido'));
                     }
-                    const nextDue = this.service._computeNextDueDate(billing_cycle_type, billing_cycle_day);
+                    const nextDue = this.service._computeNextDueDate(billing_cycle_type, billing_cycle_day, billing_cycle_hour);
                     const updated = await repo.setBillingCycle(instId, {
                         billing_cycle_type,
                         billing_cycle_day: billing_cycle_type === 'monthly_day' ? parseInt(billing_cycle_day) : (billing_cycle_type === 'biweekly' ? 15 : 1),
+                        billing_cycle_hour: Math.min(23, Math.max(0, parseInt(billing_cycle_hour) || 8)),
                         payment_due_date: nextDue.toISOString(),
                     });
                     return res.json({ success: true, data: { ...updated, tenantId } });
@@ -231,6 +232,7 @@ export class InstitucionController {
                 const result = await this.service.setBillingCycle(instId, {
                     type: billing_cycle_type,
                     day: billing_cycle_day,
+                    hour: billing_cycle_hour,
                 });
                 if (result.isFail()) return next(result.getError());
                 return res.json({ success: true, data: result.getValue() });

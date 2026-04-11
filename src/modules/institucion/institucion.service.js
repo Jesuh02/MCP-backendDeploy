@@ -71,8 +71,9 @@ export class InstitucionDomainService {
      * @param {object} cycle
      * @param {'monthly_start'|'biweekly'|'monthly_day'} cycle.type
      * @param {number|null} cycle.day - Day of month (1-28) for 'monthly_day'
+     * @param {number} [cycle.hour=8] - Hour of day (0-23) when billing triggers
      */
-    async setBillingCycle(institutionId, { type, day }) {
+    async setBillingCycle(institutionId, { type, day, hour = 8 }) {
         const item = await this.repo.findById(institutionId);
         if (!item) return Result.fail(new NotFoundError('Institucion', institutionId));
 
@@ -87,10 +88,12 @@ export class InstitucionDomainService {
             }
         }
 
-        const nextDueDate = this._computeNextDueDate(type, day);
+        const safeHour = Math.min(23, Math.max(0, parseInt(hour) || 8));
+        const nextDueDate = this._computeNextDueDate(type, day, safeHour);
         const updated = await this.repo.setBillingCycle(institutionId, {
             billing_cycle_type: type,
             billing_cycle_day: type === 'monthly_day' ? parseInt(day) : (type === 'biweekly' ? 15 : 1),
+            billing_cycle_hour: safeHour,
             payment_due_date: nextDueDate.toISOString(),
         });
         return Result.ok(updated);
@@ -100,33 +103,37 @@ export class InstitucionDomainService {
      * Compute the next payment due date based on cycle type.
      * @param {'monthly_start'|'biweekly'|'monthly_day'} type
      * @param {number|null} day
+     * @param {number} [hour=8]
      * @returns {Date}
      */
-    _computeNextDueDate(type, day) {
+    _computeNextDueDate(type, day, hour = 8) {
         const now = new Date();
         const year = now.getFullYear();
         const month = now.getMonth();
         const today = now.getDate();
+        const safeHour = Math.min(23, Math.max(0, parseInt(hour) || 8));
+
+        const setHour = (d) => { d.setHours(safeHour, 0, 0, 0); return d; };
 
         if (type === 'monthly_start') {
             // Next 1st of month
-            if (today >= 1) return new Date(year, month + 1, 1);
-            return new Date(year, month, 1);
+            if (today >= 1) return setHour(new Date(year, month + 1, 1));
+            return setHour(new Date(year, month, 1));
         }
 
         if (type === 'biweekly') {
             // Next 1st or 15th
-            if (today < 15) return new Date(year, month, 15);
-            return new Date(year, month + 1, 1);
+            if (today < 15) return setHour(new Date(year, month, 15));
+            return setHour(new Date(year, month + 1, 1));
         }
 
         if (type === 'monthly_day') {
             const d = parseInt(day) || 1;
-            if (today < d) return new Date(year, month, d);
-            return new Date(year, month + 1, d);
+            if (today < d) return setHour(new Date(year, month, d));
+            return setHour(new Date(year, month + 1, d));
         }
 
-        return new Date(year, month + 1, 1);
+        return setHour(new Date(year, month + 1, 1));
     }
 
     /** Suspend an institution — blocks all logins for its users. */

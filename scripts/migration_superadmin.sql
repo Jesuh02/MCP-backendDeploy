@@ -15,6 +15,9 @@ WHERE NOT EXISTS (SELECT 1 FROM public.roles WHERE nombre = 'superadmin');
 -- 3. Add billing and suspension columns to institutions
 ALTER TABLE public.institutions
   ADD COLUMN IF NOT EXISTS payment_due_date timestamp with time zone,
+  ADD COLUMN IF NOT EXISTS billing_cycle_type text,
+  ADD COLUMN IF NOT EXISTS billing_cycle_day integer,
+  ADD COLUMN IF NOT EXISTS billing_cycle_hour integer DEFAULT 8,
   ADD COLUMN IF NOT EXISTS is_suspended boolean DEFAULT false,
   ADD COLUMN IF NOT EXISTS suspended_at timestamp with time zone,
   ADD COLUMN IF NOT EXISTS suspended_reason text;
