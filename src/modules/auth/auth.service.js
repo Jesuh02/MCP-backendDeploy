@@ -48,14 +48,14 @@ export class AuthService {
             user = await this.userRepo.findByEmail(username);
         }
 
-        if (user.isActive === false) {
-            console.log(`[AuthService] User '${username}' is deactivated`);
-            return Result.fail(new ForbiddenError('Tu usuario ha sido desactivado, por favor contactar a soporte'));
-        }
-
         if (!user) {
             console.log(`[AuthService] User/Email '${username}' not found`);
             return Result.fail(new UnauthorizedError('Credenciales inválidas'));
+        }
+
+        if (user.isActive === false) {
+            console.log(`[AuthService] User '${username}' is deactivated`);
+            return Result.fail(new ForbiddenError('Tu usuario ha sido desactivado, por favor contactar a soporte'));
         }
 
         let valid = false;

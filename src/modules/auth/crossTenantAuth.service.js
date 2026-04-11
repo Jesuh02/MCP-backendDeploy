@@ -188,9 +188,6 @@ export class CrossTenantAuthService {
 
         const deactivatedError = forbiddenErrors.find(e => !e.message.includes('INSTITUTION_SUSPENDED'));
 
-        // User deactivation ALWAYS blocks login, regardless of other matches
-        if (deactivatedError) return Result.fail(deactivatedError);
-
         let matches = settled
             .filter(r => r.status === 'fulfilled' && r.value !== null)
             .map(r => r.value);
@@ -202,7 +199,8 @@ export class CrossTenantAuthService {
         const suspendedMatches = matches.filter(m => m._isSuspended);
 
         // If there are active (non-suspended) matches, use them exclusively.
-        // The user can log into a non-suspended institution even if another is suspended.
+        // The user can log into a non-suspended institution even if another is suspended
+        // or their account is deactivated in a different institution.
         if (activeMatches.length > 0) {
             matches = activeMatches;
         } else if (suspendedMatches.length > 0) {
@@ -212,6 +210,10 @@ export class CrossTenantAuthService {
                 `INSTITUTION_SUSPENDED:${JSON.stringify(meta)}`,
             ));
         } else {
+            // No active or suspended matches — check if user was deactivated in any tenant.
+            // Only block with deactivation when there are NO institution matches at all,
+            // so a user deactivated in one institution can still log into another.
+            if (deactivatedError) return Result.fail(deactivatedError);
             return Result.fail(new UnauthorizedError(noMatchMessage));
         }
 
