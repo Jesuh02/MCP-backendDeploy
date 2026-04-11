@@ -256,9 +256,6 @@ export class InstitucionController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
-            res.json({ success: true, data: result.getValue() });
-        } catch (err) { next(err); }
-    };
 
     /** Check if an institution is accessible (for login guards). */
     checkAccess = async (req, res, next) => {
