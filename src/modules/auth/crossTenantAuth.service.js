@@ -180,14 +180,13 @@ export class CrossTenantAuthService {
      * @param {string|null} cedula  Optional cedula to disambiguate same-credential collisions.
      */
     _resolveMatches(settled, noMatchMessage, cedula = null) {
-        // Separate user-deactivation errors from institution-suspension errors
+        // Separate user-deactivation errors (ForbiddenError thrown by _tryLogin)
         const forbiddenErrors = settled
             .filter(r => r.status === 'rejected')
             .map(r => r.reason)
             .filter(e => e instanceof ForbiddenError);
 
         const deactivatedError = forbiddenErrors.find(e => !e.message.includes('INSTITUTION_SUSPENDED'));
-        const suspendedErrors = forbiddenErrors.filter(e => e.message.includes('INSTITUTION_SUSPENDED'));
 
         // User deactivation ALWAYS blocks login, regardless of other matches
         if (deactivatedError) return Result.fail(deactivatedError);
@@ -196,10 +195,23 @@ export class CrossTenantAuthService {
             .filter(r => r.status === 'fulfilled' && r.value !== null)
             .map(r => r.value);
 
-        // Only block with institution suspension if there are NO active matches.
-        // If the user has access to another non-suspended institution, allow login there.
-        if (matches.length === 0) {
-            if (suspendedErrors.length > 0) return Result.fail(suspendedErrors[0]);
+        // Separate suspended matches from active ones.
+        // Suspended institutions are now flagged on the match (_isSuspended)
+        // instead of thrown, so we always have them in the matches array.
+        const activeMatches = matches.filter(m => !m._isSuspended);
+        const suspendedMatches = matches.filter(m => m._isSuspended);
+
+        // If there are active (non-suspended) matches, use them exclusively.
+        // The user can log into a non-suspended institution even if another is suspended.
+        if (activeMatches.length > 0) {
+            matches = activeMatches;
+        } else if (suspendedMatches.length > 0) {
+            // ALL matches are suspended → return the first suspended error with metadata
+            const meta = suspendedMatches[0]._suspendedMeta || {};
+            return Result.fail(new ForbiddenError(
+                `INSTITUTION_SUSPENDED:${JSON.stringify(meta)}`,
+            ));
+        } else {
             return Result.fail(new UnauthorizedError(noMatchMessage));
         }
 
@@ -287,13 +299,13 @@ export class CrossTenantAuthService {
         }));
 
         if (enriched.length === 1) {
-            const { _payload, _cedulaHash, ...result } = enriched[0];
+            const { _payload, _cedulaHash, _isSuspended, _suspendedMeta, ...result } = enriched[0];
             return Result.ok({ ...result, personaCedulaHash: _cedulaHash || null, availableTenants: enriched.map(m => ({ id: m.tenant.id, name: m.tenant.name })) });
         }
 
         return Result.ok({
             multipleMatches: true,
-            matches: enriched.map(({ _payload, _cedulaHash, ...m }) => ({
+            matches: enriched.map(({ _payload, _cedulaHash, _isSuspended, _suspendedMeta, ...m }) => ({
                 ...m,
                 personaCedulaHash: _cedulaHash || null,
                 availableTenants: enriched.map(x => ({ id: x.tenant.id, name: x.tenant.name })),
@@ -320,25 +332,25 @@ export class CrossTenantAuthService {
 
             await this._enrichWithInstitution(user, instRepo);
 
-            // Block login if the institution is suspended
-            if (user.institucion?.is_suspended) {
-                const inst = user.institucion;
-                const meta = JSON.stringify({
-                    institutionId: inst.id,
-                    institutionName: inst.nombre,
-                    monthlyPrice: inst.monthly_price || 0,
-                    serverUrl: entry.serverUrl || serverUrl,
-                });
-                throw new ForbiddenError(
-                    `INSTITUTION_SUSPENDED:${meta}`,
-                );
-            }
-
             // Fetch the persona's cedula hash so _resolveMatches can verify identity
             const cedulaHash = await this._fetchCedulaHash(entry.client, user);
 
             const match = this._buildMatch(entry, user);
             match._cedulaHash = cedulaHash; // attached for cross-tenant identity check
+
+            // Flag suspended institutions instead of throwing, so _resolveMatches
+            // can still pick non-suspended matches when the user has access elsewhere.
+            if (user.institucion?.is_suspended) {
+                const inst = user.institucion;
+                match._isSuspended = true;
+                match._suspendedMeta = {
+                    institutionId: inst.id,
+                    institutionName: inst.nombre,
+                    monthlyPrice: inst.monthly_price || 0,
+                    serverUrl: entry.serverUrl || '',
+                };
+            }
+
             return match;
         } catch (e) {
             if (e instanceof ForbiddenError) throw e; // propagar error de usuario desactivado
@@ -396,24 +408,24 @@ export class CrossTenantAuthService {
 
             await this._enrichWithInstitution(user, instRepo);
 
-            // Block login if the institution is suspended
-            if (user.institucion?.is_suspended) {
-                const inst = user.institucion;
-                const meta = JSON.stringify({
-                    institutionId: inst.id,
-                    institutionName: inst.nombre,
-                    monthlyPrice: inst.monthly_price || 0,
-                    serverUrl: entry.serverUrl || serverUrl,
-                });
-                throw new ForbiddenError(
-                    `INSTITUTION_SUSPENDED:${meta}`,
-                );
-            }
-
             // Fetch cedula hash so _resolveMatches can verify identity across tenants
             const cedulaHash = await this._fetchCedulaHash(entry.client, user);
             const match = { ...this._buildMatch(entry, user), isNewUser: false };
             match._cedulaHash = cedulaHash;
+
+            // Flag suspended institutions instead of throwing, so _resolveMatches
+            // can still pick non-suspended matches when the user has access elsewhere.
+            if (user.institucion?.is_suspended) {
+                const inst = user.institucion;
+                match._isSuspended = true;
+                match._suspendedMeta = {
+                    institutionId: inst.id,
+                    institutionName: inst.nombre,
+                    monthlyPrice: inst.monthly_price || 0,
+                    serverUrl: entry.serverUrl || '',
+                };
+            }
+
             return match;
         } catch (e) {
             if (e instanceof ForbiddenError) throw e; // propagar error de usuario desactivado
