@@ -202,6 +202,8 @@ export class InstitucionDomainService {
     /**
      * Public billing payment for suspended institutions.
      * Uses the institution's monthly_price. No auth required.
+     * Resolves an admin user (role 3) from the institution to satisfy the
+     * NOT NULL constraint on transactions.user_id.
      */
     async initiatePublicBillingPayment({ institutionId, redirectUrl }) {
         if (!this.txRepo) return Result.fail(new ValidationError('Transaction repository not available'));
@@ -214,12 +216,43 @@ export class InstitucionDomainService {
         const price = inst.monthly_price || 0;
         if (price <= 0) return Result.fail(new ValidationError('La institución no tiene un precio mensual configurado'));
 
+        // Resolve an admin user_id for this institution so the transaction
+        // satisfies the NOT NULL constraint on user_id.
+        let adminUserId = null;
+        if (this.userRepo) {
+            try {
+                adminUserId = await this._findAdminUserForInstitution(institutionId);
+            } catch { /* non-fatal */ }
+        }
+
         return this.initiateBillingPayment({
             institutionId,
-            userId: null,
+            userId: adminUserId,
             amount: price,
             redirectUrl,
         });
+    }
+
+    /**
+     * Finds the first admin user (role 3) that belongs to the given institution.
+     * Queries: usuarios_roles → usuarios → personas.institucion_id.
+     * @returns {Promise<number|null>}
+     */
+    async _findAdminUserForInstitution(institutionId) {
+        if (!this.userRepo?.client) return null;
+        const { data, error } = await this.userRepo.client
+            .from('usuarios_roles')
+            .select('usuario_id, usuarios!inner(id, persona_id, personas!fk_usuarios_persona(institucion_id))')
+            .eq('rol_id', 3)
+            .limit(20);
+        if (error || !data) return null;
+        for (const row of data) {
+            const persona = row.usuarios?.personas;
+            if (persona && Number(persona.institucion_id) === Number(institutionId)) {
+                return row.usuario_id;
+            }
+        }
+        return null;
     }
 
     /** Initiate a billing payment for an institution (stored as payment_type='service' in transactions). */
