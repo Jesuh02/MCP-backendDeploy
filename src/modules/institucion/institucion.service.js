@@ -159,6 +159,16 @@ export class InstitucionDomainService {
         return Result.ok(updated);
     }
 
+    /** Set the monthly price (COP) for an institution. */
+    async setMonthlyPrice(institutionId, price) {
+        const item = await this.repo.findById(institutionId);
+        if (!item) return Result.fail(new NotFoundError('Institucion', institutionId));
+        const numPrice = parseFloat(price);
+        if (isNaN(numPrice) || numPrice < 0) return Result.fail(new ValidationError('Precio inválido'));
+        const updated = await this.repo.update(institutionId, { monthly_price: numPrice });
+        return Result.ok(updated);
+    }
+
     /** Check if an institution is suspended (for login guards). */
     async checkInstitutionAccess(institutionId) {
         if (!institutionId) return Result.ok({ allowed: true });
@@ -188,6 +198,29 @@ export class InstitucionDomainService {
     // ═══════════════════════════════════════════════════════
     // Institution billing payments (Wompi via transactions table)
     // ═══════════════════════════════════════════════════════
+
+    /**
+     * Public billing payment for suspended institutions.
+     * Uses the institution's monthly_price. No auth required.
+     */
+    async initiatePublicBillingPayment({ institutionId, redirectUrl }) {
+        if (!this.txRepo) return Result.fail(new ValidationError('Transaction repository not available'));
+        if (!this.gateway) return Result.fail(new ValidationError('Payment gateway not available'));
+
+        const inst = await this.repo.findById(institutionId);
+        if (!inst) return Result.fail(new NotFoundError('Institucion', institutionId));
+        if (!inst.is_suspended) return Result.fail(new ValidationError('La institución no está suspendida'));
+
+        const price = inst.monthly_price || 0;
+        if (price <= 0) return Result.fail(new ValidationError('La institución no tiene un precio mensual configurado'));
+
+        return this.initiateBillingPayment({
+            institutionId,
+            userId: null,
+            amount: price,
+            redirectUrl,
+        });
+    }
 
     /** Initiate a billing payment for an institution (stored as payment_type='service' in transactions). */
     async initiateBillingPayment({ institutionId, userId, amount, redirectUrl }) {

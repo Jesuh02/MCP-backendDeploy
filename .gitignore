@@ -112,3 +112,5 @@ docs/migration_fix_chat_messages_sequence.sql
 scripts/log.txt
 docs/migration_subject_collaborators.sql
 scripts/migration_guests_collaborators.sql
+scripts/migration_superadmin.sql
+scripts/migration_superadmin.sql

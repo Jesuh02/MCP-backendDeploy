@@ -8,6 +8,7 @@ export function institucionRoutes({ institucionController, authMiddleware, requi
     router.get('/user-institutions/:username', institucionController.lookupUserAcrossTenants);
     router.get('/status/:id', institucionController.checkInstitutionStatus);
     router.post('/billing/webhook', institucionController.billingWebhook);
+    router.post('/billing/public-initiate', institucionController.publicBillingPayment);
 
     router.get('/', institucionController.list);
     router.get('/search', institucionController.search);
@@ -35,6 +36,7 @@ export function institucionRoutes({ institucionController, authMiddleware, requi
         router.put('/:id/payment-due', authMiddleware, requireRoles(4), institucionController.setPaymentDueDate);
         router.post('/:id/suspend', authMiddleware, requireRoles(4), institucionController.suspend);
         router.post('/:id/unsuspend', authMiddleware, requireRoles(4), institucionController.unsuspend);
+        router.put('/:id/monthly-price', authMiddleware, requireRoles(4), institucionController.setMonthlyPrice);
         router.get('/:id/access', authMiddleware, requireRoles(3, 4), institucionController.checkAccess);
         router.post('/:id/billing/initiate', authMiddleware, requireRoles(3, 4), institucionController.initiateBillingPayment);
         router.get('/:id/billing/payments', authMiddleware, requireRoles(3, 4), institucionController.getBillingPayments);
