@@ -8,13 +8,15 @@ const toApp = (row) => row && ({
     departamento: row.department,
     is_active: row.is_active,
     payment_due_date: row.payment_due_date || null,
+    billing_cycle_type: row.billing_cycle_type || null,
+    billing_cycle_day: row.billing_cycle_day ?? null,
     is_suspended: row.is_suspended || false,
     suspended_at: row.suspended_at || null,
     suspended_reason: row.suspended_reason || null,
     created_at: row.created_at,
 });
 
-const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_date, is_suspended, suspended_at, suspended_reason }) => {
+const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_date, billing_cycle_type, billing_cycle_day, is_suspended, suspended_at, suspended_reason }) => {
     const mapped = {};
     if (nombre !== undefined) mapped.name = nombre;
     if (codigo !== undefined) mapped.code = codigo;
@@ -22,6 +24,8 @@ const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_dat
     if (departamento !== undefined) mapped.department = departamento;
     if (is_active !== undefined) mapped.is_active = is_active;
     if (payment_due_date !== undefined) mapped.payment_due_date = payment_due_date;
+    if (billing_cycle_type !== undefined) mapped.billing_cycle_type = billing_cycle_type;
+    if (billing_cycle_day !== undefined) mapped.billing_cycle_day = billing_cycle_day;
     if (is_suspended !== undefined) mapped.is_suspended = is_suspended;
     if (suspended_at !== undefined) mapped.suspended_at = suspended_at;
     if (suspended_reason !== undefined) mapped.suspended_reason = suspended_reason;
@@ -98,6 +102,20 @@ export class SupabaseInstitucionRepository {
             .select()
             .single();
         if (error) throw new Error(`Error actualizando fecha de pago: ${error.message}`);
+        return toApp(data);
+    }
+
+    /** Set billing cycle for an institution. */
+    async setBillingCycle(id, { billing_cycle_type, billing_cycle_day, payment_due_date }) {
+        const updatePayload = { billing_cycle_type, billing_cycle_day };
+        if (payment_due_date !== undefined) updatePayload.payment_due_date = payment_due_date;
+        const { data, error } = await this.client
+            .from(TABLE)
+            .update(updatePayload)
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw new Error(`Error actualizando ciclo de pago: ${error.message}`);
         return toApp(data);
     }
 

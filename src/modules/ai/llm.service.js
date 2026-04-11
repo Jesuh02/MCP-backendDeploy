@@ -552,8 +552,8 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 // If the prompt asks for database queries or BI instructions, expose MCP tools
                 const promptLc = String(fullPrompt || '').toLowerCase();
                 // Allow caller to force enabling MCP tools (useful for channel integrations)
-                // Roles: 1=estudiante, 2=docente, 3=admin
-                const isAdmin = Array.isArray(userRoles) && userRoles.map(Number).includes(3);
+                // Roles: 1=estudiante, 2=docente, 3=admin, 4=superadmin
+                const isAdmin = Array.isArray(userRoles) && (userRoles.map(Number).includes(3) || userRoles.map(Number).includes(4));
                 const isTeacher = Array.isArray(userRoles) && userRoles.map(Number).includes(2);
                 // Gate MCP tool access to teachers and admins only.
                 // When fromWhatsApp=true, all authenticated users can query their OWN data (scoped by userId).

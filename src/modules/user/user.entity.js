@@ -33,9 +33,9 @@ export class User {
         this.updatedAt = updatedAt;
     }
 
-    /** @returns {boolean} Tiene rol admin (roleId = 3) */
+    /** @returns {boolean} Tiene rol admin (roleId = 3) o superadmin (roleId = 4) */
     isAdmin() {
-        return this.roles.some((r) => (r.id || r) === 3);
+        return this.roles.some((r) => (r.id || r) === 3 || (r.id || r) === 4);
     }
 
     /** @returns {boolean} Tiene rol docente/creador (roleId = 2) */

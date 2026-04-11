@@ -819,7 +819,7 @@ export class WhatsAppDomainService {
                 const canUseMCP = Boolean(this.mcpService) || Boolean(getTenantMcpServerUrl(queryTenantId));
                 const looksLikeDbQuery = this._isMCPIntent(text) || (this.mcpService && typeof this.mcpService.isBusinessIntent === 'function' && this.mcpService.isBusinessIntent(text));
                 // Allow teachers (2) and admins (3) to use MCP queries from WhatsApp.
-                const roleAllows = userRoles.includes(3) || userRoles.includes(2);
+                const roleAllows = userRoles.includes(3) || userRoles.includes(4) || userRoles.includes(2);
 
                 // If the user is asking for an Excel file, skip the direct MCP
                 // shortcut entirely — let intent classification route the message
@@ -899,7 +899,7 @@ export class WhatsAppDomainService {
             // 7. Verificar permisos
             if (intent.requiresRole && !this._hasPermission(userRoles, intent.requiresRole)) {
                 const roleName = intent.requiresRole === 'admin' ? 'Administrador' : 'Docente';
-                const currentRole = userRoles.includes(3) ? 'Admin' : userRoles.includes(2) ? 'Docente' : 'Estudiante';
+                const currentRole = userRoles.includes(3) || userRoles.includes(4) ? 'Admin' : userRoles.includes(2) ? 'Docente' : 'Estudiante';
                 await this._sendReply(from, MESSAGES.ACCESS_DENIED(currentRole, roleName));
                 return;
             }
@@ -1027,7 +1027,7 @@ export class WhatsAppDomainService {
 
         // Determine if user can use MCP (role 3 = admin)
         const userRoleIds = (user.roles || []).map(r => r.id || r.rol_id || r);
-        const canUseMCP = userRoleIds.includes(3);
+        const canUseMCP = userRoleIds.includes(3) || userRoleIds.includes(4);
 
         // 3. Verificar que el número no esté vinculado a otro usuario
         const existingByPhone = await this.sessionRepo.findByPhoneNumber(normalized);
@@ -1138,7 +1138,7 @@ export class WhatsAppDomainService {
         // Determine admin/MCP capability from user roles
         const updatedUser = await this.userRepo.findById(userId);
         const updatedRoleIds = (updatedUser?.roles || []).map(r => r.id || r.rol_id || r);
-        const canUseMCPAfterVerify = updatedRoleIds.includes(3);
+        const canUseMCPAfterVerify = updatedRoleIds.includes(3) || updatedRoleIds.includes(4);
 
         return Result.ok({
             verified: true,
@@ -1292,7 +1292,7 @@ export class WhatsAppDomainService {
                 }
                 if (label === 'QUERY_ABOUT_GRADES') {
                     // tratar como consulta sobre progreso/estadísticas
-                    if (userRoles.includes(2) || userRoles.includes(3)) {
+                    if (userRoles.includes(2) || userRoles.includes(3) || userRoles.includes(4)) {
                         return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
                     }
                     return { intent: 'MY_PROGRESS', requiresRole: null };
@@ -1305,14 +1305,14 @@ export class WhatsAppDomainService {
 
         // 3. Detección de progreso (heurística más conservadora)
         if (this._isProgressIntent(text)) {
-            if (userRoles.includes(2) || userRoles.includes(3)) {
+            if (userRoles.includes(2) || userRoles.includes(3) || userRoles.includes(4)) {
                 return { intent: 'STUDENT_PROGRESS', requiresRole: 'teacher' };
             }
             return { intent: 'MY_PROGRESS', requiresRole: null };
         }
 
         // 4. Consulta MCP (solo admin)
-        if (this._isMCPIntent(text) && userRoles.includes(3)) {
+        if (this._isMCPIntent(text) && (userRoles.includes(3) || userRoles.includes(4))) {
             return { intent: 'MCP_QUERY', requiresRole: 'admin' };
         }
 
@@ -1337,8 +1337,8 @@ export class WhatsAppDomainService {
     }
 
     _hasPermission(userRoles, required) {
-        if (required === 'admin') return userRoles.includes(3);
-        if (required === 'teacher') return userRoles.includes(2) || userRoles.includes(3);
+        if (required === 'admin') return userRoles.includes(3) || userRoles.includes(4);
+        if (required === 'teacher') return userRoles.includes(2) || userRoles.includes(3) || userRoles.includes(4);
         return true;
     }
 
@@ -1435,7 +1435,7 @@ export class WhatsAppDomainService {
             // Decide whether the Business‑Intelligence persona should be used.
             // Admins always get the BI persona now (see requirement), non-admins get
             // generic chat.
-            const isAdmin = Array.isArray(userRoles) && userRoles.includes(3);
+            const isAdmin = Array.isArray(userRoles) && (userRoles.includes(3) || userRoles.includes(4));
             const context = session.conversationContext || [];
 
             let promptToSend = text;

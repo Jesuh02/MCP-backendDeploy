@@ -14,8 +14,8 @@ export function createCourseActiveGuard(courseRepository) {
             .map((r) => Number(r?.id ?? r))
             .filter((id) => Number.isInteger(id) && id > 0);
 
-        // Role 3 always allowed; no roles = unauthenticated (handled by auth middleware)
-        if (roles.includes(3) || roles.length === 0) return next();
+        // Role 3/4 always allowed; no roles = unauthenticated (handled by auth middleware)
+        if (roles.includes(3) || roles.includes(4) || roles.length === 0) return next();
 
         const isRestricted = roles.includes(1) || roles.includes(2);
         if (!isRestricted) return next();

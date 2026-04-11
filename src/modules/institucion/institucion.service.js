@@ -65,6 +65,70 @@ export class InstitucionDomainService {
         return Result.ok(updated);
     }
 
+    /**
+     * Set billing cycle for an institution.
+     * @param {number} institutionId
+     * @param {object} cycle
+     * @param {'monthly_start'|'biweekly'|'monthly_day'} cycle.type
+     * @param {number|null} cycle.day - Day of month (1-28) for 'monthly_day'
+     */
+    async setBillingCycle(institutionId, { type, day }) {
+        const item = await this.repo.findById(institutionId);
+        if (!item) return Result.fail(new NotFoundError('Institucion', institutionId));
+
+        const validTypes = ['monthly_start', 'biweekly', 'monthly_day'];
+        if (!validTypes.includes(type)) {
+            return Result.fail(new ValidationError(`Tipo de ciclo inválido. Valores válidos: ${validTypes.join(', ')}`));
+        }
+        if (type === 'monthly_day') {
+            const d = parseInt(day);
+            if (!d || d < 1 || d > 28) {
+                return Result.fail(new ValidationError('El día debe ser entre 1 y 28'));
+            }
+        }
+
+        const nextDueDate = this._computeNextDueDate(type, day);
+        const updated = await this.repo.setBillingCycle(institutionId, {
+            billing_cycle_type: type,
+            billing_cycle_day: type === 'monthly_day' ? parseInt(day) : (type === 'biweekly' ? 15 : 1),
+            payment_due_date: nextDueDate.toISOString(),
+        });
+        return Result.ok(updated);
+    }
+
+    /**
+     * Compute the next payment due date based on cycle type.
+     * @param {'monthly_start'|'biweekly'|'monthly_day'} type
+     * @param {number|null} day
+     * @returns {Date}
+     */
+    _computeNextDueDate(type, day) {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth();
+        const today = now.getDate();
+
+        if (type === 'monthly_start') {
+            // Next 1st of month
+            if (today >= 1) return new Date(year, month + 1, 1);
+            return new Date(year, month, 1);
+        }
+
+        if (type === 'biweekly') {
+            // Next 1st or 15th
+            if (today < 15) return new Date(year, month, 15);
+            return new Date(year, month + 1, 1);
+        }
+
+        if (type === 'monthly_day') {
+            const d = parseInt(day) || 1;
+            if (today < d) return new Date(year, month, d);
+            return new Date(year, month + 1, d);
+        }
+
+        return new Date(year, month + 1, 1);
+    }
+
     /** Suspend an institution — blocks all logins for its users. */
     async suspend(institutionId, reason = null) {
         const item = await this.repo.findById(institutionId);
@@ -187,13 +251,20 @@ export class InstitucionDomainService {
         });
 
         if (dbStatus === 'APPROVED') {
-            // Extend payment due date by one month
-            const newDueDate = new Date();
-            newDueDate.setMonth(newDueDate.getMonth() + 1);
             const instId = payment.institution_id;
-            await this.repo.setPaymentDueDate(instId, newDueDate.toISOString());
-            // Unsuspend if was suspended for payment
             const inst = await this.repo.findById(instId);
+
+            // Compute next due date from billing cycle if configured, otherwise +1 month
+            let newDueDate;
+            if (inst && inst.billing_cycle_type) {
+                newDueDate = this._computeNextDueDate(inst.billing_cycle_type, inst.billing_cycle_day);
+            } else {
+                newDueDate = new Date();
+                newDueDate.setMonth(newDueDate.getMonth() + 1);
+            }
+            await this.repo.setPaymentDueDate(instId, newDueDate.toISOString());
+
+            // Unsuspend if was suspended for payment
             if (inst && inst.is_suspended && inst.suspended_reason === 'Pago vencido') {
                 await this.repo.unsuspend(instId);
             }

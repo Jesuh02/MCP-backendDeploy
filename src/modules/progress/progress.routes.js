@@ -23,28 +23,28 @@ export function progressRoutes({ progressController, requireRoles }) {
     router.put('/course/:courseId/certificate-url', progressController.updateCertificateUrl);
     router.post('/course/:courseId/recalculate', progressController.recalculate);
 
-    router.get('/admin/certificates', requireRoles(3), progressController.getAllCertificates);
-    router.post('/admin/certificates/bulk-issue', requireRoles(3), progressController.bulkIssueCertificatesAll);
-    router.post('/admin/repair-progress-status', requireRoles(3), progressController.repairProgressStatuses);
-    router.get('/admin/subject-progress', requireRoles(2, 3), progressController.getAllSubjectProgress);
+    router.get('/admin/certificates', requireRoles(3, 4), progressController.getAllCertificates);
+    router.post('/admin/certificates/bulk-issue', requireRoles(3, 4), progressController.bulkIssueCertificatesAll);
+    router.post('/admin/repair-progress-status', requireRoles(3, 4), progressController.repairProgressStatuses);
+    router.get('/admin/subject-progress', requireRoles(2, 3, 4), progressController.getAllSubjectProgress);
 
     // Admin: enrollment management (Matrícula tab)
-    router.get('/admin/pending-enrollments', requireRoles(3), progressController.getPendingEnrollments);
-    router.get('/admin/approved-enrollments', requireRoles(3), progressController.getApprovedEnrollments);
-    router.post('/admin/enrollments/:userId/:courseId/approve', requireRoles(3), progressController.approveEnrollment);
-    router.post('/admin/enrollments/:userId/:courseId/reject', requireRoles(3), progressController.rejectEnrollment);
-    router.delete('/admin/enrollments/:userId/:courseId', requireRoles(3), progressController.revokeEnrollment);
-    router.post('/admin/enrollments/:userId/:courseId/revoke', requireRoles(3), progressController.revokeEnrollment);
-    router.post('/admin/enrollments/:userId/:courseId/restore', requireRoles(3), progressController.restoreEnrollment);
+    router.get('/admin/pending-enrollments', requireRoles(3, 4), progressController.getPendingEnrollments);
+    router.get('/admin/approved-enrollments', requireRoles(3, 4), progressController.getApprovedEnrollments);
+    router.post('/admin/enrollments/:userId/:courseId/approve', requireRoles(3, 4), progressController.approveEnrollment);
+    router.post('/admin/enrollments/:userId/:courseId/reject', requireRoles(3, 4), progressController.rejectEnrollment);
+    router.delete('/admin/enrollments/:userId/:courseId', requireRoles(3, 4), progressController.revokeEnrollment);
+    router.post('/admin/enrollments/:userId/:courseId/revoke', requireRoles(3, 4), progressController.revokeEnrollment);
+    router.post('/admin/enrollments/:userId/:courseId/restore', requireRoles(3, 4), progressController.restoreEnrollment);
 
     // Admin: enrollment status toggle (activar / inactivar)
-    router.post('/admin/enrollments/:userId/:courseId/enrollment-status', requireRoles(3), progressController.setCourseEnrollmentStatus);
-    router.post('/admin/enrollments/:userId/:courseId/subject/:subjectId/enrollment-status', requireRoles(3), progressController.setSubjectEnrollmentStatus);
+    router.post('/admin/enrollments/:userId/:courseId/enrollment-status', requireRoles(3, 4), progressController.setCourseEnrollmentStatus);
+    router.post('/admin/enrollments/:userId/:courseId/subject/:subjectId/enrollment-status', requireRoles(3, 4), progressController.setSubjectEnrollmentStatus);
 
     // Admin: subject access blocks
-    router.get('/admin/subject-access-blocks', requireRoles(3), progressController.getAllSubjectAccessBlocks);
-    router.post('/admin/subject-access-block', requireRoles(3), progressController.blockSubjectAccess);
-    router.delete('/admin/subject-access-block/:userId/:subjectId', requireRoles(3), progressController.unblockSubjectAccess);
+    router.get('/admin/subject-access-blocks', requireRoles(3, 4), progressController.getAllSubjectAccessBlocks);
+    router.post('/admin/subject-access-block', requireRoles(3, 4), progressController.blockSubjectAccess);
+    router.delete('/admin/subject-access-block/:userId/:subjectId', requireRoles(3, 4), progressController.unblockSubjectAccess);
 
     // Student: check subject access block
     router.get('/subject/:subjectId/access-block', progressController.checkSubjectAccessBlock);
