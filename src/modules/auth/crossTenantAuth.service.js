@@ -180,18 +180,21 @@ export class CrossTenantAuthService {
      * @param {string|null} cedula  Optional cedula to disambiguate same-credential collisions.
      */
     _resolveMatches(settled, noMatchMessage, cedula = null) {
-        // Detectar errores de usuario desactivado — tienen prioridad sobre 'no encontrado'
+        // Detectar errores de usuario desactivado/suspendido — tienen prioridad sobre cualquier match
         const forbiddenError = settled
             .filter(r => r.status === 'rejected')
             .map(r => r.reason)
             .find(e => e instanceof ForbiddenError);
+
+        // Institution suspension / user deactivation ALWAYS blocks login,
+        // even if the same credentials match an active institution elsewhere.
+        if (forbiddenError) return Result.fail(forbiddenError);
 
         let matches = settled
             .filter(r => r.status === 'fulfilled' && r.value !== null)
             .map(r => r.value);
 
         if (matches.length === 0) {
-            if (forbiddenError) return Result.fail(forbiddenError);
             return Result.fail(new UnauthorizedError(noMatchMessage));
         }
 
