@@ -203,9 +203,7 @@ export class SupabaseTransactionRepository {
     }
 
     async createServicePayment(payload) {
-        const { data, error } = await this.client.from('transactions').insert({
-            user_id: payload.userId || 0,
-            course_id: 0,
+        const row = {
             institution_id: payload.institutionId,
             external_reference: payload.externalReference || null,
             amount: payload.amount || 0,
@@ -215,7 +213,12 @@ export class SupabaseTransactionRepository {
             payment_type: 'service',
             billing_period_start: payload.billingPeriodStart || null,
             billing_period_end: payload.billingPeriodEnd || null,
-        }).select().single();
+        };
+        // Only include user_id/course_id if they have a real value,
+        // so the INSERT works whether the columns are nullable or NOT NULL.
+        if (payload.userId) row.user_id = payload.userId;
+        if (payload.courseId) row.course_id = payload.courseId;
+        const { data, error } = await this.client.from('transactions').insert(row).select().single();
         if (error) throw new Error(`Error creando pago de servicio: ${error.message}`);
         return data;
     }
