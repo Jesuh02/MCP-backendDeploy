@@ -180,21 +180,26 @@ export class CrossTenantAuthService {
      * @param {string|null} cedula  Optional cedula to disambiguate same-credential collisions.
      */
     _resolveMatches(settled, noMatchMessage, cedula = null) {
-        // Detectar errores de usuario desactivado/suspendido — tienen prioridad sobre cualquier match
-        const forbiddenError = settled
+        // Separate user-deactivation errors from institution-suspension errors
+        const forbiddenErrors = settled
             .filter(r => r.status === 'rejected')
             .map(r => r.reason)
-            .find(e => e instanceof ForbiddenError);
+            .filter(e => e instanceof ForbiddenError);
 
-        // Institution suspension / user deactivation ALWAYS blocks login,
-        // even if the same credentials match an active institution elsewhere.
-        if (forbiddenError) return Result.fail(forbiddenError);
+        const deactivatedError = forbiddenErrors.find(e => !e.message.includes('INSTITUTION_SUSPENDED'));
+        const suspendedErrors = forbiddenErrors.filter(e => e.message.includes('INSTITUTION_SUSPENDED'));
+
+        // User deactivation ALWAYS blocks login, regardless of other matches
+        if (deactivatedError) return Result.fail(deactivatedError);
 
         let matches = settled
             .filter(r => r.status === 'fulfilled' && r.value !== null)
             .map(r => r.value);
 
+        // Only block with institution suspension if there are NO active matches.
+        // If the user has access to another non-suspended institution, allow login there.
         if (matches.length === 0) {
+            if (suspendedErrors.length > 0) return Result.fail(suspendedErrors[0]);
             return Result.fail(new UnauthorizedError(noMatchMessage));
         }
 
@@ -317,8 +322,15 @@ export class CrossTenantAuthService {
 
             // Block login if the institution is suspended
             if (user.institucion?.is_suspended) {
+                const inst = user.institucion;
+                const meta = JSON.stringify({
+                    institutionId: inst.id,
+                    institutionName: inst.nombre,
+                    monthlyPrice: inst.monthly_price || 0,
+                    serverUrl: entry.serverUrl || serverUrl,
+                });
                 throw new ForbiddenError(
-                    'Tu institución ha sido suspendida. Contacta al administrador.',
+                    `INSTITUTION_SUSPENDED:${meta}`,
                 );
             }
 
@@ -386,8 +398,15 @@ export class CrossTenantAuthService {
 
             // Block login if the institution is suspended
             if (user.institucion?.is_suspended) {
+                const inst = user.institucion;
+                const meta = JSON.stringify({
+                    institutionId: inst.id,
+                    institutionName: inst.nombre,
+                    monthlyPrice: inst.monthly_price || 0,
+                    serverUrl: entry.serverUrl || serverUrl,
+                });
                 throw new ForbiddenError(
-                    'Tu institución ha sido suspendida. Contacta al administrador.',
+                    `INSTITUTION_SUSPENDED:${meta}`,
                 );
             }
 

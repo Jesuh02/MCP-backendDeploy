@@ -297,6 +297,24 @@ export class InstitucionController {
         } catch (err) { next(err); }
     };
 
+    /** Set monthly price for an institution (cross-tenant). */
+    setMonthlyPrice = async (req, res, next) => {
+        try {
+            const { monthly_price, tenantId } = req.body || {};
+            const instId = parseInt(req.params.id);
+            if (tenantId) {
+                const repo = this._tenantRepo(tenantId);
+                if (repo) {
+                    const updated = await repo.update(instId, { monthly_price: parseFloat(monthly_price) });
+                    return res.json({ success: true, data: { ...updated, tenantId } });
+                }
+            }
+            const result = await this.service.setMonthlyPrice(instId, monthly_price);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     /** Check if an institution is accessible (for login guards). */
     checkAccess = async (req, res, next) => {
         try {
@@ -354,6 +372,31 @@ export class InstitucionController {
             const result = await this.service.checkInstitutionAccess(parseInt(req.params.id));
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * Public billing payment endpoint for suspended institutions.
+     * Called from login screens when institution is suspended due to overdue payment.
+     * Does NOT require authentication since login is blocked.
+     */
+    publicBillingPayment = async (req, res, next) => {
+        try {
+            const { institutionId, redirectUrl } = req.body;
+            if (!institutionId) return next(new ValidationError('institutionId es requerido'));
+
+            const instId = parseInt(institutionId);
+            const result = await this.service.initiatePublicBillingPayment({
+                institutionId: instId,
+                redirectUrl,
+            });
+            if (result.isFail()) return next(result.getError());
+            const data = result.getValue();
+            res.json({
+                success: true,
+                data,
+                urlBankPayment: data.checkoutUrl,
+            });
         } catch (err) { next(err); }
     };
 

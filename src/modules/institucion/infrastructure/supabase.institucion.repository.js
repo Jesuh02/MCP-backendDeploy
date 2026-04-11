@@ -14,10 +14,11 @@ const toApp = (row) => row && ({
     is_suspended: row.is_suspended || false,
     suspended_at: row.suspended_at || null,
     suspended_reason: row.suspended_reason || null,
+    monthly_price: row.monthly_price != null ? parseFloat(row.monthly_price) : 0,
     created_at: row.created_at,
 });
 
-const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, is_suspended, suspended_at, suspended_reason }) => {
+const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, is_suspended, suspended_at, suspended_reason, monthly_price }) => {
     const mapped = {};
     if (nombre !== undefined) mapped.name = nombre;
     if (codigo !== undefined) mapped.code = codigo;
@@ -31,6 +32,7 @@ const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_dat
     if (is_suspended !== undefined) mapped.is_suspended = is_suspended;
     if (suspended_at !== undefined) mapped.suspended_at = suspended_at;
     if (suspended_reason !== undefined) mapped.suspended_reason = suspended_reason;
+    if (monthly_price !== undefined) mapped.monthly_price = monthly_price;
     return mapped;
 };
 
