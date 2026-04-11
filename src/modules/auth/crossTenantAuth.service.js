@@ -198,13 +198,22 @@ export class CrossTenantAuthService {
         const activeMatches = matches.filter(m => !m._isSuspended);
         const suspendedMatches = matches.filter(m => m._isSuspended);
 
+        // Role 4 users can bypass institution suspension and still log in
+        const suspendedRole4Matches = suspendedMatches.filter(m => {
+            const roles = m._payload?.roles || [];
+            return roles.includes(4);
+        });
+
         // If there are active (non-suspended) matches, use them exclusively.
         // The user can log into a non-suspended institution even if another is suspended
         // or their account is deactivated in a different institution.
         if (activeMatches.length > 0) {
             matches = activeMatches;
+        } else if (suspendedRole4Matches.length > 0) {
+            // Suspended but user has role 4 → allow login bypassing suspension
+            matches = suspendedRole4Matches;
         } else if (suspendedMatches.length > 0) {
-            // ALL matches are suspended → return the first suspended error with metadata
+            // ALL matches are suspended and no role 4 → return error with metadata
             const meta = suspendedMatches[0]._suspendedMeta || {};
             // Include user roles so clients can decide whether to show payment button
             // (only role 3 / admin should see the payment option)
