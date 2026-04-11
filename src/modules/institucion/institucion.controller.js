@@ -208,8 +208,35 @@ export class InstitucionController {
     /** Set payment due date for an institution (cross-tenant). */
     setPaymentDueDate = async (req, res, next) => {
         try {
-            const { payment_due_date, tenantId } = req.body;
+            const { payment_due_date, billing_cycle_type, billing_cycle_day, tenantId } = req.body;
             const instId = parseInt(req.params.id);
+
+            // If billing cycle data is provided, use the cycle flow
+            if (billing_cycle_type) {
+                const repo = tenantId ? this._tenantRepo(tenantId) : null;
+                if (repo) {
+                    // Cross-tenant: compute next due date and update directly
+                    const validTypes = ['monthly_start', 'biweekly', 'monthly_day'];
+                    if (!validTypes.includes(billing_cycle_type)) {
+                        return next(new ValidationError('Tipo de ciclo inválido'));
+                    }
+                    const nextDue = this.service._computeNextDueDate(billing_cycle_type, billing_cycle_day);
+                    const updated = await repo.setBillingCycle(instId, {
+                        billing_cycle_type,
+                        billing_cycle_day: billing_cycle_type === 'monthly_day' ? parseInt(billing_cycle_day) : (billing_cycle_type === 'biweekly' ? 15 : 1),
+                        payment_due_date: nextDue.toISOString(),
+                    });
+                    return res.json({ success: true, data: { ...updated, tenantId } });
+                }
+                const result = await this.service.setBillingCycle(instId, {
+                    type: billing_cycle_type,
+                    day: billing_cycle_day,
+                });
+                if (result.isFail()) return next(result.getError());
+                return res.json({ success: true, data: result.getValue() });
+            }
+
+            // Legacy: direct date assignment
             const repo = tenantId ? this._tenantRepo(tenantId) : null;
             if (repo) {
                 if (payment_due_date && isNaN(new Date(payment_due_date).getTime())) {

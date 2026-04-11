@@ -835,7 +835,7 @@ export class ProgressDomainService {
         }
 
         const roleIds = await this._getUserRoleIds(userId);
-        if (roleIds.includes(3)) {
+        if (roleIds.includes(3) || roleIds.includes(4)) {
             return Result.fail(new ForbiddenError('Los administradores no pueden matricularse en cursos'));
         }
         if (!roleIds.some((roleId) => roleId === 1 || roleId === 2)) {
@@ -1188,9 +1188,9 @@ export class ProgressDomainService {
      * enrolled directly by an admin without going through the request flow).
      */
     async isEnrolledAndApproved(userId, courseId) {
-        // Rol 3 (admin) tiene acceso a todos los cursos sin necesidad de matrícula
+        // Rol 3 (admin) o rol 4 (superadmin) tiene acceso a todos los cursos sin necesidad de matrícula
         const roleIds = await this._getUserRoleIds(userId);
-        if (roleIds.includes(3)) {
+        if (roleIds.includes(3) || roleIds.includes(4)) {
             return Result.ok({
                 enrolled: true,
                 status: 'admin',

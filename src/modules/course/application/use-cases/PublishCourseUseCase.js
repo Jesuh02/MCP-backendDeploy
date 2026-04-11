@@ -26,7 +26,7 @@ export class PublishCourseUseCase {
             return Result.fail(new NotFoundError('Curso', courseId));
         }
 
-        const isAdmin = (requesterRoles || []).some(r => r === 3);
+        const isAdmin = (requesterRoles || []).some(r => r === 3 || r === 4);
         if (!isAdmin) {
             return Result.fail(new ForbiddenError('Solo el rol 3 puede publicar cursos'));
         }

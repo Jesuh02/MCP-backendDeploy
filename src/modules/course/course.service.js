@@ -92,7 +92,7 @@ export class CourseDomainService {
         const normalizedRoles = (requesterRoles || [])
             .map((role) => Number(role?.id ?? role))
             .filter((roleId) => Number.isInteger(roleId) && roleId > 0);
-        if (normalizedRoles.includes(3)) return false;
+        if (normalizedRoles.includes(3) || normalizedRoles.includes(4)) return false;
         return normalizedRoles.includes(1) || normalizedRoles.includes(2);
     }
 
@@ -494,7 +494,7 @@ export class CourseDomainService {
     async update(id, data, requesterId, requesterRoles = []) {
         const course = await this.courseRepo.findById(id);
         if (!course) return Result.fail(new NotFoundError('Curso', id));
-        const isPrivileged = (requesterRoles || []).some(r => r === 3);
+        const isPrivileged = (requesterRoles || []).some(r => r === 3 || r === 4);
         if (!isPrivileged) {
             return Result.fail(new ForbiddenError('Solo el rol 3 puede editar cursos'));
         }
@@ -509,7 +509,7 @@ export class CourseDomainService {
     async delete(id, requesterId, requesterRoles = []) {
         const course = await this.courseRepo.findById(id);
         if (!course) return Result.fail(new NotFoundError('Curso', id));
-        const isPrivileged = (requesterRoles || []).some(r => r === 3);
+        const isPrivileged = (requesterRoles || []).some(r => r === 3 || r === 4);
         if (!isPrivileged) {
             return Result.fail(new ForbiddenError('Solo el rol 3 puede eliminar cursos'));
         }

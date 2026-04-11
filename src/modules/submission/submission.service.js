@@ -334,7 +334,7 @@ export class SubmissionDomainService {
             const normalizedRoles = (requesterRoles || [])
                 .map(r => Number(r?.id ?? r))
                 .filter(r => Number.isInteger(r) && r > 0);
-            const isAdmin = normalizedRoles.includes(3);
+            const isAdmin = normalizedRoles.includes(3) || normalizedRoles.includes(4);
             if (!isAdmin) {
                 const courseId = await this._resolveCourseIdFromSubmission(sub);
                 if (courseId) {

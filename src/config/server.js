@@ -103,7 +103,7 @@ function mountHealthChecks(app, authMiddleware, requireRoles) {
     app.get('/health', (_req, res) => res.json(healthPayload()));
     app.get('/_health', (_req, res) => res.status(200).send('OK'));
 
-    app.get('/api/v1/diagnostics/quick', authMiddleware, requireRoles(3), (_req, res) => {
+    app.get('/api/v1/diagnostics/quick', authMiddleware, requireRoles(3, 4), (_req, res) => {
         res.json({
             success: true,
             timestamp: new Date().toISOString(),

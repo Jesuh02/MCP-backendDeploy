@@ -1475,7 +1475,7 @@ export class MCPService {
             const userIdResolution = safeUsername
                 ? `(SELECT id FROM usuarios WHERE id = ${userId} UNION SELECT id FROM usuarios WHERE username = '${safeUsername}')`
                 : userId ? `${userId}` : null;
-            const isAdmin = userId && Array.isArray(userRoles) && userRoles.map(Number).includes(3);
+            const isAdmin = userId && Array.isArray(userRoles) && (userRoles.map(Number).includes(3) || userRoles.map(Number).includes(4));
 
             let accessRestriction = '';
             if (userId && userIdResolution) {
@@ -1705,7 +1705,7 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
             // 🔐 USER ACCESS RESTRICTION (if authenticated userId is provided)
             // ============================================================
             const { userId, userRoles = [], username } = userContext;
-            const isAdmin = userId && Array.isArray(userRoles) && userRoles.map(Number).includes(3);
+            const isAdmin = userId && Array.isArray(userRoles) && (userRoles.map(Number).includes(3) || userRoles.map(Number).includes(4));
             const isTeacher = userId && !isAdmin && (Array.isArray(userRoles) && userRoles.map(Number).includes(2));
             // When userId is present but no explicit roles, default to teacher-level restriction (safe default)
             const hasUserContext = !!userId;

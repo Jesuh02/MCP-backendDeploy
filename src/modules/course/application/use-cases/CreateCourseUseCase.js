@@ -22,7 +22,7 @@ export class CreateCourseUseCase {
      * @returns {Promise<Result>}
      */
     async execute({ courseData, requesterId, requesterRoles = [] }) {
-        const isAdmin = (requesterRoles || []).some(r => r === 3);
+        const isAdmin = (requesterRoles || []).some(r => r === 3 || r === 4);
         if (!isAdmin) {
             return Result.fail(new ForbiddenError('Solo el rol 3 puede crear cursos'));
         }
