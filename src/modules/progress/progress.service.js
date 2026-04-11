@@ -819,7 +819,7 @@ export class ProgressDomainService {
      * Student requests enrollment in a course. Creates a pre_enrollment record
      * with status = 'pending'. Does NOT allow duplicate requests.
      */
-    async requestEnrollment(userId, courseId) {
+    async requestEnrollment(userId, courseId, requestedRole = 'student') {
         if (!this.courseRepo) return Result.fail(new Error('CourseRepository not available'));
 
         const course = await this.courseRepo.findById(courseId);
@@ -840,6 +840,11 @@ export class ProgressDomainService {
         }
         if (!roleIds.some((roleId) => roleId === 1 || roleId === 2)) {
             return Result.fail(new ForbiddenError('Solo los usuarios con rol 1 o rol 2 pueden solicitar matricula'));
+        }
+
+        // Only role 2 users can request enrollment as docente
+        if (requestedRole === 'docente' && !roleIds.includes(2)) {
+            return Result.fail(new ForbiddenError('Solo los usuarios con rol de docente pueden solicitar ingreso como docente'));
         }
 
         if (!this._isCourseAvailableForEnrollment(course)) {
@@ -866,10 +871,11 @@ export class ProgressDomainService {
             // rejected â€” allow re-request
         }
 
-        const pending = await this.progressRepo.upsertPreEnrollment(userId, courseId, 'pending');
+        const pending = await this.progressRepo.upsertPreEnrollment(userId, courseId, 'pending', null, requestedRole);
 
         // Notify all role 3 (admin) users about the new enrollment request
-        this._notifyAdminsAboutEnrollmentRequest(userId, courseId, course.title).catch(err =>
+        const roleLabel = requestedRole === 'docente' ? ' como docente' : '';
+        this._notifyAdminsAboutEnrollmentRequest(userId, courseId, course.title, roleLabel).catch(err =>
             console.warn('[ProgressService] Error notifying admins about enrollment request:', err?.message)
         );
 
@@ -883,7 +889,19 @@ export class ProgressDomainService {
         const existing = await this.progressRepo.findPreEnrollment(userId, courseId);
         if (!existing) return Result.fail(new NotFoundError('Solicitud de matrÃ­cula', `${userId}/${courseId}`));
 
+        const requestedRole = existing.requestedRole || existing.requested_role || 'student';
+
         const updated = await this.progressRepo.updateEnrollmentStatus(userId, courseId, 'approved');
+
+        // If the user requested enrollment as docente, add them as a collaborator
+        if (requestedRole === 'docente' && this.collaboratorRepo) {
+            try {
+                await this.collaboratorRepo.add(courseId, userId);
+                console.log(`[ProgressService] Added userId=${userId} as collaborator (docente) to courseId=${courseId}`);
+            } catch (collabErr) {
+                console.warn(`[ProgressService] Could not add collaborator for docente enrollment userId=${userId}:`, collabErr?.message);
+            }
+        }
 
         // Crear registro en progreso_curso para que isEnrolled() retorne true
         // y el estudiante aparezca correctamente en el curso.
@@ -901,6 +919,9 @@ export class ProgressDomainService {
             console.warn(`[ProgressService] Could not create progreso_curso for approved enrollment userId=${userId}:`, progressErr?.message);
         }
 
+        const isDocente = requestedRole === 'docente';
+        const roleSuffix = isDocente ? ' como docente' : '';
+
         // Notify the student about enrollment approval
         if (this._notificationService) {
             try {
@@ -911,10 +932,10 @@ export class ProgressDomainService {
                 }
                 await this._notificationService.send(userId, {
                     title: 'Â¡MatrÃ­cula aprobada!',
-                    message: `Tu solicitud de matrÃ­cula en "${courseName}" ha sido aprobada. Â¡Ya puedes comenzar!`,
+                    message: `Tu solicitud de matrÃ­cula${roleSuffix} en "${courseName}" ha sido aprobada. Â¡Ya puedes comenzar!`,
                     type: 'enrollment_approved',
                     relatedId: courseId,
-                    metadata: { courseId, courseName },
+                    metadata: { courseId, courseName, requestedRole },
                 });
 
                 // Send confirmation email to the student
@@ -1249,7 +1270,7 @@ export class ProgressDomainService {
         return typeof status === 'string' ? status.trim().toLowerCase() : null;
     }
 
-    async _notifyAdminsAboutEnrollmentRequest(studentUserId, courseId, courseTitle) {
+    async _notifyAdminsAboutEnrollmentRequest(studentUserId, courseId, courseTitle, roleLabel = '') {
         if (!this._notificationService || !this.userRepo) return;
 
         // Get all admin user IDs (role 3)
@@ -1275,7 +1296,7 @@ export class ProgressDomainService {
         // Send push/in-app notification to all admins
         await this._notificationService.sendBulk(adminUserIds, {
             title: 'Nueva solicitud de matrÃ­cula',
-            message: `${studentName} ha solicitado matricularse en "${courseName}".`,
+            message: `${studentName} ha solicitado matricularse${roleLabel} en "${courseName}".`,
             type: 'enrollment_request',
             relatedId: courseId,
             senderUsername: studentName,
