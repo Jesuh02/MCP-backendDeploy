@@ -1257,6 +1257,175 @@ export function generateCourseInvitationEmailHTML(guestName, inviterName, course
     `;
 }
 
+/**
+ * Genera el HTML de factura profesional para pago de institución aprobado.
+ * @param {Object} opts
+ * @param {string} opts.userName - Nombre del usuario que pagó
+ * @param {string} opts.institutionName - Nombre de la institución
+ * @param {number} opts.amount - Monto en pesos
+ * @param {string} opts.currency - Moneda (default COP)
+ * @param {string} opts.reference - Referencia de pago
+ * @param {string} opts.paymentDate - Fecha del pago (ISO string o legible)
+ * @param {string} opts.billingPeriodStart - Inicio del periodo
+ * @param {string} opts.billingPeriodEnd - Fin del periodo
+ * @param {string} opts.transactionId - ID de transacción Wompi
+ * @returns {string} HTML del email
+ */
+export function generateBillingPaymentEmailHTML({
+    userName = 'Usuario',
+    institutionName = 'Institución',
+    amount = 0,
+    currency = 'COP',
+    reference = '',
+    paymentDate = '',
+    billingPeriodStart = '',
+    billingPeriodEnd = '',
+    transactionId = '',
+} = {}) {
+    const formattedAmount = new Intl.NumberFormat('es-CO', { style: 'currency', currency: currency || 'COP', minimumFractionDigits: 0 }).format(amount);
+    const dateStr = paymentDate ? new Date(paymentDate).toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }) : new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
+    const periodStart = billingPeriodStart ? new Date(billingPeriodStart).toLocaleDateString('es-CO', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+    const periodEnd = billingPeriodEnd ? new Date(billingPeriodEnd).toLocaleDateString('es-CO', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+    const invoiceNumber = `CV-${Date.now().toString(36).toUpperCase()}`;
+
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pago Confirmado — CourseV</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;color:#1e293b;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:32px 16px;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+<!-- Header -->
+<tr>
+<td style="background:linear-gradient(135deg,#7C3AED 0%,#5B21B6 60%,#4C1D95 100%);padding:40px 32px;text-align:center;">
+    <div style="font-size:40px;margin-bottom:8px;">✅</div>
+    <h1 style="color:#ffffff;margin:0;font-size:26px;font-weight:700;letter-spacing:-0.5px;">Pago Confirmado</h1>
+    <p style="color:rgba(255,255,255,0.8);margin:8px 0 0;font-size:14px;">Tu pago ha sido procesado exitosamente</p>
+</td>
+</tr>
+
+<!-- Greeting -->
+<tr>
+<td style="padding:32px 32px 16px;">
+    <p style="font-size:17px;color:#334155;margin:0;">Hola <strong style="color:#7C3AED;">${userName}</strong>,</p>
+    <p style="font-size:15px;color:#64748b;margin:12px 0 0;line-height:1.6;">Tu pago por el servicio de <strong>${institutionName}</strong> ha sido aprobado. A continuación encontrarás los detalles de tu factura.</p>
+</td>
+</tr>
+
+<!-- Invoice -->
+<tr>
+<td style="padding:0 32px 32px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+
+    <!-- Invoice header -->
+    <tr>
+    <td colspan="2" style="background:#f8fafc;padding:20px 24px;border-bottom:1px solid #e2e8f0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+            <td>
+                <p style="margin:0;font-size:20px;font-weight:800;font-style:italic;color:#7C3AED;">CourseV</p>
+                <p style="margin:4px 0 0;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">CourseV Inc.</p>
+            </td>
+            <td align="right">
+                <p style="margin:0;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">Factura</p>
+                <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#334155;">${invoiceNumber}</p>
+                <p style="margin:4px 0 0;font-size:13px;color:#64748b;">${dateStr}</p>
+            </td>
+        </tr>
+        </table>
+    </td>
+    </tr>
+
+    <!-- Facturado a -->
+    <tr>
+    <td colspan="2" style="padding:20px 24px;border-bottom:1px solid #f1f5f9;">
+        <p style="margin:0;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Facturado a</p>
+        <p style="margin:6px 0 0;font-size:15px;color:#1e293b;font-weight:500;">${userName}</p>
+        <p style="margin:2px 0 0;font-size:13px;color:#64748b;">${institutionName}</p>
+    </td>
+    </tr>
+
+    <!-- Detalle -->
+    <tr>
+    <td colspan="2" style="padding:0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+        <tr style="background:#f8fafc;">
+            <td style="padding:12px 24px;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e2e8f0;">Concepto</td>
+            <td align="right" style="padding:12px 24px;font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #e2e8f0;">Monto</td>
+        </tr>
+        <tr>
+            <td style="padding:16px 24px;font-size:14px;color:#334155;border-bottom:1px solid #f1f5f9;">
+                Suscripción mensual — Plataforma educativa<br>
+                <span style="font-size:12px;color:#94a3b8;">Periodo: ${periodStart} – ${periodEnd}</span>
+            </td>
+            <td align="right" style="padding:16px 24px;font-size:14px;color:#334155;border-bottom:1px solid #f1f5f9;">${formattedAmount}</td>
+        </tr>
+        <tr>
+            <td style="padding:16px 24px;font-size:15px;font-weight:700;color:#1e293b;">Total</td>
+            <td align="right" style="padding:16px 24px;font-size:20px;font-weight:800;color:#7C3AED;">${formattedAmount}</td>
+        </tr>
+        </table>
+    </td>
+    </tr>
+
+    <!-- Referencia -->
+    <tr>
+    <td colspan="2" style="background:#f8fafc;padding:16px 24px;border-top:1px solid #e2e8f0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+            <td>
+                <p style="margin:0;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Referencia</p>
+                <p style="margin:4px 0 0;font-size:13px;color:#64748b;font-family:monospace;">${reference || '—'}</p>
+            </td>
+            <td align="right">
+                <p style="margin:0;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Método de pago</p>
+                <p style="margin:4px 0 0;font-size:13px;color:#64748b;">Wompi</p>
+            </td>
+        </tr>
+        ${transactionId ? `<tr><td colspan="2" style="padding-top:8px;"><p style="margin:0;font-size:11px;color:#94a3b8;">ID Transacción: <span style="font-family:monospace;color:#64748b;">${transactionId}</span></p></td></tr>` : ''}
+        </table>
+    </td>
+    </tr>
+
+    </table>
+</td>
+</tr>
+
+<!-- Status badge -->
+<tr>
+<td style="padding:0 32px 24px;" align="center">
+    <table cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-radius:12px;padding:16px 32px;">
+    <tr>
+        <td align="center">
+            <p style="margin:0;font-size:14px;color:#16a34a;font-weight:600;">✓ Pago aprobado</p>
+            <p style="margin:4px 0 0;font-size:12px;color:#4ade80;">El acceso a la plataforma ha sido restaurado</p>
+        </td>
+    </tr>
+    </table>
+</td>
+</tr>
+
+<!-- Footer -->
+<tr>
+<td style="background:#f8fafc;padding:24px 32px;text-align:center;border-top:1px solid #e2e8f0;">
+    <p style="margin:0;font-size:13px;color:#94a3b8;">Este email fue enviado por <strong style="color:#7C3AED;">CourseV</strong></p>
+    <p style="margin:8px 0 0;font-size:11px;color:#cbd5e1;">© ${new Date().getFullYear()} CourseV Inc. Todos los derechos reservados.</p>
+    <p style="margin:8px 0 0;font-size:11px;color:#cbd5e1;">Este comprobante sirve como constancia de pago.</p>
+</td>
+</tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+}
+
 export default {
     getEmailBaseStyles,
     generateGradeEmailHTML,
@@ -1270,6 +1439,7 @@ export default {
     generateEnrollmentRequestEmailHTML,
     generateEnrollmentApprovedEmailHTML,
     generateCourseInvitationEmailHTML,
+    generateBillingPaymentEmailHTML,
 };
 
 

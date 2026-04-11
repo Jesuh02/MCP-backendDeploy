@@ -1,5 +1,6 @@
 import { Result } from '../../shared/Result.js';
 import { NotFoundError, ValidationError, ForbiddenError } from '../../shared/errors/index.js';
+import { generateBillingPaymentEmailHTML } from '../../templates/emailTemplates.js';
 
 export class InstitucionDomainService {
     constructor({ institucionRepository, transactionRepository, paymentGatewayPort, userRepository }) {
@@ -7,6 +8,11 @@ export class InstitucionDomainService {
         this.txRepo = transactionRepository || null;
         this.gateway = paymentGatewayPort || null;
         this.userRepo = userRepository || null;
+        this.notificationService = null;
+    }
+
+    setNotificationService(notifService) {
+        this.notificationService = notifService;
     }
 
     async getById(id) {
@@ -355,6 +361,36 @@ export class InstitucionDomainService {
                 console.log(`🏛️ Institution ${instId} UNSUSPENDED — all users now have access`);
             }
             console.log(`🏛️ Institution ${instId} payment APPROVED. Due extended to ${newDueDate.toISOString()}`);
+
+            // Send payment confirmation email with invoice to the user who paid
+            if (this.notificationService && payment.user_id) {
+                try {
+                    let payerName = 'Usuario';
+                    if (this.userRepo) {
+                        const payer = await this.userRepo.findById(payment.user_id);
+                        if (payer?.username) payerName = payer.username;
+                    }
+                    const emailHtml = generateBillingPaymentEmailHTML({
+                        userName: payerName,
+                        institutionName: inst?.nombre || 'Institución',
+                        amount: payment.amount || 0,
+                        currency: payment.currency || 'COP',
+                        reference: payment.external_reference || reference,
+                        paymentDate: new Date().toISOString(),
+                        billingPeriodStart: payment.billing_period_start,
+                        billingPeriodEnd: payment.billing_period_end,
+                        transactionId: transaction.id || '',
+                    });
+                    await this.notificationService.sendEmail(payment.user_id, {
+                        subject: `✅ Pago confirmado — ${inst?.nombre || 'Institución'}`,
+                        html: emailHtml,
+                        text: `Tu pago de ${payment.amount} ${payment.currency || 'COP'} por ${inst?.nombre || 'la institución'} ha sido aprobado. Referencia: ${reference}`,
+                    });
+                    console.log(`📧 Billing payment email sent to userId ${payment.user_id}`);
+                } catch (emailErr) {
+                    console.error('⚠️ Failed to send billing payment email:', emailErr.message);
+                }
+            }
         }
 
         return Result.ok({ handled: true, status: dbStatus });

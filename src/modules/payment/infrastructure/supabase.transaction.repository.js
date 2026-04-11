@@ -183,24 +183,41 @@ export class SupabaseTransactionRepository {
             .select('*')
             .eq('institution_id', institutionId)
             .eq('payment_type', 'service')
-            .order('created_at', { ascending: false })
+            .order('transaction_date', { ascending: false })
             .range(offset, offset + limit - 1);
         if (error) return [];
         return data || [];
     }
 
     async findPendingServicePayment(institutionId, userId = null) {
-        let query = this.client
+        // First: search for ANY pending service payment for this institution (regardless of user)
+        // to prevent duplicate payments even if different admin users trigger the flow.
+        const { data: anyPending, error: anyErr } = await this.client
             .from('transactions')
             .select('*')
             .eq('institution_id', institutionId)
             .eq('payment_type', 'service')
             .ilike('status', 'pending')
-            .order('created_at', { ascending: false })
-            .limit(1);
-        if (userId) query = query.eq('user_id', userId);
-        const { data, error } = await query.maybeSingle();
-        return (error || !data) ? null : data;
+            .order('transaction_date', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (!anyErr && anyPending) return anyPending;
+
+        // Fallback: search by user_id if provided (shouldn't be needed but keeps compatibility)
+        if (userId) {
+            const { data, error } = await this.client
+                .from('transactions')
+                .select('*')
+                .eq('institution_id', institutionId)
+                .eq('payment_type', 'service')
+                .eq('user_id', userId)
+                .ilike('status', 'pending')
+                .order('transaction_date', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            return (error || !data) ? null : data;
+        }
+        return null;
     }
 
     /**
