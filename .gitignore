@@ -114,3 +114,4 @@ docs/migration_subject_collaborators.sql
 scripts/migration_guests_collaborators.sql
 scripts/migration_superadmin.sql
 scripts/migration_superadmin.sql
+fix_transactions.mjs
