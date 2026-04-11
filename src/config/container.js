@@ -302,6 +302,7 @@ export function createContainer() {
 
     const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
     const institucionService = new InstitucionDomainService({ institucionRepository: institucionRepo, transactionRepository: transactionRepo, paymentGatewayPort: paymentGateway, userRepository: userRepo });
+    institucionService.setNotificationService(notificationService);
 
     // Nivel 1: servicios que dependen de servicios del Nivel 0
     const videoService = new VideoDomainService({
