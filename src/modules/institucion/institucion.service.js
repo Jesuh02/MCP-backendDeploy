@@ -242,17 +242,13 @@ export class InstitucionDomainService {
         if (!this.userRepo?.client) return null;
         const { data, error } = await this.userRepo.client
             .from('usuarios_roles')
-            .select('usuario_id, usuarios!inner(id, persona_id, personas!fk_usuarios_persona(institucion_id))')
+            .select('usuario_id, usuarios!inner(id, persona_id, personas!inner(institucion_id))')
             .eq('rol_id', 3)
-            .limit(20);
-        if (error || !data) return null;
-        for (const row of data) {
-            const persona = row.usuarios?.personas;
-            if (persona && Number(persona.institucion_id) === Number(institutionId)) {
-                return row.usuario_id;
-            }
-        }
-        return null;
+            .eq('usuarios.personas.institucion_id', institutionId)
+            .order('usuario_id', { ascending: true })
+            .limit(1);
+        if (error || !data?.length) return null;
+        return data[0].usuario_id;
     }
 
     /** Initiate a billing payment for an institution (stored as payment_type='service' in transactions). */
