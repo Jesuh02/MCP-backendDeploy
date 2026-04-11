@@ -10,13 +10,14 @@ const toApp = (row) => row && ({
     payment_due_date: row.payment_due_date || null,
     billing_cycle_type: row.billing_cycle_type || null,
     billing_cycle_day: row.billing_cycle_day ?? null,
+    billing_cycle_hour: row.billing_cycle_hour ?? 8,
     is_suspended: row.is_suspended || false,
     suspended_at: row.suspended_at || null,
     suspended_reason: row.suspended_reason || null,
     created_at: row.created_at,
 });
 
-const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_date, billing_cycle_type, billing_cycle_day, is_suspended, suspended_at, suspended_reason }) => {
+const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, is_suspended, suspended_at, suspended_reason }) => {
     const mapped = {};
     if (nombre !== undefined) mapped.name = nombre;
     if (codigo !== undefined) mapped.code = codigo;
@@ -26,6 +27,7 @@ const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_dat
     if (payment_due_date !== undefined) mapped.payment_due_date = payment_due_date;
     if (billing_cycle_type !== undefined) mapped.billing_cycle_type = billing_cycle_type;
     if (billing_cycle_day !== undefined) mapped.billing_cycle_day = billing_cycle_day;
+    if (billing_cycle_hour !== undefined) mapped.billing_cycle_hour = billing_cycle_hour;
     if (is_suspended !== undefined) mapped.is_suspended = is_suspended;
     if (suspended_at !== undefined) mapped.suspended_at = suspended_at;
     if (suspended_reason !== undefined) mapped.suspended_reason = suspended_reason;
@@ -106,8 +108,9 @@ export class SupabaseInstitucionRepository {
     }
 
     /** Set billing cycle for an institution. */
-    async setBillingCycle(id, { billing_cycle_type, billing_cycle_day, payment_due_date }) {
+    async setBillingCycle(id, { billing_cycle_type, billing_cycle_day, billing_cycle_hour, payment_due_date }) {
         const updatePayload = { billing_cycle_type, billing_cycle_day };
+        if (billing_cycle_hour !== undefined) updatePayload.billing_cycle_hour = billing_cycle_hour;
         if (payment_due_date !== undefined) updatePayload.payment_due_date = payment_due_date;
         const { data, error } = await this.client
             .from(TABLE)
