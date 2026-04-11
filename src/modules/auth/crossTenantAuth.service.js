@@ -312,6 +312,13 @@ export class CrossTenantAuthService {
 
             await this._enrichWithInstitution(user, instRepo);
 
+            // Block login if the institution is suspended
+            if (user.institucion?.is_suspended) {
+                throw new ForbiddenError(
+                    'Tu institución ha sido suspendida. Contacta al administrador.',
+                );
+            }
+
             // Fetch the persona's cedula hash so _resolveMatches can verify identity
             const cedulaHash = await this._fetchCedulaHash(entry.client, user);
 
@@ -373,6 +380,13 @@ export class CrossTenantAuthService {
             }
 
             await this._enrichWithInstitution(user, instRepo);
+
+            // Block login if the institution is suspended
+            if (user.institucion?.is_suspended) {
+                throw new ForbiddenError(
+                    'Tu institución ha sido suspendida. Contacta al administrador.',
+                );
+            }
 
             // Fetch cedula hash so _resolveMatches can verify identity across tenants
             const cedulaHash = await this._fetchCedulaHash(entry.client, user);
