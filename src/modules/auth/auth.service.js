@@ -168,10 +168,14 @@ export class AuthService {
         if (!inst) return null;
         if (inst.is_suspended) {
             console.log(`[AuthService] Institution '${inst.nombre}' (id: ${inst.id}) is suspended`);
+            const roleIds = (user.roles || [])
+                .map(r => Number(r.id || r.rol_id))
+                .filter(id => Number.isInteger(id) && id > 0);
             const meta = JSON.stringify({
                 institutionId: inst.id,
                 institutionName: inst.nombre,
                 monthlyPrice: inst.monthly_price || 0,
+                roles: roleIds,
             });
             return Result.fail(new ForbiddenError(
                 `INSTITUTION_SUSPENDED:${meta}`,

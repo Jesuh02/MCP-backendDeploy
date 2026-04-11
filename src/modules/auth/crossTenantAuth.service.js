@@ -206,6 +206,9 @@ export class CrossTenantAuthService {
         } else if (suspendedMatches.length > 0) {
             // ALL matches are suspended → return the first suspended error with metadata
             const meta = suspendedMatches[0]._suspendedMeta || {};
+            // Include user roles so clients can decide whether to show payment button
+            // (only role 3 / admin should see the payment option)
+            meta.roles = suspendedMatches[0]._payload?.roles || [];
             return Result.fail(new ForbiddenError(
                 `INSTITUTION_SUSPENDED:${JSON.stringify(meta)}`,
             ));
