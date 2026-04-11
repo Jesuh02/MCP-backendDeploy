@@ -266,13 +266,22 @@ export class InstitucionDomainService {
         const amountInCents = Math.round(Number(amount) * 100);
         if (amountInCents <= 0) return Result.fail(new ValidationError('Monto inválido'));
 
+        // Prevent duplicate: if this user+institution already has an APPROVED service payment
+        // for the current billing period, reject.
+        if (this.txRepo.hasApprovedServicePayment) {
+            const alreadyPaid = await this.txRepo.hasApprovedServicePayment(institutionId, userId);
+            if (alreadyPaid && !inst.is_suspended) {
+                return Result.fail(new ValidationError('Ya existe un pago aprobado para esta institución'));
+            }
+        }
+
         const reference = `INST-${institutionId}-${Date.now()}`;
         const now = new Date();
         const periodEnd = new Date(now);
         periodEnd.setMonth(periodEnd.getMonth() + 1);
 
-        // Reuse pending service payment if exists
-        let payment = await this.txRepo.findPendingServicePayment(institutionId);
+        // Reuse pending service payment if exists (same institution + user)
+        let payment = await this.txRepo.findPendingServicePayment(institutionId, userId);
         if (payment) {
             payment = await this.txRepo.update(payment.id, {
                 externalReference: reference,
@@ -344,9 +353,10 @@ export class InstitucionDomainService {
             }
             await this.repo.setPaymentDueDate(instId, newDueDate.toISOString());
 
-            // Unsuspend if was suspended for payment
-            if (inst && inst.is_suspended && inst.suspended_reason === 'Pago vencido') {
+            // Unsuspend if was suspended (payment clears the suspension)
+            if (inst && inst.is_suspended) {
                 await this.repo.unsuspend(instId);
+                console.log(`🏛️ Institution ${instId} UNSUSPENDED — all users now have access`);
             }
             console.log(`🏛️ Institution ${instId} payment APPROVED. Due extended to ${newDueDate.toISOString()}`);
         }

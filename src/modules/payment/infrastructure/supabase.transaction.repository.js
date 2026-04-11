@@ -189,20 +189,49 @@ export class SupabaseTransactionRepository {
         return data || [];
     }
 
-    async findPendingServicePayment(institutionId) {
-        const { data, error } = await this.client
+    async findPendingServicePayment(institutionId, userId = null) {
+        let query = this.client
             .from('transactions')
             .select('*')
             .eq('institution_id', institutionId)
             .eq('payment_type', 'service')
             .ilike('status', 'pending')
             .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+            .limit(1);
+        if (userId) query = query.eq('user_id', userId);
+        const { data, error } = await query.maybeSingle();
         return (error || !data) ? null : data;
     }
 
+    /**
+     * Check if an APPROVED service payment already exists for a given institution
+     * (and optionally a specific user) to prevent duplicate payments.
+     */
+    async hasApprovedServicePayment(institutionId, userId = null) {
+        let query = this.client
+            .from('transactions')
+            .select('id', { count: 'exact', head: true })
+            .eq('institution_id', institutionId)
+            .eq('payment_type', 'service')
+            .ilike('status', 'approved');
+        if (userId) query = query.eq('user_id', userId);
+        const { count, error } = await query;
+        return !error && count > 0;
+    }
+
     async createServicePayment(payload) {
+        // Prevent duplicate: reuse existing PENDING payment for same institution + user
+        const existing = await this.findPendingServicePayment(
+            payload.institutionId,
+            payload.userId || null
+        );
+        if (existing) {
+            return await this.update(existing.id, {
+                externalReference: payload.externalReference,
+                amount: payload.amount || existing.amount,
+            });
+        }
+
         const row = {
             institution_id: payload.institutionId,
             external_reference: payload.externalReference || null,
