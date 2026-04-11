@@ -208,8 +208,19 @@ export class InstitucionController {
     /** Set payment due date for an institution (cross-tenant). */
     setPaymentDueDate = async (req, res, next) => {
         try {
-            const { payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, tenantId } = req.body;
+            const { payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, clear_billing_cycle, tenantId } = req.body;
             const instId = parseInt(req.params.id);
+
+            if (clear_billing_cycle) {
+                const repo = tenantId ? this._tenantRepo(tenantId) : null;
+                if (repo) {
+                    const updated = await repo.clearBillingCycle(instId);
+                    return res.json({ success: true, data: { ...updated, tenantId } });
+                }
+                const result = await this.service.clearBillingCycle(instId);
+                if (result.isFail()) return next(result.getError());
+                return res.json({ success: true, data: result.getValue() });
+            }
 
             // If billing cycle data is provided, use the cycle flow
             if (billing_cycle_type) {

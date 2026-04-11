@@ -122,6 +122,23 @@ export class SupabaseInstitucionRepository {
         return toApp(data);
     }
 
+    /** Clear billing cycle configuration for an institution. */
+    async clearBillingCycle(id) {
+        const { data, error } = await this.client
+            .from(TABLE)
+            .update({
+                billing_cycle_type: null,
+                billing_cycle_day: null,
+                billing_cycle_hour: null,
+                payment_due_date: null,
+            })
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw new Error(`Error eliminando ciclo de pago: ${error.message}`);
+        return toApp(data);
+    }
+
     /** Suspend an institution (deactivate all users). */
     async suspend(id, reason = null) {
         const { data, error } = await this.client

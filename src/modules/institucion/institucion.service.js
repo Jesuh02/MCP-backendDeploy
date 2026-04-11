@@ -99,6 +99,13 @@ export class InstitucionDomainService {
         return Result.ok(updated);
     }
 
+    async clearBillingCycle(institutionId) {
+        const item = await this.repo.findById(institutionId);
+        if (!item) return Result.fail(new NotFoundError('Institucion', institutionId));
+        const updated = await this.repo.clearBillingCycle(institutionId);
+        return Result.ok(updated);
+    }
+
     /**
      * Compute the next payment due date based on cycle type.
      * @param {'monthly_start'|'biweekly'|'monthly_day'} type
