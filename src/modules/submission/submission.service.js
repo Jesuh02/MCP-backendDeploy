@@ -21,7 +21,7 @@ export class SubmissionDomainService {
     _extractEnrollmentUserIds(enrollments = []) {
         return [...new Set(
             (enrollments || [])
-            .map(enrollment => Number(enrollment ? .userId ? ? enrollment ? .usuarioEstudiante ? ? enrollment ? .user_id))
+            .map(enrollment => Number(enrollment?.userId ?? enrollment?.usuarioEstudiante ?? enrollment?.user_id))
             .filter(userId => Number.isInteger(userId) && userId > 0)
         )];
     }
@@ -33,13 +33,13 @@ export class SubmissionDomainService {
      */
     _normalizeSubmission(s) {
         if (!s) return s;
-        s.studentId = s.studentId ? ? s.student_id;
-        s.taskId = s.taskId ? ? s.task_id;
-        s.fileUri = s.fileUri ? ? s.file_uri;
-        s.fileName = s.fileName ? ? s.file_name;
-        s.submissionDate = s.submissionDate ? ? s.submission_date;
-        s.gradedBy = s.gradedBy ? ? s.graded_by;
-        s.gradedAt = s.gradedAt ? ? s.graded_at;
+        s.studentId = s.studentId ?? s.student_id;
+        s.taskId = s.taskId ?? s.task_id;
+        s.fileUri = s.fileUri ?? s.file_uri;
+        s.fileName = s.fileName ?? s.file_name;
+        s.submissionDate = s.submissionDate ?? s.submission_date;
+        s.gradedBy = s.gradedBy ?? s.graded_by;
+        s.gradedAt = s.gradedAt ?? s.graded_at;
         if (s.additional_files != null && s.additionalFiles == null) {
             s.additionalFiles = typeof s.additional_files === 'string' ?
                 JSON.parse(s.additional_files) :
@@ -60,7 +60,7 @@ export class SubmissionDomainService {
         const subs = await this.subRepo.findByTask(taskId, pagination);
         await this._signFileUrls(subs);
         // Enrich submissions with camelCase aliases, studentUsername and studentAvatar
-        if (subs ? .length) {
+        if (subs?.length) {
             for (const s of subs) {
                 // camelCase aliases for snake_case fields
                 s.studentId = s.student_id;
@@ -91,9 +91,9 @@ export class SubmissionDomainService {
                                         const nombres = persona.nombres || '';
                                         const apellidos = persona.apellidos || '';
                                         s.studentFullName = [nombres, apellidos].filter(Boolean).join(' ') || null;
-                                        s.studentCedula = persona.cedula ? .toString() ||
-                                            persona.identificacion_original ? .toString() ||
-                                            persona.identificacion ? .toString() ||
+                                        s.studentCedula = persona.cedula?.toString() ||
+                                            persona.identificacion_original?.toString() ||
+                                            persona.identificacion?.toString() ||
                                             null;
                                     } else {
                                         s.studentFullName = null;
@@ -160,7 +160,7 @@ export class SubmissionDomainService {
      */
     _normalizeFileUri(uri) {
         if (!uri || uri.startsWith('http')) return uri;
-        return this.storage ? .getPublicUrl ? this.storage.getPublicUrl(uri) : uri;
+        return this.storage?.getPublicUrl ? this.storage.getPublicUrl(uri) : uri;
     }
 
     /**
