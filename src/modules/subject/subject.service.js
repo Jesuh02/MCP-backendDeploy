@@ -65,7 +65,9 @@ export class SubjectDomainService {
         return this._remember(this.subjectsByCourseCache, courseId, () => this.subjectRepo.findByCourse(courseId));
     }
 
-    async _checkCourseAccess(userId, courseId) {
+    async _checkCourseAccess(userId, courseId, userRoles) {
+        // Role 3 (admin/docente) can always create subjects in any course
+        if (Array.isArray(userRoles) && userRoles.map(Number).includes(3)) return true;
         const course = await this._getCourse(courseId);
         if (!course) return false;
         if (Number(course.creator_user_id) === Number(userId)) return true;
@@ -117,11 +119,11 @@ export class SubjectDomainService {
         return Result.ok(subject);
     }
 
-    async create(data, requesterId) {
+    async create(data, requesterId, userRoles) {
         const course = await this._getCourse(data.courseId);
         if (!course) return Result.fail(new NotFoundError('Curso', data.courseId));
         if (requesterId) {
-            const hasAccess = await this._checkCourseAccess(requesterId, data.courseId);
+            const hasAccess = await this._checkCourseAccess(requesterId, data.courseId, userRoles);
             if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para crear materias en este curso'));
             data.createdBy = requesterId;
         }
