@@ -21,15 +21,38 @@ export class SubmissionDomainService {
     _extractEnrollmentUserIds(enrollments = []) {
         return [...new Set(
             (enrollments || [])
-                .map(enrollment => Number(enrollment?.userId ?? enrollment?.usuarioEstudiante ?? enrollment?.user_id))
-                .filter(userId => Number.isInteger(userId) && userId > 0)
+            .map(enrollment => Number(enrollment?.userId ?? enrollment?.usuarioEstudiante ?? enrollment?.user_id))
+            .filter(userId => Number.isInteger(userId) && userId > 0)
         )];
+    }
+
+    /**
+     * Normaliza campos snake_case a camelCase en una submission individual.
+     * Crítico: parsea `additional_files` (string JSON) a `additionalFiles` (array).
+     * @private
+     */
+    _normalizeSubmission(s) {
+        if (!s) return s;
+        s.studentId = s.studentId ?? s.student_id;
+        s.taskId = s.taskId ?? s.task_id;
+        s.fileUri = s.fileUri ?? s.file_uri;
+        s.fileName = s.fileName ?? s.file_name;
+        s.submissionDate = s.submissionDate ?? s.submission_date;
+        s.gradedBy = s.gradedBy ?? s.graded_by;
+        s.gradedAt = s.gradedAt ?? s.graded_at;
+        if (s.additional_files != null && s.additionalFiles == null) {
+            s.additionalFiles = typeof s.additional_files === 'string' ?
+                JSON.parse(s.additional_files) :
+                s.additional_files;
+        }
+        return s;
     }
 
     async getById(id) {
         const sub = await this.subRepo.findById(id);
         if (!sub) return Result.fail(new NotFoundError('Entrega', id));
         await this._signFileUrls(sub);
+        this._normalizeSubmission(sub);
         return Result.ok(sub);
     }
 
@@ -45,9 +68,9 @@ export class SubmissionDomainService {
                 s.submissionDate = s.submission_date;
                 s.fileUri = s.file_uri;
                 s.fileName = s.file_name;
-                s.additionalFiles = s.additional_files
-                    ? (typeof s.additional_files === 'string' ? JSON.parse(s.additional_files) : s.additional_files)
-                    : null;
+                s.additionalFiles = s.additional_files ?
+                    (typeof s.additional_files === 'string' ? JSON.parse(s.additional_files) : s.additional_files) :
+                    null;
                 s.gradedBy = s.graded_by;
                 s.gradedAt = s.graded_at;
             }
@@ -68,10 +91,10 @@ export class SubmissionDomainService {
                                         const nombres = persona.nombres || '';
                                         const apellidos = persona.apellidos || '';
                                         s.studentFullName = [nombres, apellidos].filter(Boolean).join(' ') || null;
-                                        s.studentCedula = persona.cedula?.toString()
-                                            || persona.identificacion_original?.toString()
-                                            || persona.identificacion?.toString()
-                                            || null;
+                                        s.studentCedula = persona.cedula?.toString() ||
+                                            persona.identificacion_original?.toString() ||
+                                            persona.identificacion?.toString() ||
+                                            null;
                                     } else {
                                         s.studentFullName = null;
                                         s.studentCedula = null;
@@ -91,6 +114,7 @@ export class SubmissionDomainService {
     async getByUser(userId, pagination) {
         const subs = await this.subRepo.findByUser(userId, pagination);
         await this._signFileUrls(subs);
+        if (Array.isArray(subs)) subs.forEach(s => this._normalizeSubmission(s));
         return Result.ok(subs);
     }
 
@@ -120,13 +144,13 @@ export class SubmissionDomainService {
             });
 
             await this._updateProgress(data.userId, data.taskId);
-            return Result.ok(updated);
+            return Result.ok(this._normalizeSubmission(updated));
         } else {
             // Create new submission
             const created = await this.subRepo.create(data);
 
             await this._updateProgress(data.userId, data.taskId);
-            return Result.ok(created);
+            return Result.ok(this._normalizeSubmission(created));
         }
     }
 
@@ -237,42 +261,42 @@ export class SubmissionDomainService {
      * @private
      */
     async _notifyGrade(submission, grade, feedback, graderId) {
-        if (!this.notificationService || !this.userService || !this.taskRepo) return;
+            if (!this.notificationService || !this.userService || !this.taskRepo) return;
 
-        const studentId = submission.student_id || submission.user_id || submission.userId;
-        const taskId = submission.task_id || submission.taskId;
+            const studentId = submission.student_id || submission.user_id || submission.userId;
+            const taskId = submission.task_id || submission.taskId;
 
-        if (!studentId || !taskId) return;
+            if (!studentId || !taskId) return;
 
-        // Obtener datos del estudiante
-        const studentResult = await this.userService.getById(studentId);
-        if (studentResult.isFail()) return;
-        const student = studentResult.getValue();
-        const studentEmail = student.email || student.email_address;
+            // Obtener datos del estudiante
+            const studentResult = await this.userService.getById(studentId);
+            if (studentResult.isFail()) return;
+            const student = studentResult.getValue();
+            const studentEmail = student.email || student.email_address;
 
-        // Obtener datos de la tarea
-        const task = await this.taskRepo.findById(taskId);
-        if (!task) return;
+            // Obtener datos de la tarea
+            const task = await this.taskRepo.findById(taskId);
+            if (!task) return;
 
-        // Obtener datos del instructor que calificó
-        let graderUsername = 'Instructor';
-        if (graderId) {
-            const graderResult = await this.userService.getById(graderId);
-            if (graderResult.isOk()) {
-                graderUsername = graderResult.getValue().username || 'Instructor';
+            // Obtener datos del instructor que calificó
+            let graderUsername = 'Instructor';
+            if (graderId) {
+                const graderResult = await this.userService.getById(graderId);
+                if (graderResult.isOk()) {
+                    graderUsername = graderResult.getValue().username || 'Instructor';
+                }
             }
-        }
 
-        const studentName = student.name || student.username || 'Estudiante';
-        const taskName = task.title || task.name || 'Tarea sin título';
+            const studentName = student.name || student.username || 'Estudiante';
+            const taskName = task.title || task.name || 'Tarea sin título';
 
-        // ── 1. Notificación in-app (task_graded) ───────────────────────
-        const metadata = JSON.stringify({ taskId, grade, feedback: feedback || null, gradedBy: graderUsername });
-        let inAppNotif = null;
-        try {
-            const notifResult = await this.notificationService.send(studentId, {
-                title: `Tarea calificada: ${taskName}`,
-                message: `Tu entrega ha sido calificada con ${grade}/10 por ${graderUsername}.${feedback ? ` Retroalimentación: ${feedback}` : ''}`,
+            // ── 1. Notificación in-app (task_graded) ───────────────────────
+            const metadata = JSON.stringify({ taskId, grade, feedback: feedback || null, gradedBy: graderUsername });
+            let inAppNotif = null;
+            try {
+                const notifResult = await this.notificationService.send(studentId, {
+                            title: `Tarea calificada: ${taskName}`,
+                            message: `Tu entrega ha sido calificada con ${grade}/10 por ${graderUsername}.${feedback ? ` Retroalimentación: ${feedback}` : ''}`,
                 type: 'task_graded',
                 relatedId: Number(submission.id),
                 senderUsername: graderUsername,
@@ -361,7 +385,7 @@ export class SubmissionDomainService {
             );
         }
 
-        return Result.ok(updated);
+        return Result.ok(this._normalizeSubmission(updated));
     }
 
     async delete(id, requesterId) {
@@ -423,6 +447,7 @@ export class SubmissionDomainService {
     async getByUserAndTask(userId, taskId) {
         const sub = await this.subRepo.findByUserAndTask(userId, taskId);
         await this._signFileUrls(sub);
+        this._normalizeSubmission(sub);
         return Result.ok(sub);
     }
 

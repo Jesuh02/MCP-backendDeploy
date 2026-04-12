@@ -236,9 +236,11 @@ export class InstitucionController {
                     let nextDueIso;
                     if (payment_due_date && !isNaN(new Date(payment_due_date).getTime())) {
                         nextDueIso = new Date(payment_due_date).toISOString();
+                        console.log(`🏛️ [CrossTenant] setBillingCycle(${instId}): explicit date → ${nextDueIso}, mode=${billing_action_mode}`);
                     } else {
                         const nextDue = this.service._computeNextDueDate(billing_cycle_type === 'specific_months' ? 'monthly_day' : billing_cycle_type, billing_cycle_day, billing_cycle_hour, billing_cycle_minute);
                         nextDueIso = nextDue.toISOString();
+                        console.log(`🏛️ [CrossTenant] setBillingCycle(${instId}): computed date → ${nextDueIso}, type=${billing_cycle_type}, day=${billing_cycle_day}, mode=${billing_action_mode}`);
                     }
                     const updated = await repo.setBillingCycle(instId, {
                         billing_cycle_type,
