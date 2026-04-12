@@ -40,9 +40,9 @@ export class SupabaseSubmissionRepository {
     }
 
     async findByUserAndTask(userId, taskId) {
-        const { data, error } = await this.client.from('task_submissions').select('*').eq('student_id', userId).eq('task_id', taskId).order('created_at', { ascending: false }).limit(1).single();
-        if (error || !data) return null;
-        return data;
+        const { data, error } = await this.client.from('task_submissions').select('*').eq('student_id', userId).eq('task_id', taskId).order('created_at', { ascending: false }).limit(1);
+        if (error || !data || data.length === 0) return null;
+        return data[0];
     }
 
     async findByCourse(courseId, { offset = 0, limit = 50, ungradedOnly = false } = {}) {
@@ -71,6 +71,17 @@ export class SupabaseSubmissionRepository {
     }
 
     async create(subData) {
+        // Guard: prevent duplicate insert if a row already exists for this user+task
+        const existing = await this.findByUserAndTask(subData.userId, subData.taskId);
+        if (existing) {
+            return this.update(existing.id, {
+                fileUri: subData.fileUri,
+                fileName: subData.fileName,
+                additionalFiles: subData.additionalFiles,
+                submissionDate: Date.now(),
+            });
+        }
+
         const payload = {
             task_id: subData.taskId,
             student_id: subData.userId,
