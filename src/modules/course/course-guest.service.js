@@ -167,11 +167,18 @@ export class CourseGuestService {
         }
 
         const isAdmin = requesterRoles.includes(3) || requesterRoles.includes(4);
-        if (!isAdmin) return Result.fail(new ForbiddenError('No tienes permiso para ver los invitados de este curso'));
+        const isCreator = Number(course.creator_user_id) === Number(requesterId);
+        const isCollab = isCreator ? false : await this.collaboratorRepo.isCollaborator(requesterId, courseId);
+        const isEnrolled = (!isAdmin && !isCreator && !isCollab)
+            ? await this.progressRepo.isEnrolled(requesterId, courseId)
+            : false;
+
+        if (!isAdmin && !isCreator && !isCollab && !isEnrolled) {
+            return Result.fail(new ForbiddenError('No tienes permiso para ver los invitados de este curso'));
+        }
 
         const rows = await this.progressRepo.findApprovedPreEnrollments(courseId);
-        // Strip internal IDs — only return what the UI needs
-        const safe = (rows || []).map(({ username, avatar, status, requestedAt }) => ({ username, avatar, status, requestedAt }));
+        const safe = (rows || []).map(({ userId, username, avatar, status, requestedAt }) => ({ userId, username, avatar, status, requestedAt }));
         return Result.ok(safe);
     }
 
