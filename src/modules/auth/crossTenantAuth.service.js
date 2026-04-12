@@ -487,13 +487,28 @@ export class CrossTenantAuthService {
     }
 
     /**
+     * Returns only the fields the client needs after login.
+     * Deliberately excludes: email, persona, personas, identificacion,
+     * identificacion_original, telefono, fecha_nacimiento, persona_id, created_at.
+     */
+    _loginUser(user) {
+        return {
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar || null,
+            isActive: user.is_active !== false,
+            roles: user.roles || [],
+        };
+    }
+
+    /**
      * Builds a match object.
      * NOTE: Stores the raw payload in `_payload` so `_resolveMatches` can re-sign
      * tokens with the full `availableTenants` list once all probes complete.
      * `_payload` is stripped before the result is returned to callers.
      */
     _buildMatch(entry, user) {
-        const { password, ...safeUser } = user;
+        const safeUser = this._loginUser(user);
         const roleIds = (user.roles || [])
             .map(r => Number(r.id || r.rol_id))
             .filter(id => Number.isInteger(id) && id > 0);

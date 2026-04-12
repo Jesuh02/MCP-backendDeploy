@@ -139,8 +139,13 @@ export class AuthService {
     }
 
     _safeUser(user) {
-        const { password, ...safe } = user;
-        return safe;
+        return {
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar || null,
+            isActive: user.is_active !== false,
+            roles: user.roles || [],
+        };
     }
 
     /** Enrich user object with institution details from persona.institucion_id */
