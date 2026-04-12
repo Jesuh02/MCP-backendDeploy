@@ -9,6 +9,13 @@ export class UserController extends BaseController {
         this.whatsAppService = whatsAppService;
     }
 
+    /** Strips sensitive fields from a user object before returning it as another user's public profile */
+    _publicUser(user) {
+        if (!user || typeof user !== 'object') return user;
+        const { email, emailVerified, email_verified, ...pub } = user;
+        return pub;
+    }
+
     getProfile = async(req, res, next) => {
         try {
             const userResult = await this.userService.getById(req.user.userId);
@@ -47,11 +54,19 @@ export class UserController extends BaseController {
     };
 
     getById = async(req, res, next) => {
-        this.store(req, res, next, () => this.userService.getById(parseInt(req.params.id)));
+        try {
+            const result = await this.userService.getById(parseInt(req.params.id));
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: this._publicUser(result.getValue()) });
+        } catch (err) { next(err); }
     };
 
     getByUsername = async(req, res, next) => {
-        this.store(req, res, next, () => this.userService.getByUsername(req.params.username));
+        try {
+            const result = await this.userService.getByUsername(req.params.username);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: this._publicUser(result.getValue()) });
+        } catch (err) { next(err); }
     };
 
     updateProfile = async(req, res, next) => {
@@ -63,7 +78,14 @@ export class UserController extends BaseController {
     search = async(req, res, next) => {
         const { error, value } = searchUsersSchema.validate(req.query);
         if (error) return next(ValidationError.fromJoi(error));
-        this.store(req, res, next, () => this.userService.search(value.q, value.limit));
+        try {
+            const result = await this.userService.search(value.q, value.limit);
+            if (result.isFail()) return next(result.getError());
+            const data = Array.isArray(result.getValue())
+                ? result.getValue().map(u => this._publicUser(u))
+                : result.getValue();
+            res.json({ success: true, data });
+        } catch (err) { next(err); }
     };
 
     registerFCMToken = async(req, res, next) => {
@@ -93,7 +115,14 @@ export class UserController extends BaseController {
     getByIds = async(req, res, next) => {
         const ids = (req.query.ids || '').split(',').map(Number).filter(n => !isNaN(n) && n > 0);
         if (ids.length === 0) return res.json({ success: true, data: [] });
-        this.store(req, res, next, () => this.userService.getByIds(ids));
+        try {
+            const result = await this.userService.getByIds(ids);
+            if (result.isFail()) return next(result.getError());
+            const data = Array.isArray(result.getValue())
+                ? result.getValue().map(u => this._publicUser(u))
+                : this._publicUser(result.getValue());
+            res.json({ success: true, data });
+        } catch (err) { next(err); }
     };
 
     deactivateUser = async(req, res, next) => {
