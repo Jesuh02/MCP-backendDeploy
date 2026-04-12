@@ -639,25 +639,31 @@ export class ReinforcementDomainService {
         // Step 2b: Detect domain to enforce topic boundary and prevent cross-domain contamination
         // (moved BEFORE systemPrompt so we can pass domain to it)
         const domain = this._inferDomain(topicName, taskName, ragContent);
-        const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount, domain);
+
+        // isMathContent is the single gate that decides whether math exercises are allowed.
+        // Math is ONLY permitted when: domain is explicitly MATH/PHYSICS/CHEMISTRY/ACCOUNTING,
+        // OR domain is GENERAL but the title/RAG content explicitly mentions math topics.
+        const MATH_ADJACENT_DOMAINS = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING'];
+        const isMathContent = MATH_ADJACENT_DOMAINS.includes(domain) ||
+            (domain === 'GENERAL' && this._isMathContent(topicName, taskName, ragContent));
+
+        const systemPrompt = this._buildSystemPrompt(diffLabel, targetCount, domain, isMathContent);
 
         const domainLockBlock = this._buildDomainLockBlock(domain, topicName, taskName);
-        console.log(`🎯 [ReinforcementService] Detected domain: ${domain} (topic='${topicName}', task='${taskName}')`);
+        console.log(`🎯 [ReinforcementService] Detected domain: ${domain}, isMathContent=${isMathContent} (topic='${topicName}', task='${taskName}')`);
 
         const topicHint = topicName
             ? `El tema es "${topicName}"${taskName ? ` y la tarea es "${taskName}"` : ''}. Dominio detectado: ${domain}. TODOS los ejercicios son EXCLUSIVAMENTE de ese dominio. Lleva el dominio a su EXPRESIÓN MÁS COMPLEJA Y AVANZADA.\n\n${domainLockBlock}`
             : `\n${domainLockBlock}`;
 
         // Complexity enforcement added to the user prompt for HARD difficulty
-        const MATH_ADJACENT_DOMAINS = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING'];
         const isMathDomain = domain === 'MATH';
-        const isMathAdjacent = MATH_ADJACENT_DOMAINS.includes(domain);
-        const antiMathBlock = (!isMathAdjacent && domain !== 'GENERAL')
+        const antiMathBlock = !isMathContent
             ? `\n\n🚫🚫🚫 PROHIBICIÓN ABSOLUTA DE MATEMÁTICAS 🚫🚫🚫\nEl dominio detectado es ${domain}. Este tema NO es de matemáticas.\nPROHIBIDO TOTAL generar ejercicios de: cálculo aritmético, álgebra, ecuaciones, fracciones, series, integrales, derivadas, sumas de números, geometría, trigonometría, o CUALQUIER problema numérico/matemático puro.\nSi el material menciona un número o dato numérico como contexto, NO lo conviertas en un problema matemático.\nTODOS los ejercicios deben evaluar la COMPRENSIÓN DEL CONTENIDO del tema "${topicName}"${taskName ? ` y la tarea "${taskName}"` : ''}, NO habilidades matemáticas.\n🚫🚫🚫 FIN PROHIBICIÓN DE MATEMÁTICAS 🚫🚫🚫`
             : '';
 
         const hardEnforcement = diffLabel === 'HARD'
-            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: El dominio YA FUE DETERMINADO: ${domain}. NO cambies de dominio.\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado del dominio ${domain}.\n\nREGLAS INQUEBRANTABLES PARA DOMINIO ${domain}:\n${isMathDomain ? '- SUMAS: genera sumas de 7+ dígitos (ej: 1,023,232 + 12,213,456 + 987,654 = ___), sumas encadenadas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de matrices, series aritméticas/geométricas. NUNCA sumas de 1-3 dígitos. NUNCA algoritmos de programación (Kahan, etc.).' : ''}\n${isMathDomain ? '- ÁLGEBRA: ecuaciones cuadráticas, sistemas de ecuaciones, derivadas, integrales definidas. NUNCA ecuaciones lineales de un solo paso.' : ''}\n${domain === 'SQL' ? '- JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK, ROW_NUMBER), CTEs (WITH), GROUP BY con HAVING. NUNCA SELECT simple sin JOIN.' : ''}\n${domain === 'PROGRAMMING' ? '- Algoritmos con análisis de complejidad O(n log n), recursión con memoización, programación dinámica, grafos. NUNCA sintaxis básica ni Hello World.' : ''}\n${!isMathAdjacent && domain !== 'GENERAL' && domain !== 'SQL' && domain !== 'PROGRAMMING' ? `- DOMINIO ${domain}: Genera ejercicios que evalúen EXCLUSIVAMENTE conocimientos de ${domain}. PROHIBIDO incluir problemas matemáticos puros, cálculos aritméticos, ecuaciones o fórmulas que no pertenezcan directamente a ${domain}.` : ''}\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional.\n${antiMathBlock}\n\nTEST DE COMPLEJIDAD: Si un ejercicio se resuelve en <30 segundos de pensamiento activo → DESCÁRTALO y genera uno más complejo.`
+            ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: El dominio YA FUE DETERMINADO: ${domain}. NO cambies de dominio.\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado del dominio ${domain}.\n\nREGLAS INQUEBRANTABLES PARA DOMINIO ${domain}:\n${isMathDomain ? '- SUMAS: genera sumas de 7+ dígitos (ej: 1,023,232 + 12,213,456 + 987,654 = ___), sumas encadenadas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de matrices, series aritméticas/geométricas. NUNCA sumas de 1-3 dígitos. NUNCA algoritmos de programación (Kahan, etc.).' : ''}\n${isMathDomain ? '- ÁLGEBRA: ecuaciones cuadráticas, sistemas de ecuaciones, derivadas, integrales definidas. NUNCA ecuaciones lineales de un solo paso.' : ''}\n${domain === 'SQL' ? '- JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK, ROW_NUMBER), CTEs (WITH), GROUP BY con HAVING. NUNCA SELECT simple sin JOIN.' : ''}\n${domain === 'PROGRAMMING' ? '- Algoritmos con análisis de complejidad O(n log n), recursión con memoización, programación dinámica, grafos. NUNCA sintaxis básica ni Hello World.' : ''}\n${!isMathContent && domain !== 'SQL' && domain !== 'PROGRAMMING' ? `- DOMINIO ${domain}: Genera ejercicios que evalúen EXCLUSIVAMENTE conocimientos de ${domain}. PROHIBIDO incluir problemas matemáticos puros, cálculos aritméticos, ecuaciones o fórmulas que no pertenezcan directamente a ${domain}.` : ''}\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional.\n${antiMathBlock}\n\nTEST DE COMPLEJIDAD: Si un ejercicio se resuelve en <30 segundos de pensamiento activo → DESCÁRTALO y genera uno más complejo.`
             : (antiMathBlock || '');
 
         // Accumulate unique questions across iterations
@@ -671,7 +677,7 @@ export class ReinforcementDomainService {
         // Each call asks for (targetCount + 3) questions; after filtering we usually
         // reach targetCount in a single round, skipping all subsequent iterations.
         const buildUserPrompt = (exclusionBlock, reqCount) =>
-            `${contextBlock}\n${exclusionBlock}\n\n${topicHint}${hardEnforcement}\n\nGenera EXACTAMENTE ${reqCount} ejercicios de evaluación en formato JSON array. OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante RESUELVA problemas reales y complejos. Cada ejercicio debe exigir razonamiento genuino acorde al nivel ${diffLabel}. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
+            `${contextBlock}\n${exclusionBlock}\n\n${topicHint}${hardEnforcement}\n\n═══ INSTRUCCIÓN PRINCIPAL ═══\nANTES de generar cualquier ejercicio, ANALIZA el material de referencia proporcionado e identifica:\n1. La TEMÁTICA PRINCIPAL del contenido (ej: historia, biología, programación, idiomas, etc.)\n2. Los CONCEPTOS CLAVE que el estudiante debe dominar\n3. Los EJEMPLOS y DATOS específicos del material\n\nLuego genera EXACTAMENTE ${reqCount} ejercicios de evaluación que cubran EXCLUSIVAMENTE esa temática.\n${!isMathContent ? 'PROHIBIDO: ejercicios de cálculo, aritmética, sumas, ecuaciones o cualquier problema matemático puro. ' : ''}OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante demuestre comprensión profunda del material. Cada ejercicio debe exigir razonamiento genuino acorde al nivel ${diffLabel}.\nFormato: JSON array. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
 
         const callLLM = (temperature, reqCount, exclusionBlock) =>
             this.llmPort.chat(systemPrompt, buildUserPrompt(exclusionBlock, reqCount), {
@@ -681,11 +687,41 @@ export class ReinforcementDomainService {
 
         const applyFilters = (rawQuestions, excluded) => {
             const deduped = this._localDedup(rawQuestions, excluded);
-            return diffLabel === 'HARD' ? deduped.filter(q => {
-                const trivial = this._isExerciseTrivialForHard(q, domain);
+            // Cross-domain math rejection: applies to ALL difficulties when topic is not math
+            const crossFiltered = !isMathContent ? deduped.filter(q => {
+                const text = (q.question || '').toLowerCase();
+                const answer = String(q.correct_answer || q.correctAnswer || '').toLowerCase();
+                const pureMathSignals = [
+                    /\b\d+\s*[+\-*\/×÷]\s*\d+/,                                  // any arithmetic: "234 + 567", "12 × 3"
+                    /calcula\b/i,                                                   // "calcula..." anything
+                    /resuelve\s+(la\s+)?ecuaci[oó]n/i,                              // "resuelve la ecuación..."
+                    /cu[aá]nto\s+(es|da|resulta|vale|suman|suma)/i,                 // "cuánto es/da/suman..."
+                    /\b(sen|cos|tan|log|ln|sqrt|∫|∑|π|√)\b/i,                      // trig/calc symbols
+                    /\bx\s*[\^²³]\s*[+\-]\s*\d/,                                   // polynomial: "x² + 3"
+                    /\b\d+\s*\/\s*\d+\s*[+\-]\s*\d+\s*\/\s*\d+/,                  // fractions: "3/8 + 1/9"
+                    /serie\s+(geom[eé]trica|aritm[eé]tica)/i,                       // "serie geométrica"
+                    /sistema\s+de\s+ecuaciones/i,                                   // "sistema de ecuaciones"
+                    /\b(matriz|matrices|determinante)\b/i,                           // matrices
+                    /sumatoria|sumatorio|∑/i,                                        // summation
+                    /\b(suma|resta|multiplica|divide)\s+(los|las|estos|estas)?\s*\d/i, // "suma los números..."
+                    /resultado\s+de\s+(\d|la\s+operaci)/i,                           // "resultado de 234..."
+                    /operaci[oó]n\s+(aritm[eé]tica|matem[aá]tica)/i,                // "operación aritmética"
+                ];
+                // Also check: if the answer is purely numeric and the question asks to compute
+                const isNumericAnswer = /^-?\d+([.,]\d+)?$/.test(answer.trim());
+                const asksToCompute = /\b(calcula|resuelve|halla|encuentra|determina)\b.*\d/i.test(text);
+
+                if (pureMathSignals.some(r => r.test(text)) || (isNumericAnswer && asksToCompute)) {
+                    console.warn(`[ReinforcementService] Cross-domain math rejected (${diffLabel}): "${text.substring(0, 80)}..."`);
+                    return false;
+                }
+                return true;
+            }) : deduped;
+            return diffLabel === 'HARD' ? crossFiltered.filter(q => {
+                const trivial = this._isExerciseTrivialForHard(q, domain, isMathContent);
                 if (trivial) console.warn(`[ReinforcementService] HARD filter rejected: "${q.question.substring(0, 80)}..."`);
                 return !trivial;
-            }) : deduped;
+            }) : crossFiltered;
         };
 
         // Parallel first batch: 2 concurrent calls, each asking for targetCount+3
@@ -829,8 +865,11 @@ export class ReinforcementDomainService {
                     'aritmética', 'álgebra', 'cálculo', 'calculo', 'ecuación', 'ecuaciones', 'matemática',
                     'matemáticas', 'trigonometría', 'geometría', 'fracción', 'decimal', 'porcentaje',
                     'integral', 'derivada', 'límite', 'serie', 'sumatoria', 'logaritmo', 'exponente',
-                    'polinomio', 'matriz', 'vector', 'probabilidad', 'estadística', 'binomial'],
-                weak: ['número', 'números', 'operación', 'resultado', 'calcular', 'resolver'],
+                    'polinomio', 'matriz', 'vector', 'probabilidad', 'estadística', 'binomial',
+                    'problema matemático', 'problemas matemáticos'],
+                // IMPORTANT: removed generic words (resolver, resultado, calcular, operación) that
+                // caused false MATH classification for non-math topics like "Resolver problemas de..."
+                weak: ['número', 'números'],
             },
             SQL: {
                 strong: ['sql', 'select', 'query', 'base de datos', 'database', 'postgresql', 'mysql',
@@ -895,9 +934,17 @@ export class ReinforcementDomainService {
         const [bestDomain, bestScore] = sorted[0];
         const [secondDomain, secondScore] = sorted[1] || ['GENERAL', 0];
 
-        // Only declare a domain if the best score is meaningfully higher than the second
         if (bestScore === 0) return 'GENERAL';
-        // If MATH scores highest, return MATH even if score is 10 (one keyword match)
+
+        // MATH requires stronger evidence: must come from topic/task title (≥10 pts)
+        // or have significant RAG evidence (≥6 pts) AND a clear gap over 2nd domain.
+        // This prevents accidental MATH classification from generic words in RAG content.
+        if (bestDomain === 'MATH') {
+            const hasTopicSignal = bestScore >= 10; // At least 1 strong keyword in title
+            const hasStrongRagSignal = bestScore >= 6 && (bestScore - secondScore) >= 3;
+            if (!hasTopicSignal && !hasStrongRagSignal) return 'GENERAL';
+        }
+
         return bestScore >= 4 ? bestDomain : 'GENERAL';
     }
 
@@ -956,12 +1003,31 @@ VERIFICACIÓN OBLIGATORIA antes de cada ejercicio:
     }
 
     /** @private Build system prompt based on difficulty and domain */
-    _buildSystemPrompt(difficulty, targetCount, domain = 'GENERAL') {
+    _buildSystemPrompt(difficulty, targetCount, domain = 'GENERAL', isMathContent = false) {
         const groundingRule = `REGLA: Basa los ejercicios EXCLUSIVAMENTE en el material proporcionado. NO inventes información.`;
 
+        // Domain-specific complexity rules conditioned on difficulty
+        // GENERAL only gets math rules when the content has been explicitly identified as math
+        const MATH_DOMAINS = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING'];
+        const isMathRelevant = MATH_DOMAINS.includes(domain) || (domain === 'GENERAL' && isMathContent);
+
+        // Anti-math preamble for non-math domains — injected into ALL difficulty levels
+        const thematicPreamble = !isMathRelevant ? `
+═══ REGLA TEMÁTICA OBLIGATORIA (TODAS LAS DIFICULTADES) ═══
+Este material NO es de matemáticas (dominio: ${domain}).
+PROHIBIDO generar ejercicios de: sumas, restas, multiplicaciones, divisiones,
+ecuaciones, fracciones, series, integrales, derivadas, álgebra, geometría,
+trigonometría, o CUALQUIER problema de cálculo numérico/aritmético.
+Los ejercicios deben evaluar EXCLUSIVAMENTE la comprensión, análisis y
+aplicación del contenido temático del material proporcionado.
+Si el material contiene datos numéricos (fechas, cantidades, estadísticas),
+úsalos como CONTEXTO informativo, NO como problemas matemáticos a resolver.
+═══════════════════════════════════════════════════════════
+` : '';
+
         const difficultyInstructions = {
-            EASY: `NIVEL INTRODUCTORIO: ejercicios de comprensión y práctica básica. Operaciones simples, conceptos fundamentales. Usa "¿Por qué?", "¿Para qué?", "¿Qué pasaría si...?" para preguntas; ejercicios directos y sencillos para práctica.`,
-            INTERMEDIATE: `NIVEL INTERMEDIO: ejercicios de análisis y aplicación. Escenarios prácticos multi-paso, resolución de problemas contextualizados. El estudiante debe ANALIZAR, DECIDIR y APLICAR conocimientos en situaciones con 2-3 variables o pasos de razonamiento.`,
+            EASY: `NIVEL INTRODUCTORIO: ejercicios de comprensión y práctica básica sobre el CONTENIDO del material. Preguntas conceptuales, de definición, identificación y comprensión. Usa "¿Por qué?", "¿Para qué?", "¿Qué pasaría si...?" para preguntas; ejercicios directos y sencillos sobre la temática del material.${thematicPreamble}`,
+            INTERMEDIATE: `NIVEL INTERMEDIO: ejercicios de análisis y aplicación sobre el CONTENIDO del material. Escenarios prácticos multi-paso, resolución de problemas contextualizados DENTRO del dominio ${domain}. El estudiante debe ANALIZAR, DECIDIR y APLICAR conocimientos en situaciones con 2-3 variables o pasos de razonamiento.${thematicPreamble}`,
             HARD: `NIVEL EXPERTO — COMPLEJIDAD MÁXIMA ABSOLUTA (NO NEGOCIABLE):
 
 ══ PASO 0 OBLIGATORIO: ANÁLISIS DE DOMINIO ══
@@ -1063,9 +1129,6 @@ VERIFICACIÓN: Las 4 opciones DEBEN ser valores DIFERENTES entre sí. Si dos opc
             FREE: `Genera ejercicios variados que cubran TODO el contenido. Mezcla niveles: comprensión, análisis, aplicación y creación.`,
         };
 
-        // Domain-specific complexity rules conditioned on difficulty
-        const MATH_DOMAINS = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING', 'GENERAL'];
-        const isMathRelevant = MATH_DOMAINS.includes(domain);
         const hardComplexityOverrides = difficulty === 'HARD' ? `
 ══════════════════════════════════════════════════
 REGLAS DE COMPLEJIDAD MÁXIMA PARA NIVEL HARD
@@ -1481,7 +1544,34 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         });
     }
 
-    _isExerciseTrivialForHard(q, domain = 'GENERAL') {
+    /**
+     * Returns true if the topic/task name or RAG content explicitly indicates math content.
+     * This is the single source of truth for whether math exercises are permitted.
+     * @private
+     */
+    _isMathContent(topicName = '', taskName = '', ragContent = '') {
+        const titleText = `${topicName} ${taskName}`.toLowerCase();
+        const mathTitleKeywords = [
+            'suma', 'sumas', 'adición', 'sustracción', 'resta', 'multiplicaci', 'divisi',
+            'aritmética', 'álgebra', 'cálculo', 'calculo', 'ecuaci', 'matemática',
+            'matemáticas', 'trigonometría', 'geometría', 'fracción', 'decimal', 'porcentaje',
+            'integral', 'derivada', 'límite', 'sumatoria', 'logaritmo', 'exponente',
+            'polinomio', 'probabilidad', 'estadística', 'problema matemático', 'problemas matemáticos',
+            'math', 'mathematics', 'arithmetic', 'algebra', 'calculus', 'serie aritm', 'serie geom',
+        ];
+        // Strong: explicit math keywords in title → math is allowed
+        if (mathTitleKeywords.some(k => titleText.includes(k))) return true;
+        // RAG-only: require HEAVY evidence (6+ distinct keywords) to prevent false positives
+        // from documents that casually mention numbers, calculations, or percentages as context
+        if (ragContent) {
+            const ragSample = ragContent.substring(0, 3000).toLowerCase();
+            const hits = mathTitleKeywords.filter(k => ragSample.includes(k)).length;
+            if (hits >= 6) return true;
+        }
+        return false;
+    }
+
+    _isExerciseTrivialForHard(q, domain = 'GENERAL', isMathContent = false) {
         const text = (q.question || '').toLowerCase();
         const answer = String(q.correct_answer || q.correctAnswer || '').toLowerCase();
         const allText = text + ' ' + answer;
@@ -1511,8 +1601,10 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         }
 
         // Cross-domain: reject pure math questions in non-math domains
-        const MATH_ADJACENT = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING', 'GENERAL'];
-        if (!MATH_ADJACENT.includes(domain)) {
+        // GENERAL is only math-adjacent when explicitly identified via _isMathContent
+        const MATH_ADJACENT = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING'];
+        const isMathAdjacent = MATH_ADJACENT.includes(domain) || (domain === 'GENERAL' && isMathContent);
+        if (!isMathAdjacent) {
             // Detect pure math/arithmetic questions that don't belong in this domain
             const pureMathSignals = [
                 /\b\d+\s*[+\-*\/]\s*\d+\s*=\s*___/,                          // arithmetic: "234 + 567 = ___"
