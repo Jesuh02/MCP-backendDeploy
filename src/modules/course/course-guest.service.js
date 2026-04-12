@@ -167,10 +167,7 @@ export class CourseGuestService {
         }
 
         const isAdmin = requesterRoles.includes(3) || requesterRoles.includes(4);
-        if (!isAdmin) {
-            const { allowed } = await this._canManageGuests(requesterId, courseId);
-            if (!allowed) return Result.fail(new ForbiddenError('No tienes permiso para ver los invitados de este curso'));
-        }
+        if (!isAdmin) return Result.fail(new ForbiddenError('No tienes permiso para ver los invitados de este curso'));
 
         const rows = await this.progressRepo.findApprovedPreEnrollments(courseId);
         // Strip internal IDs — only return what the UI needs
