@@ -101,8 +101,10 @@ export class InstitucionDomainService {
         let nextDueDateIso;
         if (payment_due_date && !isNaN(new Date(payment_due_date).getTime())) {
             nextDueDateIso = new Date(payment_due_date).toISOString();
+            console.log(`🏛️ setBillingCycle(${institutionId}): using explicit payment_due_date → ${nextDueDateIso}`);
         } else {
             nextDueDateIso = this._computeNextDueDate(type === 'specific_months' ? 'monthly_day' : type, day, safeHour, safeMinute).toISOString();
+            console.log(`🏛️ setBillingCycle(${institutionId}): computed next due date → ${nextDueDateIso} (type=${type}, day=${day})`);
         }
         const cycleData = {
             billing_cycle_type: type,
@@ -144,20 +146,28 @@ export class InstitucionDomainService {
 
         const makeUTC = (y, m, d) => new Date(Date.UTC(y, m, d, safeHour, safeMinute, 0, 0));
 
+        // Helper: check if a candidate date is still in the future
+        const isFuture = (candidate) => candidate.getTime() > now.getTime();
+
         if (type === 'monthly_start') {
-            // Next 1st of month
+            // Try 1st of current month first; if already past, use next month
+            const thisMonth = makeUTC(year, month, 1);
+            if (isFuture(thisMonth)) return thisMonth;
             return makeUTC(year, month + 1, 1);
         }
 
         if (type === 'biweekly') {
-            // Next 1st or 15th
-            if (today < 15) return makeUTC(year, month, 15);
+            // Try 15th of current month, then 1st of next month
+            const mid = makeUTC(year, month, 15);
+            if (isFuture(mid)) return mid;
             return makeUTC(year, month + 1, 1);
         }
 
         if (type === 'monthly_day') {
             const d = parseInt(day) || 1;
-            if (today < d) return makeUTC(year, month, d);
+            // Try the target day this month; if that moment already passed, use next month
+            const thisMonth = makeUTC(year, month, d);
+            if (isFuture(thisMonth)) return thisMonth;
             return makeUTC(year, month + 1, d);
         }
 
