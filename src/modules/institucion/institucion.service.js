@@ -136,33 +136,32 @@ export class InstitucionDomainService {
      */
     _computeNextDueDate(type, day, hour = 8, minute = 0) {
         const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth();
-        const today = now.getDate();
+        const year = now.getUTCFullYear();
+        const month = now.getUTCMonth();
+        const today = now.getUTCDate();
         const safeHour = Math.min(23, Math.max(0, parseInt(hour) || 8));
         const safeMinute = Math.min(59, Math.max(0, parseInt(minute) || 0));
 
-        const setTime = (d) => { d.setHours(safeHour, safeMinute, 0, 0); return d; };
+        const makeUTC = (y, m, d) => new Date(Date.UTC(y, m, d, safeHour, safeMinute, 0, 0));
 
         if (type === 'monthly_start') {
             // Next 1st of month
-            if (today >= 1) return setTime(new Date(year, month + 1, 1));
-            return setTime(new Date(year, month, 1));
+            return makeUTC(year, month + 1, 1);
         }
 
         if (type === 'biweekly') {
             // Next 1st or 15th
-            if (today < 15) return setTime(new Date(year, month, 15));
-            return setTime(new Date(year, month + 1, 1));
+            if (today < 15) return makeUTC(year, month, 15);
+            return makeUTC(year, month + 1, 1);
         }
 
         if (type === 'monthly_day') {
             const d = parseInt(day) || 1;
-            if (today < d) return setTime(new Date(year, month, d));
-            return setTime(new Date(year, month + 1, d));
+            if (today < d) return makeUTC(year, month, d);
+            return makeUTC(year, month + 1, d);
         }
 
-        return setTime(new Date(year, month + 1, 1));
+        return makeUTC(year, month + 1, 1);
     }
 
     /** Suspend an institution — blocks all logins for its users. */
