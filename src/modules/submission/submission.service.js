@@ -298,7 +298,7 @@ export class SubmissionDomainService {
                             title: `Tarea calificada: ${taskName}`,
                             message: `Tu entrega ha sido calificada con ${grade}/10 por ${graderUsername}.${feedback ? ` Retroalimentación: ${feedback}` : ''}`,
                 type: 'task_graded',
-                relatedId: Number(submission.id),
+                relatedId: Number(taskId),
                 senderUsername: graderUsername,
                 metadata,
                 actorUserId: graderId || null,
