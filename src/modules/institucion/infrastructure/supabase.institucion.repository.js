@@ -11,6 +11,8 @@ const toApp = (row) => row && ({
     billing_cycle_type: row.billing_cycle_type || null,
     billing_cycle_day: row.billing_cycle_day ?? null,
     billing_cycle_hour: row.billing_cycle_hour ?? 8,
+    billing_cycle_minute: row.billing_cycle_minute ?? 0,
+    billing_action_mode: row.billing_action_mode || 'warning',
     is_suspended: row.is_suspended || false,
     suspended_at: row.suspended_at || null,
     suspended_reason: row.suspended_reason || null,
@@ -18,7 +20,7 @@ const toApp = (row) => row && ({
     created_at: row.created_at,
 });
 
-const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, is_suspended, suspended_at, suspended_reason, monthly_price }) => {
+const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, billing_cycle_minute, billing_action_mode, is_suspended, suspended_at, suspended_reason, monthly_price }) => {
     const mapped = {};
     if (nombre !== undefined) mapped.name = nombre;
     if (codigo !== undefined) mapped.code = codigo;
@@ -29,6 +31,8 @@ const toDb = ({ nombre, codigo, ciudad, departamento, is_active, payment_due_dat
     if (billing_cycle_type !== undefined) mapped.billing_cycle_type = billing_cycle_type;
     if (billing_cycle_day !== undefined) mapped.billing_cycle_day = billing_cycle_day;
     if (billing_cycle_hour !== undefined) mapped.billing_cycle_hour = billing_cycle_hour;
+    if (billing_cycle_minute !== undefined) mapped.billing_cycle_minute = billing_cycle_minute;
+    if (billing_action_mode !== undefined) mapped.billing_action_mode = billing_action_mode;
     if (is_suspended !== undefined) mapped.is_suspended = is_suspended;
     if (suspended_at !== undefined) mapped.suspended_at = suspended_at;
     if (suspended_reason !== undefined) mapped.suspended_reason = suspended_reason;
@@ -110,9 +114,11 @@ export class SupabaseInstitucionRepository {
     }
 
     /** Set billing cycle for an institution. */
-    async setBillingCycle(id, { billing_cycle_type, billing_cycle_day, billing_cycle_hour, payment_due_date, billing_cycle_months }) {
-        const updatePayload = { billing_cycle_type, billing_cycle_day };        
+    async setBillingCycle(id, { billing_cycle_type, billing_cycle_day, billing_cycle_hour, billing_cycle_minute, billing_action_mode, payment_due_date, billing_cycle_months }) {
+        const updatePayload = { billing_cycle_type, billing_cycle_day };
         if (billing_cycle_hour !== undefined) updatePayload.billing_cycle_hour = billing_cycle_hour;
+        if (billing_cycle_minute !== undefined) updatePayload.billing_cycle_minute = billing_cycle_minute;
+        if (billing_action_mode !== undefined) updatePayload.billing_action_mode = billing_action_mode;
         if (payment_due_date !== undefined) updatePayload.payment_due_date = payment_due_date;
         if (billing_cycle_months !== undefined) updatePayload.billing_cycle_months = billing_cycle_months;
         const { data, error } = await this.client
@@ -133,6 +139,8 @@ export class SupabaseInstitucionRepository {
                 billing_cycle_type: null,
                 billing_cycle_day: null,
                 billing_cycle_hour: null,
+                billing_cycle_minute: null,
+                billing_action_mode: null,
                 billing_cycle_months: null,
                 payment_due_date: null,
             })
@@ -175,6 +183,24 @@ export class SupabaseInstitucionRepository {
             .eq('is_active', true)
             .lt('payment_due_date', new Date().toISOString())
             .not('payment_due_date', 'is', null);
+        if (error) return [];
+        return (data || []).map(toApp);
+    }
+
+    /**
+     * Find active, non-suspended institutions whose payment is overdue and
+     * have billing_action_mode = 'suspension'. Used by the auto-suspend scheduler.
+     */
+    async findForAutoSuspension() {
+        const { data, error } = await this.client
+            .from(TABLE)
+            .select('*')
+            .eq('is_active', true)
+            .eq('is_suspended', false)
+            .eq('billing_action_mode', 'suspension')
+            .not('billing_cycle_type', 'is', null)
+            .not('payment_due_date', 'is', null)
+            .lt('payment_due_date', new Date().toISOString());
         if (error) return [];
         return (data || []).map(toApp);
     }

@@ -79,7 +79,7 @@ export class InstitucionDomainService {
      * @param {number|null} cycle.day - Day of month (1-28) for 'monthly_day'
      * @param {number} [cycle.hour=8] - Hour of day (0-23) when billing triggers
      */
-    async setBillingCycle(institutionId, { type, day, hour = 8, minute = 0, months }) {
+    async setBillingCycle(institutionId, { type, day, hour = 8, minute = 0, months, billing_action_mode = 'warning' }) {
         const item = await this.repo.findById(institutionId);
         if (!item) return Result.fail(new NotFoundError('Institucion', institutionId));
 
@@ -102,6 +102,7 @@ export class InstitucionDomainService {
             billing_cycle_day: type === 'monthly_day' || type === 'specific_months' ? parseInt(day) : (type === 'biweekly' ? 15 : 1),
             billing_cycle_hour: safeHour,
             billing_cycle_minute: safeMinute,
+            billing_action_mode: billing_action_mode || 'warning',
             payment_due_date: nextDueDate.toISOString(),
         };
         if (Array.isArray(months)) {
@@ -358,7 +359,12 @@ export class InstitucionDomainService {
             // Compute next due date from billing cycle if configured, otherwise +1 month
             let newDueDate;
             if (inst && inst.billing_cycle_type) {
-                newDueDate = this._computeNextDueDate(inst.billing_cycle_type, inst.billing_cycle_day);
+                newDueDate = this._computeNextDueDate(
+                    inst.billing_cycle_type,
+                    inst.billing_cycle_day,
+                    inst.billing_cycle_hour ?? 8,
+                    inst.billing_cycle_minute ?? 0
+                );
             } else {
                 newDueDate = new Date();
                 newDueDate.setMonth(newDueDate.getMonth() + 1);
@@ -418,6 +424,31 @@ export class InstitucionDomainService {
         if (!this.txRepo) return Result.ok([]);
         const payments = await this.txRepo.findAllServicePayments();
         return Result.ok(payments);
+    }
+
+    /**
+     * Automatically suspend institutions whose payment_due_date has passed
+     * and whose billing_action_mode is 'suspension'. Called by the scheduler every minute.
+     */
+    async autoProcessOverdueActions() {
+        if (!this.repo.findForAutoSuspension) return Result.ok({ processed: 0 });
+        try {
+            const institutions = await this.repo.findForAutoSuspension();
+            let processed = 0;
+            for (const inst of institutions) {
+                try {
+                    await this.repo.suspend(inst.id, 'Pago vencido — suspensión automática programada');
+                    console.log(`🏛️ Auto-suspended institution ${inst.id} (${inst.nombre}) — due date ${inst.payment_due_date} passed`);
+                    processed++;
+                } catch (err) {
+                    console.error(`⚠️ Failed to auto-suspend institution ${inst.id}:`, err.message);
+                }
+            }
+            return Result.ok({ processed });
+        } catch (err) {
+            console.error('⚠️ autoProcessOverdueActions error:', err.message);
+            return Result.fail(err);
+        }
     }
 }
 export default InstitucionDomainService;

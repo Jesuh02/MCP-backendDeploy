@@ -304,6 +304,15 @@ export function createContainer() {
     const institucionService = new InstitucionDomainService({ institucionRepository: institucionRepo, transactionRepository: transactionRepo, paymentGatewayPort: paymentGateway, userRepository: userRepo });
     institucionService.setNotificationService(notificationService);
 
+    // Scheduler: every minute auto-suspend institutions whose payment_due_date has passed
+    // and billing_action_mode = 'suspension'. Requires DB columns:
+    //   ALTER TABLE institutions ADD COLUMN IF NOT EXISTS billing_cycle_minute integer DEFAULT 0;
+    //   ALTER TABLE institutions ADD COLUMN IF NOT EXISTS billing_action_mode text DEFAULT 'warning';
+    setInterval(async () => {
+        try { await institucionService.autoProcessOverdueActions(); }
+        catch (err) { console.error('⚠️ billing auto-suspend scheduler error:', err.message); }
+    }, 60 * 1000);
+
     // Nivel 1: servicios que dependen de servicios del Nivel 0
     const videoService = new VideoDomainService({
         videoRepository: videoRepo,
