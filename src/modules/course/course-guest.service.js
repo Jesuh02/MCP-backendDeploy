@@ -157,17 +157,25 @@ export class CourseGuestService {
     }
 
     /**
-     * List all approved pre-enrollments for a course (invited + manually approved).
-     * Any authenticated user can view the guest list.
+     * List all approved pre-enrollments for a course.
+     * Restricted to the course creator, collaborators, or admins (roles 3/4).
      */
-    async getGuests(requesterId, courseId) {
+    async getGuests(requesterId, courseId, requesterRoles = []) {
         const course = await this.courseRepo.findById(courseId);
         if (!course) {
             return Result.fail(new NotFoundError('Curso', courseId));
         }
 
+        const isAdmin = requesterRoles.includes(3) || requesterRoles.includes(4);
+        if (!isAdmin) {
+            const { allowed } = await this._canManageGuests(requesterId, courseId);
+            if (!allowed) return Result.fail(new ForbiddenError('No tienes permiso para ver los invitados de este curso'));
+        }
+
         const rows = await this.progressRepo.findApprovedPreEnrollments(courseId);
-        return Result.ok(rows || []);
+        // Strip internal IDs — only return what the UI needs
+        const safe = (rows || []).map(({ username, avatar, status, requestedAt }) => ({ username, avatar, status, requestedAt }));
+        return Result.ok(safe);
     }
 
     // ─── Notification helper ──────────────────────────────────────────────────
