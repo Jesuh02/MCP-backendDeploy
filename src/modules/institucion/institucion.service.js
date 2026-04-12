@@ -79,7 +79,7 @@ export class InstitucionDomainService {
      * @param {number|null} cycle.day - Day of month (1-28) for 'monthly_day'
      * @param {number} [cycle.hour=8] - Hour of day (0-23) when billing triggers
      */
-    async setBillingCycle(institutionId, { type, day, hour = 8, months }) {
+    async setBillingCycle(institutionId, { type, day, hour = 8, minute = 0, months }) {
         const item = await this.repo.findById(institutionId);
         if (!item) return Result.fail(new NotFoundError('Institucion', institutionId));
 
@@ -95,11 +95,13 @@ export class InstitucionDomainService {
         }
 
         const safeHour = Math.min(23, Math.max(0, parseInt(hour) || 8));
-        const nextDueDate = this._computeNextDueDate(type === 'specific_months' ? 'monthly_day' : type, day, safeHour);
+        const safeMinute = Math.min(59, Math.max(0, parseInt(minute) || 0));
+        const nextDueDate = this._computeNextDueDate(type === 'specific_months' ? 'monthly_day' : type, day, safeHour, safeMinute);
         const cycleData = {
             billing_cycle_type: type,
             billing_cycle_day: type === 'monthly_day' || type === 'specific_months' ? parseInt(day) : (type === 'biweekly' ? 15 : 1),
             billing_cycle_hour: safeHour,
+            billing_cycle_minute: safeMinute,
             payment_due_date: nextDueDate.toISOString(),
         };
         if (Array.isArray(months)) {
@@ -121,36 +123,38 @@ export class InstitucionDomainService {
      * @param {'monthly_start'|'biweekly'|'monthly_day'} type
      * @param {number|null} day
      * @param {number} [hour=8]
+     * @param {number} [minute=0]
      * @returns {Date}
      */
-    _computeNextDueDate(type, day, hour = 8) {
+    _computeNextDueDate(type, day, hour = 8, minute = 0) {
         const now = new Date();
         const year = now.getFullYear();
         const month = now.getMonth();
         const today = now.getDate();
         const safeHour = Math.min(23, Math.max(0, parseInt(hour) || 8));
+        const safeMinute = Math.min(59, Math.max(0, parseInt(minute) || 0));
 
-        const setHour = (d) => { d.setHours(safeHour, 0, 0, 0); return d; };
+        const setTime = (d) => { d.setHours(safeHour, safeMinute, 0, 0); return d; };
 
         if (type === 'monthly_start') {
             // Next 1st of month
-            if (today >= 1) return setHour(new Date(year, month + 1, 1));
-            return setHour(new Date(year, month, 1));
+            if (today >= 1) return setTime(new Date(year, month + 1, 1));
+            return setTime(new Date(year, month, 1));
         }
 
         if (type === 'biweekly') {
             // Next 1st or 15th
-            if (today < 15) return setHour(new Date(year, month, 15));
-            return setHour(new Date(year, month + 1, 1));
+            if (today < 15) return setTime(new Date(year, month, 15));
+            return setTime(new Date(year, month + 1, 1));
         }
 
         if (type === 'monthly_day') {
             const d = parseInt(day) || 1;
-            if (today < d) return setHour(new Date(year, month, d));
-            return setHour(new Date(year, month + 1, d));
+            if (today < d) return setTime(new Date(year, month, d));
+            return setTime(new Date(year, month + 1, d));
         }
 
-        return setHour(new Date(year, month + 1, 1));
+        return setTime(new Date(year, month + 1, 1));
     }
 
     /** Suspend an institution — blocks all logins for its users. */
@@ -189,6 +193,7 @@ export class InstitucionDomainService {
                 allowed: false,
                 reason: item.suspended_reason || 'Institución suspendida',
                 suspended: true,
+                institutionId,
             });
         }
         const isOverdue = item.payment_due_date && new Date(item.payment_due_date) < new Date();
@@ -196,6 +201,7 @@ export class InstitucionDomainService {
             allowed: true,
             paymentOverdue: isOverdue,
             paymentDueDate: item.payment_due_date,
+            institutionId,
         });
     }
 
