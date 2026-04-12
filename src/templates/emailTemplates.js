@@ -290,7 +290,7 @@ export function generateGradeEmailHTML(studentName, taskName, grade, feedback, g
             <div class="divider"></div>
             
             <div style="text-align: center;">
-                <a href="#" class="cta-button">Ver detalles en CourseV</a>
+                <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button">Ver detalles en CourseV</a>
             </div>
         </div>
         
@@ -407,7 +407,7 @@ export function generateGradeModifiedEmailHTML(studentName, taskName, oldGrade, 
             <div class="divider"></div>
             
             <div style="text-align: center;">
-                <a href="#" class="cta-button" style="background: linear-gradient(135deg, ${improved ? '#10b981' : '#f59e0b'} 0%, ${improved ? '#059669' : '#d97706'} 100%);">
+                <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button" style="background: linear-gradient(135deg, ${improved ? '#10b981' : '#f59e0b'} 0%, ${improved ? '#059669' : '#d97706'} 100%);">
                     Ver detalles en CourseV
                 </a>
             </div>
@@ -476,7 +476,7 @@ export function generateNewCourseEmailHTML(userName, creatorUsername, courseTitl
             </div>
             
             <div style="text-align: center;">
-                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
                     Ver curso ahora
                 </a>
             </div>
@@ -544,7 +544,7 @@ export function generateGenericEmailHTML(title, message, type, senderUsername) {
             <div class="divider"></div>
             
             <div style="text-align: center;">
-                <a href="#" class="cta-button" style="background: ${config.gradient};">
+                <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button" style="background: ${config.gradient};">
                     Abrir en CourseV
                 </a>
             </div>
@@ -871,7 +871,7 @@ export function generateChatResponseEmailHTML(subject) {
                 </p>
             </div>
             
-            <a href="#" class="cta-button">Ver Respuesta en CourseV</a>
+            <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button">Ver Respuesta en CourseV</a>
         </div>
         
         <div class="footer">
@@ -963,7 +963,7 @@ export function generateAccountStatusEmailHTML(username = 'Usuario', isActive = 
                 <p class="feedback-text">${support}</p>
             </div>
 
-            <a href="#" class="cta-button">Abrir CourseV</a>
+            <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button">Abrir CourseV</a>
         </div>
         <div class="footer">
             Este correo fue generado automaticamente por CourseV.<br>
@@ -1031,7 +1031,7 @@ export function generateCollaboratorAddedEmailHTML(userName, courseName, addedBy
             <div class="divider"></div>
             
             <div style="text-align: center;">
-                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);">Ir al curso en CourseV</a>
+                <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button" style="background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);">Ir al curso en CourseV</a>
             </div>
         </div>
         
@@ -1099,7 +1099,7 @@ export function generateEnrollmentRequestEmailHTML(adminName, studentName, cours
             <div class="divider"></div>
             
             <div style="text-align: center;">
-                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);">Gestionar solicitudes</a>
+                <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button" style="background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);">Gestionar solicitudes</a>
             </div>
         </div>
         
@@ -1172,7 +1172,7 @@ export function generateEnrollmentApprovedEmailHTML(studentName, courseName) {
             <div class="divider"></div>
 
             <div style="text-align: center;">
-                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);">Ir al curso en CourseV</a>
+                <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button" style="background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);">Ir al curso en CourseV</a>
             </div>
         </div>
 
@@ -1243,7 +1243,7 @@ export function generateCourseInvitationEmailHTML(guestName, inviterName, course
             <div class="divider"></div>
 
             <div style="text-align: center;">
-                <a href="#" class="cta-button" style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);">Ir al curso en CourseV</a>
+                <a href="https://coursevwebfrontend1.coursev.workers.dev/login" class="cta-button" style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);">Ir al curso en CourseV</a>
             </div>
         </div>
 
