@@ -208,7 +208,7 @@ export class InstitucionController {
     /** Set payment due date for an institution (cross-tenant). */
     setPaymentDueDate = async (req, res, next) => {
         try {
-            const { payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, billing_cycle_months, clear_billing_cycle, tenantId } = req.body;
+            const { payment_due_date, billing_cycle_type, billing_cycle_day, billing_cycle_hour, billing_cycle_minute, billing_cycle_months, clear_billing_cycle, tenantId } = req.body;
             const instId = parseInt(req.params.id);
 
             if (clear_billing_cycle) {
@@ -231,11 +231,12 @@ export class InstitucionController {
                     if (!validTypes.includes(billing_cycle_type)) {
                         return next(new ValidationError('Tipo de ciclo inválido'));
                     }
-                    const nextDue = this.service._computeNextDueDate(billing_cycle_type === 'specific_months' ? 'monthly_day' : billing_cycle_type, billing_cycle_day, billing_cycle_hour);
+                    const nextDue = this.service._computeNextDueDate(billing_cycle_type === 'specific_months' ? 'monthly_day' : billing_cycle_type, billing_cycle_day, billing_cycle_hour, billing_cycle_minute);
                     const updated = await repo.setBillingCycle(instId, {
                         billing_cycle_type,
                         billing_cycle_day: billing_cycle_type === 'monthly_day' || billing_cycle_type === 'specific_months' ? parseInt(billing_cycle_day) : (billing_cycle_type === 'biweekly' ? 15 : 1),
                         billing_cycle_hour: Math.min(23, Math.max(0, parseInt(billing_cycle_hour) || 8)),
+                        billing_cycle_minute: Math.min(59, Math.max(0, parseInt(billing_cycle_minute) || 0)),
                         payment_due_date: nextDue.toISOString(),
                         ...(Array.isArray(billing_cycle_months) ? { billing_cycle_months: billing_cycle_months } : {}),
                     });
@@ -245,6 +246,7 @@ export class InstitucionController {
                     type: billing_cycle_type,
                     day: billing_cycle_day,
                     hour: billing_cycle_hour,
+                    minute: billing_cycle_minute,
                     ...(Array.isArray(billing_cycle_months) ? { months: billing_cycle_months } : {}),
                 });
                 if (result.isFail()) return next(result.getError());
