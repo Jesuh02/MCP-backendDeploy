@@ -49,7 +49,7 @@ export class SubjectController {
         try {
             const { error, value } = createSubjectSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.subjectService.create(value, req.user?.userId);
+            const result = await this.subjectService.create(value, req.user?.userId, req.user?.roles);
             if (result.isFail()) return next(result.getError());
             const subject = result.getValue();
             const courseId = subject.course_id ?? value.courseId;
