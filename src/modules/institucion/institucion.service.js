@@ -79,7 +79,7 @@ export class InstitucionDomainService {
      * @param {number|null} cycle.day - Day of month (1-28) for 'monthly_day'
      * @param {number} [cycle.hour=8] - Hour of day (0-23) when billing triggers
      */
-    async setBillingCycle(institutionId, { type, day, hour = 8, minute = 0, months, billing_action_mode = 'warning' }) {
+    async setBillingCycle(institutionId, { type, day, hour = 8, minute = 0, months, billing_action_mode = 'warning', payment_due_date = null }) {
         const item = await this.repo.findById(institutionId);
         if (!item) return Result.fail(new NotFoundError('Institucion', institutionId));
 
@@ -96,14 +96,21 @@ export class InstitucionDomainService {
 
         const safeHour = Math.min(23, Math.max(0, parseInt(hour) || 8));
         const safeMinute = Math.min(59, Math.max(0, parseInt(minute) || 0));
-        const nextDueDate = this._computeNextDueDate(type === 'specific_months' ? 'monthly_day' : type, day, safeHour, safeMinute);
+        // Use explicit payment_due_date if provided (user selected exact date from calendar),
+        // otherwise compute the next occurrence from the cycle type
+        let nextDueDateIso;
+        if (payment_due_date && !isNaN(new Date(payment_due_date).getTime())) {
+            nextDueDateIso = new Date(payment_due_date).toISOString();
+        } else {
+            nextDueDateIso = this._computeNextDueDate(type === 'specific_months' ? 'monthly_day' : type, day, safeHour, safeMinute).toISOString();
+        }
         const cycleData = {
             billing_cycle_type: type,
             billing_cycle_day: type === 'monthly_day' || type === 'specific_months' ? parseInt(day) : (type === 'biweekly' ? 15 : 1),
             billing_cycle_hour: safeHour,
             billing_cycle_minute: safeMinute,
             billing_action_mode: billing_action_mode || 'warning',
-            payment_due_date: nextDueDate.toISOString(),
+            payment_due_date: nextDueDateIso,
         };
         if (Array.isArray(months)) {
             cycleData.billing_cycle_months = months;
