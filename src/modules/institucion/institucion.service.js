@@ -202,6 +202,7 @@ export class InstitucionDomainService {
             allowed: true,
             paymentOverdue: isOverdue,
             paymentDueDate: item.payment_due_date,
+            billingActionMode: item.billing_action_mode || 'warning',
             institutionId,
         });
     }
