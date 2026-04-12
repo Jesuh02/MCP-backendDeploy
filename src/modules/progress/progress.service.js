@@ -949,9 +949,9 @@ export class ProgressDomainService {
                     import ('../../templates/emailTemplates.js');
                     const html = generateEnrollmentApprovedEmailHTML(studentName, courseName);
                     await this._notificationService.sendEmail(userId, {
-                        subject: `âœ… Â¡Tu matrÃ­cula en "${courseName}" ha sido aprobada!`,
+                        subject: `Tu matricula en "${courseName}" ha sido aprobada!`,
                         html,
-                        text: `Â¡Felicitaciones ${studentName}! Tu solicitud de matrÃ­cula en el curso "${courseName}" ha sido aprobada. Ya puedes acceder al contenido del curso en CourseV.`,
+                        text: `Felicitaciones ${studentName}! Tu solicitud de matricula en el curso "${courseName}" ha sido aprobada. Ya puedes acceder al contenido del curso en CourseV.`,
                     });
                 } catch (emailErr) {
                     console.warn('[ProgressService] Error sending enrollment approved email:', emailErr?.message);
@@ -1318,9 +1318,9 @@ export class ProgressDomainService {
 
                     const html = generateEnrollmentRequestEmailHTML(adminName, studentName, courseName, studentAvatar);
                     await this._notificationService.sendEmail(adminId, {
-                        subject: `ðŸ“‹ Nueva solicitud de matrÃ­cula: ${studentName} â†’ "${courseName}"`,
+                        subject: `Nueva solicitud de matricula: ${studentName} - "${courseName}"`,
                         html,
-                        text: `${studentName} ha solicitado matricularse en el curso "${courseName}". Revisa la solicitud en el panel de administraciÃ³n.`,
+                        text: `${studentName} ha solicitado matricularse en el curso "${courseName}". Revisa la solicitud en el panel de administracion.`,
                     });
                 } catch (emailErr) {
                     console.warn(`[ProgressService] Error sending enrollment email to admin ${adminId}:`, emailErr?.message);
