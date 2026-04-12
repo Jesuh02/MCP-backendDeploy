@@ -11,6 +11,7 @@ export function authRoutes({ authController }) {
     router.post('/login', authRateLimiter, validate(loginSchema), authController.login);
     router.post('/google', authRateLimiter, validate(googleLoginSchema), authController.googleLogin);
     router.post('/refresh-token', validate(refreshTokenSchema), authController.refreshToken);
+    router.post('/logout', authController.logout);
     router.post('/change-password', validate(changePasswordSchema), authController.changePassword);
 
     // Cross-tenant: searches ALL tenant databases in parallel

@@ -32,7 +32,8 @@ export class CourseGuestController {
             if (!courseId || isNaN(courseId) || courseId <= 0) {
                 return res.status(400).json({ success: false, error: 'courseId must be a positive integer' });
             }
-            const result = await this.guestService.getGuests(req.user.userId, courseId);
+            const roles = Array.isArray(req.user.roles) ? req.user.roles.map(Number) : [];
+            const result = await this.guestService.getGuests(req.user.userId, courseId, roles);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

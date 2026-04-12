@@ -47,9 +47,7 @@ export const loginSchema = Joi.object({
 });
 
 export const refreshTokenSchema = Joi.object({
-    refreshToken: Joi.string().required().messages({
-        'any.required': 'El refresh token es requerido',
-    }),
+    refreshToken: Joi.string().optional(),
 });
 
 export const changePasswordSchema = Joi.object({
