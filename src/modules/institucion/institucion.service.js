@@ -204,6 +204,8 @@ export class InstitucionDomainService {
             paymentDueDate: item.payment_due_date,
             billingActionMode: item.billing_action_mode || 'warning',
             institutionId,
+            institutionName: item.nombre || null,
+            monthlyPrice: item.monthly_price || 0,
         });
     }
 
@@ -277,8 +279,10 @@ export class InstitucionDomainService {
         const inst = await this.repo.findById(institutionId);
         if (!inst) return Result.fail(new NotFoundError('Institucion', institutionId));
 
-        const amountInCents = Math.round(Number(amount) * 100);
-        if (amountInCents <= 0) return Result.fail(new ValidationError('Monto inválido'));
+        // Auto-resolve amount from institution's monthly_price when amount is 0 or not provided
+        const resolvedAmount = (Number(amount) > 0) ? Number(amount) : (inst.monthly_price || 0);
+        const amountInCents = Math.round(resolvedAmount * 100);
+        if (amountInCents <= 0) return Result.fail(new ValidationError('Monto inválido. La institución no tiene un precio mensual configurado.'));
 
         // Prevent duplicate: if this user+institution already has an APPROVED service payment
         // for the current billing period, reject.
@@ -299,12 +303,12 @@ export class InstitucionDomainService {
         if (payment) {
             payment = await this.txRepo.update(payment.id, {
                 externalReference: reference,
-                amount,
+                amount: resolvedAmount,
             });
         } else {
             payment = await this.txRepo.createServicePayment({
                 institutionId,
-                amount,
+                amount: resolvedAmount,
                 currency: 'COP',
                 status: 'PENDING',
                 paymentMethod: 'wompi',
