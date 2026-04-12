@@ -1,5 +1,6 @@
 import express from 'express';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { networkInterfaces } from 'os';
 import { createContainer } from './container.js';
 import { createRouter } from '../interfaces/routes/index.js';
@@ -38,6 +39,7 @@ export function createApp() {
         );
         if (isAllowed) {
             res.header('Access-Control-Allow-Origin', origin);
+            res.header('Access-Control-Allow-Credentials', 'true');
             res.header('Vary', 'Origin');
         }
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
@@ -58,6 +60,7 @@ export function createApp() {
         verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); },
     }));
     app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+    app.use(cookieParser());
 
     app.use((req, res, next) => {
         const start = Date.now();

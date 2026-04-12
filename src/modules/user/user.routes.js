@@ -13,7 +13,7 @@ export function userRoutes({ userController, requireRoles }) {
     router.post('/me/avatar', upload.single('avatar'), userController.uploadAvatar);
     router.get('/search', validate(searchUsersSchema, 'query'), userController.search);
     router.get('/by-ids', userController.getByIds);
-    router.get('/by-email/:email', userController.getByEmail);
+    router.get('/by-email/:email', requireRoles(3, 4), userController.getByEmail);
     router.get('/by-username/:username', userController.getByUsername);
     router.get('/:id', userController.getById);
     router.post('/fcm-token', validate(registerFCMTokenSchema), userController.registerFCMToken);

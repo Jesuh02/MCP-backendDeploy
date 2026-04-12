@@ -4,7 +4,7 @@ export class SupabaseCollaboratorRepository {
     async findByCourse(courseId) {
         const { data, error } = await this.client
             .from('collaborators')
-            .select('*, usuarios(id, username, email, avatar)')
+            .select('*, usuarios(id, username, avatar)')
             .eq('course_id', courseId)
             .order('created_at', { ascending: true });
         if (error) throw new Error(error.message);
@@ -43,7 +43,7 @@ export class SupabaseCollaboratorRepository {
         const { data, error } = await this.client
             .from('collaborators')
             .upsert({ course_id: courseId, user_id: userId }, { onConflict: 'course_id,user_id' })
-            .select('*, usuarios(id, username, email, avatar)')
+            .select('*, usuarios(id, username, avatar)')
             .single();
         if (error) throw new Error(error.message);
         return this._mapToDomain(data);
@@ -66,7 +66,7 @@ export class SupabaseCollaboratorRepository {
         const { data, error } = await this.client
             .from('collaborators')
             .insert(rows)
-            .select('*, usuarios(id, username, email, avatar)');
+            .select('*, usuarios(id, username, avatar)');
         if (error) throw new Error(error.message);
         return (data || []).map(this._mapToDomain);
     }
@@ -81,7 +81,6 @@ export class SupabaseCollaboratorRepository {
             user: row.usuarios ? {
                 id: row.usuarios.id,
                 username: row.usuarios.username,
-                email: row.usuarios.email,
                 avatar: row.usuarios.avatar,
             } : null,
         };
