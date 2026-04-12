@@ -144,7 +144,6 @@ export class AuthService {
             username: user.username,
             avatar: user.avatar || null,
             isActive: user.is_active !== false,
-            roles: user.roles || [],
         };
     }
 

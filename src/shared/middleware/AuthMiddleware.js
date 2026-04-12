@@ -17,6 +17,7 @@ const DEFAULT_PUBLIC_PATHS = [
     '/api/v1/auth/login',
     '/api/v1/auth/register',
     '/api/v1/auth/refresh-token',
+    '/api/v1/auth/logout',
     '/api/v1/auth/check-password',
     '/api/v1/auth/cross-tenant-login',
     '/api/v1/auth/cross-tenant-google',
@@ -71,15 +72,20 @@ export function createAuthMiddleware(jwtAdapter, extraPublicPaths = []) {
             return next();
         }
 
-        // ── Extraer token JWT ──
+        // ── Extraer token JWT (Bearer header o cookie HttpOnly) ──
         const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        let token = null;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.slice(7);
+        } else if (req.cookies && req.cookies.access_token) {
+            token = req.cookies.access_token;
+        }
+
+        if (!token) {
             const err = new UnauthorizedError('Token de autenticación requerido');
             err.silent = true; // No loguear warning — ya es manejado por IdempotencyMiddleware
             return next(err);
         }
-
-        const token = authHeader.slice(7);
         const { valid, decoded, error } = jwtAdapter.verifyAccessToken(token);
 
         if (!valid) {

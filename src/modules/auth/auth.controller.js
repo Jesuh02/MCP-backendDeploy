@@ -4,6 +4,25 @@ import { runInTenantContext, getTenantClient, TENANT_CONFIGS } from '../../confi
 import { verifyGoogleIdToken } from './infrastructure/google-token.verifier.js';
 
 /**
+ * Sets HttpOnly cookies for the access and refresh tokens.
+ * SameSite=None + Secure is required for cross-origin requests (web on coursev.workers.dev → railway.app).
+ */
+function _setAuthCookies(res, accessToken, refreshToken) {
+    const base = { httpOnly: true, secure: true, sameSite: 'None', path: '/' };
+    res.cookie('access_token', accessToken, { ...base, maxAge: 15 * 60 * 1000 });          // 15 min
+    res.cookie('refresh_token', refreshToken, { ...base, maxAge: 30 * 24 * 60 * 60 * 1000 }); // 30 days
+}
+
+/**
+ * Clears auth cookies on logout or when sessions need to be invalidated.
+ */
+function _clearAuthCookies(res) {
+    const base = { httpOnly: true, secure: true, sameSite: 'None', path: '/' };
+    res.clearCookie('access_token', base);
+    res.clearCookie('refresh_token', base);
+}
+
+/**
  * Verifica criptográficamente el idToken de Google (cuando está presente)
  * y normaliza el payload para el servicio de autenticación.
  * Si el payload ya trae email directamente (llamada interna de confianza), lo usa tal cual.
@@ -67,7 +86,9 @@ export class AuthController {
             }
 
             if (result.isFail()) return next(result.getError());
-            res.status(201).json({ success: true, data: result.getValue() });
+            const regData = result.getValue();
+            if (regData.accessToken) _setAuthCookies(res, regData.accessToken, regData.refreshToken);
+            res.status(201).json({ success: true, data: regData });
         } catch (err) { next(err); }
     };
 
@@ -87,16 +108,21 @@ export class AuthController {
             if (error) return next(ValidationError.fromJoi(error));
             const result = await this.authService.login(value);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const data = result.getValue();
+            _setAuthCookies(res, data.accessToken, data.refreshToken);
+            res.json({ success: true, data });
         } catch (err) { next(err); }
     };
     refreshToken = async(req, res, next) => {
         try {
-            const { error, value } = refreshTokenSchema.validate(req.body);
-            if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.authService.refreshToken(value.refreshToken);
+            // Web: refresh token from HttpOnly cookie; Mobile: from request body
+            const rt = req.cookies?.refresh_token || req.body?.refreshToken;
+            if (!rt) return next(new ValidationError('Refresh token requerido'));
+            const result = await this.authService.refreshToken(rt);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const data = result.getValue();
+            _setAuthCookies(res, data.accessToken, data.refreshToken);
+            res.json({ success: true, data });
         } catch (err) { next(err); }
     };
 
@@ -117,7 +143,9 @@ export class AuthController {
             const normalized = await normalizeGoogleLoginPayload(value);
             const result = await this.authService.loginWithGoogle(normalized);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const data = result.getValue();
+            _setAuthCookies(res, data.accessToken, data.refreshToken);
+            res.json({ success: true, data });
         } catch (err) { next(err); }
     };
 
@@ -128,7 +156,12 @@ export class AuthController {
             if (error) return next(ValidationError.fromJoi(error));
             const result = await this.crossTenantAuthService.login(value);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const data = result.getValue();
+            // Set cookies only for a single-match result (multiple matches need tenant selection first)
+            if (!data.multipleMatches && data.accessToken) {
+                _setAuthCookies(res, data.accessToken, data.refreshToken);
+            }
+            res.json({ success: true, data });
         } catch (err) { next(err); }
     };
 
@@ -140,8 +173,18 @@ export class AuthController {
             const normalized = await normalizeGoogleLoginPayload(value);
             const result = await this.crossTenantAuthService.googleLogin(normalized);
             if (result.isFail()) return next(result.getError());
-            res.json({ success: true, data: result.getValue() });
+            const data = result.getValue();
+            if (!data.multipleMatches && data.accessToken) {
+                _setAuthCookies(res, data.accessToken, data.refreshToken);
+            }
+            res.json({ success: true, data });
         } catch (err) { next(err); }
+    };
+
+    /** Sends a 4-digit reset code to the given email. Always responds { sent: true } for security. */
+    logout = async(req, res, _next) => {
+        _clearAuthCookies(res);
+        res.json({ success: true, data: { message: 'Sesión cerrada' } });
     };
 
     /** Sends a 4-digit reset code to the given email. Always responds { sent: true } for security. */
