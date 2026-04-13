@@ -1,6 +1,8 @@
 /**
  * EmailAdapter — Implementa IEmailPort.
- * Cascada: Resend API → SendGrid → Gmail SMTP.
+ * Cascada: Resend API → SendGrid → Gmail SMTP → Brevo SMTP.
+ * Brevo actúa como fallback cuando se supera la cuota del proveedor principal
+ * (100 emails/día o 3 000 emails/mes en Resend free tier).
  */
 import nodemailer from 'nodemailer';
 
@@ -24,8 +26,27 @@ export class EmailAdapter {
                 auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASSWORD },
             });
             console.log('✅ EmailAdapter: Using Gmail SMTP');
+        } else if (process.env.BREVO_SMTP_USER && process.env.BREVO_SMTP_PASSWORD) {
+            this.provider = 'brevo';
+            this.transporter = nodemailer.createTransport({
+                host: 'smtp-relay.sendinblue.com', // cert TLS aún usa dominio Sendinblue
+                port: 587,
+                secure: false,
+                auth: { user: process.env.BREVO_SMTP_USER, pass: process.env.BREVO_SMTP_PASSWORD },
+            });
+            console.log('✅ EmailAdapter: Using Brevo SMTP');
         } else {
             console.warn('⚠️ EmailAdapter: No email provider configured');
+        }
+
+        // Inicializar transporter de Brevo para fallback de cuota
+        if (process.env.BREVO_SMTP_USER && process.env.BREVO_SMTP_PASSWORD) {
+            this._brevoTransporter = nodemailer.createTransport({
+                host: 'smtp-relay.sendinblue.com', // cert TLS aún usa dominio Sendinblue
+                port: 587,
+                secure: false,
+                auth: { user: process.env.BREVO_SMTP_USER, pass: process.env.BREVO_SMTP_PASSWORD },
+            });
         }
     }
 
@@ -37,6 +58,8 @@ export class EmailAdapter {
                 return this._sendViaSendGrid({ to, subject, html, text });
             case 'smtp':
                 return this._sendViaSMTP({ to, subject, html, text });
+            case 'brevo':
+                return this._sendViaBrevo({ to, subject, html, text });
             default:
                 console.warn('EmailAdapter: No provider — email not sent');
                 return { success: false, error: 'No email provider configured' };
@@ -54,9 +77,10 @@ export class EmailAdapter {
             return { success: true, messageId: response.data?.id };
         } catch (err) {
             console.error('EmailAdapter Resend error:', err.response?.data || err.message);
-            // fallback to SendGrid
+            // Cascada: SendGrid → Gmail SMTP → Brevo
             if (process.env.SENDGRID_API_KEY) return this._sendViaSendGrid({ to, subject, html, text });
             if (this.transporter) return this._sendViaSMTP({ to, subject, html, text });
+            if (this._brevoTransporter) return this._sendViaBrevo({ to, subject, html, text });
             return { success: false, error: err.message };
         }
     }
@@ -84,6 +108,7 @@ export class EmailAdapter {
         } catch (err) {
             console.error('EmailAdapter SendGrid error:', err.response?.data || err.message);
             if (this.transporter) return this._sendViaSMTP({ to, subject, html, text });
+            if (this._brevoTransporter) return this._sendViaBrevo({ to, subject, html, text });
             return { success: false, error: err.message };
         }
     }
@@ -101,6 +126,37 @@ export class EmailAdapter {
             return { success: true, messageId: info.messageId };
         } catch (err) {
             console.error('EmailAdapter SMTP error:', err.message);
+            if (this._brevoTransporter) return this._sendViaBrevo({ to, subject, html, text });
+            return { success: false, error: err.message };
+        }
+    }
+
+    /**
+     * Brevo SMTP — fallback cuando se agota la cuota del proveedor principal.
+     * Límites Brevo free: 300 emails/día, sin límite mensual estricto.
+     */
+    async _sendViaBrevo({ to, subject, html, text }) {
+        try {
+            const from = process.env.EMAIL_FROM || 'coursev@yisuscompany.com';
+            const transporter = this._brevoTransporter || nodemailer.createTransport({
+                host: 'smtp-relay.sendinblue.com', // cert TLS aún usa dominio Sendinblue
+                port: 587,
+                secure: false,
+                auth: {
+                    user: process.env.BREVO_SMTP_USER,
+                    pass: process.env.BREVO_SMTP_PASSWORD,
+                },
+            });
+            const info = await transporter.sendMail({
+                from: `"CourseV" <${from}>`,
+                to: Array.isArray(to) ? to.join(', ') : to,
+                subject,
+                html,
+                text,
+            });
+            return { success: true, messageId: info.messageId };
+        } catch (err) {
+            console.error('EmailAdapter Brevo error:', err.message);
             return { success: false, error: err.message };
         }
     }
