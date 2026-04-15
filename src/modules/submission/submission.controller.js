@@ -1,5 +1,5 @@
 import { BaseController } from '../../shared/BaseController.js';
-import { createSubmissionSchema, gradeSubmissionSchema } from '../../shared/validators/CommonSchemas.js';
+import { createSubmissionSchema, createSubmissionForStudentSchema, gradeSubmissionSchema } from '../../shared/validators/CommonSchemas.js';
 import { ValidationError } from '../../shared/errors/index.js';
 import { parsePagination } from '../../shared/pagination.js';
 import path from 'path';
@@ -33,6 +33,18 @@ export class SubmissionController extends BaseController {
         value.username = req.user.username;
         this.handleResult(res, next, (async() => {
             const result = await this.subService.submitAndNotify(value);
+            if (result.isFail()) return result;
+            res.status(201);
+            return result;
+        })());
+    };
+
+    // Crear una entrega en nombre de otro estudiante (solo para roles autorizados)
+    submitForStudent = async(req, res, next) => {
+        const { error, value } = createSubmissionForStudentSchema.validate(req.body);
+        if (error) return next(ValidationError.fromJoi(error));
+        this.handleResult(res, next, (async() => {
+            const result = await this.subService.createForStudent(value, req.user.userId, req.user.roles);
             if (result.isFail()) return result;
             res.status(201);
             return result;
