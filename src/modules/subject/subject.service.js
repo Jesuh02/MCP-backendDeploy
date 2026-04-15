@@ -94,7 +94,14 @@ export class SubjectDomainService {
             if (!isCourseOwner) {
                 const isCollab = this.collaboratorRepo && await this.collaboratorRepo.isCollaborator(requesterId, courseId);
                 if (isCollab) {
-                    result = subjects.filter(s => s.created_by && Number(s.created_by) === Number(requesterId));
+                    const collabSubjectIds = this.subjectRepo.findSubjectIdsByCollaborator
+                        ? await this.subjectRepo.findSubjectIdsByCollaborator(requesterId, courseId)
+                        : [];
+                    const collabSet = new Set(collabSubjectIds);
+                    result = subjects.filter(s =>
+                        (s.created_by && Number(s.created_by) === Number(requesterId)) ||
+                        collabSet.has(s.id)
+                    );
                     return Result.ok(result);
                 }
             }

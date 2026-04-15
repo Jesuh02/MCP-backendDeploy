@@ -170,6 +170,16 @@ export class SupabaseSubjectRepository {
         return !error && count > 0;
     }
 
+    async findSubjectIdsByCollaborator(userId, courseId) {
+        const { data, error } = await this.client
+            .from('subject_collaborators')
+            .select('subject_id, subjects!inner(course_id)')
+            .eq('user_id', userId)
+            .eq('subjects.course_id', courseId);
+        if (error) return [];
+        return (data || []).map(r => r.subject_id);
+    }
+
     async addSubjectCollaborator(subjectId, userId) {
         const { data, error } = await this.client
             .from('subject_collaborators')
