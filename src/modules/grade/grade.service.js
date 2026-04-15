@@ -4,7 +4,7 @@ import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 const VALID_GRADE_TYPES = ['comportamiento', 'participacion', 'examenes'];
 
 export class GradeDomainService {
-    constructor({ gradeRepository, subjectRepository, courseRepository, collaboratorRepository, progressService, taskRepository, submissionRepository, progressRepository }) {
+    constructor({ gradeRepository, subjectRepository, courseRepository, collaboratorRepository, progressService, taskRepository, submissionRepository, progressRepository, userRepository }) {
         this.gradeRepo = gradeRepository;
         this.subjectRepo = subjectRepository;
         this.courseRepo = courseRepository;
@@ -13,6 +13,7 @@ export class GradeDomainService {
         this.progressRepo = progressRepository || null;
         this.collaboratorRepo = collaboratorRepository;
         this.progressService = progressService || null;
+        this.userRepo = userRepository || null;
     }
 
     async _canGradeSubject(userId, subjectId) {
@@ -189,18 +190,44 @@ export class GradeDomainService {
 
         const courseId = subject.course_id;
 
-        // 1. Get all invited/enrolled students
-        let students = [];
+        // 1. Get all invited/enrolled students from BOTH sources
+        const studentMap = new Map();
+
+        // 1a. From pre_enrollments (invited students)
         if (this.progressRepo && typeof this.progressRepo.findApprovedPreEnrollments === 'function') {
             const enrollments = await this.progressRepo.findApprovedPreEnrollments(courseId);
-            students = (enrollments || []).map(e => ({
-                userId: e.userId,
-                username: e.username || null,
-                avatar: e.avatar || null,
-                fullName: e.fullName || null,
-                cedula: e.cedula || null,
-            }));
+            for (const e of (enrollments || [])) {
+                const uid = Number(e.userId);
+                if (uid > 0) studentMap.set(uid, { userId: uid, username: e.username || null, avatar: e.avatar || null });
+            }
         }
+
+        // 1b. From progreso_curso (students with direct enrollment / progress)
+        if (this.progressRepo && typeof this.progressRepo.findByCourse === 'function') {
+            const progressRows = await this.progressRepo.findByCourse(courseId);
+            for (const p of (progressRows || [])) {
+                const uid = Number(p.userId);
+                if (uid > 0 && !studentMap.has(uid)) {
+                    studentMap.set(uid, { userId: uid, username: null, avatar: null });
+                }
+            }
+        }
+
+        // 1c. Enrich with username/avatar from usuarios table for entries missing them
+        const missingUserIds = [...studentMap.values()].filter(s => !s.username).map(s => s.userId);
+        if (missingUserIds.length > 0 && this.userRepo && typeof this.userRepo.findByIds === 'function') {
+            const users = await this.userRepo.findByIds(missingUserIds);
+            for (const u of (users || [])) {
+                const uid = Number(u.id);
+                const entry = studentMap.get(uid);
+                if (entry) {
+                    entry.username = entry.username || u.username || null;
+                    entry.avatar = entry.avatar || u.avatar || null;
+                }
+            }
+        }
+
+        const students = [...studentMap.values()];
 
         // 2. Get all tasks for this subject
         let tasks = [];
