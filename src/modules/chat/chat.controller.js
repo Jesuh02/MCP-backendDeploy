@@ -21,7 +21,11 @@ export class ChatMessageController extends BaseController {
     };
 
     getBySession = async(req, res, next) => {
-        const pg = parsePagination(req.query);
+        // Only apply pagination when explicitly requested; otherwise let the
+        // repository defaults (limit=500) apply so the full chat loads.
+        const pg = (req.query.page || req.query.pageSize)
+            ? parsePagination(req.query)
+            : undefined;
         this.store(req, res, next, () =>
             this.chatMessageService.getBySession(req.params.sessionId, pg)
         );
@@ -31,7 +35,9 @@ export class ChatMessageController extends BaseController {
         const userId = req.params.userId ?
             parseInt(req.params.userId) :
             req.user.userId;
-        const pg = parsePagination(req.query);
+        const pg = (req.query.page || req.query.pageSize)
+            ? parsePagination(req.query)
+            : undefined;
         this.store(req, res, next, () =>
             this.chatMessageService.getByUser(userId, pg)
         );
@@ -40,7 +46,9 @@ export class ChatMessageController extends BaseController {
     getByUserAndOrigin = async(req, res, next) => {
         const userId = req.user.userId;
         const origin = req.params.origin;
-        const pg = parsePagination(req.query);
+        const pg = (req.query.page || req.query.pageSize)
+            ? parsePagination(req.query)
+            : undefined;
         this.store(req, res, next, () =>
             this.chatMessageService.getByUserAndOrigin(userId, origin, pg)
         );
