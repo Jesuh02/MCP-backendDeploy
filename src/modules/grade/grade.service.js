@@ -1,7 +1,13 @@
 import { Result } from '../../shared/Result.js';
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
-const VALID_GRADE_TYPES = ['comportamiento', 'participacion', 'examenes'];
+const BASE_GRADE_TYPES = ['comportamiento', 'participacion', 'examenes'];
+
+function isValidGradeType(type) {
+    if (BASE_GRADE_TYPES.includes(type)) return true;
+    const match = type.match(/^(comportamiento|participacion|examenes)_(\d+)$/);
+    return match !== null && Number(match[2]) >= 2;
+}
 
 export class GradeDomainService {
     constructor({ gradeRepository, subjectRepository, courseRepository, collaboratorRepository, progressService, taskRepository, submissionRepository, progressRepository, userRepository }) {
@@ -45,8 +51,8 @@ export class GradeDomainService {
     }
 
     async setGrade(gradedBy, { studentId, courseId, subjectId, gradeType, grade }) {
-        if (!VALID_GRADE_TYPES.includes(gradeType)) {
-            return Result.fail(new Error(`Tipo de nota inválido: ${gradeType}. Válidos: ${VALID_GRADE_TYPES.join(', ')}`));
+        if (!isValidGradeType(gradeType)) {
+            return Result.fail(new Error(`Tipo de nota inválido: ${gradeType}. Válidos: ${BASE_GRADE_TYPES.join(', ')} (con sufijo _N para slots adicionales)`));
         }
         if (grade < 0 || grade > 10) {
             return Result.fail(new Error('La nota debe estar entre 0 y 10'));
@@ -77,7 +83,7 @@ export class GradeDomainService {
     }
 
     async bulkSetGrades(gradedBy, { courseId, subjectId, gradeType, entries }) {
-        if (!VALID_GRADE_TYPES.includes(gradeType)) {
+        if (!isValidGradeType(gradeType)) {
             return Result.fail(new Error(`Tipo de nota inválido: ${gradeType}`));
         }
 
@@ -117,7 +123,7 @@ export class GradeDomainService {
     }
 
     async setGradeForAll(gradedBy, { courseId, subjectId, gradeType, grade, studentIds }) {
-        if (!VALID_GRADE_TYPES.includes(gradeType)) {
+        if (!isValidGradeType(gradeType)) {
             return Result.fail(new Error(`Tipo de nota inválido: ${gradeType}`));
         }
         if (grade < 0 || grade > 10) {

@@ -1,4 +1,10 @@
-const VALID_GRADE_TYPES = ['comportamiento', 'participacion', 'examenes'];
+const BASE_GRADE_TYPES = ['comportamiento', 'participacion', 'examenes'];
+
+function isValidGradeType(type) {
+    if (BASE_GRADE_TYPES.includes(type)) return true;
+    const match = type.match(/^(comportamiento|participacion|examenes)_(\d+)$/);
+    return match !== null && Number(match[2]) >= 2;
+}
 
 export class SupabaseGradeRepository {
     constructor(client) {
@@ -25,7 +31,7 @@ export class SupabaseGradeRepository {
     }
 
     async upsert({ studentId, courseId, subjectId, gradeType, grade, gradedBy }) {
-        if (!VALID_GRADE_TYPES.includes(gradeType)) {
+        if (!isValidGradeType(gradeType)) {
             throw new Error(`Invalid grade type: ${gradeType}`);
         }
         if (grade < 0 || grade > 10) {
