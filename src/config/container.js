@@ -150,6 +150,10 @@ import { SupabaseInstitucionRepository } from '../modules/institucion/infrastruc
 import { InstitucionController } from '../modules/institucion/institucion.controller.js';
 import { ExcelController } from '../modules/excel/excel.controller.js';
 
+import { GradeDomainService } from '../modules/grade/grade.service.js';
+import { SupabaseGradeRepository } from '../modules/grade/infrastructure/supabase.grade.repository.js';
+import { GradeController } from '../modules/grade/grade.controller.js';
+
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los
  * controladores listos para montar en las rutas Express.
@@ -254,6 +258,7 @@ export function createContainer() {
     const crossTenantWhatsAppSessionRepo = new CrossTenantWhatsAppSessionRepository();
     const collaboratorRepo = new SupabaseCollaboratorRepository(client);
     const institucionRepo = new SupabaseInstitucionRepository(client);
+    const gradeRepo = new SupabaseGradeRepository(client);
 
     // ═══════════════════════════════════════════════════════════
     // 3. SERVICIOS DE DOMINIO — Inyectar repositorios y adaptadores
@@ -274,7 +279,7 @@ export function createContainer() {
     const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, progressRepository: progressRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo, topicRepository: topicRepo, taskRepository: taskRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
     const collaboratorService = new CollaboratorDomainService({ collaboratorRepository: collaboratorRepo, courseRepository: courseRepo });
-    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo, subjectRepository: subjectRepo, collaboratorRepository: collaboratorRepo });
+    const progressService = new ProgressDomainService({ progressRepository: progressRepo, taskRepository: taskRepo, submissionRepository: submissionRepo, courseRepository: courseRepo, userRepository: userRepo, subjectRepository: subjectRepo, collaboratorRepository: collaboratorRepo, gradeRepository: gradeRepo });
     const notificationService = new NotificationDomainService({
         notificationRepository: notificationRepo,
         userRepository: userRepo,
@@ -292,6 +297,8 @@ export function createContainer() {
     collaboratorService.setUserService(userService);
     userService.setNotificationService(notificationService);
     progressService.setNotificationService(notificationService);
+
+    const gradeService = new GradeDomainService({ gradeRepository: gradeRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, progressService });
 
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo, outboxRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
@@ -435,6 +442,7 @@ export function createContainer() {
     const submissionController = new SubmissionController({ submissionService, storageService, storageAdapter });
     const subscriptionController = new SubscriptionController({ subscriptionService });
     const progressController = new ProgressController({ progressService });
+    const gradeController = new GradeController({ gradeService });
     const likeController = new LikeController({ likeService });
     const commentController = new CommentController({ commentService });
     const notificationController = new NotificationController({ notificationService });
@@ -492,6 +500,7 @@ export function createContainer() {
         subscriptionController,
         collaboratorController,
         progressController,
+        gradeController,
         likeController,
         commentController,
         notificationController,
@@ -530,6 +539,7 @@ export function createContainer() {
         subscriptionService,
         collaboratorService,
         progressService,
+        gradeService,
         likeService,
         commentService,
         notificationService,
