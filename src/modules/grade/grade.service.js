@@ -4,10 +4,13 @@ import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 const VALID_GRADE_TYPES = ['comportamiento', 'participacion', 'examenes'];
 
 export class GradeDomainService {
-    constructor({ gradeRepository, subjectRepository, courseRepository, collaboratorRepository, progressService }) {
+    constructor({ gradeRepository, subjectRepository, courseRepository, collaboratorRepository, progressService, taskRepository, submissionRepository, progressRepository }) {
         this.gradeRepo = gradeRepository;
         this.subjectRepo = subjectRepository;
         this.courseRepo = courseRepository;
+        this.taskRepo = taskRepository || null;
+        this.submissionRepo = submissionRepository || null;
+        this.progressRepo = progressRepository || null;
         this.collaboratorRepo = collaboratorRepository;
         this.progressService = progressService || null;
     }
@@ -166,6 +169,83 @@ export class GradeDomainService {
     async getGradeAverages(studentId, subjectId) {
         const averages = await this.gradeRepo.getAveragesByStudentAndSubject(studentId, subjectId);
         return Result.ok(averages);
+    }
+
+    /**
+     * Grade Sheet: returns an Excel-like structure with all students, their manual grades,
+     * and all task submission grades for a given subject.
+     * @param {number} requesterId
+     * @param {number} subjectId
+     * @returns {Promise<Result>} { students, tasks, manualGrades, taskGrades }
+     */
+    async getGradeSheet(requesterId, subjectId) {
+        const canGrade = await this._canGradeSubject(requesterId, subjectId);
+        if (!canGrade) {
+            return Result.fail(new ForbiddenError('No tienes permiso para ver la planilla de esta materia'));
+        }
+
+        const subject = await this.subjectRepo.findById(subjectId);
+        if (!subject) return Result.fail(new NotFoundError('Materia no encontrada'));
+
+        const courseId = subject.course_id;
+
+        // 1. Get all invited/enrolled students
+        let students = [];
+        if (this.progressRepo && typeof this.progressRepo.findApprovedPreEnrollments === 'function') {
+            const enrollments = await this.progressRepo.findApprovedPreEnrollments(courseId);
+            students = (enrollments || []).map(e => ({
+                userId: e.userId,
+                username: e.username || null,
+                avatar: e.avatar || null,
+                fullName: e.fullName || null,
+                cedula: e.cedula || null,
+            }));
+        }
+
+        // 2. Get all tasks for this subject
+        let tasks = [];
+        if (this.taskRepo && typeof this.taskRepo.findBySubject === 'function') {
+            tasks = await this.taskRepo.findBySubject(subjectId);
+            tasks = (tasks || []).map(t => ({
+                id: t.id,
+                title: t.title || t.name || '(Sin título)',
+                topicId: t.topic_id || t.topicId,
+            }));
+        }
+
+        // 3. Get all manual grades for this subject
+        const manualGrades = await this.gradeRepo.findBySubject(subjectId);
+
+        // 4. Get all task submission grades
+        const taskGrades = [];
+        if (this.submissionRepo && tasks.length > 0) {
+            const taskIds = tasks.map(t => t.id);
+            for (const taskId of taskIds) {
+                try {
+                    const subs = await this.submissionRepo.findByTask(taskId, { offset: 0, limit: 10000 });
+                    for (const sub of (subs || [])) {
+                        taskGrades.push({
+                            taskId: sub.task_id || sub.taskId,
+                            studentId: sub.student_id || sub.studentId,
+                            grade: sub.grade ?? null,
+                            feedback: sub.feedback || null,
+                            submissionId: sub.id,
+                            submittedAt: sub.created_at || sub.createdAt || null,
+                            gradedAt: sub.graded_at || sub.gradedAt || null,
+                        });
+                    }
+                } catch { /* skip */ }
+            }
+        }
+
+        return Result.ok({
+            subjectId: Number(subjectId),
+            courseId: Number(courseId),
+            students,
+            tasks,
+            manualGrades,
+            taskGrades,
+        });
     }
 }
 

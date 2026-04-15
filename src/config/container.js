@@ -298,7 +298,7 @@ export function createContainer() {
     userService.setNotificationService(notificationService);
     progressService.setNotificationService(notificationService);
 
-    const gradeService = new GradeDomainService({ gradeRepository: gradeRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, progressService });
+    const gradeService = new GradeDomainService({ gradeRepository: gradeRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, progressService, taskRepository: taskRepo, submissionRepository: submissionRepo, progressRepository: progressRepo });
 
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo, outboxRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
