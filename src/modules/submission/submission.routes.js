@@ -15,6 +15,7 @@ export function submissionRoutes({ submissionController }) {
     router.post('/upload', upload.single('file'), submissionController.uploadFile);
     router.post('/content', submissionController.getSubmissionContent);
     router.post('/', submissionController.submit);
+    router.post('/for-student', submissionController.submitForStudent);
     router.put('/:id/grade', submissionController.grade);
     router.delete('/:id', submissionController.delete);
 
