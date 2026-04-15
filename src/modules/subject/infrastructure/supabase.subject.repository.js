@@ -144,7 +144,7 @@ export class SupabaseSubjectRepository {
     async findCollaboratorsBySubject(subjectId) {
         const { data, error } = await this.client
             .from('subject_collaborators')
-            .select('*, usuarios(id, username, avatar)')
+            .select('*, usuarios(id, username, email, avatar)')
             .eq('subject_id', subjectId)
             .order('created_at', { ascending: true });
         if (error) throw new Error(error.message);
@@ -156,6 +156,7 @@ export class SupabaseSubjectRepository {
             user: r.usuarios ? {
                 id: r.usuarios.id,
                 username: r.usuarios.username,
+                email: r.usuarios.email || null,
                 avatar: r.usuarios.avatar,
             } : null,
         }));
@@ -184,7 +185,7 @@ export class SupabaseSubjectRepository {
         const { data, error } = await this.client
             .from('subject_collaborators')
             .upsert({ subject_id: subjectId, user_id: userId }, { onConflict: 'subject_id,user_id' })
-            .select('*, usuarios(id, username, avatar)')
+            .select('*, usuarios(id, username, email, avatar)')
             .single();
         if (error) throw new Error(error.message);
         return {
@@ -195,6 +196,7 @@ export class SupabaseSubjectRepository {
             user: data.usuarios ? {
                 id: data.usuarios.id,
                 username: data.usuarios.username,
+                email: data.usuarios.email || null,
                 avatar: data.usuarios.avatar,
             } : null,
         };
@@ -217,7 +219,7 @@ export class SupabaseSubjectRepository {
         const { data, error } = await this.client
             .from('subject_collaborators')
             .insert(rows)
-            .select('*, usuarios(id, username, avatar)');
+            .select('*, usuarios(id, username, email, avatar)');
         if (error) throw new Error(error.message);
         return (data || []).map(r => ({
             id: r.id,
@@ -227,6 +229,7 @@ export class SupabaseSubjectRepository {
             user: r.usuarios ? {
                 id: r.usuarios.id,
                 username: r.usuarios.username,
+                email: r.usuarios.email || null,
                 avatar: r.usuarios.avatar,
             } : null,
         }));
