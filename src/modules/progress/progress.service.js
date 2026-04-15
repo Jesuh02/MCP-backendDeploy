@@ -2,7 +2,7 @@
 import { NotFoundError, ForbiddenError } from '../../shared/errors/index.js';
 
 export class ProgressDomainService {
-    constructor({ progressRepository, taskRepository, submissionRepository, courseRepository, userRepository, subjectRepository, collaboratorRepository }) {
+    constructor({ progressRepository, taskRepository, submissionRepository, courseRepository, userRepository, subjectRepository, collaboratorRepository, gradeRepository }) {
         this.progressRepo = progressRepository;
         this.taskRepo = taskRepository || null;
         this.submissionRepo = submissionRepository || null;
@@ -10,6 +10,7 @@ export class ProgressDomainService {
         this.userRepo = userRepository || null;
         this.subjectRepo = subjectRepository || null;
         this.collaboratorRepo = collaboratorRepository || null;
+        this.gradeRepo = gradeRepository || null;
         this._notificationService = null;
         this._courseRefreshJobs = new Map();
     }
@@ -656,8 +657,28 @@ export class ProgressDomainService {
         const completedTasks = submittedTaskIds.length;
 
         const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
-        const averageGradeRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
-        const averageGrade = Math.round(averageGradeRaw * 100) / 100;
+        const taskAverageRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
+        const taskAverage = Math.round(taskAverageRaw * 100) / 100;
+
+        // Fetch manual grades across all subjects for this course
+        let manualAverages = { comportamiento: null, participacion: null, examenes: null };
+        if (this.gradeRepo) {
+            try {
+                const courseGrades = await this.gradeRepo.findByStudentAndCourse(userId, courseId);
+                const byType = {};
+                for (const g of courseGrades) {
+                    if (!byType[g.gradeType]) byType[g.gradeType] = [];
+                    byType[g.gradeType].push(g.grade);
+                }
+                for (const type of ['comportamiento', 'participacion', 'examenes']) {
+                    if (byType[type]?.length) {
+                        manualAverages[type] = byType[type].reduce((a, b) => a + b, 0) / byType[type].length;
+                    }
+                }
+            } catch (_) { /* non-critical */ }
+        }
+
+        const averageGrade = this._computeGeneralAverage(taskAverage, manualAverages);
 
         const progressPercentageRaw = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
         const progressPercentage = Math.round(progressPercentageRaw * 100) / 100;
@@ -731,8 +752,19 @@ export class ProgressDomainService {
 
         const graded = await this.submissionRepo.getGradedByUserAndSubject(userId, subjectId);
         const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
-        const averageGradeRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
-        const averageGrade = Math.round(averageGradeRaw * 100) / 100;
+        const taskAverageRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
+        const taskAverage = Math.round(taskAverageRaw * 100) / 100;
+
+        // Fetch manual grades (comportamiento, participacion, examenes)
+        let manualAverages = { comportamiento: null, participacion: null, examenes: null };
+        if (this.gradeRepo) {
+            try {
+                manualAverages = await this.gradeRepo.getAveragesByStudentAndSubject(userId, subjectId);
+            } catch (_) { /* non-critical */ }
+        }
+
+        // Compute weighted general average: average of available grade categories
+        const averageGrade = this._computeGeneralAverage(taskAverage, manualAverages);
 
         const progressPercentageRaw = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
         const progressPercentage = Math.round(progressPercentageRaw * 100) / 100;
@@ -782,6 +814,23 @@ export class ProgressDomainService {
 
     _isProgressWon(progress) {
         return String(progress?.status || '').trim().toLowerCase() === 'ganado';
+    }
+
+    /**
+     * Computes a general average from the 4 grade categories:
+     * tareas, comportamiento, participacion, examenes.
+     * Only categories with a value contribute to the average.
+     */
+    _computeGeneralAverage(taskAverage, manualAverages) {
+        const components = [];
+        if (taskAverage > 0 || taskAverage === 0) components.push(taskAverage);
+        if (manualAverages.comportamiento !== null) components.push(manualAverages.comportamiento);
+        if (manualAverages.participacion !== null) components.push(manualAverages.participacion);
+        if (manualAverages.examenes !== null) components.push(manualAverages.examenes);
+
+        if (components.length === 0) return 0;
+        const sum = components.reduce((a, b) => a + b, 0);
+        return Math.round((sum / components.length) * 100) / 100;
     }
 
     _normalizeRoleIds(roles = []) {

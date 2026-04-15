@@ -10,6 +10,7 @@ import { contentItemRoutes } from '../../modules/content-item/content-item.route
 import { submissionRoutes } from '../../modules/submission/submission.routes.js';
 import { subscriptionRoutes } from '../../modules/subscription/subscription.routes.js';
 import { progressRoutes } from '../../modules/progress/progress.routes.js';
+import { gradeRoutes } from '../../modules/grade/grade.routes.js';
 import { collaboratorRoutes } from '../../modules/collaborator/collaborator.routes.js';
 import { likeRoutes } from '../../modules/like/like.routes.js';
 import { commentRoutes } from '../../modules/comment/comment.routes.js';
@@ -98,6 +99,7 @@ export function createRouter(deps) {
     router.use('/submissions', submissionRoutes(deps));
     router.use('/subscriptions', subscriptionRoutes(deps));
     router.use('/progress', progressRoutes({...deps, requireRoles }));
+    router.use('/grades', gradeRoutes({...deps, requireRoles }));
     router.use('/collaborators', collaboratorRoutes(deps));
     router.use('/likes', likeRoutes(deps));
     router.use('/comments', commentRoutes(deps));
