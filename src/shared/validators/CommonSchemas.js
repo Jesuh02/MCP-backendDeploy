@@ -219,6 +219,46 @@ export const createSubmissionSchema = Joi.object({
     return value;
 });
 
+// Schema para crear una entrega en nombre de otro usuario (solo para roles con permiso)
+export const createSubmissionForStudentSchema = Joi.object({
+    taskId: Joi.number().integer().optional(),
+    task_id: Joi.number().integer().optional(),
+    studentId: Joi.number().integer().required(),
+    student_id: Joi.number().integer().optional(),
+    fileUri: Joi.string().allow(null, '').optional(),
+    file_uri: Joi.string().allow(null, '').optional(),
+    file_url: Joi.string().allow(null, '').optional(),
+    fileName: Joi.string().max(255).allow(null, '').optional(),
+    file_name: Joi.string().max(255).allow(null, '').optional(),
+    content: Joi.string().max(255).allow(null, '').optional(),
+    textContent: Joi.string().max(50000).allow(null, '').optional(),
+    text: Joi.string().max(50000).allow(null, '').optional(),
+    additionalFiles: Joi.array().items(
+        Joi.object({
+            fileUri: Joi.string().allow(null, '').optional(),
+            fileName: Joi.string().max(255).allow(null, '').optional(),
+        })
+    ).max(20).allow(null).optional(),
+    status: Joi.any().strip().optional(),
+}).custom((value, helpers) => {
+    if (!value.taskId && value.task_id) value.taskId = value.task_id;
+    if (!value.studentId && value.student_id) value.studentId = value.student_id;
+    if (!value.fileUri && (value.file_url || value.file_uri)) value.fileUri = value.file_url || value.file_uri;
+    if (!value.fileName && (value.content || value.file_name)) value.fileName = value.file_name || value.content;
+    if (!value.textContent && value.text) value.textContent = value.text;
+    delete value.task_id;
+    delete value.file_url;
+    delete value.file_uri;
+    delete value.content;
+    delete value.file_name;
+    delete value.text;
+    delete value.student_id;
+
+    if (!value.taskId) return helpers.error('any.required', { key: 'taskId' });
+    if (!value.studentId) return helpers.error('any.required', { key: 'studentId' });
+    return value;
+});
+
 export const gradeSubmissionSchema = Joi.object({
     grade: Joi.number().min(0).max(10).required(),
     feedback: Joi.string().max(5000).allow('').optional(),

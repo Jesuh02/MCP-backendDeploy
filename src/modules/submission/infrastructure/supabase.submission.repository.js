@@ -5,19 +5,19 @@ export class SupabaseSubmissionRepository {
         const orFilter = subjectIds.map(id => `materia_id.eq.${id},subject_id.eq.${id}`).join(',');
         const { data, error } = await this.client
             .from('topics').select('id').or(orFilter);
-        if (error || !data?.length) return [];
+            if (error || !data || data.length === 0) return [];
         return [...new Set(data.map(t => t.id))];
     }
 
     async _getTaskIdsByCourse(courseId) {
         const { data: subjects, error: subErr } = await this.client
             .from('subjects').select('id').eq('course_id', courseId);
-        if (subErr || !subjects?.length) return [];
+            if (subErr || !subjects || subjects.length === 0) return [];
         const topicIds = await this._getTopicIdsBySubjects(subjects.map(s => s.id));
         if (topicIds.length === 0) return [];
         const { data: tasks, error: taskErr } = await this.client
             .from('tasks').select('id').in('topic_id', topicIds);
-        if (taskErr || !tasks?.length) return [];
+            if (taskErr || !tasks || tasks.length === 0) return [];
         return tasks.map(t => t.id);
     }
 
@@ -50,7 +50,7 @@ export class SupabaseSubmissionRepository {
         if (taskIds.length === 0) return [];
 
         let query = this.client
-            .from('task_submissions')
+            .from('task_submissions') 
             .select('*, tasks!inner(*, topics!inner(*))')
             .in('task_id', taskIds);
 
@@ -174,7 +174,7 @@ export class SupabaseSubmissionRepository {
         if (topicIds.length === 0) return [];
         const { data, error } = await this.client
             .from('tasks').select('id').in('topic_id', topicIds);
-        if (error || !data?.length) return [];
+            if (error || !data || data.length === 0) return [];
         return data.map(t => t.id);
     }
 

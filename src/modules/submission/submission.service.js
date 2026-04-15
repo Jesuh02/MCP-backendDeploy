@@ -179,6 +179,56 @@ export class SubmissionDomainService {
     }
 
     /**
+     * Crea una entrega para un estudiante específico (en nombre de un docente/colaborador).
+     * Realiza verificación de permisos por curso antes de crear la fila.
+     * @param {{ taskId, studentId, fileUri?, fileName?, additionalFiles? }} data
+     * @param {number} requesterId — id del usuario que realiza la acción
+     * @param {Array|Object} requesterRoles — roles del request
+     */
+    async createForStudent(data, requesterId, requesterRoles = []) {
+        // Validar tarea
+        const task = await this.taskRepo.findById(data.taskId);
+        if (!task) return Result.fail(new NotFoundError('Tarea', data.taskId));
+
+        // Resolver curso asociado a la tarea
+        const topicId = task.topicId || task.topic_id;
+        const courseId = topicId && this.topicService ? await this.topicService.resolveCourseId(topicId) : null;
+
+        // Permisos: allow admin roles (3,4) or creator/collaborator for course
+        const normalizedRoles = (requesterRoles || []).map(r => Number(r?.id ?? r)).filter(r => Number.isInteger(r));
+        const isAdmin = normalizedRoles.includes(3) || normalizedRoles.includes(4);
+        if (!isAdmin && courseId) {
+            if (!this.collaboratorService) return Result.fail(new ForbiddenError('No tienes permiso para crear entregas en este curso'));
+            const hasAccess = await this.collaboratorService.isCreatorOrCollaborator(requesterId, courseId);
+            if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para crear entregas en este curso'));
+        }
+
+        // Preparar payload para crear la submission
+        const payload = {
+            taskId: data.taskId,
+            userId: data.studentId,
+            username: null,
+            fileUri: this._normalizeFileUri(data.fileUri),
+            fileName: data.fileName || null,
+            additionalFiles: Array.isArray(data.additionalFiles) ? data.additionalFiles.map(f => ({
+                ...f,
+                fileUri: this._normalizeFileUri(f.fileUri),
+            })) : null,
+        };
+
+        const created = await this.subRepo.create(payload);
+
+        // Actualizar progreso y notificar (notificación de envío)
+        await this._updateProgress(data.studentId, data.taskId);
+        // Enviar notificación de entrega al creador del curso
+        this._notifySubmission({ ...payload, userId: data.studentId }).catch(err =>
+            console.warn('[SubmissionDomainService] Error notificando entrega creada por docente:', err.message)
+        );
+
+        return Result.ok(this._normalizeSubmission(created));
+    }
+
+    /**
      * Notifica al creador del curso sobre una nueva entrega.
      * @private
      */
