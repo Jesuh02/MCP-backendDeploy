@@ -97,6 +97,18 @@ export class GradeController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    getGradeSheet = async (req, res, next) => {
+        try {
+            const subjectId = parseInt(req.params.subjectId);
+            if (!Number.isInteger(subjectId) || subjectId <= 0) {
+                return res.status(400).json({ success: false, error: 'subjectId inválido' });
+            }
+            const result = await this.gradeService.getGradeSheet(req.user.userId, subjectId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 
 export default GradeController;

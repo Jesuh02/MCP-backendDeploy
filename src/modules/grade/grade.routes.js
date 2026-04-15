@@ -15,6 +15,9 @@ export function gradeRoutes({ gradeController, requireRoles }) {
     // Docente/Admin: get all grades for a subject
     router.get('/subject/:subjectId', requireRoles(2, 3, 4), gradeController.getBySubject);
 
+    // Docente/Admin: get full grade sheet (Excel-like) for a subject
+    router.get('/sheet/:subjectId', requireRoles(2, 3, 4), gradeController.getGradeSheet);
+
     // Student: get own grades for a subject
     router.get('/my/subject/:subjectId', gradeController.getStudentGrades);
 
