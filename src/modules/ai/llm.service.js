@@ -402,9 +402,16 @@ CUANDO generes preguntas de tipo "ordering" sobre procedimientos matemáticos/ar
    ✅ CORRECTO: Sumar columna → Llevar acarreo → Continuar con siguiente columna
    ❌ INCORRECTO: Sumar columna → Continuar sumando → Llevar acarreos  ← ESTO ESTÁ MAL
 3. RESULTADO: El paso de ESCRIBIR/ANOTAR el resultado final siempre va DESPUÉS de todas las operaciones y ANTES de la verificación.
-4. VERIFICACIÓN: Los pasos de verificar/comprobar van siempre al FINAL.
-5. NUNCA pongas "Continuar sumando" o "Pasar a siguiente columna" antes de "Llevar acarreos".
-6. NUNCA inviertas causa y consecuencia: los acarreos son CAUSA de la columna actual, no EFECTO de la siguiente.
+4. VERIFICACIÓN POST-CÁLCULO: Los pasos de verificar/comprobar el resultado van siempre al FINAL.
+5. VERIFICACIÓN PREREQUISITO: "Verificar convergencia", "Verificar dimensiones de matrices", "Verificar compatibilidad" son PREREQUISITOS — van ANTES de calcular/operar, NUNCA al final.
+   ✅ CORRECTO: Verificar convergencia → Aplicar fórmula → Escribir resultado
+   ❌ INCORRECTO: Aplicar fórmula → Escribir resultado → Verificar convergencia
+6. REDONDEO: Para procedimientos con redondeo, el orden DEBE ser:
+   Calcular → Escribir resultado provisional → Identificar dígito de redondeo → Aplicar redondeo
+   NUNCA pongas "Identificar dígito" o "Aplicar redondeo" ANTES de "Escribir resultado provisional".
+7. NUNCA pongas "Continuar sumando" o "Pasar a siguiente columna" antes de "Llevar acarreos".
+8. NUNCA inviertas causa y consecuencia: los acarreos son CAUSA de la columna actual, no EFECTO de la siguiente.
+9. La explicación DEBE ser consistente: si mencionas un dígito específico (ej: "el cuarto decimal es 9"), NO contradigas ese valor en otra parte de la explicación.
 
 EJEMPLO CORRECTO para suma con acarreos:
 items: [
