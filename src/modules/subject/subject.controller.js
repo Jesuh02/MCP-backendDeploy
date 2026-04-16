@@ -86,7 +86,7 @@ export class SubjectController {
     getSubjectCollaborators = async (req, res, next) => {
         try {
             const subjectId = parseInt(req.params.id);
-            const result = await this.subjectService.getSubjectCollaborators(subjectId, req.user.userId);
+            const result = await this.subjectService.getSubjectCollaborators(subjectId, req.user.userId, req.user.roles);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -97,7 +97,7 @@ export class SubjectController {
             const subjectId = parseInt(req.params.id);
             const userId = parseInt(req.body.userId);
             if (!userId) return next(new Error('userId requerido'));
-            const result = await this.subjectService.addSubjectCollaborator(subjectId, userId, req.user.userId);
+            const result = await this.subjectService.addSubjectCollaborator(subjectId, userId, req.user.userId, req.user.roles);
             if (result.isFail()) return next(result.getError());
             res.status(201).json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -107,7 +107,7 @@ export class SubjectController {
         try {
             const subjectId = parseInt(req.params.id);
             const userId = parseInt(req.params.userId);
-            const result = await this.subjectService.removeSubjectCollaborator(subjectId, userId, req.user.userId);
+            const result = await this.subjectService.removeSubjectCollaborator(subjectId, userId, req.user.userId, req.user.roles);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
@@ -117,7 +117,7 @@ export class SubjectController {
         try {
             const subjectId = parseInt(req.params.id);
             const userIds = req.body.userIds || [];
-            const result = await this.subjectService.syncSubjectCollaborators(subjectId, userIds, req.user.userId);
+            const result = await this.subjectService.syncSubjectCollaborators(subjectId, userIds, req.user.userId, req.user.roles);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
