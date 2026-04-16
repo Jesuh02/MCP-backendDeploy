@@ -148,6 +148,14 @@ export class SupabaseGradeRepository {
         if (error) throw new Error(error.message);
     }
 
+    async deleteBySubject(subjectId) {
+        const { error } = await this.client
+            .from(this._table())
+            .delete()
+            .eq('subject_id', subjectId);
+        if (error) throw new Error(error.message);
+    }
+
     async getAveragesByStudentAndSubject(studentId, subjectId) {
         const grades = await this.findByStudentAndSubject(studentId, subjectId);
         return this._computeAveragesByType(grades);
