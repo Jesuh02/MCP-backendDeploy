@@ -217,8 +217,8 @@ class VerificationLastRule {
         /(?:verificar|comprobar)\s+(?:si|que)\s+(?:la\s+)?(?:serie|sucesi[oó]n)\s+converge/i,
         /convergencia.*\|r\|/i,
         /\|r\|\s*<\s*1/i,
-        /(?:verificar|comprobar)\s+(?:las?\s+)?dimension/i,
-        /(?:verificar|comprobar)\s+(?:la\s+)?compatibilidad/i,
+        /(?:verificar|comprobar)\s+(?:(?:que|si)\s+)?(?:las?\s+)?dimension/i,
+        /(?:verificar|comprobar)\s+(?:(?:que|si)\s+)?(?:la\s+)?compatibilidad/i,
         /(?:verificar|comprobar)\s+(?:las?\s+)?(?:condiciones?\s+(?:de\s+)?)?(?:existencia|aplicabilidad)/i,
         /(?:verificar|comprobar)\s+(?:el\s+)?(?:tipo|rango|dominio)/i,
         /(?:verificar|comprobar)\s+(?:que|si)\s+(?:las?\s+)?matrices?\s+(?:son|sean)\s+(?:compatib|del\s+mismo)/i,
@@ -226,6 +226,10 @@ class VerificationLastRule {
         /(?:verificar|comprobar)\s+(?:el\s+)?requisito/i,
         /(?:verificar|comprobar)\s+(?:que|si)\s+(?:se\s+)?(?:puede|pueden)\s+(?:sumar|restar|multiplicar|operar)/i,
         /(?:verificar|comprobar)\s+(?:la\s+)?(?:condici[oó]n|hip[oó]tesis)\s+(?:de|del|para)/i,
+        /(?:verificar|comprobar)\s+(?:(?:que|si)\s+)?(?:las?\s+)?(?:dimensiones|medidas)\s+(?:sean|son|coincid|igual)/i,
+        /(?:verificar|comprobar)\s+(?:(?:que|si)\s+)?(?:el\s+)?(?:orden|tama[ñn]o)\s+(?:de\s+)?(?:las?\s+)?matrices?/i,
+        /dimension.*(?:compatib|igual|coincid|misma)/i,
+        /compatib.*dimension/i,
     ];
 
     /**
@@ -851,11 +855,13 @@ class StepDependencyOrderRule {
         // ── Verificar dimensiones ANTES de operar matrices ────────────────
         {
             prerequisite: [
-                /verificar\s+(?:las?\s+)?dimension/i,
-                /comprobar\s+(?:las?\s+)?dimension/i,
-                /verificar\s+(?:la\s+)?compatibilidad/i,
-                /comprobar\s+(?:la\s+)?compatibilidad/i,
+                /verificar\s+(?:(?:que|si)\s+)?(?:las?\s+)?dimension/i,
+                /comprobar\s+(?:(?:que|si)\s+)?(?:las?\s+)?dimension/i,
+                /verificar\s+(?:(?:que|si)\s+)?(?:la\s+)?compatibilidad/i,
+                /comprobar\s+(?:(?:que|si)\s+)?(?:la\s+)?compatibilidad/i,
                 /verificar\s+(?:que|si)\s+(?:las?\s+)?matrices?\s+(?:son|sean)\s+compatib/i,
+                /verificar\s+(?:(?:que|si)\s+)?(?:las?\s+)?(?:dimensiones|medidas)\s+(?:sean|son|coincid|igual)/i,
+                /verificar\s+(?:(?:que|si)\s+)?(?:el\s+)?(?:orden|tama[ñn]o)\s+(?:de\s+)?(?:las?\s+)?matrices?/i,
             ],
             dependent: [
                 /sumar\s+(?:las?\s+)?matrices/i,
@@ -863,9 +869,12 @@ class StepDependencyOrderRule {
                 /multiplicar\s+(?:las?\s+)?matrices/i,
                 /operar\s+(?:las?\s+)?matrices/i,
                 /(?:realizar|ejecutar)\s+(?:la\s+)?(?:operaci[oó]n|suma|resta|multiplicaci[oó]n)\s+(?:de\s+)?matrices/i,
+                /calcular\s+(?:la\s+)?(?:suma|resta|multiplicaci[oó]n|operaci[oó]n)/i,
+                /(?:sumar|restar|multiplicar|operar)\s+(?:los\s+)?(?:elementos|componentes|entradas)/i,
             ],
             contextPatterns: [
                 /matrices?/i,
+                /dimension/i,
             ],
             reason: 'Verificar dimensiones/compatibilidad ANTES de operar matrices',
         },
