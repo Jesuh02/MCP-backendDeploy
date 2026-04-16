@@ -186,3 +186,88 @@ var r28 = QuizMathValidator.computeExpectedAnswer('Calcula el volumen de un pris
 console.log('Test 28 (Volume):', r28 ? r28.value.toString() : 'NULL', r28 && r28.value.toString() === '60' ? '\u2705' : '\u274C expected 60');
 
 console.log('\n--- All tests completed ---');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX TESTS: Three reported validation failures
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { OrderingQuestionValidator } from './src/shared/math/OrderingQuestionValidator.js';
+
+console.log('\n=== BUG FIX 1: Ordering - Verificar dimensiones ANTES de calcular ===');
+
+// Test B1: "Verificar dimensiones" must come BEFORE "Calcular la suma"
+var oq1 = 'Ordena los pasos para sumar dos matrices de 3x3';
+var oi1 = ['Calcular la suma elemento por elemento', 'Escribir la matriz resultado', 'Verificar dimensiones de las matrices'];
+var or1 = OrderingQuestionValidator.validateQuestion(oq1, oi1);
+var or1Items = or1.items || oi1;
+var vdIdx = or1Items.findIndex(function(s) { return /verificar/i.test(s); });
+var csIdx = or1Items.findIndex(function(s) { return /calcular/i.test(s); });
+console.log('Test B1 (Ordering):', vdIdx < csIdx ? '✅' : '❌ Verificar dimensiones debe ir ANTES de Calcular la suma',
+    '| order:', or1Items.map(function(s) { return s.substring(0, 30); }));
+
+// Test B1b: "Verificar que las dimensiones coincidan" (phrasal variant)
+var oq1b = 'Pasos para sumar matrices';
+var oi1b = ['Sumar los elementos correspondientes', 'Verificar que las dimensiones coincidan', 'Anotar el resultado'];
+var or1b = OrderingQuestionValidator.validateQuestion(oq1b, oi1b);
+var or1bItems = or1b.items || oi1b;
+var vd1b = or1bItems.findIndex(function(s) { return /verificar/i.test(s); });
+var cs1b = or1bItems.findIndex(function(s) { return /sumar/i.test(s); });
+console.log('Test B1b (Ordering phrasal):', vd1b < cs1b ? '✅' : '❌ Verificar dimensiones debe ir ANTES de Sumar',
+    '| order:', or1bItems.map(function(s) { return s.substring(0, 30); }));
+
+console.log('\n=== BUG FIX 2: Decimal precision - respect requested decimals ===');
+
+// Test B2: "con 3 decimales" must not round to 2
+var rb2 = QuizMathValidator.computeExpectedAnswer('Calcula 25/9 con 3 decimales');
+var expectedB2 = '2.778';
+console.log('Test B2 (3 decimales):', rb2 ? rb2.value.toString() : 'NULL',
+    rb2 && rb2.value.toDecimalPlaces(3).toString() === expectedB2 ? '✅' : '❌ expected ' + expectedB2);
+
+// Test B2b: Arithmetic result with 3 decimal requirement (via verify)
+var qb2b = {
+    type: 'fill_in_blank',
+    question: 'Calcula 25000000 / 9 con 3 decimales',
+    correctAnswer: '2777777.77',
+    explanation: 'División con redondeo'
+};
+var rb2b = QuizMathValidator.verify(qb2b);
+console.log('Test B2b (arith 3 dec):', rb2b ? rb2b.correctAnswer : 'NULL',
+    rb2b && rb2b.correctAnswer === '2777777.778' ? '✅' : '❌ expected 2777777.778 (not 2 decimals)');
+
+console.log('\n=== BUG FIX 3: Fraction matching in MC options ===');
+
+// Test B3: MC with fraction options must match correctly
+var qb3 = {
+    type: 'multiple_choice',
+    question: 'Calcula: 5/3 + 7/6',
+    options: ['A) 61/6', 'B) 125/12', 'C) 10', 'D) 15'],
+    correctIndex: 1,
+    explanation: '5/3 + 7/6 = 10/6 + 7/6 = 17/6'
+};
+var rb3 = QuizMathValidator.verify(qb3);
+// 5/3 + 7/6 = 10/6 + 7/6 = 17/6
+console.log('Test B3 (Fraction MC):', rb3 ? 'index=' + rb3.correctIndex : 'REJECTED',
+    rb3 && rb3.correctIndex === 0 ? '❌ should be index for 17/6' : '');
+// Note: 17/6 ≈ 2.833, so neither 61/6 nor 125/12 matches. Should reject.
+
+// Test B3b: Fraction MC with correct option present
+var qb3b = {
+    type: 'multiple_choice',
+    question: 'Calcula: 3/8 + 1/9',
+    options: ['A) 35/72', 'B) 125/12', 'C) 4/17', 'D) 1/2'],
+    correctIndex: 2,
+    explanation: '3/8 + 1/9 = 27/72 + 8/72 = 35/72'
+};
+var rb3b = QuizMathValidator.verify(qb3b);
+console.log('Test B3b (Fraction MC correct):', rb3b ? 'index=' + rb3b.correctIndex + (rb3b.correctIndex === 0 ? ' ✅' : ' ❌ expected 0') : 'REJECTED ❌');
+
+// Test B3c: Fraction options without letter prefix
+var qb3c = {
+    type: 'multiple_choice',
+    question: 'Calcula: 1/4 + 1/3',
+    options: ['7/12', '5/12', '1/7', '2/7'],
+    correctIndex: 2,
+    explanation: '1/4 + 1/3 = 3/12 + 4/12 = 7/12'
+};
+var rb3c = QuizMathValidator.verify(qb3c);
+console.log('Test B3c (Fraction no prefix):', rb3c ? 'index=' + rb3c.correctIndex + (rb3c.correctIndex === 0 ? ' ✅' : ' ❌ expected 0') : 'REJECTED ❌');

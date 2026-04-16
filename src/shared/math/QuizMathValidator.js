@@ -149,13 +149,25 @@ export class QuizMathValidator {
         var digit = QuizMathValidator._tryDigitPositionProblem(text);
         if (digit) return digit;
 
+        // Strategy 1.5 (elevated): Fraction arithmetic BEFORE explicit arithmetic
+        // when the text contains fraction patterns (a/b + c/d).
+        // This prevents _tryExplicitArithmetic from treating "/" as division
+        // and losing fraction precision.
+        var hasFractions = /\d+\s*\/\s*\d+/.test(text) && !/\bfecha\b|\bmes\b|\baño\b|\bd[ií]a\b/i.test(text);
+        if (hasFractions) {
+            var fraction = QuizMathValidator._tryFractionArithmetic(text);
+            if (fraction) return fraction;
+        }
+
         // Strategy 1: Explicit arithmetic expressions (highest confidence)
         var arithmetic = QuizMathValidator._tryExplicitArithmetic(text);
         if (arithmetic) return arithmetic;
 
-        // Strategy 1.5: Fraction arithmetic (3/8 + 1/9, operaciones con fracciones)
-        var fraction = QuizMathValidator._tryFractionArithmetic(text);
-        if (fraction) return fraction;
+        // Strategy 1.5: Fraction arithmetic (fallback for cases not caught above)
+        if (!hasFractions) {
+            var fraction2 = QuizMathValidator._tryFractionArithmetic(text);
+            if (fraction2) return fraction2;
+        }
 
         // Strategy 1.8: Exponentiation problems (2.8^40, a elevado a la b)
         var exponent = QuizMathValidator._tryExponentiationProblem(text);
@@ -245,7 +257,8 @@ export class QuizMathValidator {
         if (fractionResult) {
             var fracStr = MathEngine.fractionToString(fractionResult);
             for (var fi = 0; fi < q.options.length; fi++) {
-                var optClean = String(q.options[fi]).trim();
+                // Strip letter prefix (e.g., "A) ", "B. ") before parsing fraction
+                var optClean = String(q.options[fi]).trim().replace(/^[A-Za-z]\)\s*/, '').replace(/^[A-Za-z]\.\s*/, '').trim();
                 // Match exact fraction string (e.g., "89/72")
                 var optFrac = MathEngine.parseFraction(optClean);
                 if (optFrac && optFrac.num.eq(fractionResult.num) && optFrac.den.eq(fractionResult.den)) {
@@ -1438,7 +1451,7 @@ export class QuizMathValidator {
     }
 
     static _applyDecimals(value, text) {
-        var match = text.match(/redonde[ao].*?(\d+)\s*decimal/i) || text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i);
+        var match = text.match(/redonde[ao].*?(\d+)\s*decimal/i) || text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i) || text.match(/(?:con|a)\s+(\d+)\s+decimal/i);
         if (match) return value.toDecimalPlaces(parseInt(match[1]));
         if (/redonde[ao]\s+a\s+entero/i.test(text)) return value.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
         return value;
@@ -1640,8 +1653,11 @@ export class QuizMathValidator {
             var optStr = String(options[fi]);
             var opt = null;
 
+            // Strip letter prefix (e.g., "A) ", "B. ") before parsing
+            var stripped = optStr.trim().replace(/^[A-Za-z]\)\s*/, '').replace(/^[A-Za-z]\.\s*/, '').trim();
+
             // Try parsing as fraction first (e.g., "89/72")
-            var parsedFrac = MathEngine.parseFraction(optStr.trim());
+            var parsedFrac = MathEngine.parseFraction(stripped);
             if (parsedFrac) {
                 opt = MathEngine.fractionToDecimal(parsedFrac);
             }
@@ -1663,7 +1679,8 @@ export class QuizMathValidator {
 
         var optStr2 = String(options[bestIdx]);
         var bestOpt = null;
-        var parsedFrac2 = MathEngine.parseFraction(optStr2.trim());
+        var stripped2 = optStr2.trim().replace(/^[A-Za-z]\)\s*/, '').replace(/^[A-Za-z]\.\s*/, '').trim();
+        var parsedFrac2 = MathEngine.parseFraction(stripped2);
         if (parsedFrac2) {
             bestOpt = MathEngine.fractionToDecimal(parsedFrac2);
         }
