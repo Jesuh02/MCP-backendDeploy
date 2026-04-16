@@ -1,4 +1,4 @@
-import { Result } from '../../../shared/Result.js';
+import { Result } from '../../shared/Result.js';
 
 export class PeriodDomainService {
     constructor({ periodRepository, gradeService, gradeRepository }) {
