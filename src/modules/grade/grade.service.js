@@ -282,6 +282,27 @@ export class GradeDomainService {
             }
         }
 
+        // Fill in grade=0 for enrolled students who haven't submitted each task.
+        // This ensures exports show 0 instead of blank/null for non-submitters.
+        if (students.length > 0 && tasks.length > 0) {
+            const submittedPairs = new Set(taskGrades.map(tg => `${tg.studentId}:${tg.taskId}`));
+            for (const student of students) {
+                for (const task of tasks) {
+                    if (!submittedPairs.has(`${student.userId}:${task.id}`)) {
+                        taskGrades.push({
+                            taskId: task.id,
+                            studentId: student.userId,
+                            grade: 0,
+                            feedback: null,
+                            submissionId: null,
+                            submittedAt: null,
+                            gradedAt: null,
+                        });
+                    }
+                }
+            }
+        }
+
         return Result.ok({
             subjectId: Number(subjectId),
             courseId: Number(courseId),
