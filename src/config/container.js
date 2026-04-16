@@ -154,6 +154,10 @@ import { GradeDomainService } from '../modules/grade/grade.service.js';
 import { SupabaseGradeRepository } from '../modules/grade/infrastructure/supabase.grade.repository.js';
 import { GradeController } from '../modules/grade/grade.controller.js';
 
+import { PeriodDomainService } from '../modules/period/period.service.js';
+import { SupabasePeriodRepository } from '../modules/period/infrastructure/supabase.period.repository.js';
+import { PeriodController } from '../modules/period/period.controller.js';
+
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los
  * controladores listos para montar en las rutas Express.
@@ -300,6 +304,9 @@ export function createContainer() {
 
     const gradeService = new GradeDomainService({ gradeRepository: gradeRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, progressService, taskRepository: taskRepo, submissionRepository: submissionRepo, progressRepository: progressRepo, userRepository: userRepo });
 
+    const periodRepo = new SupabasePeriodRepository(client);
+    const periodService = new PeriodDomainService({ periodRepository: periodRepo, gradeService, gradeRepository: gradeRepo });
+
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo, outboxRepo });
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
@@ -443,6 +450,7 @@ export function createContainer() {
     const subscriptionController = new SubscriptionController({ subscriptionService });
     const progressController = new ProgressController({ progressService });
     const gradeController = new GradeController({ gradeService });
+    const periodController = new PeriodController({ periodService });
     const likeController = new LikeController({ likeService });
     const commentController = new CommentController({ commentService });
     const notificationController = new NotificationController({ notificationService });
@@ -501,6 +509,7 @@ export function createContainer() {
         collaboratorController,
         progressController,
         gradeController,
+        periodController,
         likeController,
         commentController,
         notificationController,
@@ -540,6 +549,7 @@ export function createContainer() {
         collaboratorService,
         progressService,
         gradeService,
+        periodService,
         likeService,
         commentService,
         notificationService,

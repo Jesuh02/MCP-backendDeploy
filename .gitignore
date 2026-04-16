@@ -118,3 +118,4 @@ fix_transactions.mjs
 fix_dup_billing.mjs
 scripts/migration_requested_role.sql
 tsc_check.txt
+scripts/migration_grade_periods.sql
