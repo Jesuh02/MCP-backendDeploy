@@ -465,6 +465,48 @@ console.log(`\n═══ QuizMathValidator: Digit-Position Strategy ═══`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Test: Duplicate numeric options must be rejected
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test: Duplicate numeric options (all same result) ═══');
+{
+    const q = {
+        type: 'multiple_choice',
+        question: '¿Cuánto es 3 × $250?',
+        options: ['$750', '750', '$750.00', '750.0'],
+        correctIndex: 0,
+        explanation: 'El resultado es $750.',
+    };
+    const result = pipeline.validate(q);
+    assert(result === null, 'Should REJECT when all 4 options are numerically equal');
+}
+
+console.log('\n═══ Test: Two duplicate options out of four ═══');
+{
+    const q = {
+        type: 'multiple_choice',
+        question: '¿Cuánto es 100 + 200?',
+        options: ['300', '$300', '350', '250'],
+        correctIndex: 0,
+        explanation: 'El resultado es 300.',
+    };
+    const result = pipeline.validate(q);
+    assert(result === null, 'Should REJECT when 2 options are numerically equivalent (300 ≈ $300)');
+}
+
+console.log('\n═══ Test: Distinct options should pass ═══');
+{
+    const q = {
+        type: 'multiple_choice',
+        question: '¿Cuánto es 100 + 200?',
+        options: ['300', '310', '290', '350'],
+        correctIndex: 0,
+        explanation: 'El resultado es 300.',
+    };
+    const result = pipeline.validate(q);
+    assert(result !== null, 'Should PASS when all options are distinct');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Results
 // ═══════════════════════════════════════════════════════════════════════════
 

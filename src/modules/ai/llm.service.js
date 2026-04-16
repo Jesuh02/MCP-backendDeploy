@@ -500,7 +500,7 @@ Reglas OBLIGATORIAS para TODOS los ejercicios:
 4. CONCEPTOS: NO preguntar "¿Qué es X?" → preguntar "¿Qué implicaciones tiene X cuando se combina con Y en el contexto Z?"
 5. TODOS los ejercicios deben requerir razonamiento multi-paso. Si se puede responder de memoria o en 1 paso, es DEMASIADO FÁCIL.
 6. VALIDACIÓN MATEMÁTICA INTERNA: Antes de emitir cada pregunta numérica, VERIFICA mentalmente que la respuesta correcta coincide con el enunciado. NO generes "3 libros × $250 = $600" cuando el resultado real es $750.
-7. OPCIONES MATEMÁTICAS: Genera los distractores aplicando errores típicos de cálculo (error de un dígito, confusión de operación, olvido de un operando). NUNCA pongas el resultado correcto en otra opción.
+7. OPCIONES MATEMÁTICAS: Genera los distractores aplicando errores típicos de cálculo (error de un dígito, confusión de operación, olvido de un operando). NUNCA pongas el resultado correcto en otra opción. NUNCA generes dos opciones con el mismo valor numérico (ni siquiera con formato diferente como "$750" vs "750" o "1,500" vs "1500").
 
 Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo RECHAZARÁ. Maximiza la complejidad y la exactitud.`;
                 }

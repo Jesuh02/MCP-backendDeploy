@@ -36,18 +36,37 @@ class OptionConsistencyVerifier {
     verify(q) {
         const options = q.options;
         const numericOpts = [];
+        const indexedOpts = [];
 
-        for (const opt of options) {
-            const cleaned = String(opt).replace(/[^\d.,-]/g, '');
+        for (let i = 0; i < options.length; i++) {
+            const cleaned = String(options[i]).replace(/[^\d.,-]/g, '');
             const val = _parseDecimalSafe(cleaned);
-            if (val !== null) numericOpts.push(val);
+            if (val !== null) {
+                numericOpts.push(val);
+                indexedOpts.push({ val, idx: i });
+            }
         }
 
         // If fewer than 2 options are numeric, skip this check
         if (numericOpts.length < 2) return { valid: true };
 
-        // Check if all options are suspiciously close to each other (< 5% spread)
-        // This happens when LLM fabricates options around a wrong answer
+        // Check 1: Pairwise duplicate detection — reject if any two options
+        // have the same numeric value (tolerance 0.1% of the larger value)
+        for (let i = 0; i < indexedOpts.length; i++) {
+            for (let j = i + 1; j < indexedOpts.length; j++) {
+                const a = indexedOpts[i].val, b = indexedOpts[j].val;
+                const diff = a.minus(b).abs();
+                const tol = Decimal.max(a.abs(), b.abs()).times('0.001');
+                if (diff.lte(tol)) {
+                    return {
+                        valid: false,
+                        reason: `Opciones ${indexedOpts[i].idx} y ${indexedOpts[j].idx} son numéricamente equivalentes (${a} ≈ ${b})`,
+                    };
+                }
+            }
+        }
+
+        // Check 2: Overall spread — reject if all options cluster within 1%
         const sorted = numericOpts.slice().sort((a, b) => a.cmp(b));
         const range = sorted[sorted.length - 1].minus(sorted[0]).abs();
         const median = sorted[Math.floor(sorted.length / 2)];
@@ -56,7 +75,6 @@ class OptionConsistencyVerifier {
 
         const spreadPct = range.div(median.abs()).times(100);
 
-        // If spread is < 1% all options are essentially the same — reject
         if (spreadPct.lt(1)) {
             return {
                 valid: false,
