@@ -219,16 +219,27 @@ export class GradeDomainService {
             }
         }
 
-        // 1c. Enrich with username/avatar from usuarios table for entries missing them
-        const missingUserIds = [...studentMap.values()].filter(s => !s.username).map(s => s.userId);
-        if (missingUserIds.length > 0 && this.userRepo && typeof this.userRepo.findByIds === 'function') {
-            const users = await this.userRepo.findByIds(missingUserIds);
+        // 1c. Enrich with username/avatar/fullName/cedula from usuarios+personas table
+        const allStudentIds = [...studentMap.keys()];
+        if (allStudentIds.length > 0 && this.userRepo && typeof this.userRepo.findByIds === 'function') {
+            const users = await this.userRepo.findByIds(allStudentIds);
             for (const u of (users || [])) {
                 const uid = Number(u.id);
                 const entry = studentMap.get(uid);
                 if (entry) {
                     entry.username = entry.username || u.username || null;
                     entry.avatar = entry.avatar || u.avatar || null;
+                    // Resolve fullName and cedula from persona
+                    const persona = u.persona || u.personas || null;
+                    if (persona) {
+                        const nombres = (persona.nombres || '').trim();
+                        const apellidos = (persona.apellidos || '').trim();
+                        entry.fullName = [nombres, apellidos].filter(Boolean).join(' ') || null;
+                        entry.cedula = persona.identificacion?.toString() || null;
+                    } else {
+                        entry.fullName = entry.fullName || null;
+                        entry.cedula = entry.cedula || null;
+                    }
                 }
             }
         }
