@@ -261,7 +261,7 @@ export const createSubmissionForStudentSchema = Joi.object({
 
 export const gradeSubmissionSchema = Joi.object({
     grade: Joi.number().min(0).max(10).required(),
-    feedback: Joi.string().max(5000).allow('').optional(),
+    feedback: Joi.string().max(5000).allow('', null).optional().default(null),
 });
 
 // ─── Comments ────────────────────────────────────────────
