@@ -334,8 +334,18 @@ export class QuizMathValidator {
         };
 
         // Also handle "posición 10^N" notation with Unicode superscripts
-        var superscriptMap = { '\u2070': 0, '\xb9': 1, '\xb2': 2, '\xb3': 3,
-            '\u2074': 4, '\u2075': 5, '\u2076': 6, '\u2077': 7, '\u2078': 8, '\u2079': 9 };
+        var superscriptMap = {
+            '\u2070': 0,
+            '\xb9': 1,
+            '\xb2': 2,
+            '\xb3': 3,
+            '\u2074': 4,
+            '\u2075': 5,
+            '\u2076': 6,
+            '\u2077': 7,
+            '\u2078': 8,
+            '\u2079': 9
+        };
 
         var lower = text.toLowerCase()
             .replace(/í/g, 'i').replace(/ó/g, 'o').replace(/á/g, 'a')
@@ -705,9 +715,12 @@ export class QuizMathValidator {
         var geo = QuizMathValidator._tryGeometricSeriesFormula(text);
         var arith = QuizMathValidator._tryArithmeticSeriesFormula(text);
 
-        if (summation) { results.push(summation); steps = steps.concat(summation.steps); }
-        if (arith && !summation) { results.push(arith); steps = steps.concat(arith.steps); }
-        if (geo) { results.push(geo); steps = steps.concat(geo.steps); }
+        if (summation) { results.push(summation);
+            steps = steps.concat(summation.steps); }
+        if (arith && !summation) { results.push(arith);
+            steps = steps.concat(arith.steps); }
+        if (geo) { results.push(geo);
+            steps = steps.concat(geo.steps); }
 
         if (results.length >= 2) {
             var total = results[0].value;
@@ -1139,9 +1152,13 @@ export class QuizMathValidator {
             var dm = discountPatterns[di].exec(text);
             if (dm) {
                 var dBase, dPct;
-                if (di === 0) { dBase = QuizMathValidator._parseDecimal(dm[1]);
-                    dPct = QuizMathValidator._parseDecimal(dm[2]); } else { dPct = QuizMathValidator._parseDecimal(dm[1]);
-                    dBase = QuizMathValidator._parseDecimal(dm[2]); }
+                if (di === 0) {
+                    dBase = QuizMathValidator._parseDecimal(dm[1]);
+                    dPct = QuizMathValidator._parseDecimal(dm[2]);
+                } else {
+                    dPct = QuizMathValidator._parseDecimal(dm[1]);
+                    dBase = QuizMathValidator._parseDecimal(dm[2]);
+                }
                 if (dBase && dPct && dBase.gt(0) && dPct.gt(0) && dPct.lte(100)) {
                     if (/precio\s+final|costo\s+final|pagar[a\xe1]?s?|total|valor\s+final|queda|despu[e\xe9]s/i.test(lower)) {
                         var factor = new Decimal(1).minus(dPct.div(100));
@@ -1168,9 +1185,13 @@ export class QuizMathValidator {
             var tm = taxPatterns[ti].exec(text);
             if (tm) {
                 var tBase, tPct;
-                if (ti === 0) { tBase = QuizMathValidator._parseDecimal(tm[1]);
-                    tPct = QuizMathValidator._parseDecimal(tm[2]); } else { tPct = QuizMathValidator._parseDecimal(tm[1]);
-                    tBase = QuizMathValidator._parseDecimal(tm[2]); }
+                if (ti === 0) {
+                    tBase = QuizMathValidator._parseDecimal(tm[1]);
+                    tPct = QuizMathValidator._parseDecimal(tm[2]);
+                } else {
+                    tPct = QuizMathValidator._parseDecimal(tm[1]);
+                    tBase = QuizMathValidator._parseDecimal(tm[2]);
+                }
                 if (tBase && tPct && tBase.gt(0) && tPct.gt(0) && tPct.lte(200)) {
                     if (/precio\s+final|costo\s+final|total|pagar[a\xe1]?s?|monto\s+total|valor\s+final|monto\s+final/i.test(lower)) {
                         var tfactor = new Decimal(1).plus(tPct.div(100));
@@ -1583,9 +1604,22 @@ export class QuizMathValidator {
             var restaSumaRe = /resta[rn]?\s+(?:la\s+)?suma\s+de\s+los\s+primeros?\s+(\d+|un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\s+n[u\xfa]meros?/i;
             var restaSumaM = restaSumaRe.exec(text);
             if (restaSumaM) {
-                var _wtn = { 'un': 1, 'uno': 1, 'una': 1, 'dos': 2, 'tres': 3, 'cuatro': 4,
-                    'cinco': 5, 'seis': 6, 'siete': 7, 'ocho': 8, 'nueve': 9, 'diez': 10,
-                    'once': 11, 'doce': 12 };
+                var _wtn = {
+                    'un': 1,
+                    'uno': 1,
+                    'una': 1,
+                    'dos': 2,
+                    'tres': 3,
+                    'cuatro': 4,
+                    'cinco': 5,
+                    'seis': 6,
+                    'siete': 7,
+                    'ocho': 8,
+                    'nueve': 9,
+                    'diez': 10,
+                    'once': 11,
+                    'doce': 12
+                };
                 var _cap = restaSumaM[1].toLowerCase();
                 var nRestar = _wtn[_cap] || parseInt(_cap, 10);
                 (function(count, pos) {
@@ -1608,18 +1642,24 @@ export class QuizMathValidator {
             while ((m = addRe.exec(text)) !== null) {
                 var v = QuizMathValidator._parseDecimal(m[1]);
                 if (v && v.gt(0)) {
-                    (function(val, pos) { operations.push({ apply: function(x) { return x.plus(val); }, describe: function(p, r) { return 'Adicion: ' + p + ' + ' + val + ' = ' + r; }, position: pos }); })(v, m.index); }
+                    (function(val, pos) { operations.push({ apply: function(x) { return x.plus(val); }, describe: function(p, r) { return 'Adicion: ' + p + ' + ' + val + ' = ' + r; }, position: pos }); })(v, m.index);
+                }
             }
             var subRe = /(?:se\s+(?:le\s+)?)?(?:resta[rn]?|quit[ao]?[rn]?|descuent[ao]?[rn]?|deduc[ei][rn]?|sustrae[rn]?|rebaj[ao]?[rn]?|menos)\s+(?:(?:un|una|el|la|un\s+total\s+de|una\s+cantidad\s+de)\s+)?(?:\w+\s+){0,5}?(?:=\s*)?\$?\s*([\d,]+\.?\d*)/gi;
             while ((m = subRe.exec(text)) !== null) {
                 var v2 = QuizMathValidator._parseDecimal(m[1]);
                 if (v2 && v2.gt(0)) {
-                    (function(val, pos) { operations.push({ apply: function(x) { return x.minus(val); }, describe: function(p, r) { return 'Sustraccion: ' + p + ' - ' + val + ' = ' + r; }, position: pos }); })(v2, m.index); }
+                    (function(val, pos) { operations.push({ apply: function(x) { return x.minus(val); }, describe: function(p, r) { return 'Sustraccion: ' + p + ' - ' + val + ' = ' + r; }, position: pos }); })(v2, m.index);
+                }
             }
             var multRe = /(?:multiplic[a\xe1]r?\s+por|\xd7)\s*\$?([\d,.]+)/gi;
             var m3 = multRe.exec(text);
-            if (m3) { var f = QuizMathValidator._parseDecimal(m3[1]); if (f && f.gt(0)) {
-                    (function(val, pos) { operations.push({ apply: function(x) { return x.times(val); }, describe: function(p, r) { return 'Multiplicacion: ' + p + ' x ' + val + ' = ' + r; }, position: pos }); })(f, m3.index); } }
+            if (m3) {
+                var f = QuizMathValidator._parseDecimal(m3[1]);
+                if (f && f.gt(0)) {
+                    (function(val, pos) { operations.push({ apply: function(x) { return x.times(val); }, describe: function(p, r) { return 'Multiplicacion: ' + p + ' x ' + val + ' = ' + r; }, position: pos }); })(f, m3.index);
+                }
+            }
             var pctMatch = /(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i.exec(text);
             if (pctMatch) {
                 var pct = QuizMathValidator._parseDecimal(pctMatch[1]);
@@ -1784,9 +1824,9 @@ export class QuizMathValidator {
             var isDesc = f && l ? f.gt(l) : false;
             var direction = isDesc ? 'descendente (mayor a menor)' : 'ascendente (menor a mayor)';
             var numExplanation = 'El orden correcto ' + direction + ' es: ' + correctSequence.join(' → ');
-            return llmExplanation
-                ? (llmExplanation + '\n' + numExplanation)
-                : numExplanation;
+            return llmExplanation ?
+                (llmExplanation + '\n' + numExplanation) :
+                numExplanation;
         }
 
         // Procedural steps: list them numbered — ONLY use corrected sequence,

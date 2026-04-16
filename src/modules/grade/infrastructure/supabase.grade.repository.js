@@ -174,9 +174,9 @@ export class SupabaseGradeRepository {
             byType[g.gradeType] = g.grade;
         }
         return {
-            comportamiento: byType.comportamiento ?? null,
-            participacion: byType.participacion ?? null,
-            examenes: byType.examenes ?? null,
+            comportamiento: byType.comportamiento ?? 0,
+            participacion: byType.participacion ?? 0,
+            examenes: byType.examenes ?? 0,
         };
     }
 }

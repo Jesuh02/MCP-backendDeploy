@@ -271,3 +271,98 @@ var qb3c = {
 };
 var rb3c = QuizMathValidator.verify(qb3c);
 console.log('Test B3c (Fraction no prefix):', rb3c ? 'index=' + rb3c.correctIndex + (rb3c.correctIndex === 0 ? ' ✅' : ' ❌ expected 0') : 'REJECTED ❌');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 4: Rounding cascade — "3000" vs "3000.000" (precision-aware MC)
+// The system must prefer "3000.000" over "3000" when 3 decimals are requested.
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== BUG FIX 4: Precision-aware MC option matching ===');
+
+// Test B4a: Rounding cascade — 2999.999988 rounded to 3 decimals = 3000.000
+var qb4a = {
+    type: 'multiple_choice',
+    question: 'Calcula la suma de 1500.123456 + 1499.876532 y redondea a 3 decimales',
+    options: ['A) 3000', 'B) 2999.999', 'C) 3000.000', 'D) 3000.001'],
+    correctIndex: 0,
+    explanation: 'La suma es 2999.999988, redondeado: 3000.000'
+};
+var rb4a = QuizMathValidator.verify(qb4a);
+console.log('Test B4a (Rounding cascade MC):', rb4a ? 'index=' + rb4a.correctIndex + (rb4a.correctIndex === 2 ? ' ✅' : ' ❌ expected 2 (C: 3000.000)') : 'REJECTED ❌');
+
+// Test B4b: Fill-in-blank with precision formatting
+var qb4b = {
+    type: 'fill_in_blank',
+    question: 'Calcula la suma de 1500.123456 + 1499.876532 y redondea a 3 decimales',
+    correctAnswer: '3000',
+    explanation: 'La suma redondeada'
+};
+var rb4b = QuizMathValidator.verify(qb4b);
+console.log('Test B4b (Fill precision):', rb4b ? rb4b.correctAnswer + (rb4b.correctAnswer === '3000.000' ? ' ✅' : ' ❌ expected 3000.000') : 'NULL ❌');
+
+// Test B4c: Integer rounding — should prefer "3000" not "3000.000"
+var qb4c = {
+    type: 'multiple_choice',
+    question: 'Calcula la suma de 1500.123456 + 1499.876532. Redondea a entero',
+    options: ['A) 3000', 'B) 2999', 'C) 3000.000', 'D) 3001'],
+    correctIndex: 2,
+    explanation: 'Redondeado al entero más cercano'
+};
+var rb4c = QuizMathValidator.verify(qb4c);
+console.log('Test B4c (Integer rounding MC):', rb4c ? 'index=' + rb4c.correctIndex + (rb4c.correctIndex === 0 ? ' ✅' : ' ❌ expected 0 (A: 3000)') : 'REJECTED ❌');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 5: Multi-step sum + tax — sum must resolve BEFORE tax is applied
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== BUG FIX 5: Multi-step sum + tax ===');
+
+// Test B5a: Sum labeled values + IVA
+var qb5a = {
+    type: 'fill_in_blank',
+    question: 'Los gastos son: alquiler $500, comida $300, transporte $200. Calcula el gasto total con IVA del 16%',
+    correctAnswer: '1000',
+    explanation: 'Suma + IVA'
+};
+var rb5a = QuizMathValidator.verify(qb5a);
+console.log('Test B5a (Sum+IVA):', rb5a ? rb5a.correctAnswer + (rb5a.correctAnswer === '1160' ? ' ✅' : ' ❌ expected 1160') : 'NULL ❌');
+
+// Test B5b: Sum currency values + impuesto
+var qb5b = {
+    type: 'fill_in_blank',
+    question: 'Calcula el total: $1500 + $2300 + $750. Agrega un impuesto del 10%',
+    correctAnswer: '4550',
+    explanation: 'Suma con impuesto'
+};
+var rb5b = QuizMathValidator.verify(qb5b);
+console.log('Test B5b (Sum+Tax):', rb5b ? rb5b.correctAnswer + (rb5b.correctAnswer === '5005' ? ' ✅' : ' ❌ expected 5005') : 'NULL ❌');
+
+// Test B5c: Division with 3 decimal precision
+var qb5c = {
+    type: 'fill_in_blank',
+    question: 'Calcula 25000000 / 9 con 3 decimales',
+    correctAnswer: '2777777.77',
+    explanation: 'División con redondeo'
+};
+var rb5c = QuizMathValidator.verify(qb5c);
+console.log('Test B5c (Div 3 dec):', rb5c ? rb5c.correctAnswer + (rb5c.correctAnswer === '2777777.778' ? ' ✅' : ' ❌ expected 2777777.778') : 'NULL ❌');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 6: Explanation must match selected answer
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== BUG FIX 6: Explanation-answer consistency ===');
+
+// Test B6a: When validator corrects MC index, explanation must reflect the correction
+var qb6a = {
+    type: 'multiple_choice',
+    question: 'Calcula: 500 + 300 + 200',
+    options: ['A) 900', 'B) 1000', 'C) 1100', 'D) 800'],
+    correctIndex: 1,
+    explanation: 'El resultado es 1000'
+};
+var rb6a = QuizMathValidator.verify(qb6a);
+var b6aExplHas1000 = rb6a && rb6a.explanation && rb6a.explanation.indexOf('1000') !== -1;
+console.log('Test B6a (Explanation consistency):', rb6a ? 'index=' + rb6a.correctIndex +
+    (rb6a.correctIndex === 1 ? ' ✅' : ' ❌ expected 1') +
+    (b6aExplHas1000 ? ' explanation✅' : ' explanation❌') : 'REJECTED ❌');
