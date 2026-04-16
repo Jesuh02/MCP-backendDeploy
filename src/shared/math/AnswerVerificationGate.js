@@ -733,6 +733,18 @@ class OrderingStepDependencyVerifier {
             [/(?:identificar|leer|reconocer)\s+(?:el\s+)?(?:problema|datos|enunciado)/,
                 /(?:calcular|operar|resolver|aplicar)/,
                 'Debe identificar datos antes de calcular'],
+            // ── Verificar convergencia ANTES de aplicar fórmula ────────────────
+            [/(?:verificar|comprobar)\s+(?:la\s+)?convergencia/,
+                /(?:aplicar|usar)\s+(?:la\s+)?f[oó]rmula|(?:calcular|sumar)\s+(?:la\s+)?serie/,
+                'Verificar convergencia ANTES de aplicar la fórmula'],
+            // ── Verificar dimensiones ANTES de operar matrices ─────────────────
+            [/(?:verificar|comprobar)\s+(?:las?\s+)?(?:dimension|compatib)/,
+                /(?:sumar|restar|multiplicar|operar)\s+(?:las?\s+)?matrices/,
+                'Verificar dimensiones ANTES de operar matrices'],
+            // ── Resultado provisional ANTES de redondear ───────────────────────
+            [/(?:escribir|anotar|obtener)\s+(?:el\s+)?resultado\s+provisional/,
+                /(?:identificar|mirar)\s+(?:el\s+)?(?:d[ií]gito|cuarto|quinto)|(?:aplicar|redonde)/,
+                'Obtener resultado provisional ANTES de redondear'],
         ];
 
         for (let i = 0; i < lowerItems.length; i++) {
