@@ -13,8 +13,12 @@ export class SubjectDomainService {
         this.subjectsByCourseCache = new Map();
     }
 
-    async _canManageSubject(requesterId, subject) {
+    async _canManageSubject(requesterId, subject, requesterRoles = []) {
         if (!requesterId || !subject) return false;
+
+        // Admin roles (3 = admin/docente, 4 = superadmin) can always manage
+        const normalizedRoles = (requesterRoles || []).map(r => Number(r?.id ?? r)).filter(r => Number.isInteger(r) && r > 0);
+        if (normalizedRoles.includes(3) || normalizedRoles.includes(4)) return true;
 
         const course = await this.courseRepo.findById(subject.course_id);
         if (!course) return false;
@@ -170,19 +174,19 @@ export class SubjectDomainService {
 
     // ── Subject collaborators ──────────────────────────────────────────────
 
-    async getSubjectCollaborators(subjectId, requesterId) {
+    async getSubjectCollaborators(subjectId, requesterId, requesterRoles = []) {
         const subject = await this._getSubject(subjectId);
         if (!subject) return Result.fail(new NotFoundError('Materia', subjectId));
-        const canManage = await this._canManageSubject(requesterId, subject);
+        const canManage = await this._canManageSubject(requesterId, subject, requesterRoles);
         if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso'));
         const collabs = await this.subjectRepo.findCollaboratorsBySubject(subjectId);
         return Result.ok(collabs);
     }
 
-    async addSubjectCollaborator(subjectId, userId, requesterId) {
+    async addSubjectCollaborator(subjectId, userId, requesterId, requesterRoles = []) {
         const subject = await this._getSubject(subjectId);
         if (!subject) return Result.fail(new NotFoundError('Materia', subjectId));
-        const canManage = await this._canManageSubject(requesterId, subject);
+        const canManage = await this._canManageSubject(requesterId, subject, requesterRoles);
         if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para añadir colaboradores'));
         if (Number(subject.created_by) === Number(userId)) {
             return Result.fail(new ForbiddenError('El creador de la materia ya la gestiona'));
@@ -191,19 +195,19 @@ export class SubjectDomainService {
         return Result.ok(collab);
     }
 
-    async removeSubjectCollaborator(subjectId, userId, requesterId) {
+    async removeSubjectCollaborator(subjectId, userId, requesterId, requesterRoles = []) {
         const subject = await this._getSubject(subjectId);
         if (!subject) return Result.fail(new NotFoundError('Materia', subjectId));
-        const canManage = await this._canManageSubject(requesterId, subject);
+        const canManage = await this._canManageSubject(requesterId, subject, requesterRoles);
         if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para eliminar colaboradores'));
         await this.subjectRepo.removeSubjectCollaborator(subjectId, userId);
         return Result.ok({ message: 'Colaborador eliminado de la materia' });
     }
 
-    async syncSubjectCollaborators(subjectId, userIds, requesterId) {
+    async syncSubjectCollaborators(subjectId, userIds, requesterId, requesterRoles = []) {
         const subject = await this._getSubject(subjectId);
         if (!subject) return Result.fail(new NotFoundError('Materia', subjectId));
-        const canManage = await this._canManageSubject(requesterId, subject);
+        const canManage = await this._canManageSubject(requesterId, subject, requesterRoles);
         if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para gestionar colaboradores'));
         const filtered = (userIds || []).filter(id => Number(id) !== Number(subject.created_by));
         const collabs = await this.subjectRepo.syncSubjectCollaborators(subjectId, filtered);
