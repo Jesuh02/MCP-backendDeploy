@@ -203,6 +203,12 @@ export class SubmissionDomainService {
             if (!hasAccess) return Result.fail(new ForbiddenError('No tienes permiso para crear entregas en este curso'));
         }
 
+        // Check if submission already exists: return it (idempotent) instead of creating a duplicate
+        const existingSubmission = await this.subRepo.findByUserAndTask(data.studentId, data.taskId);
+        if (existingSubmission) {
+            return Result.ok(this._normalizeSubmission(existingSubmission));
+        }
+
         // Preparar payload para crear la submission
         const payload = {
             taskId: data.taskId,
