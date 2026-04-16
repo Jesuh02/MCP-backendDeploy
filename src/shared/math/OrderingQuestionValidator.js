@@ -209,6 +209,26 @@ class VerificationLastRule {
     ];
 
     /**
+     * Verificaciones que son PREREQUISITOS (deben ir ANTES de calcular, NO al final).
+     * Ejemplo: "Verificar convergencia" debe hacerse antes de aplicar la fórmula de la serie.
+     */
+    static PRECALCULATION_VERIFY_PATTERNS = [
+        /(?:verificar|comprobar)\s+(?:la\s+)?convergencia/i,
+        /(?:verificar|comprobar)\s+(?:si|que)\s+(?:la\s+)?(?:serie|sucesi[oó]n)\s+converge/i,
+        /convergencia.*\|r\|/i,
+        /\|r\|\s*<\s*1/i,
+        /(?:verificar|comprobar)\s+(?:las?\s+)?dimension/i,
+        /(?:verificar|comprobar)\s+(?:la\s+)?compatibilidad/i,
+        /(?:verificar|comprobar)\s+(?:las?\s+)?(?:condiciones?\s+(?:de\s+)?)?(?:existencia|aplicabilidad)/i,
+        /(?:verificar|comprobar)\s+(?:el\s+)?(?:tipo|rango|dominio)/i,
+        /(?:verificar|comprobar)\s+(?:que|si)\s+(?:las?\s+)?matrices?\s+(?:son|sean)\s+(?:compatib|del\s+mismo)/i,
+        /(?:verificar|comprobar)\s+(?:que|si)\s+(?:las?\s+)?matrices?\s+(?:tienen|tengan)\s+(?:las?\s+)?mismas?\s+dimension/i,
+        /(?:verificar|comprobar)\s+(?:el\s+)?requisito/i,
+        /(?:verificar|comprobar)\s+(?:que|si)\s+(?:se\s+)?(?:puede|pueden)\s+(?:sumar|restar|multiplicar|operar)/i,
+        /(?:verificar|comprobar)\s+(?:la\s+)?(?:condici[oó]n|hip[oó]tesis)\s+(?:de|del|para)/i,
+    ];
+
+    /**
      * Patrones para clasificar el TIPO de verificación y determinar el orden relativo.
      * Prioridad más baja = va primero entre los pasos de verificación.
      * "Verificar resultado total/general" va ANTES de "Verificación independiente por partes".
@@ -231,10 +251,11 @@ class VerificationLastRule {
      * relativo correcto (verificación total → verificación por partes).
      */
     apply(question, items) {
-        // Encontrar TODOS los pasos de verificación
+        // Encontrar pasos de verificación POST-cálculo (excluir pre-cálculo)
         const verifyIndices = [];
         for (let i = 0; i < items.length; i++) {
-            if (VerificationLastRule.VERIFY_PATTERNS.some(p => p.test(items[i]))) {
+            if (VerificationLastRule.VERIFY_PATTERNS.some(p => p.test(items[i])) &&
+                !VerificationLastRule.PRECALCULATION_VERIFY_PATTERNS.some(p => p.test(items[i]))) {
                 verifyIndices.push(i);
             }
         }
@@ -526,6 +547,16 @@ class WriteResultLastRule {
         /^(?:obtener|calcular)\s+(?:el\s+)?resultado\s+final/i,
     ];
 
+    /** Resultados intermedios que NO deben moverse al final */
+    static PROVISIONAL_RESULT_PATTERNS = [
+        /resultado\s+provisional/i,
+        /resultado\s+parcial/i,
+        /resultado\s+intermedio/i,
+        /resultado\s+con\s+todos?\s+(?:los\s+)?decimales/i,
+        /resultado\s+sin\s+redonde/i,
+        /resultado\s+antes?\s+(?:de\s+)?redonde/i,
+    ];
+
     static VERIFY_PATTERNS = [
         /^verificar/i,
         /^comprobar/i,
@@ -535,18 +566,23 @@ class WriteResultLastRule {
     ];
 
     applies(question, items) {
-        return items.some(item => WriteResultLastRule.WRITE_RESULT_PATTERNS.some(p => p.test(item)));
+        return items.some(item =>
+            WriteResultLastRule.WRITE_RESULT_PATTERNS.some(p => p.test(item)) &&
+            !WriteResultLastRule.PROVISIONAL_RESULT_PATTERNS.some(p => p.test(item))
+        );
     }
 
     apply(question, items) {
         const resultIdx = items.findIndex(item =>
-            WriteResultLastRule.WRITE_RESULT_PATTERNS.some(p => p.test(item))
+            WriteResultLastRule.WRITE_RESULT_PATTERNS.some(p => p.test(item)) &&
+            !WriteResultLastRule.PROVISIONAL_RESULT_PATTERNS.some(p => p.test(item))
         );
         if (resultIdx === -1) return { modified: false };
 
-        // Find the first verification step (already moved to end by VerificationLastRule)
+        // Find the first POST-CALCULATION verification step (exclude pre-calculation)
         const firstVerifyIdx = items.findIndex(item =>
-            WriteResultLastRule.VERIFY_PATTERNS.some(p => p.test(item))
+            WriteResultLastRule.VERIFY_PATTERNS.some(p => p.test(item)) &&
+            !VerificationLastRule.PRECALCULATION_VERIFY_PATTERNS.some(p => p.test(item))
         );
 
         // Only act when "escribir resultado" appears AFTER a verification step
@@ -791,6 +827,121 @@ class StepDependencyOrderRule {
                 /S\s*[₁1]\s*\+\s*S\s*[₂2]/i,
             ],
             reason: 'Calcular cada serie individualmente ANTES de combinar resultados',
+        },
+        // ── Verificar convergencia ANTES de aplicar fórmula de serie ──────
+        {
+            prerequisite: [
+                /verificar\s+(?:la\s+)?convergencia/i,
+                /comprobar\s+(?:la\s+)?convergencia/i,
+                /verificar\s+(?:si|que)\s+(?:la\s+)?(?:serie|sucesi[oó]n)\s+converge/i,
+                /(?:condici[oó]n|criterio)\s+(?:de\s+)?convergencia/i,
+            ],
+            dependent: [
+                /aplicar\s+(?:la\s+)?f[oó]rmula/i,
+                /calcular\s+(?:la\s+)?(?:suma\s+(?:de\s+)?(?:la\s+)?)?serie/i,
+                /usar\s+(?:la\s+)?f[oó]rmula/i,
+                /sumar\s+(?:los\s+)?t[eé]rminos/i,
+                /(?:sustituir|reemplazar)\s+(?:en\s+)?(?:la\s+)?f[oó]rmula/i,
+            ],
+            contextPatterns: [
+                /serie|sucesi[oó]n|progresi[oó]n|convergencia/i,
+            ],
+            reason: 'Verificar convergencia ANTES de aplicar la fórmula (no se puede usar la fórmula sin confirmar que la serie converge)',
+        },
+        // ── Verificar dimensiones ANTES de operar matrices ────────────────
+        {
+            prerequisite: [
+                /verificar\s+(?:las?\s+)?dimension/i,
+                /comprobar\s+(?:las?\s+)?dimension/i,
+                /verificar\s+(?:la\s+)?compatibilidad/i,
+                /comprobar\s+(?:la\s+)?compatibilidad/i,
+                /verificar\s+(?:que|si)\s+(?:las?\s+)?matrices?\s+(?:son|sean)\s+compatib/i,
+            ],
+            dependent: [
+                /sumar\s+(?:las?\s+)?matrices/i,
+                /restar\s+(?:las?\s+)?matrices/i,
+                /multiplicar\s+(?:las?\s+)?matrices/i,
+                /operar\s+(?:las?\s+)?matrices/i,
+                /(?:realizar|ejecutar)\s+(?:la\s+)?(?:operaci[oó]n|suma|resta|multiplicaci[oó]n)\s+(?:de\s+)?matrices/i,
+            ],
+            contextPatterns: [
+                /matrices?/i,
+            ],
+            reason: 'Verificar dimensiones/compatibilidad ANTES de operar matrices',
+        },
+        // ── Escribir resultado provisional ANTES de redondear ─────────────
+        {
+            prerequisite: [
+                /(?:escribir|anotar|obtener)\s+(?:el\s+)?resultado\s+provisional/i,
+                /(?:escribir|anotar|obtener)\s+(?:el\s+)?resultado\s+(?:con\s+)?(?:todos?\s+(?:los\s+)?)?decimales/i,
+                /resultado\s+sin\s+redonde/i,
+            ],
+            dependent: [
+                /identificar\s+(?:el\s+)?(?:\S+\s+)?(?:decimal|d[ií]gito)/i,
+                /redonde(?:ar|o)\s+(?:(?:(?:el|al)\s+)?resultado|a\s+\d+\s+decimal)/i,
+                /aplicar\s+(?:el\s+)?redondeo/i,
+                /(?:aproximar|truncar)\s+(?:el\s+)?resultado/i,
+            ],
+            contextPatterns: [
+                /redonde|redondear|decimal/i,
+            ],
+            reason: 'Obtener resultado provisional ANTES de redondear (no se puede redondear sin tener el resultado completo)',
+        },
+        // ── Identificar dígito de redondeo ANTES de aplicar redondeo ──────
+        {
+            prerequisite: [
+                /identificar\s+(?:el\s+)?(?:\S+\s+)?(?:decimal|d[ií]gito)/i,
+                /(?:mirar|observar|ver)\s+(?:el\s+)?(?:\S+\s+)?(?:decimal|d[ií]gito)/i,
+            ],
+            dependent: [
+                /aplicar\s+(?:el\s+)?redondeo/i,
+                /redonde(?:ar|o)\s+(?:hacia\s+)?(?:arriba|abajo)/i,
+                /sumar\s+(?:1|uno)\s+(?:a\s+)?(?:la\s+)?(?:tercera|segunda|primera)\s+decimal/i,
+            ],
+            contextPatterns: [
+                /redonde|redondear/i,
+            ],
+            reason: 'Identificar el dígito de redondeo ANTES de aplicar el redondeo',
+        },
+        // ── Calcular/sumar ANTES de escribir resultado provisional ─────────
+        {
+            prerequisite: [
+                /(?:sumar|restar|multiplicar|dividir|operar|calcular)\s+(?:las?\s+)?(?:columnas?|valores?|n[uú]meros?)/i,
+                /sumar\s+columna\s+por\s+columna/i,
+                /(?:realizar|ejecutar|efectuar)\s+(?:la\s+)?(?:operaci[oó]n|suma|resta)/i,
+            ],
+            dependent: [
+                /(?:escribir|anotar|obtener)\s+(?:el\s+)?resultado\s+provisional/i,
+                /resultado\s+provisional\s+con/i,
+                /resultado\s+(?:con\s+)?(?:todos?\s+(?:los\s+)?)?decimales/i,
+            ],
+            contextPatterns: [
+                /redonde|decimal|provisional/i,
+            ],
+            reason: 'Calcular/sumar ANTES de escribir el resultado provisional',
+        },
+        // ── Leer/analizar problema ANTES de plantear ecuación ──────────────
+        {
+            prerequisite: [
+                /(?:leer|analizar|comprender)\s+(?:el\s+)?(?:problema|enunciado)/i,
+            ],
+            dependent: [
+                /plantear\s+(?:la\s+)?ecuaci[oó]n/i,
+                /(?:escribir|formular)\s+(?:la\s+)?ecuaci[oó]n/i,
+            ],
+            reason: 'Leer/analizar el problema ANTES de plantear la ecuación',
+        },
+        // ── Factorizar ANTES de encontrar raíces ──────────────────────────
+        {
+            prerequisite: [
+                /factorizar/i,
+                /simplificar\s+(?:la\s+)?(?:expresi[oó]n|ecuaci[oó]n)/i,
+            ],
+            dependent: [
+                /(?:encontrar|hallar|obtener)\s+(?:las?\s+)?ra[ií]ces?/i,
+                /(?:encontrar|hallar|obtener)\s+(?:los?\s+)?(?:valores?\s+de\s+)?x/i,
+            ],
+            reason: 'Factorizar/simplificar ANTES de encontrar raíces',
         },
     ];
 

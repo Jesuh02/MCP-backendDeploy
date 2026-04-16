@@ -241,6 +241,41 @@ class OrderingDependencyStage {
                 /(?:sumar|restar|multiplicar|dividir|aplicar|calcular|resolver)/,
                 'Debe analizarse el problema antes de operarlo'
             ],
+            // ── Verificar convergencia ANTES de aplicar fórmula ────────────────
+            [/(?:verificar|comprobar)\s+(?:la\s+)?convergencia|\|r\|\s*<\s*1/,
+                /(?:aplicar|usar)\s+(?:la\s+)?f[oó]rmula|(?:calcular|sumar)\s+(?:la\s+)?serie/,
+                'Verificar convergencia ANTES de aplicar la fórmula'
+            ],
+            // ── Verificar dimensiones ANTES de operar matrices ─────────────────
+            [/(?:verificar|comprobar)\s+(?:las?\s+)?(?:dimension|compatib)/,
+                /(?:sumar|restar|multiplicar|operar)\s+(?:las?\s+)?matrices/,
+                'Verificar dimensiones ANTES de operar matrices'
+            ],
+            // ── Resultado provisional ANTES de redondear ───────────────────────
+            [/(?:escribir|anotar|obtener)\s+(?:el\s+)?resultado\s+provisional/,
+                /(?:identificar|mirar)\s+(?:el\s+)?(?:d[ií]gito|cuarto|quinto)|(?:aplicar|redonde)/,
+                'Obtener resultado provisional ANTES de redondear'
+            ],
+            // ── Calcular ANTES de resultado provisional ────────────────────────
+            [/(?:sumar|restar|multiplicar|calcular|operar)\s+(?:las?\s+)?(?:columnas?|valores?|n[uú]meros?)/,
+                /resultado\s+provisional|resultado\s+(?:con\s+)?(?:todos?\s+(?:los\s+)?)?decimales/,
+                'Calcular ANTES de escribir resultado provisional'
+            ],
+            // ── Plantear ecuación ANTES de resolver ────────────────────────────
+            [/(?:plantear|escribir|formular)\s+(?:la\s+)?ecuaci[oó]n/,
+                /(?:resolver|despejar|simplificar)\s+(?:la\s+)?ecuaci[oó]n/,
+                'Plantear ecuación ANTES de resolver'
+            ],
+            // ── Derivar ANTES de igualar a cero ───────────────────────────────
+            [/(?:calcular|obtener)\s+(?:la\s+)?derivada/,
+                /igualar\s+(?:la\s+)?(?:derivada\s+)?(?:a\s+)?(?:cero|0)|puntos?\s+cr[ií]tic/,
+                'Derivar ANTES de igualar a cero'
+            ],
+            // ── Factorizar ANTES de encontrar raíces ──────────────────────────
+            [/factorizar/,
+                /(?:encontrar|hallar)\s+(?:las?\s+)?ra[ií]ces?/,
+                'Factorizar ANTES de encontrar raíces'
+            ],
         ];
 
         for (let i = 0; i < lowerItems.length; i++) {

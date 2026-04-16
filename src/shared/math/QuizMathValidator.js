@@ -1772,22 +1772,26 @@ export class QuizMathValidator {
                 : numExplanation;
         }
 
-        // Procedural steps: list them numbered
+        // Procedural steps: list them numbered — ONLY use corrected sequence,
+        // NOT the LLM explanation (which may contain contradictory information).
         var stepsText = correctSequence.map(function(s, i) { return (i + 1) + '. ' + s; }).join('\n');
         var procExplanation = 'El orden correcto de los pasos es:\n' + stepsText;
 
-        // Append LLM explanation (without its ordering claims, which may be wrong)
-        var stripped = QuizMathValidator._stripOrderingClaims(llmExplanation || '');
-        return stripped
-            ? (procExplanation + '\n\n' + stripped)
-            : procExplanation;
+        return procExplanation;
     }
 
     static _stripOrderingClaims(text) {
         if (!text) return text;
         return text
+            // Eliminar claims de orden que pueden ser incorrectos
             .replace(/(?:el\s+)?orden\s+(?:correcto|es|ser\xeda)[^.]*\./gi, '')
             .replace(/(?:de\s+)?(?:mayor|menor)\s+a\s+(?:mayor|menor)[^.]*\./gi, '')
+            // Eliminar numeraciones del LLM que pueden contradecir el orden real
+            .replace(/\d+\s*(?:pasos?|etapas?):\s*(?:\d+\))/gi, '')
+            // Eliminar enumeraciones tipo "1) Alineación... 2) Suma..."
+            .replace(/\d+\)\s+[A-ZÁÉÍÓÚ][^.]*\.\s*/gi, '')
+            // Eliminar frases con datos numéricos contradictorios sobre dígitos
+            .replace(/(?:el\s+)?(?:cuarto|quinto|sexto|s[eé]ptimo)\s+decimal\s+(?:es|ser[ií]a)\s+\d+[^.]*\./gi, '')
             .replace(/\s{2,}/g, ' ')
             .trim();
     }

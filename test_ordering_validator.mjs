@@ -299,6 +299,191 @@ console.log('\n═══ Test 13: Redondear DESPUÉS de calcular ═══');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Test 14: Verificar convergencia NO debe ir al final (es prerequisito)
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 14: Verificar convergencia como prerequisito ═══'); {
+    const question = 'Ordena los pasos para calcular la suma de una serie geométrica infinita';
+    const items = [
+        'Identificar los valores de a₁ y r',
+        'Verificar convergencia: |r| < 1',
+        'Aplicar la fórmula S = a₁/(1-r)',
+        'Escribir el resultado final',
+        'Verificar el resultado',
+    ];
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid, 'Should be valid');
+    const verifyConvergIdx = result.items.findIndex(i => /convergencia/.test(i));
+    const applyIdx = result.items.findIndex(i => /aplicar.*f[oó]rmula/i.test(i));
+    const verifyResultIdx = result.items.findIndex(i => /verificar\s+el\s+resultado/i.test(i));
+    assert(verifyConvergIdx < applyIdx,
+        `"Verificar convergencia" (${verifyConvergIdx}) debe estar ANTES de "Aplicar fórmula" (${applyIdx})`);
+    assert(verifyResultIdx === result.items.length - 1,
+        `"Verificar el resultado" debe ser el ÚLTIMO paso (pos ${verifyResultIdx})`);
+    assert(verifyConvergIdx !== result.items.length - 1,
+        `"Verificar convergencia" NO debe ser el último paso (pos ${verifyConvergIdx})`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 15: Verificar dimensiones NO debe ir al final (es prerequisito)
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 15: Verificar dimensiones de matrices ═══'); {
+    const question = 'Ordena los pasos para sumar dos matrices';
+    const items = [
+        'Verificar dimensiones de las matrices',
+        'Sumar las matrices elemento por elemento',
+        'Escribir el resultado final',
+        'Verificar el resultado',
+    ];
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid, 'Should be valid');
+    const dimIdx = result.items.findIndex(i => /dimensiones/.test(i));
+    const sumIdx = result.items.findIndex(i => /sumar.*matrices/i.test(i));
+    assert(dimIdx < sumIdx,
+        `"Verificar dimensiones" (${dimIdx}) debe estar ANTES de "Sumar matrices" (${sumIdx})`);
+    assert(dimIdx === 0, `"Verificar dimensiones" debe ser el primer paso (pos ${dimIdx})`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 16: Resultado provisional ANTES de redondear
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 16: Resultado provisional antes de redondeo ═══'); {
+    const question = 'Ordena los pasos para sumar y redondear a 3 decimales';
+    const items = [
+        'Alinear verticalmente los números por el punto decimal',
+        'Sumar columna por columna de derecha a izquierda',
+        'Escribir el resultado provisional con todos los decimales: 2999.999988',
+        'Identificar el cuarto decimal para redondear a 3 decimales',
+        'Aplicar redondeo: resultado final 3000.000',
+    ];
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid, 'Should be valid');
+    const provisionalIdx = result.items.findIndex(i => /resultado\s+provisional/i.test(i));
+    const identifyIdx = result.items.findIndex(i => /identificar.*decimal/i.test(i));
+    const roundIdx = result.items.findIndex(i => /aplicar\s+redondeo/i.test(i));
+    assert(provisionalIdx < identifyIdx,
+        `"Resultado provisional" (${provisionalIdx}) debe estar ANTES de "Identificar dígito" (${identifyIdx})`);
+    assert(identifyIdx < roundIdx,
+        `"Identificar dígito" (${identifyIdx}) debe estar ANTES de "Aplicar redondeo" (${roundIdx})`);
+    console.log('  Items:', result.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 17: WriteResultLastRule NO debe mover "resultado provisional"
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 17: Resultado provisional no se mueve al final ═══'); {
+    const question = 'Ordena los pasos para sumar y redondear';
+    const items = [
+        'Alinear los números',
+        'Sumar columnas',
+        'Escribir el resultado provisional con todos los decimales',
+        'Identificar el dígito de redondeo',
+        'Aplicar el redondeo',
+        'Verificar el resultado',
+    ];
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid, 'Should be valid');
+    const provisionalIdx = result.items.findIndex(i => /resultado\s+provisional/i.test(i));
+    const roundIdx = result.items.findIndex(i => /aplicar.*redondeo/i.test(i));
+    assert(provisionalIdx < roundIdx,
+        `"Resultado provisional" (${provisionalIdx}) debe quedar ANTES de "Aplicar redondeo" (${roundIdx}), no moverse al final`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 18: Bug reportado — resultado provisional en posición incorrecta
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 18: BUG: Resultado provisional al final (debe estar antes de redondeo) ═══'); {
+    const question = 'Ordena los pasos para sumar cuatro números con muchos decimales y redondear el resultado a 3 decimales';
+    const items = [
+        'Alinear verticalmente los números por el punto decimal',
+        'Sumar columna por columna de derecha a izquierda',
+        'Identificar el cuarto decimal (diezmilésimas) para redondear a 3 decimales',
+        'Aplicar redondeo: resultado final 3000.000',
+        'Escribir el resultado provisional con todos los decimales: 2999.999988',
+    ];
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid, 'Should be valid after correction');
+    assert(result.corrections && result.corrections.length > 0, 'Should have corrections');
+    const provisionalIdx = result.items.findIndex(i => /resultado\s+provisional/i.test(i));
+    const identifyIdx = result.items.findIndex(i => /identificar.*decimal/i.test(i));
+    const roundIdx = result.items.findIndex(i => /aplicar\s+redondeo/i.test(i));
+    assert(provisionalIdx < identifyIdx,
+        `"Resultado provisional" (${provisionalIdx}) debe estar ANTES de "Identificar dígito" (${identifyIdx})`);
+    assert(identifyIdx < roundIdx,
+        `"Identificar dígito" (${identifyIdx}) debe estar ANTES de "Aplicar redondeo" (${roundIdx})`);
+    console.log('  Items corregidos:', result.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 19: Bug reportado — Verificar convergencia como último paso
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 19: BUG: Verificar convergencia al final (debe ser prerequisito) ═══'); {
+    const question = 'Ordena los pasos para calcular la suma de una serie geométrica infinita';
+    const items = [
+        'Identificar los valores de a₁ y r',
+        'Aplicar la fórmula S = a₁/(1-r)',
+        'Escribir el resultado final',
+        'Verificar convergencia: |r| < 1',
+    ];
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid, 'Should be valid after correction');
+    const convIdx = result.items.findIndex(i => /convergencia/i.test(i));
+    const applyIdx = result.items.findIndex(i => /aplicar.*f[oó]rmula/i.test(i));
+    assert(convIdx < applyIdx,
+        `"Verificar convergencia" (${convIdx}) debe estar ANTES de "Aplicar fórmula" (${applyIdx})`);
+    assert(convIdx !== result.items.length - 1,
+        `"Verificar convergencia" NO debe ser el último paso (pos ${convIdx})`);
+    console.log('  Items corregidos:', result.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 20: Bug reportado — Verificar dimensiones al final en matrices
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 20: BUG: Verificar dimensiones al final en matrices ═══'); {
+    const question = 'Ordena los pasos para sumar dos matrices';
+    const items = [
+        'Sumar las matrices elemento por elemento',
+        'Escribir la matriz resultado',
+        'Verificar el resultado',
+        'Verificar dimensiones de las matrices',
+    ];
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid, 'Should be valid after correction');
+    const dimIdx = result.items.findIndex(i => /dimensiones/i.test(i));
+    const sumIdx = result.items.findIndex(i => /sumar.*matri/i.test(i));
+    assert(dimIdx < sumIdx,
+        `"Verificar dimensiones" (${dimIdx}) debe estar ANTES de "Sumar matrices" (${sumIdx})`);
+    console.log('  Items corregidos:', result.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test 21: Cadena completa de redondeo — calcular → provisional → dígito → redondear
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n═══ Test 21: Cadena completa de redondeo en orden incorrecto ═══'); {
+    const question = 'Ordena los pasos para sumar y redondear a 2 decimales';
+    const items = [
+        'Identificar el tercer decimal para redondear',
+        'Alinear los números por el punto decimal',
+        'Aplicar redondeo al resultado',
+        'Escribir el resultado provisional con todos los decimales',
+        'Sumar columna por columna',
+    ];
+    const result = OrderingQuestionValidator.validateQuestion(question, items);
+    assert(result.valid, 'Should be valid after correction');
+
+    const alignIdx = result.items.findIndex(i => /alinear/i.test(i));
+    const sumIdx = result.items.findIndex(i => /sumar.*columna/i.test(i));
+    const provIdx = result.items.findIndex(i => /resultado\s+provisional/i.test(i));
+    const digitIdx = result.items.findIndex(i => /identificar.*decimal/i.test(i));
+    const roundIdx = result.items.findIndex(i => /aplicar\s+redondeo/i.test(i));
+
+    assert(alignIdx < sumIdx, `Alinear (${alignIdx}) debe ir ANTES de Sumar (${sumIdx})`);
+    assert(sumIdx < provIdx, `Sumar (${sumIdx}) debe ir ANTES de Provisional (${provIdx})`);
+    assert(provIdx < digitIdx, `Provisional (${provIdx}) debe ir ANTES de Identificar dígito (${digitIdx})`);
+    assert(digitIdx < roundIdx, `Identificar dígito (${digitIdx}) debe ir ANTES de Redondear (${roundIdx})`);
+    console.log('  Items corregidos:', result.items);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Summary
 // ═══════════════════════════════════════════════════════════════════════════
 console.log(`\n═══ RESULTADO: ${passed} passed, ${failed} failed ═══\n`);
