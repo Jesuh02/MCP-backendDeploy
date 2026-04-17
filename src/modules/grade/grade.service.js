@@ -23,7 +23,11 @@ export class GradeDomainService {
         this.periodRepo = periodRepository || null;
     }
 
-    async _canGradeSubject(userId, subjectId) {
+    async _canGradeSubject(userId, subjectId, roles = []) {
+        // Admin / Superadmin bypass
+        const numRoles = (roles || []).map(Number);
+        if (numRoles.includes(3) || numRoles.includes(4)) return true;
+
         const subject = await this.subjectRepo.findById(subjectId);
         if (!subject) return false;
 
@@ -186,8 +190,8 @@ export class GradeDomainService {
      * @param {number} subjectId
      * @returns {Promise<Result>} { students, tasks, manualGrades, taskGrades }
      */
-    async getGradeSheet(requesterId, subjectId) {
-        const canGrade = await this._canGradeSubject(requesterId, subjectId);
+    async getGradeSheet(requesterId, subjectId, roles = []) {
+        const canGrade = await this._canGradeSubject(requesterId, subjectId, roles);
         if (!canGrade) {
             return Result.fail(new ForbiddenError('No tienes permiso para ver la planilla de esta materia'));
         }
