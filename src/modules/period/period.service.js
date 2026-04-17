@@ -8,7 +8,7 @@ export class PeriodDomainService {
     }
 
     /** Cierra el periodo actual: toma un snapshot del grade sheet y limpia las notas manuales. */
-    async closePeriod(userId, { courseId, subjectId, name }) {
+    async closePeriod(userId, { courseId, subjectId, name, startsAt, endsAt }) {
         try {
             const cid = parseInt(courseId);
             const sid = parseInt(subjectId);
@@ -23,7 +23,7 @@ export class PeriodDomainService {
             const periodNumber = maxNum + 1;
             const periodName = name || `Periodo ${periodNumber}`;
 
-            // 3. Guardar snapshot (no auto-start next period)
+            // 3. Guardar snapshot con fechas automáticas
             const period = await this.periodRepo.create({
                 courseId: cid,
                 subjectId: sid,
@@ -31,6 +31,8 @@ export class PeriodDomainService {
                 name: periodName,
                 snapshot: sheet,
                 createdBy: userId,
+                startsAt: startsAt || null,
+                endsAt: endsAt || new Date().toISOString(),
             });
 
             // 4. Limpiar notas manuales del subject para empezar de cero
@@ -42,22 +44,22 @@ export class PeriodDomainService {
         }
     }
 
-    /** Inicia un nuevo periodo con fechas de inicio y fin. */
+    /** Inicia un nuevo periodo con fecha de inicio (endsAt se establece al cerrarlo). */
     async startPeriod(userId, { courseId, subjectId, name, startsAt, endsAt }) {
         try {
             const cid = parseInt(courseId);
             const sid = parseInt(subjectId);
 
-            if (!startsAt || !endsAt) {
-                return Result.fail(new Error('Se requieren fecha de inicio y fecha de fin del periodo'));
+            const start = new Date(startsAt || new Date());
+            if (isNaN(start.getTime())) {
+                return Result.fail(new Error('Fecha de inicio inválida'));
             }
 
-            const start = new Date(startsAt);
-            const end = new Date(endsAt);
-            if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-                return Result.fail(new Error('Fechas inválidas'));
+            const end = endsAt ? new Date(endsAt) : null;
+            if (end && isNaN(end.getTime())) {
+                return Result.fail(new Error('Fecha de fin inválida'));
             }
-            if (end <= start) {
+            if (end && end <= start) {
                 return Result.fail(new Error('La fecha de fin debe ser posterior a la fecha de inicio'));
             }
 
@@ -75,7 +77,7 @@ export class PeriodDomainService {
                 snapshot: null,
                 createdBy: userId,
                 startsAt: start.toISOString(),
-                endsAt: end.toISOString(),
+                endsAt: end ? end.toISOString() : null,
             });
 
             return Result.ok(period);
