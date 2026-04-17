@@ -17,21 +17,26 @@ export class SupabasePeriodRepository {
             name: row.name,
             snapshot: row.snapshot,
             closedAt: row.closed_at,
+            startsAt: row.starts_at || null,
+            endsAt: row.ends_at || null,
             createdBy: row.created_by,
         };
     }
 
-    async create({ courseId, subjectId, periodNumber, name, snapshot, createdBy }) {
+    async create({ courseId, subjectId, periodNumber, name, snapshot, createdBy, startsAt, endsAt }) {
+        const row = {
+            course_id: courseId,
+            subject_id: subjectId,
+            period_number: periodNumber,
+            name,
+            snapshot,
+            created_by: createdBy,
+        };
+        if (startsAt) row.starts_at = startsAt;
+        if (endsAt) row.ends_at = endsAt;
         const { data, error } = await this.client
             .from(this._table())
-            .insert({
-                course_id: courseId,
-                subject_id: subjectId,
-                period_number: periodNumber,
-                name,
-                snapshot,
-                created_by: createdBy,
-            })
+            .insert(row)
             .select()
             .single();
         if (error) throw error;

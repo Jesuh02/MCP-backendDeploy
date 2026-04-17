@@ -23,7 +23,7 @@ export class PeriodDomainService {
             const periodNumber = maxNum + 1;
             const periodName = name || `Periodo ${periodNumber}`;
 
-            // 3. Guardar snapshot
+            // 3. Guardar snapshot (no auto-start next period)
             const period = await this.periodRepo.create({
                 courseId: cid,
                 subjectId: sid,
@@ -35,6 +35,48 @@ export class PeriodDomainService {
 
             // 4. Limpiar notas manuales del subject para empezar de cero
             await this.gradeRepo.deleteBySubject(sid);
+
+            return Result.ok(period);
+        } catch (err) {
+            return Result.fail(err);
+        }
+    }
+
+    /** Inicia un nuevo periodo con fechas de inicio y fin. */
+    async startPeriod(userId, { courseId, subjectId, name, startsAt, endsAt }) {
+        try {
+            const cid = parseInt(courseId);
+            const sid = parseInt(subjectId);
+
+            if (!startsAt || !endsAt) {
+                return Result.fail(new Error('Se requieren fecha de inicio y fecha de fin del periodo'));
+            }
+
+            const start = new Date(startsAt);
+            const end = new Date(endsAt);
+            if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+                return Result.fail(new Error('Fechas inválidas'));
+            }
+            if (end <= start) {
+                return Result.fail(new Error('La fecha de fin debe ser posterior a la fecha de inicio'));
+            }
+
+            // Siguiente número de periodo
+            const maxNum = await this.periodRepo.getMaxPeriodNumber(cid, sid);
+            const periodNumber = maxNum + 1;
+            const periodName = name || `Periodo ${periodNumber}`;
+
+            // Crear periodo activo (sin snapshot aún, se llenará al cerrarlo)
+            const period = await this.periodRepo.create({
+                courseId: cid,
+                subjectId: sid,
+                periodNumber,
+                name: periodName,
+                snapshot: null,
+                createdBy: userId,
+                startsAt: start.toISOString(),
+                endsAt: end.toISOString(),
+            });
 
             return Result.ok(period);
         } catch (err) {
