@@ -366,3 +366,60 @@ var b6aExplHas1000 = rb6a && rb6a.explanation && rb6a.explanation.indexOf('1000'
 console.log('Test B6a (Explanation consistency):', rb6a ? 'index=' + rb6a.correctIndex +
     (rb6a.correctIndex === 1 ? ' ✅' : ' ❌ expected 1') +
     (b6aExplHas1000 ? ' explanation✅' : ' explanation❌') : 'REJECTED ❌');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 7: Decimal precision — answer must NOT be truncated to 2 decimals
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== BUG FIX 7: Decimal precision (no truncation) ===');
+
+// Test B7a: 25000/9 = 2777.777... — fill_in_blank should preserve 3+ decimals
+var qb7a = {
+    type: 'fill_in_blank',
+    question: 'Dividir 25000 entre 9',
+    correctAnswer: '2777.78',  // LLM gave wrong 2-decimal answer
+    explanation: 'El resultado es 2777.78'
+};
+var rb7a = QuizMathValidator.verify(qb7a);
+// The computed answer is 2777.777... repeating — validator should NOT truncate to 2777.78
+var b7aVal = rb7a ? rb7a.correctAnswer : 'NULL';
+var b7aCorrect = b7aVal && b7aVal.indexOf('2777.77') === 0;
+console.log('Test B7a (Decimal precision):', b7aVal, b7aCorrect ? '✅' : '❌ expected 2777.77...');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 8: Combined formula — S₁ (polynomial) + S₂ (geometric sigma)
+// Must compute BOTH parts, not just S₁
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== BUG FIX 8: Combined S₁ + S₂ (sigma geometric) ===');
+
+// Test B8a: Σ(i=1 to 100)(2i+1) + Σ(k=1 to 50) 3·2^{k-1}
+var textB8a = 'Calcula S₁ + S₂ donde S₁ = Σ (de i=1 a 100) de (2i + 1) y S₂ es la serie geométrica: 3, 6, 12, 24 (primeros 50 términos)';
+var rb8a = QuizMathValidator.computeExpectedAnswer(textB8a);
+// S₁ = Σ(2i+1) from 1 to 100 = 2·(100·101/2) + 100 = 10100 + 100 = 10200
+// S₂ = 3·(2^50 - 1)/(2 - 1) = 3·(1125899906842623) = 3377699720527869
+// Total = 3377699720538069
+console.log('Test B8a (Combined S₁+S₂):', rb8a ? rb8a.value.toExponential(6) : 'NULL',
+    rb8a && rb8a.value.gt(1e15) ? '✅ (correctly includes S₂)' : '❌ S₂ was ignored — value too small');
+
+// Test B8b: Sigma notation geometric Σ_{k=1}^{50} 3·2^{k-1}
+var textB8b = 'Calcula la sumatoria: Σ (de k=1 a 50) de (3·2^{k-1})';
+var rb8b = QuizMathValidator.computeExpectedAnswer(textB8b);
+console.log('Test B8b (Sigma geometric only):', rb8b ? rb8b.value.toExponential(6) : 'NULL',
+    rb8b && rb8b.value.gt(1e15) ? '✅' : '❌ expected ~3.38e15');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 9: Sum-then-discount (multiple values + percentage)
+// Must sum ALL values first, THEN apply discount
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== BUG FIX 9: Sum-then-discount (no partial data) ===');
+
+// Test B9a: Sum 4 quarterly values, then apply 15% discount
+var textB9a = 'Una empresa reportó ingresos trimestrales: Q1=$12,500,000, Q2=$13,200,000, Q3=$15,555,555.55, Q4=$11,800,000. Calcula el gasto total anual con un descuento del 15%.';
+var rb9a = QuizMathValidator.computeExpectedAnswer(textB9a);
+// Total = 12500000 + 13200000 + 15555555.55 + 11800000 = 53055555.55
+// With 15% discount: 53055555.55 × 0.85 = 45097222.2175
+console.log('Test B9a (Sum-then-discount):', rb9a ? rb9a.value.toString() : 'NULL');
+var b9aExpected = rb9a && rb9a.value.gt(40000000);
+console.log('  Total > 40M:', b9aExpected ? '✅ (used all 4 quarters)' : '❌ (likely used only 1 value)');

@@ -713,6 +713,9 @@ export class QuizMathValidator {
 
         var summation = QuizMathValidator._tryPolynomialSummation(text);
         var geo = QuizMathValidator._tryGeometricSeriesFormula(text);
+        // Also try implicit geometric (no keyword needed) and sigma-notation geometric
+        if (!geo) geo = QuizMathValidator._tryImplicitGeometricSeries(text);
+        if (!geo) geo = QuizMathValidator._trySigmaGeometricSeries(text);
         var arith = QuizMathValidator._tryArithmeticSeriesFormula(text);
 
         if (summation) { results.push(summation);
@@ -932,6 +935,41 @@ export class QuizMathValidator {
                 fromFormula: true,
             };
         }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Strategy 2.4: Sigma-notation Geometric Series (no keyword required)
+    // Detects: Σ(a·r^{k-1}), Σ(a·r^k), Σ_{k=1}^{n} a·r^{k-1}
+    // This catches cases where the problem uses sigma notation for a geometric
+    // series without explicitly saying "serie geométrica".
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    static _trySigmaGeometricSeries(text) {
+        // Pattern: Σ_{k=start}^{end} a·r^{k-1} or a·r^k or a(r)^{k-1}
+        var sigmaGeoPatterns = [
+            // Σ_{k=1}^{50} 3·2^{k-1}  or  Σ(k=1 to 50) 3·2^{k-1}
+            /[\u03A3\u2211]\s*_?\{?\s*[ijk]\s*=\s*(\d+)\s*\}?\s*\^?\{?\s*(\d+)\s*\}?\s*\(?\s*(\d+\.?\d*)\s*[·*×\u00b7]\s*\(?(\d+\.?\d*)\)?\s*\^\s*\{?\s*(?:\(\s*)?[ijk]\s*(?:-\s*1\s*(?:\))?\s*)?\}?\s*\)?/i,
+            // Σ(de k=1 a 50) de (3·2^{k-1})
+            /[\u03A3\u2211]\s*\(?(?:de\s+)?[ijk]\s*=\s*(\d+)\s+a\s+(\d+)\)?\s*(?:de\s+)?\(?\s*(\d+\.?\d*)\s*[·*×\u00b7]\s*\(?(\d+\.?\d*)\)?\s*\^\s*\{?\s*(?:\(\s*)?[ijk]\s*(?:-\s*1\s*(?:\))?\s*)?\}?\s*\)?/i,
+            // sumatoria de k=1 a 50 de 3·2^{k-1}
+            /sumatoria\s*(?::\s*)?[\u03A3\u2211]?\s*\(?(?:de\s+)?[ijk]\s*=\s*(\d+)\s+a\s+(\d+)\)?\s*(?:de\s+)?\(?\s*(\d+\.?\d*)\s*[·*×\u00b7]\s*\(?(\d+\.?\d*)\)?\s*\^\s*\{?\s*(?:\(\s*)?[ijk]\s*(?:-\s*1\s*(?:\))?\s*)?\}?\s*\)?/i,
+        ];
+        for (var p = 0; p < sigmaGeoPatterns.length; p++) {
+            var m = sigmaGeoPatterns[p].exec(text);
+            if (!m) continue;
+            var start = parseInt(m[1], 10);
+            var end = parseInt(m[2], 10);
+            var a1 = new Decimal(m[3]);
+            var r = new Decimal(m[4]);
+            if (a1.gt(0) && !r.eq(1) && end >= start && end <= 100000) {
+                var n = end - start + 1;
+                var seriesCalc = MathEngine.geometricSeries(a1, r, n);
+                console.log('[MathVerify] Sigma geometric series: a1=' + a1 + ', r=' + r + ', n=' + n + ' → S_n=' + seriesCalc.value.toExponential(4));
+                return { value: seriesCalc.value, steps: seriesCalc.steps, fromFormula: true };
+            }
+        }
+        return null;
+    }
+
         // ═══════════════════════════════════════════════════════════════════════════
         // Strategy 3: Compound multi-step problems (multiple qty×price pairs)
         // e.g. "3 libros a $50 y 5 cuadernos a $20" → 3×50 + 5×20 = 250
@@ -1142,8 +1180,31 @@ export class QuizMathValidator {
             }
         }
 
+        // ─── GUARD: If there are multiple currency values that must be summed
+        // first (e.g. Q1=$X, Q2=$Y, Q3=$Z, Q4=$W ... descuento 20%), skip
+        // discount/tax patterns and let Strategy 9 (_tryExplicitSumProblem) handle
+        // the sum-then-percentage flow. This prevents applying the discount to
+        // only one of the values (Bug: partial data usage).
+        var allCurrencyVals = [];
+        var currScan = /\$\s*([\d,.]+)/g;
+        var currM;
+        while ((currM = currScan.exec(text)) !== null) {
+            var cv = QuizMathValidator._parseDecimal(currM[1]);
+            if (cv && cv.gt(0)) allCurrencyVals.push(cv);
+        }
+        var hasMultipleSummableValues = allCurrencyVals.length >= 3;
+        // Also check for labeled amounts (Q1: valor, Q2: valor, etc.)
+        if (!hasMultipleSummableValues) {
+            var labelScan = /(?:Q\d|trimestre|mes|semana|periodo|cuota|pago)\s*(?:\d+)?\s*[:=]\s*\$?\s*([\d,.]+)/gi;
+            var labelCount = 0;
+            while (labelScan.exec(text) !== null) labelCount++;
+            hasMultipleSummableValues = labelCount >= 3;
+        }
+
         // ─── Pattern B: Discount on a value ──────────────────────────────────
         // "$1000 con descuento del 20%" → 800 (final price) or 200 (discount amount)
+        // SKIP if multiple values need summing first (let Strategy 9 handle it)
+        if (!hasMultipleSummableValues) {
         var discountPatterns = [
             /\$?\s*([\d,.]+)[\s\S]{0,80}?(?:descuento|rebaja)\s+(?:del?)?\s*([\d,.]+)\s*%/i,
             /(?:descuento|rebaja)\s+(?:del?)?\s*([\d,.]+)\s*%[\s\S]{0,80}?\$?\s*([\d,.]+)/i,
@@ -1174,9 +1235,12 @@ export class QuizMathValidator {
                 }
             }
         }
+        } // end if (!hasMultipleSummableValues) for discount
 
         // ─── Pattern C: Tax / increment on a value ───────────────────────────
         // "$1000 con IVA del 16%" → 1160
+        // SKIP if multiple values need summing first (let Strategy 9 handle it)
+        if (!hasMultipleSummableValues) {
         var taxPatterns = [
             /\$?\s*([\d,.]+)[\s\S]{0,80}?(?:impuesto|IVA|ISR|recargo|inter[e\xe9]s|incremento|aumento)\s+(?:del?)?\s*([\d,.]+)\s*%/i,
             /(?:impuesto|IVA|ISR|recargo|inter[e\xe9]s|incremento|aumento)\s+(?:del?)?\s*([\d,.]+)\s*%[\s\S]{0,80}?\$?\s*([\d,.]+)/i,
@@ -1207,6 +1271,7 @@ export class QuizMathValidator {
                 }
             }
         }
+        } // end if (!hasMultipleSummableValues) for tax
 
         return null;
     }
