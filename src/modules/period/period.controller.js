@@ -19,6 +19,27 @@ export class PeriodController {
         } catch (err) { next(err); }
     };
 
+    startPeriod = async (req, res, next) => {
+        try {
+            const { courseId, subjectId, name, startsAt, endsAt } = req.body;
+            if (!courseId || !subjectId) {
+                return res.status(400).json({ success: false, error: 'courseId y subjectId son requeridos' });
+            }
+            if (!startsAt || !endsAt) {
+                return res.status(400).json({ success: false, error: 'startsAt y endsAt son requeridos' });
+            }
+            const result = await this.periodService.startPeriod(req.user.userId, {
+                courseId: parseInt(courseId),
+                subjectId: parseInt(subjectId),
+                name,
+                startsAt,
+                endsAt,
+            });
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
     listBySubject = async (req, res, next) => {
         try {
             const result = await this.periodService.listBySubject(req.params.subjectId);
