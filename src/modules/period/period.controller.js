@@ -25,6 +25,7 @@ export class PeriodController {
         try {
             const { courseId, subjectId, name, startsAt, endsAt } = req.body || {};
             if (courseId == null || subjectId == null) {
+                console.error('[PeriodController] startPeriod validation failed — req.body:', JSON.stringify(req.body ?? null));
                 return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'courseId y subjectId son requeridos', statusCode: 400, received: { courseId, subjectId } } });
             }
             const result = await this.periodService.startPeriod(req.user.userId, {
