@@ -29,9 +29,12 @@ export class SupabasePeriodRepository {
             subject_id: subjectId,
             period_number: periodNumber,
             name,
-            snapshot,
             created_by: createdBy,
         };
+        // Only include snapshot when non-null: avoids storing JSONB "null" instead of SQL NULL.
+        // findActiveBySubject relies on `.is('snapshot', null)` (SQL IS NULL), which would miss
+        // a row with a JSONB null value, causing the legacy flow to run and creating a duplicate period.
+        if (snapshot !== null && snapshot !== undefined) row.snapshot = snapshot;
         if (startsAt) row.starts_at = startsAt;
         if (endsAt) row.ends_at = endsAt;
         const { data, error } = await this.client

@@ -21,7 +21,19 @@ export class PeriodDomainService {
             let period;
 
             // 2. Si existe un periodo activo (snapshot = null), cerrarlo actualizándolo
-            const activePeriod = await this.periodRepo.findActiveBySubject(sid);
+            let activePeriod = await this.periodRepo.findActiveBySubject(sid);
+
+            // Defensive fallback: if the SQL IS NULL query missed the active period (can happen
+            // when snapshot was stored as JSONB null instead of SQL NULL in older rows),
+            // scan all periods and pick the one without a snapshot.
+            if (!activePeriod) {
+                const allPeriods = await this.periodRepo.findBySubject(sid);
+                const unclosed = (allPeriods || [])
+                    .filter(p => p.snapshot == null)
+                    .sort((a, b) => b.periodNumber - a.periodNumber);
+                activePeriod = unclosed[0] || null;
+            }
+
             if (activePeriod) {
                 period = await this.periodRepo.closeById(activePeriod.id, {
                     snapshot: sheet,
