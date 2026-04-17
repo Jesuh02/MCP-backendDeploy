@@ -302,9 +302,9 @@ export function createContainer() {
     userService.setNotificationService(notificationService);
     progressService.setNotificationService(notificationService);
 
-    const gradeService = new GradeDomainService({ gradeRepository: gradeRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, progressService, taskRepository: taskRepo, submissionRepository: submissionRepo, progressRepository: progressRepo, userRepository: userRepo });
-
     const periodRepo = new SupabasePeriodRepository(client);
+    const gradeService = new GradeDomainService({ gradeRepository: gradeRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, progressService, taskRepository: taskRepo, submissionRepository: submissionRepo, progressRepository: progressRepo, userRepository: userRepo, periodRepository: periodRepo });
+
     const periodService = new PeriodDomainService({ periodRepository: periodRepo, gradeService, gradeRepository: gradeRepo });
 
     const paymentService = new PaymentDomainService({ transactionRepository: transactionRepo, courseRepository: courseRepo, paymentGatewayPort: paymentGateway, progressRepository: progressRepo, outboxRepo });
