@@ -29,9 +29,12 @@ export class SupabasePeriodRepository {
             subject_id: subjectId,
             period_number: periodNumber,
             name,
-            snapshot,
             created_by: createdBy,
         };
+        // Only include snapshot when non-null: avoids storing JSONB "null" instead of SQL NULL.
+        // findActiveBySubject relies on `.is('snapshot', null)` (SQL IS NULL), which would miss
+        // a row with a JSONB null value, causing the legacy flow to run and creating a duplicate period.
+        if (snapshot !== null && snapshot !== undefined) row.snapshot = snapshot;
         if (startsAt) row.starts_at = startsAt;
         if (endsAt) row.ends_at = endsAt;
         const { data, error } = await this.client
@@ -89,6 +92,38 @@ export class SupabasePeriodRepository {
         const { data, error } = await this.client
             .from(this._table())
             .update({ snapshot })
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw error;
+        return this._map(data);
+    }
+
+    /** Finds the active (not-yet-closed) period for a subject: snapshot IS NULL */
+    async findActiveBySubject(subjectId) {
+        const { data, error } = await this.client
+            .from(this._table())
+            .select('*')
+            .eq('subject_id', subjectId)
+            .is('snapshot', null)
+            .order('period_number', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (error) throw error;
+        return data ? this._map(data) : null;
+    }
+
+    /** Closes an active period by filling its snapshot, ends_at and closed_at */
+    async closeById(id, { snapshot, endsAt, name }) {
+        const updates = {
+            snapshot,
+            closed_at: new Date().toISOString(),
+        };
+        if (endsAt) updates.ends_at = endsAt;
+        if (name) updates.name = name;
+        const { data, error } = await this.client
+            .from(this._table())
+            .update(updates)
             .eq('id', id)
             .select()
             .single();

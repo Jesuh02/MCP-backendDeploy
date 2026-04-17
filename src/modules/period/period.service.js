@@ -18,24 +18,47 @@ export class PeriodDomainService {
             if (sheetResult.isFail()) return sheetResult;
             const sheet = sheetResult.getValue();
 
-            // 2. Siguiente número de periodo
-            const maxNum = await this.periodRepo.getMaxPeriodNumber(cid, sid);
-            const periodNumber = maxNum + 1;
-            const periodName = name || `Periodo ${periodNumber}`;
+            let period;
 
-            // 3. Guardar snapshot con fechas automáticas
-            const period = await this.periodRepo.create({
-                courseId: cid,
-                subjectId: sid,
-                periodNumber,
-                name: periodName,
-                snapshot: sheet,
-                createdBy: userId,
-                startsAt: startsAt || null,
-                endsAt: endsAt || new Date().toISOString(),
-            });
+            // 2. Si existe un periodo activo (snapshot = null), cerrarlo actualizándolo
+            let activePeriod = await this.periodRepo.findActiveBySubject(sid);
 
-            // 4. Limpiar notas manuales del subject para empezar de cero
+            // Defensive fallback: if the SQL IS NULL query missed the active period (can happen
+            // when snapshot was stored as JSONB null instead of SQL NULL in older rows),
+            // scan all periods and pick the one without a snapshot.
+            if (!activePeriod) {
+                const allPeriods = await this.periodRepo.findBySubject(sid);
+                const unclosed = (allPeriods || [])
+                    .filter(p => p.snapshot == null)
+                    .sort((a, b) => b.periodNumber - a.periodNumber);
+                activePeriod = unclosed[0] || null;
+            }
+
+            if (activePeriod) {
+                period = await this.periodRepo.closeById(activePeriod.id, {
+                    snapshot: sheet,
+                    endsAt: endsAt || new Date().toISOString(),
+                    name: name || undefined, // solo renombrar si se provee explícitamente
+                });
+            } else {
+                // Flujo legado: no se llamó startPeriod antes, crear directamente
+                const maxNum = await this.periodRepo.getMaxPeriodNumber(cid, sid);
+                const periodNumber = maxNum + 1;
+                const periodName = name || `Periodo ${periodNumber}`;
+
+                period = await this.periodRepo.create({
+                    courseId: cid,
+                    subjectId: sid,
+                    periodNumber,
+                    name: periodName,
+                    snapshot: sheet,
+                    createdBy: userId,
+                    startsAt: startsAt || null,
+                    endsAt: endsAt || new Date().toISOString(),
+                });
+            }
+
+            // 3. Limpiar notas manuales del subject para empezar de cero
             await this.gradeRepo.deleteBySubject(sid);
 
             return Result.ok(period);
