@@ -260,10 +260,15 @@ export class GradeDomainService {
 
         // 2b. Exclude tasks that were already captured in a closed period's snapshot.
         //     Only tasks created after the last period was closed belong to the current period.
-        if (tasks.length > 0 && this.periodRepo && typeof this.periodRepo.findBySubject === 'function') {
+        let closedPeriodsCount = 0;
+        let hasActivePeriod = false;
+        if (this.periodRepo && typeof this.periodRepo.findBySubject === 'function') {
             try {
                 const periods = await this.periodRepo.findBySubject(subjectId);
-                if (periods && periods.length > 0) {
+                const closedPeriods = (periods || []).filter(p => p.snapshot != null);
+                closedPeriodsCount = closedPeriods.length;
+                hasActivePeriod = (periods || []).some(p => p.snapshot == null);
+                if (tasks.length > 0 && periods && periods.length > 0) {
                     const archivedTaskIds = new Set();
                     for (const period of periods) {
                         const snapshotTasks = period.snapshot?.tasks ?? [];
@@ -331,6 +336,8 @@ export class GradeDomainService {
             tasks,
             manualGrades,
             taskGrades,
+            closedPeriodsCount,
+            hasActivePeriod,
         });
     }
 }
