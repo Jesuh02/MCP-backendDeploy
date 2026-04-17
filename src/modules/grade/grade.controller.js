@@ -104,7 +104,7 @@ export class GradeController {
             if (!Number.isInteger(subjectId) || subjectId <= 0) {
                 return res.status(400).json({ success: false, error: 'subjectId inválido' });
             }
-            const result = await this.gradeService.getGradeSheet(req.user.userId, subjectId);
+            const result = await this.gradeService.getGradeSheet(req.user.userId, subjectId, req.user.roles);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
