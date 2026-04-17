@@ -5,14 +5,16 @@ export class PeriodController {
 
     closePeriod = async (req, res, next) => {
         try {
-            const { courseId, subjectId, name } = req.body;
-            if (!courseId || !subjectId) {
-                return res.status(400).json({ success: false, error: 'courseId y subjectId son requeridos' });
+            const { courseId, subjectId, name, startsAt, endsAt } = req.body || {};
+            if (courseId == null || subjectId == null) {
+                return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'courseId y subjectId son requeridos', statusCode: 400, received: { courseId, subjectId } } });
             }
             const result = await this.periodService.closePeriod(req.user.userId, {
                 courseId: parseInt(courseId),
                 subjectId: parseInt(subjectId),
                 name,
+                startsAt: startsAt || null,
+                endsAt: endsAt || null,
             });
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
@@ -21,19 +23,17 @@ export class PeriodController {
 
     startPeriod = async (req, res, next) => {
         try {
-            const { courseId, subjectId, name, startsAt, endsAt } = req.body;
-            if (!courseId || !subjectId) {
-                return res.status(400).json({ success: false, error: 'courseId y subjectId son requeridos' });
-            }
-            if (!startsAt || !endsAt) {
-                return res.status(400).json({ success: false, error: 'startsAt y endsAt son requeridos' });
+            const { courseId, subjectId, name, startsAt, endsAt } = req.body || {};
+            if (courseId == null || subjectId == null) {
+                console.error('[PeriodController] startPeriod validation failed — req.body:', JSON.stringify(req.body ?? null));
+                return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'courseId y subjectId son requeridos', statusCode: 400, received: { courseId, subjectId } } });
             }
             const result = await this.periodService.startPeriod(req.user.userId, {
                 courseId: parseInt(courseId),
                 subjectId: parseInt(subjectId),
                 name,
-                startsAt,
-                endsAt,
+                startsAt: startsAt || new Date().toISOString(),
+                endsAt: endsAt || null,
             });
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
