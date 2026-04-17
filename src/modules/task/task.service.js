@@ -21,7 +21,7 @@ export class TaskDomainService {
      * @param {import('./ProgressDomainService.js').ProgressDomainService} [deps.progressService]
      * @param {import('./UserDomainService.js').UserDomainService} [deps.userService]
      */
-    constructor({ taskRepository, topicRepository, subjectRepository, courseRepository, collaboratorRepository, notificationService, courseService, progressService, userService }) {
+    constructor({ taskRepository, topicRepository, subjectRepository, courseRepository, collaboratorRepository, notificationService, courseService, progressService, userService, periodRepository }) {
         this.taskRepo = taskRepository;
         this.topicRepo = topicRepository;
         this.subjectRepo = subjectRepository || null;
@@ -31,6 +31,7 @@ export class TaskDomainService {
         this.courseService = courseService || null;
         this.progressService = progressService || null;
         this.userService = userService || null;
+        this.periodRepo = periodRepository || null;
         this.cacheTtlMs = 60000;
         this.taskCache = new Map();
         this.topicCache = new Map();
@@ -179,6 +180,30 @@ export class TaskDomainService {
             const canManage = await this._canManageSubject(requesterId, subject);
             if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para crear tareas en esta materia'));
             data.createdBy = requesterId;
+        }
+
+        // Auto-resolve periodo activo para asociar la tarea al periodo correcto.
+        // Si el cliente no envió periodId y tenemos un subject, buscamos el periodo activo.
+        // Si no hay periodo activo, usamos el más reciente (último cerrado).
+        if (data.periodId == null && subjectId && this.periodRepo) {
+            try {
+                let resolvedPeriodId = null;
+                const activePeriod = await this.periodRepo.findActiveBySubject(subjectId);
+                if (activePeriod) {
+                    resolvedPeriodId = activePeriod.id;
+                } else {
+                    // Sin periodo activo → asignar al periodo más reciente
+                    const allPeriods = await this.periodRepo.findBySubject(subjectId);
+                    if (allPeriods && allPeriods.length > 0) {
+                        // findBySubject devuelve ordenado por period_number ASC; tomamos el último
+                        resolvedPeriodId = allPeriods[allPeriods.length - 1].id;
+                    }
+                }
+                if (resolvedPeriodId != null) data.periodId = resolvedPeriodId;
+            } catch (err) {
+                // No bloquear la creación si falla la resolución del periodo
+                console.warn('[TaskDomainService] Could not resolve period for task:', err.message);
+            }
         }
 
         // Protección anti-duplicados: verificar si ya existe una tarea reciente con mismo título y tema

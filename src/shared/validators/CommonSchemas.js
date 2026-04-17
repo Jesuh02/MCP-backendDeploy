@@ -63,6 +63,8 @@ export const createTaskSchema = Joi.object({
     due_date: Joi.date().iso().allow(null).optional(),
     timeLimitMinutes: Joi.number().integer().min(1).allow(null).optional(),
     time_limit_minutes: Joi.number().integer().min(1).allow(null).optional(),
+    periodId: Joi.number().integer().allow(null).optional(),
+    period_id: Joi.number().integer().allow(null).optional(),
     orderIndex: Joi.number().integer().min(0).default(0),
     order_index: Joi.number().integer().min(0).optional(),
 }).custom((value, helpers) => {
@@ -72,9 +74,11 @@ export const createTaskSchema = Joi.object({
     if (value.timeLimitMinutes === undefined && value.time_limit_minutes !== undefined) {
         value.timeLimitMinutes = value.time_limit_minutes;
     }
+    if (value.periodId == null && value.period_id != null) value.periodId = value.period_id;
     delete value.topic_id;
     delete value.due_date;
     delete value.time_limit_minutes;
+    delete value.period_id;
     delete value.order_index;
     if (!value.topicId) return helpers.error('any.required', { key: 'topicId' });
     return value;

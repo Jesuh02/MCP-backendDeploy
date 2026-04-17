@@ -1305,19 +1305,15 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
                 let correctAnswer = String(q.correctAnswer ?? q.correct_answer ?? '').trim();
                 if (!correctAnswer) return null;
 
-                // Normalize numeric answers: strip thousand separators, limit decimals
+                // Normalize numeric answers: strip thousand separators only.
+                // DO NOT truncate decimals here — QuizMathValidator.verify() runs
+                // after normalization and will compute the correct precision.
+                // Truncating to 2 decimals caused 2777.778 → 2777.78 (wrong).
                 const numericClean = correctAnswer.replace(/,/g, '').replace(/\s/g, '');
                 const numericVal = Number(numericClean);
                 if (Number.isFinite(numericVal) && /^-?\d/.test(numericClean)) {
                     // Strip thousand separators from correct answer (always store as plain digits)
                     correctAnswer = numericClean;
-                    // Limit to max 2 decimal places
-                    if (correctAnswer.includes('.')) {
-                        const parts = correctAnswer.split('.');
-                        if (parts[1] && parts[1].length > 2) {
-                            correctAnswer = String(Math.round(numericVal * 100) / 100);
-                        }
-                    }
                 }
 
                 return {
