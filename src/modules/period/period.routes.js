@@ -6,6 +6,9 @@ export function periodRoutes({ periodController, requireRoles }) {
     // Docente/Admin: cerrar periodo (snapshot + reset)
     router.post('/', requireRoles(2, 3, 4), periodController.closePeriod);
 
+    // Docente/Admin: iniciar nuevo periodo con fechas
+    router.post('/start', requireRoles(2, 3, 4), periodController.startPeriod);
+
     // Cualquier usuario autenticado: listar periodos de una materia
     router.get('/subject/:subjectId', periodController.listBySubject);
 
@@ -19,7 +22,7 @@ export function periodRoutes({ periodController, requireRoles }) {
     router.put('/:periodId/grades', requireRoles(2, 3, 4), periodController.updateGrades);
 
     // Docente/Admin: eliminar periodo
-    router.delete('/:periodId', requireRoles(3, 4), periodController.deletePeriod);
+    router.delete('/:periodId', requireRoles(2, 3, 4), periodController.deletePeriod);
 
     return router;
 }
