@@ -5,9 +5,9 @@ export class PeriodController {
 
     closePeriod = async (req, res, next) => {
         try {
-            const { courseId, subjectId, name, startsAt, endsAt } = req.body;
-            if (!courseId || !subjectId) {
-                return res.status(400).json({ success: false, error: 'courseId y subjectId son requeridos' });
+            const { courseId, subjectId, name, startsAt, endsAt } = req.body || {};
+            if (courseId == null || subjectId == null) {
+                return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'courseId y subjectId son requeridos', statusCode: 400, received: { courseId, subjectId } } });
             }
             const result = await this.periodService.closePeriod(req.user.userId, {
                 courseId: parseInt(courseId),
@@ -23,9 +23,9 @@ export class PeriodController {
 
     startPeriod = async (req, res, next) => {
         try {
-            const { courseId, subjectId, name, startsAt, endsAt } = req.body;
-            if (!courseId || !subjectId) {
-                return res.status(400).json({ success: false, error: 'courseId y subjectId son requeridos' });
+            const { courseId, subjectId, name, startsAt, endsAt } = req.body || {};
+            if (courseId == null || subjectId == null) {
+                return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'courseId y subjectId son requeridos', statusCode: 400, received: { courseId, subjectId } } });
             }
             const result = await this.periodService.startPeriod(req.user.userId, {
                 courseId: parseInt(courseId),
