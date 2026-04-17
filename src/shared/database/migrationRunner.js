@@ -40,6 +40,31 @@ END;
 $$;
 `;
 
+// ─── Migración: añadir columnas starts_at / ends_at a grade_periods ────────
+const ADD_GRADE_PERIODS_COLS_SQL = `
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name   = 'grade_periods'
+          AND column_name  = 'starts_at'
+    ) THEN
+        ALTER TABLE public.grade_periods ADD COLUMN starts_at TIMESTAMPTZ;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name   = 'grade_periods'
+          AND column_name  = 'ends_at'
+    ) THEN
+        ALTER TABLE public.grade_periods ADD COLUMN ends_at TIMESTAMPTZ;
+    END IF;
+END;
+$$;
+`;
+
 // ─── Migración: crear execute_sql() para consultas dinámicas MCP ───────────
 const EXECUTE_SQL_FN = `
 CREATE OR REPLACE FUNCTION public.execute_sql(query text)
@@ -150,6 +175,14 @@ export async function runStartupMigrations() {
 
             // ── execute_sql function (required for MCP queries) ──
             await _ensureExecuteSqlFunction(client, label);
+
+            // ── grade_periods: ensure starts_at / ends_at columns exist ──
+            try {
+                await client.query(ADD_GRADE_PERIODS_COLS_SQL);
+                logger.info(`  ✅ [${label}] grade_periods starts_at/ends_at columns OK`);
+            } catch (colErr) {
+                logger.warn(`  ⚠️  [${label}] grade_periods column migration failed: ${colErr.message}`);
+            }
 
             // ── Trigger migration (primary only — certificates table may not exist in all tenants) ──
             if (label === 'primary') {
