@@ -30,9 +30,9 @@ export class PersonaDomainService {
         const q = String(query || '').trim();
         // If query contains letters, search by name; otherwise search by identificacion
         const hasLetters = /[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ]/.test(q);
-        const personas = hasLetters
-            ? await this.personaRepo.searchByName(q, limit)
-            : await this.personaRepo.searchByIdentificacion(q, limit);
+        const personas = hasLetters ?
+            await this.personaRepo.searchByName(q, limit) :
+            await this.personaRepo.searchByIdentificacion(q, limit);
         return Result.ok(personas);
     }
 
@@ -74,4 +74,3 @@ export class PersonaDomainService {
     }
 }
 export default PersonaDomainService;
-
