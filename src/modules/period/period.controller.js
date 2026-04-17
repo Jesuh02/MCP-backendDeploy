@@ -5,7 +5,7 @@ export class PeriodController {
 
     closePeriod = async (req, res, next) => {
         try {
-            const { courseId, subjectId, name } = req.body;
+            const { courseId, subjectId, name, startsAt, endsAt } = req.body;
             if (!courseId || !subjectId) {
                 return res.status(400).json({ success: false, error: 'courseId y subjectId son requeridos' });
             }
@@ -13,6 +13,26 @@ export class PeriodController {
                 courseId: parseInt(courseId),
                 subjectId: parseInt(subjectId),
                 name,
+                startsAt: startsAt || null,
+                endsAt: endsAt || null,
+            });
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    startPeriod = async (req, res, next) => {
+        try {
+            const { courseId, subjectId, name, startsAt, endsAt } = req.body;
+            if (!courseId || !subjectId) {
+                return res.status(400).json({ success: false, error: 'courseId y subjectId son requeridos' });
+            }
+            const result = await this.periodService.startPeriod(req.user.userId, {
+                courseId: parseInt(courseId),
+                subjectId: parseInt(subjectId),
+                name,
+                startsAt: startsAt || new Date().toISOString(),
+                endsAt: endsAt || null,
             });
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
