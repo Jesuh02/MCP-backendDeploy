@@ -55,7 +55,8 @@ export function idempotencyGuard(req, res, next) {
     // Agrupa TODOS los POST sin auth al mismo path+IP, sin importar el body,
     // para evitar flood de 401s por múltiples requests simultáneos.
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const hasCookieAuth = !!(req.cookies && req.cookies.access_token);
+    if (!hasCookieAuth && (!authHeader || !authHeader.startsWith('Bearer '))) {
         const unauthKey = buildUnauthKey(req);
         const now = Date.now();
         const existing = unauthThrottle.get(unauthKey);
