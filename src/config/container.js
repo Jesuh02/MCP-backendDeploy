@@ -356,7 +356,7 @@ export function createContainer() {
     });
 
     // Nivel 1: servicios que dependen de notificationService u otros servicios
-    const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, notificationService, courseService, progressService, userService });
+    const taskService = new TaskDomainService({ taskRepository: taskRepo, topicRepository: topicRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, notificationService, courseService, progressService, userService, periodRepository: periodRepo });
     const submissionService = new SubmissionDomainService({ submissionRepository: submissionRepo, taskRepository: taskRepo, progressRepository: progressRepo, progressService, notificationService, courseService, topicService, subjectService, userService, fileStoragePort: storageAdapter, collaboratorService });
     const likeService = new LikeDomainService({ likeRepository: likeRepo, notificationService, commentRepository: commentRepo, videoRepository: videoRepo, userRepository: userRepo });
     const commentService = new CommentDomainService({ commentRepository: commentRepo, videoRepository: videoRepo, notificationService, userRepository: userRepo });
