@@ -2,7 +2,7 @@
  * Task — Entidad de dominio para Tarea de un tema.
  *
  * Refleja exactamente las columnas de la tabla `tasks`:
- *   id, topic_id, title, description, due_date, time_limit_minutes, created_at
+ *   id, topic_id, title, description, due_date, time_limit_minutes, period_id, created_at
  *
  * Principio: la entidad de dominio usa camelCase; la capa de
  * infraestructura se encarga del mapeo snake_case ↔ camelCase.
@@ -16,15 +16,17 @@ export class Task {
      * @param {number}       props.topicId
      * @param {string|null}  props.dueDate
      * @param {number|null}  props.timeLimitMinutes
+     * @param {number|null}  props.periodId  — ID del periodo activo al momento de creación
      * @param {string|null}  props.createdAt
      */
-    constructor({ id = null, title, description = '', topicId, dueDate = null, timeLimitMinutes = null, createdAt = null } = {}) {
+    constructor({ id = null, title, description = '', topicId, dueDate = null, timeLimitMinutes = null, periodId = null, createdAt = null } = {}) {
         this.id = id;
         this.title = title;
         this.description = description;
         this.topicId = topicId;
         this.dueDate = dueDate;
         this.timeLimitMinutes = timeLimitMinutes;
+        this.periodId = periodId;
         this.createdAt = createdAt;
     }
 
@@ -41,6 +43,7 @@ export class Task {
             topicId: row.topic_id ?? row.topicId,
             dueDate: row.due_date ?? row.dueDate ?? null,
             timeLimitMinutes: row.time_limit_minutes ?? row.timeLimitMinutes ?? null,
+            periodId: row.period_id ?? row.periodId ?? null,
             createdAt: row.created_at ?? row.createdAt ?? null,
         });
     }
@@ -61,6 +64,8 @@ export class Task {
             due_date: this.dueDate,
             timeLimitMinutes: this.timeLimitMinutes,
             time_limit_minutes: this.timeLimitMinutes,
+            periodId: this.periodId,
+            period_id: this.periodId,
             createdAt: this.createdAt,
             created_at: this.createdAt,
         };
