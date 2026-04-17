@@ -128,6 +128,7 @@ export class UserController extends BaseController {
     deactivateUser = async(req, res, next) => {
         const userId = parseInt(req.params.id);
         if (!userId || userId <= 0) return next(new ValidationError('userId inválido'));
+        if (userId === req.user.userId) return next(new ValidationError('No puedes desactivarte a ti mismo'));
         this.store(req, res, next, () => this.userService.deactivateUser(userId));
     };
 
