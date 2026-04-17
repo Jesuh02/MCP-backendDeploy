@@ -96,6 +96,38 @@ export class SupabasePeriodRepository {
         return this._map(data);
     }
 
+    /** Finds the active (not-yet-closed) period for a subject: snapshot IS NULL */
+    async findActiveBySubject(subjectId) {
+        const { data, error } = await this.client
+            .from(this._table())
+            .select('*')
+            .eq('subject_id', subjectId)
+            .is('snapshot', null)
+            .order('period_number', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (error) throw error;
+        return data ? this._map(data) : null;
+    }
+
+    /** Closes an active period by filling its snapshot, ends_at and closed_at */
+    async closeById(id, { snapshot, endsAt, name }) {
+        const updates = {
+            snapshot,
+            closed_at: new Date().toISOString(),
+        };
+        if (endsAt) updates.ends_at = endsAt;
+        if (name) updates.name = name;
+        const { data, error } = await this.client
+            .from(this._table())
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw error;
+        return this._map(data);
+    }
+
     async delete(id) {
         const { error } = await this.client
             .from(this._table())
