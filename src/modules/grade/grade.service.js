@@ -10,7 +10,7 @@ function isValidGradeType(type) {
 }
 
 export class GradeDomainService {
-    constructor({ gradeRepository, subjectRepository, courseRepository, collaboratorRepository, progressService, taskRepository, submissionRepository, progressRepository, userRepository }) {
+    constructor({ gradeRepository, subjectRepository, courseRepository, collaboratorRepository, progressService, taskRepository, submissionRepository, progressRepository, userRepository, periodRepository }) {
         this.gradeRepo = gradeRepository;
         this.subjectRepo = subjectRepository;
         this.courseRepo = courseRepository;
@@ -20,6 +20,7 @@ export class GradeDomainService {
         this.collaboratorRepo = collaboratorRepository;
         this.progressService = progressService || null;
         this.userRepo = userRepository || null;
+        this.periodRepo = periodRepository || null;
     }
 
     async _canGradeSubject(userId, subjectId) {
@@ -255,6 +256,26 @@ export class GradeDomainService {
                 title: t.title || t.name || '(Sin título)',
                 topicId: t.topic_id || t.topicId,
             }));
+        }
+
+        // 2b. Exclude tasks that were already captured in a closed period's snapshot.
+        //     Only tasks created after the last period was closed belong to the current period.
+        if (tasks.length > 0 && this.periodRepo && typeof this.periodRepo.findBySubject === 'function') {
+            try {
+                const periods = await this.periodRepo.findBySubject(subjectId);
+                if (periods && periods.length > 0) {
+                    const archivedTaskIds = new Set();
+                    for (const period of periods) {
+                        const snapshotTasks = period.snapshot?.tasks ?? [];
+                        for (const t of snapshotTasks) {
+                            if (t && t.id != null) archivedTaskIds.add(Number(t.id));
+                        }
+                    }
+                    if (archivedTaskIds.size > 0) {
+                        tasks = tasks.filter(t => !archivedTaskIds.has(Number(t.id)));
+                    }
+                }
+            } catch (_) { /* If period lookup fails, continue without filtering */ }
         }
 
         // 3. Get all manual grades for this subject
