@@ -178,7 +178,13 @@ export class SubjectDomainService {
         const subject = await this._getSubject(subjectId);
         if (!subject) return Result.fail(new NotFoundError('Materia', subjectId));
         const canManage = await this._canManageSubject(requesterId, subject, requesterRoles);
-        if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso'));
+        if (!canManage) {
+            // Allow enrolled/invited students to view collaborators (read-only)
+            const isEnrolled = this.progressRepo
+                ? await this.progressRepo.isEnrolled(requesterId, subject.course_id)
+                : false;
+            if (!isEnrolled) return Result.fail(new ForbiddenError('No tienes permiso'));
+        }
         const collabs = await this.subjectRepo.findCollaboratorsBySubject(subjectId);
         return Result.ok(collabs);
     }
