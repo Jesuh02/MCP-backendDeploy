@@ -62,6 +62,7 @@ export class LLMService {
         this.primaryProvider = 'none';
         this.fallbackProvider = 'none';
         this._initialized = false;
+        this._initPromise = null;
         LLMService.instance = this;
     }
 
@@ -72,8 +73,15 @@ export class LLMService {
      */
     async _ensureInitialized() {
         if (this._initialized) return;
-        this._initialized = true;
+        // Use a shared promise so concurrent callers all await the same init
+        // instead of racing past the guard before this.model is assigned.
+        if (!this._initPromise) {
+            this._initPromise = this._doInit();
+        }
+        return this._initPromise;
+    }
 
+    async _doInit() {
         await ensureLangChainLoaded();
 
         // ── PRIMARY MODEL: Qwen3.6 Plus via OpenRouter ─────────────────────────
@@ -136,6 +144,7 @@ export class LLMService {
         } else {
             console.warn('⚠️ No LLM provider available (LangChain not loaded or disabled)');
         }
+        this._initialized = true;
     }
 
     async testConnection() {

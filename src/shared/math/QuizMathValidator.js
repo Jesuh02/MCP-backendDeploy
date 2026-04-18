@@ -1481,13 +1481,21 @@ export class QuizMathValidator {
         }
 
         // ─── Pattern C: Explicit "suma de N, N, N" ──────────────────────────
-        var numListRe = /(?:suma|total)\s+(?:de\s+)?(?:los\s+)?(?:n[u\xfa]meros?|valores?|cantidades?|pagos?|gastos?|ingresos?)?\s*(?::|es)?\s*([\d,.]+(?:\s*[,;+y]\s*[\d,.]+)+)/i;
-        var nlm = numListRe.exec(text);
-        if (nlm) {
-            var parts = nlm[1].split(/\s*[,;+]\s*|\s+y\s+/);
+        // Uses thousands-separator-aware extraction to avoid confusing commas
+        // inside numbers (e.g. 12,345,678) with commas separating list items.
+        var sumKeyRe = /(?:suma|total)\s+(?:de\s+)?(?:los\s+)?(?:n[u\xfa]meros?|valores?|cantidades?|pagos?|gastos?|ingresos?)?\s*(?::|es)?\s*/i;
+        var skm = sumKeyRe.exec(text);
+        if (skm) {
+            var afterKey = text.substring(skm.index + skm[0].length);
+            // Extract numbers using thousands-separator-aware regex:
+            // \d{1,3}(,\d{3})+ handles comma-formatted numbers (requires at least one comma group)
+            // \d+ handles plain numbers without commas
+            // Both optionally followed by .\d+ for decimals
+            var thousNumRe = /\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g;
             var nums = [];
-            for (var ni = 0; ni < parts.length; ni++) {
-                var nd = QuizMathValidator._parseDecimal(parts[ni].trim());
+            var tnm;
+            while ((tnm = thousNumRe.exec(afterKey)) !== null) {
+                var nd = QuizMathValidator._parseDecimal(tnm[0]);
                 if (nd) nums.push(nd);
             }
             if (nums.length >= 2) {
@@ -1533,7 +1541,22 @@ export class QuizMathValidator {
 
     static _parseDecimal(str) {
         if (!str) return null;
-        try { var d = new Decimal(String(str).replace(/,/g, '')); return d.isFinite() ? d : null; } catch (e) { return null; }
+        try {
+            var s = String(str).replace(/,/g, '');
+            // Handle sentence-ending periods captured by greedy [\d,.]+ regexes:
+            // e.g. "$2,222,222.2222." → after comma removal "2222222.2222." → two dots.
+            // Truncate at second dot to keep only the valid decimal portion.
+            var dotIdx = s.indexOf('.');
+            if (dotIdx >= 0) {
+                var secondDot = s.indexOf('.', dotIdx + 1);
+                if (secondDot >= 0) s = s.substring(0, secondDot);
+            }
+            // Strip any remaining trailing dots (standalone sentence terminators)
+            s = s.replace(/\.+$/, '');
+            if (!s) return null;
+            var d = new Decimal(s);
+            return d.isFinite() ? d : null;
+        } catch (e) { return null; }
     }
 
     static _applyDecimals(value, text) {
