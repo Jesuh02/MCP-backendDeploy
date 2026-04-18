@@ -56,14 +56,19 @@ export class LLMService {
         }
 
         this.model = null;
+        this.primaryModel = null;
+        this.fallbackModel = null;
         this.provider = 'none';
+        this.primaryProvider = 'none';
+        this.fallbackProvider = 'none';
         this._initialized = false;
         LLMService.instance = this;
     }
 
     /**
-     * Initializes the LLM provider lazily on first use.
-     * Separates construction from initialization (SRP).
+     * Initializes the LLM providers lazily on first use.
+     * Primary: Qwen3 Plus via OpenRouter.
+     * Fallback: DeepSeek via DeepSeek API (used when primary fails or times out).
      */
     async _ensureInitialized() {
         if (this._initialized) return;
@@ -71,10 +76,26 @@ export class LLMService {
 
         await ensureLangChainLoaded();
 
+        // ── PRIMARY MODEL: Qwen3 Plus via OpenRouter ──────────────────────────
+        const openRouterApiKey = process.env.OPENROUTER_API_KEY;
+        if (openRouterApiKey && ChatOpenAI) {
+            const modelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3-235b-a22b';
+            console.log(`🧠 Initializing PRIMARY model: ${modelName} via OpenRouter ...`);
+            this.primaryProvider = 'openrouter';
+            this.primaryModel = new ChatOpenAI({
+                openAIApiKey: openRouterApiKey,
+                configuration: {
+                    baseURL: 'https://openrouter.ai/api/v1',
+                },
+                modelName,
+                temperature: 0.3,
+                timeout: 120000,
+                maxRetries: 1,
+            });
+        }
+
+        // ── FALLBACK MODEL: DeepSeek ──────────────────────────────────────────
         const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
-        // enable DeepSeek automatically whenever an API key is configured, unless
-        // the user explicitly disables via USE_LLM="false".  This reduces the
-        // surprising case where DEEPSEEK_API_KEY is set but nothing happens.
         const useDeepSeek = Boolean(deepSeekApiKey) && process.env.USE_LLM !== 'false';
         if (deepSeekApiKey && process.env.USE_LLM !== 'true') {
             console.warn('[LLMService] DEEPSEEK_API_KEY present; enabling LLM even though USE_LLM!=true');
@@ -82,9 +103,9 @@ export class LLMService {
 
         if (useDeepSeek && ChatOpenAI) {
             const modelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-            console.log(`🧠 Initializing DeepSeek ${modelName} ...`);
-            this.provider = 'deepseek';
-            this.model = new ChatOpenAI({
+            console.log(`🧠 Initializing FALLBACK model: DeepSeek ${modelName} ...`);
+            this.fallbackProvider = 'deepseek';
+            this.fallbackModel = new ChatOpenAI({
                 openAIApiKey: deepSeekApiKey,
                 configuration: {
                     baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
@@ -94,6 +115,15 @@ export class LLMService {
                 timeout: 300000,
                 maxRetries: 2,
             });
+        }
+
+        // ── Set active model: primary preferred, fallback otherwise ───────────
+        if (this.primaryModel) {
+            this.model = this.primaryModel;
+            this.provider = this.primaryProvider;
+        } else if (this.fallbackModel) {
+            this.model = this.fallbackModel;
+            this.provider = this.fallbackProvider;
         } else if (ChatOllama) {
             console.log('Initializing Ollama LLM...');
             this.provider = 'ollama';
@@ -116,17 +146,52 @@ export class LLMService {
                 setTimeout(() => reject(new Error('Connection test timeout')), 30000)
             );
             await Promise.race([this.model.invoke("Hello"), timeoutPromise]);
-            const modelName = process.env.DEEPSEEK_MODEL || "deepseek-reasoner";
+            const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3-235b-a22b';
+            const fallbackModelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
             return {
                 status: 'connected',
                 provider: this.provider,
-                model: this.provider === 'deepseek' ? modelName : 'llama3:8b',
-                thinkingMode: modelName.includes('reasoner')
+                model: this.provider === 'openrouter' ? primaryModelName : (this.provider === 'deepseek' ? fallbackModelName : 'llama3:8b'),
+                hasFallback: !!this.fallbackModel,
+                fallbackProvider: this.fallbackProvider,
             };
         } catch (error) {
             console.error("LLM Connection failed:", error);
             return { status: 'error', error: error.message };
         }
+    }
+
+    /**
+     * Invokes a model with automatic fallback from primary (Qwen3/OpenRouter)
+     * to fallback (DeepSeek) on error or timeout.
+     * @param {Function} invokeFn - (model) => Promise<response>
+     * @returns {Promise<any>}
+     * @private
+     */
+    async _invokeWithFallback(invokeFn) {
+        const PRIMARY_TIMEOUT_MS = 60000; // 60s — fail fast to fallback
+
+        if (this.primaryModel && this.fallbackModel) {
+            try {
+                const result = await Promise.race([
+                    invokeFn(this.primaryModel),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Primary model timeout (60s)')), PRIMARY_TIMEOUT_MS)
+                    ),
+                ]);
+                console.log(`✅ Primary model (${this.primaryProvider}) responded successfully`);
+                return result;
+            } catch (err) {
+                console.warn(`⚠️ Primary model (${this.primaryProvider}) failed: ${err.message}. Falling back to ${this.fallbackProvider}...`);
+                const result = await invokeFn(this.fallbackModel);
+                console.log(`✅ Fallback model (${this.fallbackProvider}) responded successfully`);
+                return result;
+            }
+        }
+
+        // Only one model available
+        if (!this.model) throw new Error('LLM disabled');
+        return await invokeFn(this.model);
     }
 
     /**
@@ -175,7 +240,7 @@ export class LLMService {
 
             // If no tools, just invoke directly
             if (!tools || tools.length === 0) {
-                const response = await this.model.invoke(sanitizedMessages);
+                const response = await this._invokeWithFallback(model => model.invoke(sanitizedMessages));
 
                 // --- USER REQUESTED LOGGING ---
                 console.log("\n📤 [LLM RESPONSE] -------------------------------------------");
@@ -196,12 +261,13 @@ export class LLMService {
                 }
             }));
 
-            const modelWithTools = this.model.bind({
-                tools: formattedTools,
-                tool_choice: toolChoice, // "required" forces at least one tool call; "auto" lets model decide
+            const response = await this._invokeWithFallback(model => {
+                const modelWithTools = model.bind({
+                    tools: formattedTools,
+                    tool_choice: toolChoice,
+                });
+                return modelWithTools.invoke(sanitizedMessages);
             });
-
-            const response = await modelWithTools.invoke(sanitizedMessages);
 
             // --- USER REQUESTED LOGGING ---
             console.log("\n📤 [LLM RESPONSE (WITH TOOLS)] ------------------------------");
@@ -223,7 +289,7 @@ export class LLMService {
                 console.warn("Tool call error detected, retrying without tools...");
                 try {
                     const sanitizedMessages = this.sanitizeMessages(messages);
-                    const response = await this.model.invoke(sanitizedMessages);
+                    const response = await this._invokeWithFallback(model => model.invoke(sanitizedMessages));
 
                     // --- USER REQUESTED LOGGING ---
                     console.log("\n📤 [LLM RESPONSE (RETRY)] -----------------------------------");
