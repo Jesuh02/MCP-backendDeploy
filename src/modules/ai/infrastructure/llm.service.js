@@ -169,7 +169,7 @@ export class LLMService {
      * @private
      */
     async _invokeWithFallback(invokeFn) {
-        const PRIMARY_TIMEOUT_MS = 60000; // 60s — fail fast to fallback
+        const PRIMARY_TIMEOUT_MS = 180000; // 180s (3 min) — allow Qwen3.6 Plus time to respond
         const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
         const fallbackModelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 
@@ -179,7 +179,7 @@ export class LLMService {
                 const result = await Promise.race([
                     invokeFn(this.primaryModel),
                     new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Primary model timeout (60s)')), PRIMARY_TIMEOUT_MS)
+                        setTimeout(() => reject(new Error('Primary model timeout (3min)')), PRIMARY_TIMEOUT_MS)
                     ),
                 ]);
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
