@@ -67,7 +67,7 @@ export class LLMService {
 
     /**
      * Initializes the LLM providers lazily on first use.
-     * Primary: Qwen3 Plus via OpenRouter.
+     * Primary: Qwen3.6 Plus via OpenRouter.
      * Fallback: DeepSeek via DeepSeek API (used when primary fails or times out).
      */
     async _ensureInitialized() {
@@ -76,10 +76,10 @@ export class LLMService {
 
         await ensureLangChainLoaded();
 
-        // ── PRIMARY MODEL: Qwen3 Plus via OpenRouter ──────────────────────────
+        // ── PRIMARY MODEL: Qwen3.6 Plus via OpenRouter ─────────────────────────
         const openRouterApiKey = process.env.OPENROUTER_API_KEY;
         if (openRouterApiKey && ChatOpenAI) {
-            const modelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3-235b-a22b';
+            const modelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
             console.log(`🧠 Initializing PRIMARY model: ${modelName} via OpenRouter ...`);
             this.primaryProvider = 'openrouter';
             this.primaryModel = new ChatOpenAI({
@@ -146,7 +146,7 @@ export class LLMService {
                 setTimeout(() => reject(new Error('Connection test timeout')), 30000)
             );
             await Promise.race([this.model.invoke("Hello"), timeoutPromise]);
-            const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3-235b-a22b';
+            const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
             const fallbackModelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
             return {
                 status: 'connected',
@@ -162,7 +162,7 @@ export class LLMService {
     }
 
     /**
-     * Invokes a model with automatic fallback from primary (Qwen3/OpenRouter)
+     * Invokes a model with automatic fallback from primary (Qwen3.6 Plus/OpenRouter)
      * to fallback (DeepSeek) on error or timeout.
      * @param {Function} invokeFn - (model) => Promise<response>
      * @returns {Promise<any>}
@@ -170,28 +170,39 @@ export class LLMService {
      */
     async _invokeWithFallback(invokeFn) {
         const PRIMARY_TIMEOUT_MS = 60000; // 60s — fail fast to fallback
+        const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
+        const fallbackModelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 
         if (this.primaryModel && this.fallbackModel) {
             try {
+                const startTime = Date.now();
                 const result = await Promise.race([
                     invokeFn(this.primaryModel),
                     new Promise((_, reject) =>
                         setTimeout(() => reject(new Error('Primary model timeout (60s)')), PRIMARY_TIMEOUT_MS)
                     ),
                 ]);
-                console.log(`✅ Primary model (${this.primaryProvider}) responded successfully`);
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                console.log(`✅ RESPONDIÓ: Qwen3.6 Plus (${primaryModelName}) vía OpenRouter en ${elapsed}s`);
                 return result;
             } catch (err) {
-                console.warn(`⚠️ Primary model (${this.primaryProvider}) failed: ${err.message}. Falling back to ${this.fallbackProvider}...`);
+                console.warn(`⚠️ Qwen3.6 Plus (${primaryModelName}) FALLÓ: ${err.message}. Cambiando a DeepSeek (${fallbackModelName})...`);
+                const startTime = Date.now();
                 const result = await invokeFn(this.fallbackModel);
-                console.log(`✅ Fallback model (${this.fallbackProvider}) responded successfully`);
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                console.log(`✅ RESPONDIÓ: DeepSeek (${fallbackModelName}) vía DeepSeek API en ${elapsed}s (fallback)`);
                 return result;
             }
         }
 
         // Only one model available
         if (!this.model) throw new Error('LLM disabled');
-        return await invokeFn(this.model);
+        const singleModelName = this.provider === 'openrouter' ? primaryModelName : (this.provider === 'deepseek' ? fallbackModelName : 'ollama');
+        const startTime = Date.now();
+        const result = await invokeFn(this.model);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`✅ RESPONDIÓ: ${singleModelName} (${this.provider}) en ${elapsed}s`);
+        return result;
     }
 
     /**
