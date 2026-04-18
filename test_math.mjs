@@ -423,3 +423,49 @@ var rb9a = QuizMathValidator.computeExpectedAnswer(textB9a);
 console.log('Test B9a (Sum-then-discount):', rb9a ? rb9a.value.toString() : 'NULL');
 var b9aExpected = rb9a && rb9a.value.gt(40000000);
 console.log('  Total > 40M:', b9aExpected ? '✅ (used all 4 quarters)' : '❌ (likely used only 1 value)');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 10: 4-operand omission — system summed only 3 of 4 numbers
+// Root cause: [\d,.]+ regex captured sentence-ending period (.) as part of
+// the last number, creating a double-dot value that _parseDecimal rejected.
+// Also: Pattern C in _tryExplicitSumProblem couldn't distinguish commas
+// inside numbers (thousands) from commas between list items.
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== BUG FIX 10: 4-operand omission ===');
+
+// Test B10a: Q-labeled values with sentence-ending period after last number
+var textB10a = 'Una empresa reporta valores trimestrales: Q1=$12,345,678.9876, Q2=$9,876,543.2109, Q3=$5,555,555.5555, Q4=$2,222,222.2222. ¿Cuánto es el monto total?';
+var rb10a = QuizMathValidator.computeExpectedAnswer(textB10a);
+console.log('Test B10a (4 Q-labeled $):', rb10a ? rb10a.value.toString() : 'NULL',
+    rb10a && rb10a.value.toString() === '29999999.9762' ? '✅' : '❌ expected 29999999.9762');
+
+// Test B10b: Comma-separated list with "y" connector and thousands separators
+var textB10b = 'Calcula la suma total de los valores 12,345,678.9876, 9,876,543.2109, 5,555,555.5555 y 2,222,222.2222';
+var rb10b = QuizMathValidator.computeExpectedAnswer(textB10b);
+console.log('Test B10b (comma-list + y):', rb10b ? rb10b.value.toString() : 'NULL',
+    rb10b && rb10b.value.toString() === '29999999.9762' ? '✅' : '❌ expected 29999999.9762');
+
+// Test B10c: Digit-position problem must use ALL 4 numbers
+var textB10c = '¿Cuál es el dígito en la posición de las decenas de millón de la suma de 12,345,678.9876 + 9,876,543.2109 + 5,555,555.5555 + 2,222,222.2222 redondeada a 3 decimales?';
+var rb10c = QuizMathValidator.computeExpectedAnswer(textB10c);
+// Sum = 29,999,999.9762 → int = 29999999 → decenas de millón (10^7) = 2
+console.log('Test B10c (digit pos 4 nums):', rb10c ? rb10c.value.toString() : 'NULL',
+    rb10c && rb10c.value.toString() === '2' ? '✅' : '❌ expected 2 (NOT 7 from 3-number sum)');
+
+// Test B10d: verify() must correct LLM answer based on 3 numbers to correct 4-number answer
+var qb10d = {
+    type: 'fill_in_blank',
+    question: '¿Cuál es el dígito en la posición de las decenas de millón de la suma de 12,345,678.9876 + 9,876,543.2109 + 5,555,555.5555 + 2,222,222.2222 redondeada a 3 decimales?',
+    correctAnswer: '7',
+    explanation: 'La suma es 27,777,777.754, el dígito en decenas de millón es 7'
+};
+var rb10d = QuizMathValidator.verify(qb10d);
+console.log('Test B10d (verify corrects 7→2):', rb10d ? rb10d.correctAnswer : 'NULL',
+    rb10d && rb10d.correctAnswer === '2' ? '✅' : '❌ expected 2');
+
+// Test B10e: Labeled values without $ (A=, B=, C=, D=) ending with period
+var textB10e = 'Calcula la suma de los siguientes valores: A = 12,345,678.9876, B = 9,876,543.2109, C = 5,555,555.5555, D = 2,222,222.2222.';
+var rb10e = QuizMathValidator.computeExpectedAnswer(textB10e);
+console.log('Test B10e (labeled A=B=C=D=.):', rb10e ? rb10e.value.toString() : 'NULL',
+    rb10e && rb10e.value.toString() === '29999999.9762' ? '✅' : '❌ expected 29999999.9762');
