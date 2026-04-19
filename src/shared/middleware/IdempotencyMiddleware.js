@@ -47,9 +47,16 @@ function buildUnauthKey(req) {
     return `unauth:${req.method}:${req.path}:${ip}`;
 }
 
+// Paths where each identical POST intentionally produces a different effect
+// (e.g. toggle endpoints). They must NOT be deduplicated.
+const EXCLUDED_PATHS = ['/likes/toggle'];
+
 export function idempotencyGuard(req, res, next) {
     // Solo aplicar a métodos de escritura
     if (req.method !== 'POST') return next();
+
+    // Skip idempotency for intentional toggle endpoints
+    if (EXCLUDED_PATHS.some(p => req.path.endsWith(p))) return next();
 
     // ── Throttle para requests sin token de autenticación ──
     // Agrupa TODOS los POST sin auth al mismo path+IP, sin importar el body,
