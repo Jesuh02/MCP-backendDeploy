@@ -469,3 +469,119 @@ var textB10e = 'Calcula la suma de los siguientes valores: A = 12,345,678.9876, 
 var rb10e = QuizMathValidator.computeExpectedAnswer(textB10e);
 console.log('Test B10e (labeled A=B=C=D=.):', rb10e ? rb10e.value.toString() : 'NULL',
     rb10e && rb10e.value.toString() === '29999999.9762' ? '✅' : '❌ expected 29999999.9762');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 11: Tax not applied — "impuesto corporativo del 18.5%"
+// The system computed the gross total correctly but failed to apply the tax
+// because the regex didn't allow modifier words (like "corporativo") between
+// the keyword "impuesto" and "del X%".
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== BUG FIX 11: Corporate tax / modifier words in tax regex ===');
+
+// Test B11a: Sum + corporate tax (deduction)
+var textB11a = 'Una empresa reportó ingresos trimestrales: Q1=$5,000,000, Q2=$6,000,000, Q3=$7,591,348, Q4=$6,000,000. Calcula el monto final después de aplicar un impuesto corporativo del 18.5%. Redondea al entero';
+var rb11a = QuizMathValidator.computeExpectedAnswer(textB11a);
+// Total = 5000000 + 6000000 + 7591348 + 6000000 = 24591348
+// After 18.5% corporate tax (deduction): 24591348 × (1 - 0.185) = 24591348 × 0.815 = 20041948.62 → 20041949
+console.log('Test B11a (Sum + corporate tax):', rb11a ? rb11a.value.toString() : 'NULL');
+var b11aExpected = rb11a && rb11a.value.toDecimalPlaces(0).toString() === '20041949';
+console.log('  Expected 20041949:', b11aExpected ? '✅' : '❌ (tax was NOT applied or wrong)');
+
+// Test B11b: Single value + impuesto corporativo
+var textB11b = 'Un ingreso de $100,000 con impuesto corporativo del 30%. ¿Cuál es el monto neto?';
+var rb11b = QuizMathValidator.computeExpectedAnswer(textB11b);
+// 100000 × (1 - 0.30) = 70000
+console.log('Test B11b (Single + corporate tax):', rb11b ? rb11b.value.toString() : 'NULL',
+    rb11b && rb11b.value.toString() === '70000' ? '✅' : '❌ expected 70000');
+
+// Test B11c: Impuesto sobre la renta
+var textB11c = 'Calcula el ingreso neto de $50,000 después de aplicar un impuesto sobre la renta del 25%';
+var rb11c = QuizMathValidator.computeExpectedAnswer(textB11c);
+// 50000 × (1 - 0.25) = 37500
+console.log('Test B11c (Income tax):', rb11c ? rb11c.value.toString() : 'NULL',
+    rb11c && rb11c.value.toString() === '37500' ? '✅' : '❌ expected 37500');
+
+// Test B11d: IVA should still ADD (not deduct)
+var textB11d = 'Calcula el total de $1000 con IVA del 16%';
+var rb11d = QuizMathValidator.computeExpectedAnswer(textB11d);
+console.log('Test B11d (IVA still adds):', rb11d ? rb11d.value.toString() : 'NULL',
+    rb11d && rb11d.value.toString() === '1160' ? '✅' : '❌ expected 1160 (IVA adds, not deducts)');
+
+// Test B11e: verify() must correct when tax was omitted
+var qb11e = {
+    type: 'fill_in_blank',
+    question: 'Una empresa tiene ingresos de $24,591,348. Calcula el monto final después de un impuesto corporativo del 18.5%. Redondea al entero',
+    correctAnswer: '24591348',
+    explanation: 'El ingreso total es 24591348'
+};
+var rb11e = QuizMathValidator.verify(qb11e);
+console.log('Test B11e (verify corrects missing tax):', rb11e ? rb11e.correctAnswer : 'NULL',
+    rb11e && rb11e.correctAnswer === '20041949' ? '✅' : '❌ expected 20041949');
+
+// Test B11f: Sum + impuesto estatal (another modifier word)
+var textB11f = 'Ventas totales: $10,000 + $15,000 + $25,000. Aplica impuesto estatal del 10%';
+var rb11f = QuizMathValidator.computeExpectedAnswer(textB11f);
+// Sum = 50000, + 10% = 55000 (estatal is not deductible)
+console.log('Test B11f (Sum + state tax):', rb11f ? rb11f.value.toString() : 'NULL',
+    rb11f && rb11f.value.toString() === '55000' ? '✅' : '❌ expected 55000');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 12: Digit sum — system stopped at intermediate result
+// The system computed the sum correctly but ignored the instruction to
+// calculate the sum of the individual digits of the result.
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== BUG FIX 12: Digit sum post-processing ===');
+
+// Test B12a: Sum of 4 integers, then sum of digits
+var textB12a = 'Suma los siguientes enteros: 9,876,543 + 8,765,432 + 7,654,321 + 6,543,210. Luego calcula la suma de sus dígitos individuales';
+var rb12a = QuizMathValidator.computeExpectedAnswer(textB12a);
+// Sum = 32,839,506 → digits: 3+2+8+3+9+5+0+6 = 36
+console.log('Test B12a (Sum then digit sum):', rb12a ? rb12a.value.toString() : 'NULL',
+    rb12a && rb12a.value.toString() === '36' ? '✅' : '❌ expected 36 (NOT 32839506)');
+
+// Test B12b: Single number digit sum
+var textB12b = '¿Cuál es la suma de los dígitos de 123456789?';
+var rb12b = QuizMathValidator.computeExpectedAnswer(textB12b);
+// 1+2+3+4+5+6+7+8+9 = 45
+console.log('Test B12b (Single number digit sum):', rb12b ? rb12b.value.toString() : 'NULL',
+    rb12b && rb12b.value.toString() === '45' ? '✅' : '❌ expected 45');
+
+// Test B12c: verify() must correct fill_in_blank that gave intermediate result
+var qb12c = {
+    type: 'fill_in_blank',
+    question: 'Suma 9,876,543 + 8,765,432 + 7,654,321 + 6,543,210 y calcula la suma de sus dígitos individuales',
+    correctAnswer: '32839506',
+    explanation: 'La suma es 32839506'
+};
+var rb12c = QuizMathValidator.verify(qb12c);
+console.log('Test B12c (verify digit sum correction):', rb12c ? rb12c.correctAnswer : 'NULL',
+    rb12c && rb12c.correctAnswer === '36' ? '✅' : '❌ expected 36');
+
+// Test B12d: MC with digit sum answer
+var qb12d = {
+    type: 'multiple_choice',
+    question: 'Calcula 5000 + 3000 + 2000 y encuentra la suma de los dígitos del resultado',
+    options: ['A) 10000', 'B) 10', 'C) 1', 'D) 100'],
+    correctIndex: 0,
+    explanation: 'El resultado es 10000'
+};
+var rb12d = QuizMathValidator.verify(qb12d);
+// 5000+3000+2000 = 10000, digits: 1+0+0+0+0 = 1
+console.log('Test B12d (MC digit sum):', rb12d ? 'index=' + rb12d.correctIndex + (rb12d.correctIndex === 2 ? ' ✅' : ' ❌ expected 2 (C: 1)') : 'REJECTED ❌');
+
+// Test B12e: Sumar los dígitos variant
+var textB12e = 'Calcula 999 + 111 y luego suma los dígitos del resultado';
+var rb12e = QuizMathValidator.computeExpectedAnswer(textB12e);
+// 999 + 111 = 1110, digits: 1+1+1+0 = 3
+console.log('Test B12e (Sumar dígitos variant):', rb12e ? rb12e.value.toString() : 'NULL',
+    rb12e && rb12e.value.toString() === '3' ? '✅' : '❌ expected 3');
+
+// Test B12f: Normal sum should NOT trigger digit sum
+var textB12f = 'Calcula la suma total: $1500 + $2300 + $750';
+var rb12f = QuizMathValidator.computeExpectedAnswer(textB12f);
+console.log('Test B12f (Normal sum, no digit sum):', rb12f ? rb12f.value.toString() : 'NULL',
+    rb12f && rb12f.value.toString() === '4550' ? '✅' : '❌ expected 4550 (should NOT do digit sum)');
+
+console.log('\n--- All tests completed ---');

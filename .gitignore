@@ -120,3 +120,6 @@ scripts/migration_requested_role.sql
 tsc_check.txt
 scripts/migration_grade_periods.sql
 scripts/migrate_tasks_period_id.sql
+scripts/consulidadodenotas.txt
+scripts/periodos.txt
+scripts/reporte_plataforma_1776619148463.xlsx
