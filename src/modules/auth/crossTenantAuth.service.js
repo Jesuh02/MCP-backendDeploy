@@ -347,10 +347,11 @@ export class CrossTenantAuthService {
             const valid = await this._verifyPassword(userRepo, user, password);
             if (!valid) return null;
 
-            await this._enrichWithInstitution(user, instRepo);
-
-            // Fetch the persona's cedula hash so _resolveMatches can verify identity
-            const cedulaHash = await this._fetchCedulaHash(entry.client, user);
+            // Run institution enrichment and cedula fetch in parallel (saves ~100-200ms)
+            const [, cedulaHash] = await Promise.all([
+                this._enrichWithInstitution(user, instRepo),
+                this._fetchCedulaHash(entry.client, user),
+            ]);
 
             const match = this._buildMatch(entry, user);
             match._cedulaHash = cedulaHash; // attached for cross-tenant identity check
@@ -423,10 +424,11 @@ export class CrossTenantAuthService {
                 try { await userRepo.update(user.id, { avatar: avatarUrl }); user.avatar = avatarUrl; } catch { /* ignore */ }
             }
 
-            await this._enrichWithInstitution(user, instRepo);
-
-            // Fetch cedula hash so _resolveMatches can verify identity across tenants
-            const cedulaHash = await this._fetchCedulaHash(entry.client, user);
+            // Run institution enrichment and cedula fetch in parallel (saves ~100-200ms)
+            const [, cedulaHash] = await Promise.all([
+                this._enrichWithInstitution(user, instRepo),
+                this._fetchCedulaHash(entry.client, user),
+            ]);
             const match = { ...this._buildMatch(entry, user), isNewUser: false };
             match._cedulaHash = cedulaHash;
 
