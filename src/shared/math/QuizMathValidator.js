@@ -1615,9 +1615,48 @@ export class QuizMathValidator {
     }
 
     static _applyDecimals(value, text) {
-        var match = text.match(/redonde[ao].*?(\d+)\s*decimal/i) || text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i) || text.match(/(?:con|a)\s+(\d+)\s+decimal/i);
-        if (match) return value.toDecimalPlaces(parseInt(match[1]));
-        if (/redonde[ao]\s+a(?:l)?\s+entero/i.test(text)) return value.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+        if (!value || typeof value.toDecimalPlaces !== 'function') return value;
+
+        // 1) Explicit number of decimal places requested: "con 3 decimales",
+        //    "redondea a 2 decimales", "3 cifras decimales", etc.
+        var match = text.match(/redonde[ao]\w*\s+(?:a|hasta|con)?\s*(\d+)\s*(?:cifras?\s+)?decimal/i) ||
+            text.match(/(\d+)\s*(?:cifras?\s+)?decimal(?:es)?/i) ||
+            text.match(/(?:con|a|hasta)\s+(\d+)\s+decimal/i);
+        if (match) {
+            var n = parseInt(match[1], 10);
+            if (isFinite(n) && n >= 0 && n <= 20) {
+                return value.toDecimalPlaces(n, Decimal.ROUND_HALF_UP);
+            }
+        }
+
+        // 2) Round-to-integer signals. Accept a wide range of Spanish phrasings:
+        //    "redondea al entero", "redondea al entero más cercano",
+        //    "redondear al número entero", "redondeado al entero más próximo",
+        //    "expresa como número entero", "al entero inmediato",
+        //    "sin decimales", "sin centavos", "en pesos enteros",
+        //    "al peso/dólar/euro más cercano", etc.
+        var intSignals = [
+            /redonde[ae]\w*\s+(?:el\s+(?:resultado|valor|total)\s+)?(?:a(?:l)?|hasta|en)\s+(?:el\s+|un\s+|n[u\xfa]mero\s+)?enter[oa]s?(?:\s+(?:m[a\xe1]s\s+(?:cercano|pr[o\xf3]ximo)|inmediato|superior|inferior))?/i,
+            /aproxim\w*\s+a(?:l)?\s+(?:el\s+|un\s+)?enter[oa]/i,
+            /(?:resultado|respuesta|valor|total|monto)\s+(?:como\s+|en\s+)?(?:un\s+)?n[u\xfa]mero\s+enter[oa]/i,
+            /expres[ae]\w*\s+(?:el\s+)?(?:resultado|valor|total)?\s*(?:como\s+|en\s+)?(?:un\s+)?n[u\xfa]mero\s+enter[oa]/i,
+            /\b(?:sin|omite|omitiendo)\s+decimal(?:es)?/i,
+            /\b(?:sin|omite|omitiendo)\s+centavos?/i,
+            /\b(?:en|a)\s+(?:pesos|d[o\xf3]lares|euros|soles|bolivianos|quetzales)\s+enter[oa]s/i,
+            /al\s+(?:peso|d[o\xf3]lar|euro|sol|boliviano|quetzal|yen|real)\s+(?:m[a\xe1]s\s+cercano|entero)/i,
+            /al\s+enter[oa]\s+(?:m[a\xe1]s\s+(?:cercano|pr[o\xf3]ximo)|inmediato)/i,
+        ];
+        for (var i = 0; i < intSignals.length; i++) {
+            if (intSignals[i].test(text)) {
+                return value.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+            }
+        }
+
+        // 3) "Al centavo más cercano" → 2 decimal places.
+        if (/al\s+centavo\s+(?:m[a\xe1]s\s+(?:cercano|pr[o\xf3]ximo)|entero)/i.test(text)) {
+            return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        }
+
         return value;
     }
 
