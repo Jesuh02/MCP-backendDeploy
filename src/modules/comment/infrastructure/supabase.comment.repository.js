@@ -31,7 +31,6 @@ export class SupabaseCommentRepository {
     async update(id, updateData) {
         const payload = {};
         if (updateData.content !== undefined) payload.comment = updateData.content; // Map content -> comment
-        payload.updated_at = new Date().toISOString();
         const { data, error } = await this.client.from('video_comments').update(payload).eq('id', id).select('*, usuarios!usuario_id(username)').single();
         if (error) throw new Error(error.message);
         return this._mapToDomain(data);
