@@ -584,4 +584,118 @@ var rb12f = QuizMathValidator.computeExpectedAnswer(textB12f);
 console.log('Test B12f (Normal sum, no digit sum):', rb12f ? rb12f.value.toString() : 'NULL',
     rb12f && rb12f.value.toString() === '4550' ? '✅' : '❌ expected 4550 (should NOT do digit sum)');
 
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 13: Rounding variants must ALL trigger integer rounding
+// Real bug: "57,150,617.17953" must become "57150617" when problem ends with
+// "redondea al entero más cercano" or similar phrasings.
+// Test _applyDecimals directly for deterministic regex coverage.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n=== BUG FIX 13: Robust integer rounding variants (_applyDecimals) ===');
+
+// Import Decimal for direct _applyDecimals tests
+const DecimalMod = (await import('decimal.js')).default;
+
+function testRound(label, text, rawValue, expected) {
+    var v = new DecimalMod(rawValue);
+    var out = QuizMathValidator._applyDecimals(v, text);
+    var got = out.toString();
+    console.log(label + ':', got, got === expected ? '✅' : '❌ expected ' + expected + ' (input text: "' + text + '")');
+}
+
+// B13a: real user case — "redondea al entero más cercano"
+testRound(
+    'Test B13a (al entero más cercano)',
+    'Calcula el monto y redondea al entero más cercano',
+    '57150617.17953',
+    '57150617'
+);
+
+// B13b: "al número entero más cercano"
+testRound(
+    'Test B13b (al número entero más cercano)',
+    'redondea al número entero más cercano',
+    '2.7777',
+    '3'
+);
+
+// B13c: "redondeado al entero"
+testRound(
+    'Test B13c (redondeado al entero)',
+    'el resultado redondeado al entero',
+    '1234.567',
+    '1235'
+);
+
+// B13d: "al peso más cercano"
+testRound(
+    'Test B13d (al peso más cercano)',
+    'expresa el monto al peso más cercano',
+    '1777.5',
+    '1778'
+);
+
+// B13e: "sin decimales"
+testRound(
+    'Test B13e (sin decimales)',
+    'da el resultado sin decimales',
+    '166.5',
+    '167'
+);
+
+// B13f: "expresa como número entero"
+testRound(
+    'Test B13f (expresa como número entero)',
+    'expresa el resultado como número entero',
+    '1369.5',
+    '1370'
+);
+
+// B13g: "al centavo más cercano" → 2 decimals
+testRound(
+    'Test B13g (al centavo más cercano)',
+    'redondea al centavo más cercano',
+    '33.33333',
+    '33.33'
+);
+
+// B13h: "aproxima al entero"
+testRound(
+    'Test B13h (aproxima al entero)',
+    'aproxima al entero',
+    '99.6',
+    '100'
+);
+
+// B13i: "en pesos enteros"
+testRound(
+    'Test B13i (en pesos enteros)',
+    'expresa la respuesta en pesos enteros',
+    '4321.78',
+    '4322'
+);
+
+// B13j: existing "3 decimales" still works
+testRound(
+    'Test B13j (3 decimales)',
+    'Calcula con 3 decimales',
+    '2.77777',
+    '2.778'
+);
+
+// B13k: existing "redondea a entero" still works (regression)
+testRound(
+    'Test B13k (redondea a entero)',
+    'Redondea a entero',
+    '46089.5',
+    '46090'
+);
+
+// B13l: no rounding signal → value unchanged
+testRound(
+    'Test B13l (no signal)',
+    'Calcula el total',
+    '57150617.17953',
+    '57150617.17953'
+);
+
 console.log('\n--- All tests completed ---');
