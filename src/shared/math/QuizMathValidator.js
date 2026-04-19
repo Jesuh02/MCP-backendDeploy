@@ -51,6 +51,14 @@ const OPTION_ABS_TOLERANCE = new Decimal('0.01');
 // the question is considered mathematically broken (LLM fabricated options).
 const BROKEN_QUESTION_FACTOR = new Decimal('10');
 
+// Patterns that indicate the question asks for the sum of digits of a result
+const DIGIT_SUM_PATTERNS = [
+    /suma\s+(?:de\s+)?(?:los\s+|sus\s+)?d[i\xed]gitos/i,
+    /sumar\s+(?:los\s+|sus\s+)?d[i\xed]gitos/i,
+    /total\s+de\s+(?:los\s+|sus\s+)?d[i\xed]gitos/i,
+    /d[i\xed]gitos?\s+individuales/i,
+];
+
 export class QuizMathValidator {
 
     static verify(q) {
@@ -144,6 +152,46 @@ export class QuizMathValidator {
     }
 
     static computeExpectedAnswer(text) {
+        var result = QuizMathValidator._computeRawAnswer(text);
+
+        // Post-processing: if the question asks for the sum of digits of the result
+        var wantsDigitSum = DIGIT_SUM_PATTERNS.some(function(re) { return re.test(text); });
+        if (wantsDigitSum) {
+            var baseValue = result ? result.value : null;
+            var baseSteps = result ? result.steps.slice() : [];
+
+            // If no computed result, try to extract a single target number
+            if (!baseValue) {
+                var cleaned = text.replace(/[$\u20ac\xa5\xa3\u20a1\u20bf]\s*/g, '');
+                var numRe = /\d[\d,]*\.?\d*/g;
+                var nm;
+                var nums = [];
+                while ((nm = numRe.exec(cleaned)) !== null) {
+                    var parsed = QuizMathValidator._parseDecimal(nm[0]);
+                    if (parsed !== null && parsed.gte(10)) nums.push(parsed);
+                }
+                if (nums.length === 1) {
+                    baseValue = nums[0];
+                    baseSteps = ['N\xfamero: ' + baseValue];
+                }
+            }
+
+            if (baseValue) {
+                var intPart = baseValue.abs().floor().toFixed(0);
+                var dSum = 0;
+                for (var di = 0; di < intPart.length; di++) {
+                    if (intPart[di] >= '0' && intPart[di] <= '9') dSum += parseInt(intPart[di], 10);
+                }
+                var digitStr = intPart.split('').filter(function(c) { return c >= '0' && c <= '9'; }).join(' + ');
+                baseSteps.push('Suma de d\xedgitos de ' + intPart + ': ' + digitStr + ' = ' + dSum);
+                return { value: new Decimal(dSum), steps: baseSteps };
+            }
+        }
+
+        return result;
+    }
+
+    static _computeRawAnswer(text) {
         // Strategy 0: Digit-position meta-questions (highest priority — prevents
         // downstream strategies from misinterpreting digit position text as arithmetic)
         var digit = QuizMathValidator._tryDigitPositionProblem(text);
@@ -1242,8 +1290,8 @@ export class QuizMathValidator {
         // SKIP if multiple values need summing first (let Strategy 9 handle it)
         if (!hasMultipleSummableValues) {
         var taxPatterns = [
-            /\$?\s*([\d,.]+)[\s\S]{0,80}?(?:impuesto|IVA|ISR|recargo|inter[e\xe9]s|incremento|aumento)\s+(?:del?)?\s*([\d,.]+)\s*%/i,
-            /(?:impuesto|IVA|ISR|recargo|inter[e\xe9]s|incremento|aumento)\s+(?:del?)?\s*([\d,.]+)\s*%[\s\S]{0,80}?\$?\s*([\d,.]+)/i,
+            /\$?\s*([\d,.]+)[\s\S]{0,80}?(?:impuesto|IVA|ISR|recargo|inter[e\xe9]s|incremento|aumento)(?:\s+\w+){0,3}?\s+(?:del?)?\s*([\d,.]+)\s*%/i,
+            /(?:impuesto|IVA|ISR|recargo|inter[e\xe9]s|incremento|aumento)(?:\s+\w+){0,3}?\s+(?:del?)?\s*([\d,.]+)\s*%[\s\S]{0,80}?\$?\s*([\d,.]+)/i,
         ];
         for (var ti = 0; ti < taxPatterns.length; ti++) {
             var tm = taxPatterns[ti].exec(text);
@@ -1257,7 +1305,14 @@ export class QuizMathValidator {
                     tBase = QuizMathValidator._parseDecimal(tm[2]);
                 }
                 if (tBase && tPct && tBase.gt(0) && tPct.gt(0) && tPct.lte(200)) {
-                    if (/precio\s+final|costo\s+final|total|pagar[a\xe1]?s?|monto\s+total|valor\s+final|monto\s+final/i.test(lower)) {
+                    // Determine if this is a deductible tax (corporate, income, ISR)
+                    var isTaxDeduction = /corporativ|sobre\s+(?:la\s+)?renta|retenci[o\xf3]n|ISR/i.test(text) ||
+                                         /despu[e\xe9]s\s+de\s+impuestos?|neto\b/i.test(lower);
+                    if (isTaxDeduction) {
+                        var tDedFactor = new Decimal(1).minus(tPct.div(100));
+                        result = tBase.times(tDedFactor);
+                        steps.push('Impuesto ' + tPct + '% (deducci\xf3n) sobre ' + tBase + ': ' + tBase + ' \xd7 ' + tDedFactor + ' = ' + result);
+                    } else if (/precio\s+final|costo\s+final|total|pagar[a\xe1]?s?|monto\s+total|valor\s+final|monto\s+final/i.test(lower)) {
                         var tfactor = new Decimal(1).plus(tPct.div(100));
                         result = tBase.times(tfactor);
                         steps.push(tPct + '% impuesto sobre ' + tBase + ': ' + tBase + ' \xd7 ' + tfactor + ' = ' + result);
@@ -1416,7 +1471,7 @@ export class QuizMathValidator {
         var lower = text.toLowerCase();
 
         // Only trigger for EXPLICITLY stated sums — not any question with numbers
-        if (!/(?:suma\s+(?:de|total|los)|total\s+de|(?:\xbf)?cu[a\xe1]nto\s+(?:suman|es\s+(?:la\s+)?suma)|acumulad[oa]|calcula\s+(?:la\s+)?suma|sumando|cu[a\xe1]nto\s+gast[o\xf3]|cu[a\xe1]nto\s+pag[o\xf3]|gasto\s+total|costo\s+total|precio\s+total|monto\s+total|valor\s+total|ingreso\s+total|deuda\s+total)/i.test(lower)) {
+        if (!/(?:suma\s+(?:de|total|los)|total\s+de|(?:\xbf)?cu[a\xe1]nto\s+(?:suman|es\s+(?:la\s+)?suma)|acumulad[oa]|calcula\s+(?:la\s+)?suma|sumando|cu[a\xe1]nto\s+gast[o\xf3]|cu[a\xe1]nto\s+pag[o\xf3]|gasto\s+total|costo\s+total|precio\s+total|monto\s+total|monto\s+final|valor\s+total|valor\s+final|ingreso\s+total|ingreso\s+anual|ingresos?\s+trimestrales?|deuda\s+total)/i.test(lower)) {
             return null;
         }
 
@@ -1562,7 +1617,7 @@ export class QuizMathValidator {
     static _applyDecimals(value, text) {
         var match = text.match(/redonde[ao].*?(\d+)\s*decimal/i) || text.match(/(\d+)\s*(?:cifras?\s+)?decimal/i) || text.match(/(?:con|a)\s+(\d+)\s+decimal/i);
         if (match) return value.toDecimalPlaces(parseInt(match[1]));
-        if (/redonde[ao]\s+a\s+entero/i.test(text)) return value.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+        if (/redonde[ao]\s+a(?:l)?\s+entero/i.test(text)) return value.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
         return value;
     }
 
@@ -1641,19 +1696,25 @@ export class QuizMathValidator {
     }
 
     static _applyPercentage(text, result, steps) {
-        var pctMatch = text.match(/(?:impuesto|descuento|incremento|aumento|IVA|ISR|inter\xe9s)\s+(?:del?)?\s*([\d,.]+)\s*%/i);
+        var pctMatch = text.match(/(?:impuesto|descuento|incremento|aumento|IVA|ISR|inter[e\xe9]s)(?:\s+\w+){0,3}?\s+(?:del?)?\s*([\d,.]+)\s*%/i);
         if (!pctMatch) return result;
         var pct = QuizMathValidator._parseDecimal(pctMatch[1]);
         if (!pct || pct.lte(0) || pct.gt(200)) return result;
         var prev = result;
-        if (/descuento/i.test(pctMatch[0])) {
+        // Determine if the tax/percentage is a deduction
+        var isDeduction = /descuento|rebaja/i.test(pctMatch[0]);
+        if (!isDeduction) {
+            isDeduction = /corporativ|sobre\s+(?:la\s+)?renta|retenci[o\xf3]n|ISR/i.test(pctMatch[0]) ||
+                          /despu[e\xe9]s\s+de\s+impuestos?|neto\b/i.test(text);
+        }
+        if (isDeduction) {
             var f = new Decimal(1).minus(pct.div(100));
             result = result.times(f);
-            steps.push('Descuento ' + pct + '%: ' + prev + ' x ' + f + ' = ' + result);
+            steps.push('Deducci\xf3n ' + pct + '%: ' + prev + ' \xd7 ' + f + ' = ' + result);
         } else {
             var f2 = new Decimal(1).plus(pct.div(100));
             result = result.times(f2);
-            steps.push('+ ' + pct + '%: ' + prev + ' x ' + f2 + ' = ' + result);
+            steps.push('+ ' + pct + '%: ' + prev + ' \xd7 ' + f2 + ' = ' + result);
         }
         return result;
     }
@@ -1729,7 +1790,9 @@ export class QuizMathValidator {
             var m;
             while ((m = addRe.exec(text)) !== null) {
                 var v = QuizMathValidator._parseDecimal(m[1]);
-                if (v && v.gt(0)) {
+                // Skip if the captured number is part of a percentage (e.g., "10%")
+                var afterAdd = text.substring(m.index + m[0].length);
+                if (v && v.gt(0) && !/^\s*%/.test(afterAdd)) {
                     (function(val, pos) { operations.push({ apply: function(x) { return x.plus(val); }, describe: function(p, r) { return 'Adicion: ' + p + ' + ' + val + ' = ' + r; }, position: pos }); })(v, m.index);
                 }
             }
@@ -1748,13 +1811,15 @@ export class QuizMathValidator {
                     (function(val, pos) { operations.push({ apply: function(x) { return x.times(val); }, describe: function(p, r) { return 'Multiplicacion: ' + p + ' x ' + val + ' = ' + r; }, position: pos }); })(f, m3.index);
                 }
             }
-            var pctMatch = /(?:impuesto|descuento|incremento|aumento|IVA)\s+(?:del?)?\s*([\d,.]+)\s*%/i.exec(text);
+            var pctMatch = /(?:impuesto|descuento|incremento|aumento|IVA|ISR|inter[e\xe9]s)(?:\s+\w+){0,3}?\s+(?:del?)?\s*([\d,.]+)\s*%/i.exec(text);
             if (pctMatch) {
                 var pct = QuizMathValidator._parseDecimal(pctMatch[1]);
                 if (pct && pct.gt(0)) {
-                    var isDisc = /descuento/i.test(pctMatch[0]);
+                    var isDisc = /descuento|rebaja/i.test(pctMatch[0]) ||
+                                 /corporativ|sobre\s+(?:la\s+)?renta|retenci[o\xf3]n|ISR/i.test(pctMatch[0]) ||
+                                 /despu[e\xe9]s\s+de\s+impuestos?|neto\b/i.test(text);
                     var pf = isDisc ? new Decimal(1).minus(pct.div(100)) : new Decimal(1).plus(pct.div(100));
-                    var lbl = isDisc ? 'Descuento' : 'Incremento';
+                    var lbl = isDisc ? 'Deducci\xf3n' : 'Incremento';
                     (function(factor, label, p, pos) { operations.push({ apply: function(x) { return x.times(factor); }, describe: function(prev, r) { return label + ' ' + p + '%: ' + prev + ' x ' + factor + ' = ' + r; }, position: pos }); })(pf, lbl, pct, pctMatch.index);
                 }
             }
