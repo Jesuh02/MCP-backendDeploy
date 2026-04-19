@@ -2,9 +2,9 @@ export class SupabaseLikeRepository {
     constructor(client) { this.client = client; }
 
     async findByUserAndEntity(userId, entityType, entityId) {
-        const { data, error } = await this.client.from('likes').select('*').eq('usuario_id', userId).eq('entity_type', entityType).eq('entity_id', entityId).single();
-        if (error || !data) return null;
-        return data;
+        const { data, error } = await this.client.from('likes').select('*').eq('usuario_id', userId).eq('entity_type', entityType).eq('entity_id', entityId).limit(1);
+        if (error || !data || data.length === 0) return null;
+        return data[0];
     }
 
     async create(likeData) {
