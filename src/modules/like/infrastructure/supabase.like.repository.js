@@ -2,8 +2,17 @@ export class SupabaseLikeRepository {
     constructor(client) { this.client = client; }
 
     async findByUserAndEntity(userId, entityType, entityId) {
-        const { data, error } = await this.client.from('likes').select('*').eq('usuario_id', userId).eq('entity_type', entityType).eq('entity_id', entityId).limit(1);
+        // Select without .single() to detect duplicate rows from historical bugs.
+        const { data, error } = await this.client.from('likes').select('*').eq('usuario_id', userId).eq('entity_type', entityType).eq('entity_id', entityId);
         if (error || !data || data.length === 0) return null;
+        // Self-heal historical duplicates: keep only the oldest row so that toggle-off
+        // decreases the count by exactly 1 instead of N (the dup count).
+        if (data.length > 1) {
+            const extraIds = data.slice(1).map(r => r.id).filter(id => id != null);
+            if (extraIds.length > 0) {
+                await this.client.from('likes').delete().in('id', extraIds);
+            }
+        }
         return data[0];
     }
 
@@ -13,6 +22,14 @@ export class SupabaseLikeRepository {
             entity_type: likeData.entityType || 'video',
             entity_id: likeData.entityId,
         };
+        // Defense in depth: wipe any pre-existing rows for this (user,entity) tuple
+        // before inserting, so concurrent requests or stale state never produce
+        // duplicates that would later cause the count to drop by more than 1.
+        await this.client.from('likes')
+            .delete()
+            .eq('usuario_id', payload.usuario_id)
+            .eq('entity_type', payload.entity_type)
+            .eq('entity_id', payload.entity_id);
         const { data, error } = await this.client.from('likes').insert(payload).select().single();
         if (error) throw new Error(error.message);
         return data;
