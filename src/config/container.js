@@ -3,6 +3,8 @@ import { SupabaseService } from '../shared/database/SupabaseService.js';
 import { eventBus } from '../shared/events/EventBus.js';
 import { registerEventSubscriptions } from '../shared/events/EventSubscriptions.js';
 import { CachedRepository } from '../shared/database/CachedRepository.js';
+import { CachedRolRepository } from '../shared/database/CachedRolRepository.js';
+import { CachedCourseReadRepository } from '../shared/database/CachedCourseReadRepository.js';
 import { withCircuitBreaker } from '../shared/infrastructure/CircuitBreaker.js';
 import { SupabaseOutboxRepository } from '../shared/outbox/SupabaseOutboxRepository.js';
 import { OutboxProcessor } from '../shared/outbox/OutboxProcessor.js';
@@ -238,10 +240,22 @@ export function createContainer() {
     const courseRepo = cacheAdapter
         ? new CachedRepository(rawCourseRepo, cacheAdapter, { ttlMs: 600_000, prefix: 'course' })
         : rawCourseRepo;
-    const courseReadRepo = new SupabaseCourseReadRepository(client);
+
+    // Cache-aside: Course Read (catálogo público, TTL 5 min)
+    const rawCourseReadRepo = new SupabaseCourseReadRepository(client);
+    const courseReadRepo = cacheAdapter
+        ? new CachedCourseReadRepository(rawCourseReadRepo, cacheAdapter, { ttlMs: 300_000, prefix: 'courseRead' })
+        : rawCourseReadRepo;
+
     const videoRepo = new SupabaseVideoRepository(client);
     const topicRepo = new SupabaseTopicRepository(client);
-    const subjectRepo = new SupabaseSubjectRepository(client);
+
+    // Cache-aside: Subject (materias consultadas al entrar a un curso, TTL 10 min)
+    const rawSubjectRepo = new SupabaseSubjectRepository(client);
+    const subjectRepo = cacheAdapter
+        ? new CachedRepository(rawSubjectRepo, cacheAdapter, { ttlMs: 600_000, prefix: 'subject' })
+        : rawSubjectRepo;
+
     const taskRepo = new SupabaseTaskRepository(client);
     const contentItemRepo = new SupabaseContentItemRepository(client);
     const submissionRepo = new SupabaseSubmissionRepository(client);
@@ -252,8 +266,19 @@ export function createContainer() {
     const notificationRepo = new SupabaseNotificationRepository(client);
     const transactionRepo = new SupabaseTransactionRepository(client);
     const outboxRepo = new SupabaseOutboxRepository(client);
-    const personaRepo = new SupabasePersonaRepository(client);
-    const rolRepo = new SupabaseRolRepository(client);
+
+    // Cache-aside: Persona (búsquedas de identidad, TTL 5 min)
+    const rawPersonaRepo = new SupabasePersonaRepository(client);
+    const personaRepo = cacheAdapter
+        ? new CachedRepository(rawPersonaRepo, cacheAdapter, { ttlMs: 300_000, prefix: 'persona' })
+        : rawPersonaRepo;
+
+    // Cache-aside: Roles (datos maestros, TTL 30 min)
+    const rawRolRepo = new SupabaseRolRepository(client);
+    const rolRepo = cacheAdapter
+        ? new CachedRolRepository(rawRolRepo, cacheAdapter, { ttlMs: 1_800_000, prefix: 'rol' })
+        : rawRolRepo;
+
     const fileContextRepo = new SupabaseFileContextRepository(client);
     const reinforcementRepo = new SupabaseReinforcementRepository(client);
     const reinforcementResultRepo = new SupabaseReinforcementResultRepository(client);
@@ -261,7 +286,12 @@ export function createContainer() {
     const whatsAppSessionRepo = new SupabaseWhatsAppSessionRepository(client);
     const crossTenantWhatsAppSessionRepo = new CrossTenantWhatsAppSessionRepository();
     const collaboratorRepo = new SupabaseCollaboratorRepository(client);
-    const institucionRepo = new SupabaseInstitucionRepository(client);
+
+    // Cache-aside: Institución (resolución de tenant en cada request, TTL 10 min)
+    const rawInstitucionRepo = new SupabaseInstitucionRepository(client);
+    const institucionRepo = cacheAdapter
+        ? new CachedRepository(rawInstitucionRepo, cacheAdapter, { ttlMs: 600_000, prefix: 'institucion' })
+        : rawInstitucionRepo;
     const gradeRepo = new SupabaseGradeRepository(client);
 
     // ═══════════════════════════════════════════════════════════
