@@ -116,6 +116,50 @@ export class ExcelDomainService {
         }
     }
 
+    /**
+     * Builds and uploads an Excel file from pre-fetched row data.
+     * Use this when the caller already has the exact rows (e.g. from rawQueryData
+     * returned by LLMDomainService.processPrompt) to avoid a second DB round-trip
+     * that could return a different row count.
+     *
+     * @param {{ data: object[], userId: number|string, username?: string, query?: string }} params
+     * @returns {Promise<Result>}
+     */
+    async buildFromRawData({ data, userId, username, query = '' }) {
+        if (!Array.isArray(data) || data.length === 0) {
+            return Result.fail('No hay datos para exportar en el Excel.');
+        }
+        try {
+            const excelBuffer = await this._buildStyledWorkbook({
+                data,
+                sheetTitle: "Reporte",
+                query,
+                username,
+                generatedAt: new Date(),
+            });
+
+            const timestamp = Date.now();
+            const filename = `reports/excel_export_${userId || "anon"}_${timestamp}.xlsx`;
+
+            const uploadResult = await this.fileStoragePort.uploadFile(
+                excelBuffer,
+                filename,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            );
+
+            const publicUrl = uploadResult?.getValue ? uploadResult.getValue() : uploadResult;
+
+            return Result.ok({
+                url: publicUrl,
+                rows: data.length,
+                filename,
+                data,
+            });
+        } catch (uploadErr) {
+            return Result.fail(`Error subiendo archivo: ${uploadErr.message}`);
+        }
+    }
+
     async uploadFile({ buffer, originalname, mimetype, size, userId }) {
         try {
             const timestamp = Date.now();
