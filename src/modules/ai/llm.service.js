@@ -577,6 +577,13 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 // enable tools in 'auto' mode so the LLM can answer general knowledge questions
                 // directly without being forced to call a DB tool.
                 let needsMCPTools = roleAllowsMCPTools && (forceMCPTools || promptMatchesDB);
+                // When excelDataContext is already injected into the system prompt, the LLM must describe
+                // that pre-fetched data directly. Keeping MCP tools active would cause a second, independent
+                // DB query with different SQL — leading to row-count mismatches between text and Excel.
+                if (excelDataContext && Array.isArray(excelDataContext) && excelDataContext.length > 0) {
+                    needsMCPTools = false;
+                    console.log('[LLMDomainService] ⚡ Excel data pre-fetched — MCP tools disabled to ensure text matches Excel');
+                }
                 // Track whether tools were forced without an explicit DB pattern — use 'auto' toolChoice
                 const toolsAvailableButOptional = needsMCPTools && forceMCPTools && !promptMatchesDB;
                 if (needsMCPTools) {
