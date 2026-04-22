@@ -281,12 +281,29 @@ export class LLMService {
                 }
             }));
 
-            const response = await this._invokeWithFallback(model => {
-                const modelWithTools = model.bind({
-                    tools: formattedTools,
-                    tool_choice: toolChoice,
-                });
-                return modelWithTools.invoke(sanitizedMessages);
+            const response = await this._invokeWithFallback(async (model) => {
+                try {
+                    const modelWithTools = model.bind({
+                        tools: formattedTools,
+                        tool_choice: toolChoice,
+                    });
+                    return await modelWithTools.invoke(sanitizedMessages);
+                } catch (bindErr) {
+                    // Some providers (e.g. qwen/qwen3.6-plus via OpenRouter) reject the
+                    // 'tool_choice' parameter with a 404.  Retry the SAME model without
+                    // it — 'auto' is the implicit default when tools are provided.
+                    if (
+                        bindErr.message &&
+                        (bindErr.message.includes('tool_choice') || bindErr.status === 404)
+                    ) {
+                        console.warn(
+                            `[LLMService] tool_choice rejected by model, retrying without it: ${bindErr.message}`
+                        );
+                        const modelWithoutChoice = model.bind({ tools: formattedTools });
+                        return await modelWithoutChoice.invoke(sanitizedMessages);
+                    }
+                    throw bindErr;
+                }
             });
 
             // --- USER REQUESTED LOGGING ---
