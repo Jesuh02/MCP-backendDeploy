@@ -1410,7 +1410,59 @@ export class WhatsAppDomainService {
         console.log("[WhatsApp] Excel query sanitized to:", q);
 
         try {
-            const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id });
+            // ── Step 1: run the same BI LLM flow as _handleGeneralQuestion so the SQL
+            // and returned rows are IDENTICAL to a normal data query.  rawQueryData in
+            // the LLM result holds the exact rows query_database returned — we use those
+            // directly so the Excel row count always matches what the LLM described.
+            if (this.llmService) {
+                const username = user?.username || 'usuario';
+                const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${q}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema' (salvo que necesites confirmar la estructura de tablas).\n2. 📌 OBLIGATORIO: usa la herramienta 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.). No inventes datos.\n   - Para invocarla, responde primero con un bloque JSON EXACTO:\n` +
+                    "```json\n" +
+                    "{\"tool\":\"query_database\",\"arguments\":{\"query\":\"<tu SQL aquí>\"}}\n" +
+                    "```\n" +
+                    `   Debes esperar a que el backend ejecute ese SQL y componer tu reporte utilizando la respuesta.\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta "query_database" del agente MCP y espera su respuesta antes de concluir.\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.).\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra username o nombre (first_name, last_name). Haz JOIN con usuarios.\n- Para cursos: muestra título (title). Haz JOIN con courses.\n- Para temas: muestra nombre (name). Para tareas: muestra título (title).\n- Si una columna es FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible.\n\n🎯 ¡Bienvenido/a, ${username}!`;
+
+                const currentTenantId = getCurrentTenantId();
+                const currentTenantCfg = currentTenantId ? TENANT_CONFIGS.find(t => t.id === currentTenantId) : null;
+                const currentInstitutionName = currentTenantCfg?.name || null;
+                const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
+
+                const llmResult = await this.llmService.processPrompt({
+                    prompt: biPrompt,
+                    model: preferredModel,
+                    userId: user.id,
+                    username: user.username,
+                    userRoles,
+                    fromWhatsApp: true,
+                    forceMCPTools: true,
+                    tenantId: currentTenantId,
+                    institutionName: currentInstitutionName,
+                });
+
+                if (llmResult && llmResult.isOk && llmResult.isOk()) {
+                    const val = llmResult.getValue();
+                    const rawData = val.rawQueryData;
+                    if (Array.isArray(rawData) && rawData.length > 0) {
+                        console.log(`[WhatsApp] Excel: using rawQueryData from LLM (${rawData.length} rows)`);
+                        const gen = await this.excelService.buildFromRawData({
+                            data: rawData,
+                            userId: user.id,
+                            username: user.username,
+                            query: q,
+                        });
+                        if (gen && gen.isOk && gen.isOk()) {
+                            const v = gen.getValue();
+                            return `✅ Excel generado: ${v.url} (filas: ${v.rows})`;
+                        }
+                    } else {
+                        console.warn('[WhatsApp] Excel: LLM did not return rawQueryData, falling back to MCP direct query');
+                    }
+                }
+            }
+
+            // ── Step 2 (fallback): generate Excel via direct MCP query when LLM path
+            // could not supply rawQueryData (e.g. llmService unavailable or tool loop skipped).
+            const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id, username: user?.username, userRoles });
             if (gen && gen.isOk && gen.isOk()) {
                 const v = gen.getValue();
                 return `✅ Excel generado: ${v.url} (filas: ${v.rows})`;
