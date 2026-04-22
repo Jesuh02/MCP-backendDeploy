@@ -146,52 +146,69 @@ export class LLMController {
                 }
             }
 
-            // Detect Excel generation intent and generate the file proactively.
-            // The raw data from the Excel is then injected into processPrompt so the
-            // LLM text response describes the SAME data that went into the Excel file.
+            // Excel is generated AFTER processPrompt so we can use the exact rows
+            // the LLM queried, preventing row-count mismatches between text and spreadsheet.
+            // excelDataForContext is no longer needed before the LLM call.
+            const isExcelRequest = this.excelService && this._isExcelIntent(params.prompt);
+
+            const result = await this.llmService.processPrompt(params);
+            if (result.isFail()) return next(result.getError());
+
+            const resultValue = result.getValue();
+
+            // ── Build Excel from the LLM's own query results ──────────────────────
             let excelUrl = null;
-            let excelDataForContext = null;
-            if (this.excelService && this._isExcelIntent(params.prompt)) {
+            if (isExcelRequest) {
                 try {
-                    // For progress-specific queries, build a targeted query
-                    let excelQuery = params.prompt;
-                    if (this._isProgressExcelIntent(params.prompt, params.taskDescription || '')) {
-                        excelQuery = (params.taskDescription || '').includes('RESUMEN DE PROGRESO')
-                            ? `Progreso de estudiantes: ${params.taskDescription}`
-                            : `Progreso de todos los estudiantes en los cursos del docente con userId ${params.userId}`;
-                    }
-
-                    const excelResult = await this.excelService.generateFromQuery({
-                        query: excelQuery,
-                        userId: String(params.userId || 'anon'),
-                        username: params.username,
-                        userRoles: params.userRoles,
-                    });
-
-                    if (!excelResult.isFail()) {
-                        const excelValue = excelResult.getValue();
-                        excelUrl = excelValue.url;
-                        // Capture the raw data so the LLM text response matches the Excel
-                        if (Array.isArray(excelValue.data) && excelValue.data.length > 0) {
-                            excelDataForContext = excelValue.data;
+                    // Prefer rawQueryData: the exact rows the LLM described to the user.
+                    // Fall back to generateFromQuery (independent agent) only when rawQueryData is absent.
+                    const rawRows = resultValue.rawQueryData;
+                    if (Array.isArray(rawRows)) {
+                        const excelBuffer = await this.excelService._buildStyledWorkbook({
+                            data: rawRows,
+                            sheetTitle: 'Reporte',
+                            query: params.prompt,
+                            username: params.username,
+                            generatedAt: new Date(),
+                        });
+                        const timestamp = Date.now();
+                        const filename = `reports/excel_export_${params.userId || 'anon'}_${timestamp}.xlsx`;
+                        if (!this.excelService.fileStoragePort) {
+                            console.error('[LLM] fileStoragePort no disponible — R2 no configurado');
+                        } else {
+                        const uploadResult = await this.excelService.fileStoragePort.uploadFile(
+                            excelBuffer,
+                            filename,
+                            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        );
+                        excelUrl = uploadResult?.getValue ? uploadResult.getValue() : uploadResult;
+                        console.log(`[LLM] Excel generado desde rawQueryData: ${excelUrl} (${rawRows.length} filas)`);
                         }
-                        console.log(`[LLM] Excel generado: ${excelUrl} (${excelValue.rows} filas)`);
+                    } else {
+                        // Fallback: independent agent query (may produce different row count)
+                        let excelQuery = params.prompt;
+                        if (this._isProgressExcelIntent(params.prompt, params.taskDescription || '')) {
+                            excelQuery = (params.taskDescription || '').includes('RESUMEN DE PROGRESO')
+                                ? `Progreso de estudiantes: ${params.taskDescription}`
+                                : `Progreso de todos los estudiantes en los cursos del docente con userId ${params.userId}`;
+                        }
+                        const excelResult = await this.excelService.generateFromQuery({
+                            query: excelQuery,
+                            userId: String(params.userId || 'anon'),
+                            username: params.username,
+                            userRoles: params.userRoles,
+                        });
+                        if (!excelResult.isFail()) {
+                            const excelValue = excelResult.getValue();
+                            excelUrl = excelValue.url;
+                            console.log(`[LLM] Excel generado (fallback agent): ${excelUrl} (${excelValue.rows} filas)`);
+                        }
                     }
                 } catch (excelErr) {
                     console.error('[LLM] Error generando Excel:', excelErr.message);
                 }
             }
 
-            // Inject the Excel data into processPrompt so the LLM describes
-            // exactly the same rows that were exported to the spreadsheet.
-            if (excelDataForContext) {
-                params.excelDataContext = excelDataForContext;
-            }
-
-            const result = await this.llmService.processPrompt(params);
-            if (result.isFail()) return next(result.getError());
-
-            const resultValue = result.getValue();
             // Adapt to legacy Android client expectations (respuesta_texto)
             const data = {
                 ...resultValue,

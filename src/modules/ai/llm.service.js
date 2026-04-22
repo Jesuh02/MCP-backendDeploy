@@ -900,6 +900,8 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
 
             // If the model returned tool_calls, execute them using MCPService and feed results back.
             let toolLoopExecuted = false;
+            // rawQueryData: rows from the last successful query_database call — used to build Excel
+            let rawQueryData = null;
             try {
                 const extractToolCalls = (r) => r?.tool_calls || r?.toolCalls || (r?.raw && (r.raw.tool_calls || r.raw.toolCalls)) || null;
                 let toolCalls = extractToolCalls(response);
@@ -923,6 +925,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                             const { MCPService } = await import('./mcp-legacy.service.js');
                             const mcp = new MCPService();
                             const toolResult = await mcp.executeMCPTool(toolName, toolArgs, { fromWhatsApp, scopedUserId: userId });
+                            // Capture raw rows from successful DB queries for consistent Excel generation
+                            if (toolName === 'query_database' && toolResult && toolResult.success && Array.isArray(toolResult.results) && toolResult.results.length > 0) {
+                                rawQueryData = toolResult.results;
+                            }
                             // Append tool result to system prompt to allow the model to continue reasoning
                             let toolResultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
                             // Truncate very large tool results to prevent token overflow
@@ -961,6 +967,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                         const { MCPService } = await import('./mcp-legacy.service.js');
                         const mcp = new MCPService();
                         const toolResult = await mcp.executeMCPTool(inlineCall.tool, inlineCall.arguments, { fromWhatsApp, scopedUserId: userId });
+                        // Capture raw rows for consistent Excel generation
+                        if (inlineCall.tool === 'query_database' && toolResult && toolResult.success && Array.isArray(toolResult.results) && toolResult.results.length > 0) {
+                            rawQueryData = toolResult.results;
+                        }
                         const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
                         response = await this.llm.chat(
                             systemPrompt + `\n\n[TOOL_RESULT name=${inlineCall.tool}]\n${resultStr}\n[END_TOOL_RESULT]`,
@@ -975,7 +985,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                     if (!inlineSucceeded) {
                         try {
                             const fallbackResult = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model);
-                            if (fallbackResult !== null && fallbackResult !== undefined) response = fallbackResult;
+                            if (fallbackResult !== null && fallbackResult !== undefined) {
+                                response = fallbackResult;
+                                if (fallbackResult._rawQueryData) rawQueryData = fallbackResult._rawQueryData;
+                            }
                         } catch (e) {
                             console.warn('[LLMDomainService] Direct DB query fallback (after inline failure) failed:', e.message);
                         }
@@ -985,7 +998,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                     // Runs when the model produced no tool call at all (neither via tool_calls nor inline JSON).
                     try {
                         const fallbackResult = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model);
-                        if (fallbackResult !== null && fallbackResult !== undefined) response = fallbackResult;
+                        if (fallbackResult !== null && fallbackResult !== undefined) {
+                            response = fallbackResult;
+                            if (fallbackResult._rawQueryData) rawQueryData = fallbackResult._rawQueryData;
+                        }
                     } catch (e) {
                         console.warn('[LLMDomainService] Direct DB query fallback failed:', e.message);
                     }
@@ -1056,7 +1072,11 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 model: response.model,
                 usage: response.usage,
                 esCalificacion,
-                nota
+                nota,
+                // Raw DB rows from the last successful query_database call.
+                // The controller uses this to build an Excel with the EXACT same data
+                // that the LLM described, preventing row-count mismatches.
+                rawQueryData: rawQueryData || null,
             });
         } catch (err) {
             return Result.fail(new ValidationError(`Procesamiento LLM falló: ${err.message}`));
@@ -1692,11 +1712,16 @@ Responde de forma clara y constructiva.`;
         const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
 
         // Step 3: format final answer
-        return await this.llm.chat(
+        const finalResponse = await this.llm.chat(
             systemPrompt + `\n\n[DATOS OBTENIDOS DE LA BASE DE DATOS]\n${resultStr}\n[FIN DE DATOS]\n\nFormula ahora tu respuesta en Markdown claro usando SOLO los datos anteriores. No inventes valores.`,
             fullPrompt,
             { model, tools: [] }
         );
+        // Attach raw rows so callers can build Excel from the same data the LLM described
+        if (toolResult && toolResult.success && Array.isArray(toolResult.results) && toolResult.results.length > 0) {
+            finalResponse._rawQueryData = toolResult.results;
+        }
+        return finalResponse;
     }
 }
 export default LLMDomainService;
