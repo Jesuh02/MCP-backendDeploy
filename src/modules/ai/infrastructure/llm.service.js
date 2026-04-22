@@ -282,17 +282,19 @@ export class LLMService {
             }));
 
             const response = await this._invokeWithFallback(async (model) => {
+                // OpenRouter routing does not support the tool_choice parameter for all models.
+                // Skip it for the OpenRouter primary to avoid a 404 on first attempt.
+                const isOpenRouter = (model === this.primaryModel && this.primaryProvider === 'openrouter');
+                const bindOpts = isOpenRouter
+                    ? { tools: formattedTools }
+                    : { tools: formattedTools, tool_choice: toolChoice };
                 try {
-                    const modelWithTools = model.bind({
-                        tools: formattedTools,
-                        tool_choice: toolChoice,
-                    });
+                    const modelWithTools = model.bind(bindOpts);
                     return await modelWithTools.invoke(sanitizedMessages);
                 } catch (bindErr) {
-                    // Some providers (e.g. qwen/qwen3.6-plus via OpenRouter) reject the
-                    // 'tool_choice' parameter with a 404.  Retry the SAME model without
-                    // it — 'auto' is the implicit default when tools are provided.
+                    // For non-OpenRouter providers that still reject tool_choice, retry without it.
                     if (
+                        bindOpts.tool_choice &&
                         bindErr.message &&
                         (bindErr.message.includes('tool_choice') || bindErr.status === 404)
                     ) {
