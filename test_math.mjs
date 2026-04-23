@@ -698,4 +698,85 @@ testRound(
     '57150617.17953'
 );
 
+// ═══════════════════════════════════════════════════════════════════════════
+// BUG FIX 14: Base Conversion — convert EACH number independently FIRST
+// Root cause of reported error: system operated in octal BEFORE converting,
+// polluting all subsequent steps with a wrong intermediate value.
+//
+// Correct methodology:
+//   744₈ → 484₁₀  (independently)
+//   362₈ → 242₁₀  (independently)
+//   Sum in base 10: 484 + 242 = 726
+//   Then add 489₁₀: 726 + 489 = 1215
+//   Express in hex:  1215 = 4BF₁₆
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n=== BUG FIX 14: Base Conversion — convert each number independently ===');
+
+// Test B14a: Octal + Octal (subscript notation)
+var rb14a = QuizMathValidator.computeExpectedAnswer('Calcula la suma de 744\u2088 + 362\u2088');
+// 744₈ = 7×64 + 4×8 + 4 = 484, 362₈ = 3×64 + 6×8 + 2 = 242, sum = 726
+console.log('Test B14a (octal+octal \u2088):', rb14a ? rb14a.value.toString() : 'NULL',
+    rb14a && rb14a.value.toString() === '726' ? '\u2705' : '\u274C expected 726 (NOT 727 \u2014 system must NOT sum in octal first)');
+
+// Test B14b: Octal + Decimal + Hex chain with output in hex
+var rb14b = QuizMathValidator.computeExpectedAnswer(
+    'Suma 744\u2088 + 362\u2088 + 489 y expresa el resultado en hexadecimal'
+);
+// 484 + 242 + 489 = 1215 = 4BF₁₆
+console.log('Test B14b (octal+octal+decimal\u2192hex):', rb14b ? rb14b.value.toString() + ' baseRepr=' + (rb14b.baseRepresentation || 'none') : 'NULL',
+    rb14b && rb14b.value.toString() === '1215' && rb14b.baseRepresentation === '4BF' ? '\u2705' : '\u274C expected value=1215 baseRepresentation=4BF');
+
+// Test B14c: Pure octal-to-decimal conversion
+var rb14c = QuizMathValidator.computeExpectedAnswer('Convierte 745\u2088 a decimal');
+// 745₈ = 7×64 + 4×8 + 5 = 485
+console.log('Test B14c (pure octal\u2192decimal):', rb14c ? rb14c.value.toString() : 'NULL',
+    rb14c && rb14c.value.toString() === '485' ? '\u2705' : '\u274C expected 485');
+
+// Test B14d: Hexadecimal to decimal (subscript notation)
+var rb14d = QuizMathValidator.computeExpectedAnswer('Convierte 3A5\u2081\u2086 a decimal');
+// 3×256 + 10×16 + 5 = 768 + 160 + 5 = 933
+console.log('Test B14d (hex\u2192decimal \u2081\u2086):', rb14d ? rb14d.value.toString() : 'NULL',
+    rb14d && rb14d.value.toString() === '933' ? '\u2705' : '\u274C expected 933');
+
+// Test B14e: Binary to decimal (subscript notation)
+var rb14e = QuizMathValidator.computeExpectedAnswer('Convierte 1010\u2082 a decimal');
+// 1010₂ = 8 + 2 = 10
+console.log('Test B14e (binary\u2192decimal \u2082):', rb14e ? rb14e.value.toString() : 'NULL',
+    rb14e && rb14e.value.toString() === '10' ? '\u2705' : '\u274C expected 10');
+
+// Test B14f: C-style prefix 0xFF
+var rb14f = QuizMathValidator.computeExpectedAnswer('\u00bfCu\u00e1nto vale 0xFF en decimal?');
+// 0xFF = 255
+console.log('Test B14f (0xFF\u2192decimal):', rb14f ? rb14f.value.toString() : 'NULL',
+    rb14f && rb14f.value.toString() === '255' ? '\u2705' : '\u274C expected 255');
+
+// Test B14g: Keyword notation "octal"
+var rb14g = QuizMathValidator.computeExpectedAnswer('Suma 745 octal + 362 octal');
+// 745₈ = 485, 362₈ = 242, sum = 727
+console.log('Test B14g (keyword octal):', rb14g ? rb14g.value.toString() : 'NULL',
+    rb14g && rb14g.value.toString() === '727' ? '\u2705' : '\u274C expected 727');
+
+// Test B14h: verify() must correct MC answer for octal sum
+var qb14h = {
+    type: 'multiple_choice',
+    question: 'Calcula la suma de 744\u2088 + 362\u2088. \u00bfCu\u00e1l es el resultado en base 10?',
+    options: ['A) 727', 'B) 726', 'C) 1327', 'D) 700'],
+    correctIndex: 0,   // LLM said 727 (wrong — summed in octal first)
+    explanation: 'Sumando en octal: 744+362=1327, convertido: 727'
+};
+var rb14h = QuizMathValidator.verify(qb14h);
+console.log('Test B14h (verify MC octal error):', rb14h ? 'index=' + rb14h.correctIndex + (rb14h.correctIndex === 1 ? ' \u2705' : ' \u274C expected 1 (B: 726)') : 'REJECTED \u274C');
+
+// Test B14i: Binary sum
+var rb14i = QuizMathValidator.computeExpectedAnswer('Suma 1010\u2082 + 0110\u2082 en decimal');
+// 10 + 6 = 16
+console.log('Test B14i (binary sum):', rb14i ? rb14i.value.toString() : 'NULL',
+    rb14i && rb14i.value.toString() === '16' ? '\u2705' : '\u274C expected 16');
+
+// Test B14j: Hex sum with 0x prefix
+var rb14j = QuizMathValidator.computeExpectedAnswer('Calcula 0x1A + 0x06 en decimal');
+// 26 + 6 = 32
+console.log('Test B14j (0x prefix hex sum):', rb14j ? rb14j.value.toString() : 'NULL',
+    rb14j && rb14j.value.toString() === '32' ? '\u2705' : '\u274C expected 32');
+
 console.log('\n--- All tests completed ---');
