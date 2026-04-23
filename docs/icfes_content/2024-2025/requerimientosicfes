@@ -1,0 +1,398 @@
+categorias del icfes 
+Lectura Crítica
+Matemáticas
+Sociales y Ciudadanas
+Ciencias Naturales
+Inglés
+El flujo completo en palabras
+Excelente pregunta, este es uno de los problemas más complejos del sistema. Te explico todo el pipeline.
+El Problema Real
+Los PDFs del ICFES tienen 3 tipos de imágenes:
+Tipo 1 → Imagen decorativa/contexto (una foto para un texto de lectura)
+Tipo 2 → Imagen ES la pregunta (una gráfica, tabla, figura geométrica)
+Tipo 3 → Imagen está DENTRO de una opción de respuesta
+El tipo 2 y 3 son los críticos — sin la imagen la pregunta es imposible de responder.
+
+Pipeline Completo de Extracción
+Paso 1: Extraer el PDF con precisión
+La mejor herramienta para PDFs del ICFES es pdfplumber combinado con pymupdf (fitz):
+pythonimport fitz  # pymupdf
+import pdfplumber
+import json
+import base64
+from pathlib import Path
+
+def extract_icfes_pdf(pdf_path: str, area: str, year: int):
+    doc = fitz.open(pdf_path)
+    questions = []
+    
+    with pdfplumber.open(pdf_path) as plumber:
+        for page_num, page in enumerate(plumber.pages):
+            # Extraer texto con coordenadas exactas (bbox)
+            words = page.extract_words(
+                x_tolerance=3,
+                y_tolerance=3,
+                keep_blank_chars=False,
+                use_text_flow=True,
+                extra_attrs=["fontname", "size"]  # detectar negrilla = enunciado
+            )
+            
+            # Extraer imágenes de la misma página con pymupdf
+            fitz_page = doc[page_num]
+            images = extract_images_from_page(fitz_page, page_num)
+            
+            # Asociar texto e imágenes por posición Y en la página
+            questions += associate_text_and_images(words, images, page_num)
+    
+    return questions
+Paso 2: Extraer imágenes con su posición exacta
+pythondef extract_images_from_page(fitz_page, page_num: int) -> list:
+    images = []
+    image_list = fitz_page.get_images(full=True)
+    
+    for img_index, img in enumerate(image_list):
+        xref = img[0]
+        
+        # Obtener bbox (posición) de la imagen en la página
+        # Esto es CLAVE para saber a qué pregunta pertenece
+        img_rects = fitz_page.get_image_rects(xref)
+        
+        for rect in img_rects:
+            # Extraer imagen como bytes
+            base_image = fitz_page.parent.extract_image(xref)
+            img_bytes = base_image["image"]
+            img_ext = base_image["ext"]  # png, jpeg
+            
+            # Convertir a base64 para guardar en BD
+            img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+            
+            images.append({
+                "index": img_index,
+                "page": page_num,
+                "bbox": {
+                    "x0": rect.x0,
+                    "y0": rect.y0,  # posición vertical = clave
+                    "x1": rect.x1,
+                    "y1": rect.y1
+                },
+                "data": f"data:image/{img_ext};base64,{img_b64}",
+                "ext": img_ext,
+                "width": rect.width,
+                "height": rect.height
+            })
+    
+    return images
+Paso 3: Asociar imagen a pregunta por posición Y
+Este es el paso más delicado. La lógica es: una imagen pertenece a la pregunta cuyo enunciado está más cercano por encima de ella.
+pythondef associate_text_and_images(words: list, images: list, page_num: int) -> list:
+    # Detectar inicio de cada pregunta por patrón "1." "2." etc.
+    question_boundaries = []
+    
+    for word in words:
+        import re
+        if re.match(r'^\d{1,2}\.$', word['text']):
+            question_boundaries.append({
+                "number": int(word['text'].rstrip('.')),
+                "y_start": word['top'],
+                "y_end": None  # se llena con el inicio de la siguiente
+            })
+    
+    # Calcular y_end de cada pregunta
+    for i, q in enumerate(question_boundaries):
+        if i + 1 < len(question_boundaries):
+            q["y_end"] = question_boundaries[i + 1]["y_start"]
+        else:
+            q["y_end"] = 9999  # última pregunta de la página
+    
+    # Asignar cada imagen a la pregunta cuyo rango Y la contiene
+    for image in images:
+        img_y_center = (image["bbox"]["y0"] + image["bbox"]["y1"]) / 2
+        
+        for q in question_boundaries:
+            if q["y_start"] <= img_y_center <= q["y_end"]:
+                if "images" not in q:
+                    q["images"] = []
+                
+                # Clasificar posición de la imagen dentro de la pregunta
+                q["images"].append({
+                    **image,
+                    "position": classify_image_position(image, words, q)
+                })
+                break
+    
+    return question_boundaries
+
+def classify_image_position(image, words, question):
+    # Determinar si la imagen va ANTES de las opciones o DENTRO de una opción
+    options_y = get_options_y_position(words, question)
+    
+    if image["bbox"]["y0"] < options_y:
+        return "stem"      # imagen es parte del enunciado
+    else:
+        return "option"    # imagen es una de las opciones A/B/C/D
+
+Cómo Guardar en la Base de Datos
+Tienes dos estrategias. La profesional es usar un CDN:
+Opción A: Cloudflare R2 (recomendada)
+PDF → extracción → imagen → subir a R2 → guardar URL en PostgreSQL
+URL ejemplo: https://r2.tudominio.com/icfes/2023/MAT/q447_stem.png
+Opción B: Base64 directo en PostgreSQL
+sql-- Solo viable si las imágenes son pequeñas (< 100KB cada una)
+ALTER TABLE questions ADD COLUMN images JSONB DEFAULT '[]';
+
+-- Estructura del campo images:
+[
+  {
+    "id": "q447_img_0",
+    "position": "stem",        -- "stem" | "option_a" | "option_b"
+    "url": "https://r2...",    -- si usas CDN
+    "base64": "data:image/png;base64,...",  -- si guardas directo
+    "alt": "Gráfica función cuadrática",
+    "width": 320,
+    "height": 240
+  }
+]
+
+Cómo el Frontend Renderiza Pregunta + Imagen
+La clave es que el componente de pregunta sabe en qué posición va cada imagen:
+tsx// QuestionCard.tsx
+interface QuestionImage {
+  id: string
+  position: "stem" | "option_a" | "option_b" | "option_c" | "option_d"
+  url: string
+  alt: string
+}
+
+interface Question {
+  id: string
+  stem: string
+  options: { id: string; text: string }[]
+  images: QuestionImage[]
+}
+
+export function QuestionCard({ question }: { question: Question }) {
+  const stemImages = question.images.filter(img => img.position === "stem")
+  
+  return (
+    <div className="question-card">
+      {/* Enunciado */}
+      <p>{question.stem}</p>
+      
+      {/* Imágenes del enunciado, justo debajo del texto */}
+      {stemImages.map(img => (
+        <img 
+          key={img.id}
+          src={img.url}
+          alt={img.alt}
+          className="my-4 max-w-full rounded-lg"
+          loading="eager"  // pre-cargada, no lazy
+        />
+      ))}
+      
+      {/* Opciones con sus posibles imágenes */}
+      {question.options.map(option => {
+        const optionImg = question.images.find(
+          img => img.position === `option_${option.id.toLowerCase()}`
+        )
+        return (
+          <div key={option.id} className="option">
+            <span>{option.id}.</span>
+            {option.text && <span>{option.text}</span>}
+            {optionImg && (
+              <img src={optionImg.url} alt={optionImg.alt} />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+El Problema de las Gráficas Generadas (Matemáticas)
+Muchas preguntas de matemáticas del ICFES no tienen imagen en el PDF — la gráfica está dibujada con vectores del propio PDF. pdfplumber no las extrae como imagen porque técnicamente son paths SVG.
+Para esos casos hay dos soluciones:
+Solución A — Rasterizar la región: usar pymupdf para renderizar la zona de la página como imagen PNG directamente.
+pythondef rasterize_question_region(fitz_page, bbox: dict, dpi=150) -> str:
+    # Recortar solo la región de la pregunta y convertir a imagen
+    clip_rect = fitz.Rect(bbox["x0"], bbox["y0"], bbox["x1"], bbox["y1"])
+    mat = fitz.Matrix(dpi/72, dpi/72)  # escalar a DPI deseado
+    pix = fitz_page.get_pixmap(matrix=mat, clip=clip_rect)
+    img_bytes = pix.tobytes("png")
+    return base64.b64encode(img_bytes).decode("utf-8")
+Solución B — Capturar toda la pregunta como imagen: en vez de extraer texto e imagen por separado, renderizar el bloque completo de la pregunta como un PNG. Más simple, menos flexible para embeddings.
+
+Recomendación Final para tu Caso
+Para el MVP:
+├── Usar pymupdf para rasterizar cada pregunta completa como imagen PNG
+├── Guardar en Cloudflare R2
+├── En el JSON de la pregunta guardar la URL + el texto extraído por separado
+└── El texto separado sirve para embeddings, la imagen sirve para mostrar
+
+Para producción:
+├── Pipeline completo de asociación texto-imagen por bbox
+├── Clasificación stem/option con el algoritmo de posición Y
+├── CDN con lazy loading solo fuera del examen activo
+└── Las 20 preguntas del examen activo → precargar todas las imágenes al inicio
+
+Cuando el estudiante selecciona "Ciencias Naturales", el backend hace una sola operación compuesta:
+1. Consulta adaptativa: busca en PostgreSQL las 20 preguntas de CN que el estudiante nunca ha visto, priorizando los subtemas donde tiene falencia_score > 0.65, y si es la primera vez, distribuye equitativamente entre Física, Química y Biología en dificultad 2.
+2. Empaqueta todo en Redis con una clave tipo exam_session:{student_id}:{timestamp} y TTL de 30 minutos. El paquete incluye las 20 preguntas completas con sus opciones e imágenes en base64 o URLs de CDN.
+3. El frontend recibe el paquete completo de una sola vez — no hay petición por pregunta. Navegar de la pregunta 1 a la 2 es instantáneo porque todo ya está en memoria del cliente.
+
+La query de selección en la práctica
+sql-- Selección adaptativa para un área específica
+WITH ranked AS (
+  SELECT 
+    q.*,
+    COALESCE(sm.theta, 0) AS theta,
+    COALESCE(sm.falencia_score, 0.5) AS falencia_score,
+    ROW_NUMBER() OVER (
+      PARTITION BY q.subtopic 
+      ORDER BY RANDOM()
+    ) AS rn
+  FROM questions q
+  LEFT JOIN skill_metrics sm 
+    ON sm.student_id = $1 
+    AND sm.topic = q.topic
+  WHERE 
+    q.area = $2                          -- 'CN', 'MAT', etc.
+    AND q.id NOT IN (
+      SELECT question_id 
+      FROM student_attempts 
+      WHERE student_id = $1              -- nunca repetir
+    )
+    AND ABS(q.difficulty - GREATEST(1, LEAST(5, 
+      COALESCE(sm.theta, 2)::int
+    ))) <= 1
+)
+SELECT * FROM ranked
+WHERE rn = 1
+ORDER BY falencia_score DESC             -- prioriza falencias
+LIMIT 20;
+
+Cómo se ve la selección de materia en el frontend
+Lo más limpio es una pantalla de selección con las 5 áreas como cards. Al tocar una, disparas una sola llamada POST /api/exam/start con { area: "CN", studentId: "..." }. El backend responde en < 300ms con el paquete completo porque la query tiene índices en area, student_id y difficulty.
+Índices críticos en PostgreSQL:
+CREATE INDEX idx_questions_area_difficulty ON questions(area, difficulty);
+CREATE INDEX idx_attempts_student ON student_attempts(student_id, question_id);
+CREATE INDEX idx_metrics_student_topic ON skill_metrics(student_id, area, topic);
+Con esos 3 índices la query de selección corre en < 20ms incluso con 50,000 preguntas en el banco.
+
+El detalle que marca la diferencia
+Dentro de Ciencias Naturales, no todas las preguntas pesan igual para ese estudiante. El orden de las 20 preguntas que recibe no es aleatorio — el sistema las ordena así:
+Preguntas 1-3   → dificultad baja del subtema con mayor falencia
+                  (ganar confianza inicial)
+Preguntas 4-10  → mezcla de subtemas, dificultad media
+Preguntas 11-16 → escalar dificultad en falencias confirmadas
+Preguntas 17-19 → dificultad alta en fortalezas (no aburrir)
+Pregunta 20     → siempre un reto, dificultad 4-5
+Detección de Falencias y Sistema de Embeddings
+1. ¿Cómo Detectar Falencias Sin Encuesta?
+La idea central: el comportamiento ES la encuesta
+Cada vez que un estudiante responde una pregunta, está revelando información sin saberlo. No necesitas preguntarle "¿en qué eres malo?" — el sistema lo infiere de 4 señales simultáneas:
+
+Señal 1: Tasa de error por tema
+Si en "Funciones cuadráticas" responde mal 3 de 4 preguntas → falencia detectada. Simple, pero insuficiente solo.
+Señal 2: Tiempo de respuesta
+Un estudiante que tarda 90 segundos en una pregunta de dificultad 2 y la responde bien, no la domina — la adivinó con esfuerzo. El tiempo revela inseguridad aunque la respuesta sea correcta.
+Tiempo > 2x promedio del grupo + respuesta correcta = "dominio frágil"
+Tiempo < 0.5x promedio + respuesta incorrecta = "confusión total"
+Señal 3: Patrón de error (qué opción elige)
+Si el estudiante elige siempre la opción que comete el error conceptual más común (ej: no distribuir el exponente), el sistema identifica qué concepto específico falla, no solo que falla el tema.
+Señal 4: Curva de recuperación
+Si le das 3 preguntas del mismo subtema en dificultad creciente y falla las 3 → falencia estructural. Si falla la 1 pero acierta la 2 y 3 → fue distracción, no falencia.
+
+Cómo se combinan las 4 señales: el score de falencia
+falencia_score(topic) = 
+    (tasa_error × 0.4) + 
+    (tiempo_normalizado × 0.2) + 
+    (patron_error × 0.25) + 
+    (curva_recuperacion × 0.15)
+
+Si score > 0.65 → FALENCIA CONFIRMADA
+Si score 0.40–0.65 → ZONA DE RIESGO (refuerzo moderado)
+Si score < 0.40 → FORTALEZA
+Cómo se refuerzan las falencias
+Una vez detectada la falencia, el sistema no simplemente manda más preguntas del mismo tema. Hace esto:
+Paso 1 — Bajar la dificultad un nivel: si falló en dificultad 3, empieza desde dificultad 1 del mismo subtema. Construir desde la base.
+Paso 2 — Intercalar, no saturar: en un examen de 20 preguntas, si tienes 2 falencias, el sistema distribuye así:
+[falencia_A] → [otro tema] → [falencia_B] → [otro tema] → [falencia_A dif+1]
+Esto evita que el estudiante se frustre y además usa el efecto de espaciado (spacing effect) que la neurociencia educativa ha comprobado que mejora retención.
+Paso 3 — Escalar gradualmente: si responde bien 2 seguidas del subtema → sube dificultad. Si falla → baja y cambia el ángulo de la pregunta (mismo concepto, diferente contexto).
+Paso 4 — Confirmar superación: una falencia solo se "cierra" cuando el estudiante acierta correctamente 3 preguntas consecutivas del tema en dificultad ≥ 3 con tiempo ≤ promedio.
+
+2. Por Qué Chunkear en Embeddings es la Jugada Más Poderosa
+Primero: ¿qué es un embedding aquí?
+Conviertes cada pregunta, respuesta, explicación y concepto en un vector numérico (ej: 1536 dimensiones con OpenAI o con un modelo local). Ese vector captura el significado semántico, no las palabras exactas.
+El problema que resuelve
+Sin embeddings, tu sistema sabe que el estudiante falló "Álgebra - Funciones". Con embeddings, sabe que el concepto que no entiende es "transformación de funciones por traslación vertical" — aunque ese concepto aparezca en 40 preguntas redactadas de formas completamente distintas.
+
+Ventaja 1: Anti-repetición semántica (la más importante para ti)
+Este es el núcleo de tu requisito de no repetir preguntas. Sin embeddings, comparas por question_id — sabes que la pregunta ID-447 ya la vio. Pero si tienes estas dos preguntas:
+Pregunta A: "Si f(x) = 2x + 3, ¿cuánto es f(5)?"
+Pregunta B: "Dada la función f(x) = 2x + 3, calcula el valor cuando x vale 5"
+Son la misma pregunta. Sin embeddings el sistema las trata como distintas y se la muestra. Con embeddings, calcula la similitud coseno entre los dos vectores, detecta que son >0.95 similares y la excluye.
+similitud_coseno(vec_A, vec_B) > 0.85 → misma pregunta conceptualmente → NO mostrar
+El usuario nunca percibe repetición aunque el banco tenga preguntas redactadas de forma diferente sobre lo mismo.
+Ventaja 2: Diagnóstico fino de falencias
+Sin embeddings sabes "falla en Ciencias Naturales - Física". Con embeddings puedes hacer una búsqueda semántica sobre el historial del estudiante y descubrir que todas las preguntas que falló tienen en su vector una cercanía alta con "segunda ley de Newton" y "fuerza neta" — aunque esas palabras no aparezcan explícitamente en todas.
+El sistema te dice: "este estudiante no falla Física en general, falla específicamente la aplicación de Newton en planos inclinados."
+Ventaja 3: Refuerzo con material explicativo relevante
+Cuando detectas la falencia, puedes hacer una búsqueda vectorial en tu base de explicaciones/contenido de estudio y devolver exactamente el chunk de teoría más cercano semánticamente a lo que el estudiante no entiende. No un capítulo entero — el párrafo específico.
+embedding(pregunta_fallida) → búsqueda en chunks de teoría → top 3 más similares → mostrar explicación quirúrgica
+Ventaja 4: Dificultad semántica, no solo numérica
+Con embeddings puedes agrupar preguntas en clusters de concepto real. Dentro del cluster "derivadas - regla de la cadena" tienes preguntas de dificultad 1 al 5. Cuando el estudiante falla una de dificultad 3, buscas en ese mismo cluster semántico la más cercana en concepto pero de dificultad 2 — garantizando que el refuerzo ataca exactamente el mismo punto ciego.
+
+3. Cómo Chunkear Correctamente
+Cada pregunta genera 4 chunks separados:
+Chunk 1 → [enunciado + contexto]
+Chunk 2 → [opción correcta + por qué es correcta]  
+Chunk 3 → [cada distractor + por qué es incorrecto] ← oro puro para detectar error conceptual
+Chunk 4 → [explicación pedagógica del concepto base]
+Por qué separar los distractores
+El distractor (opción incorrecta) no es ruido — es el error más común codificado. Si embeds el distractor B de la pregunta 47 y el estudiante lo elige frecuentemente, puedes buscar en tu base cuántos otros distractores similares ha elegido. Si hay un cluster de distractores que el estudiante elige repetidamente, ese cluster define exactamente su error conceptual.
+Metadata que acompaña cada chunk
+json{
+  "chunk_id": "q447_stem",
+  "question_id": "447",
+  "area": "MAT",
+  "topic": "Funciones",
+  "subtopic": "Transformaciones",
+  "difficulty": 3,
+  "year": 2023,
+  "chunk_type": "stem | correct | distractor_A | distractor_B | explanation",
+  "embedding": [0.023, -0.441, ...]
+}
+
+4. Flujo Completo Integrado
+ESTUDIANTE RESPONDE PREGUNTA
+           │
+           ▼
+┌─────────────────────────────────────────┐
+│  Registrar: question_id, respuesta,     │
+│  tiempo, opción elegida                 │
+└──────────────────┬──────────────────────┘
+                   │
+         ¿Respuesta incorrecta?
+          /              \
+        SÍ               NO
+         │                │
+         ▼                ▼
+  Embedding de la    Actualizar theta
+  opción elegida     positivamente
+         │
+         ▼
+  Búsqueda por similitud en
+  historial de errores del estudiante
+         │
+         ▼
+  ¿Cluster de errores similares?
+          /              \
+        SÍ               NO → zona de riesgo
+         │
+         ▼
+  FALENCIA CONFIRMADA
+  → Bajar dificultad en ese cluster semántico
+  → Buscar chunk de teoría más cercano
+  → Aumentar peso del tema en próximos exámenes
+  → Anti-repetición: excluir por similitud coseno > 0.85
