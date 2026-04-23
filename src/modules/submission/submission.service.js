@@ -424,9 +424,15 @@ export class SubmissionDomainService {
             }
         }
 
+        // Preserve existing feedback when the new value is absent (null/empty string),
+        // so re-grading without feedback does not erase a previously stored retroalimentación.
+        const effectiveFeedback = (feedback != null && String(feedback).trim().length > 0)
+            ? feedback
+            : (sub.feedback ?? null);
+
         const updated = await this.subRepo.update(id, {
             grade,
-            feedback,
+            feedback: effectiveFeedback,
             gradedBy: graderId || null,
             gradedAt: new Date().toISOString(),
         });
@@ -436,7 +442,7 @@ export class SubmissionDomainService {
 
         // Fire-and-forget: Enviar email de calificación al estudiante
         if (this.notificationService && this.userService && this.taskRepo) {
-            await this._notifyGrade(sub, grade, feedback, graderId).catch(err =>
+            await this._notifyGrade(sub, grade, effectiveFeedback, graderId).catch(err =>
                 console.warn('[SubmissionDomainService] Error notificando calificación:', err.message)
             );
         }

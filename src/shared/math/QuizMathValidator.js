@@ -4,7 +4,7 @@ import { MathEngine } from './MathEngine.js';
 
 Decimal.set({ precision: 64 });
 
-const MATH_SIGNALS = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|\xbfcu\xe1nto|cu\xe1ntos|cu\xe1ntas|promedio|media|porcentaje|[a\xe1]rea|per[i\xed]metro|volumen|superficie|inter[e\xe9]s\s+(?:simple|compuesto)|descuento|impuesto|IVA|repartir|dividir|ganancia|utilidad|beneficio|derivada|extremo|m[i\xed]nimo\s+local|m[a\xe1]ximo\s+local|notaci[o\xf3]n\s+cient[i\xed]fica|fracci[o\xf3]n|fracciones|elevado|potencia|exponente|\d+\s*\/\s*\d+\s*[+\-×÷*]/i;
+const MATH_SIGNALS = /calcula|suma|total|multiplica|divide|resta|resultado|costo\s+total|precio\s+total|monto\s+total|redondea|\xbfcu\xe1nto|cu\xe1ntos|cu\xe1ntas|promedio|media|porcentaje|[a\xe1]rea|per[i\xed]metro|volumen|superficie|inter[e\xe9]s\s+(?:simple|compuesto)|descuento|impuesto|IVA|repartir|dividir|ganancia|utilidad|beneficio|derivada|extremo|m[i\xed]nimo\s+local|m[a\xe1]ximo\s+local|notaci[o\xf3]n\s+cient[i\xed]fica|fracci[o\xf3]n|fracciones|elevado|potencia|exponente|\d+\s*\/\s*\d+\s*[+\-×÷*]|octal|hexadecimal|binario|base\s+\d+|[\u2080-\u2089]/i;
 const HAS_SIGNIFICANT_NUMBERS = /\d{3,}/;
 
 const ADVANCED_FORMULA_PATTERNS = [
@@ -196,6 +196,11 @@ export class QuizMathValidator {
         // downstream strategies from misinterpreting digit position text as arithmetic)
         var digit = QuizMathValidator._tryDigitPositionProblem(text);
         if (digit) return digit;
+
+        // Strategy 0.8: Base conversion / multi-base arithmetic (highest priority after digit-position)
+        // CRITICAL: must run BEFORE explicit arithmetic to avoid treating octal/hex digits as base-10
+        var baseConv = QuizMathValidator._tryBaseConversionProblem(text);
+        if (baseConv) return baseConv;
 
         // Strategy 1.5 (elevated): Fraction arithmetic BEFORE explicit arithmetic
         // when the text contains fraction patterns (a/b + c/d).
@@ -2144,6 +2149,154 @@ export class QuizMathValidator {
         }
 
         return { value: sum, steps: steps };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Strategy 0.8: Base Conversion / Multi-base Arithmetic
+    // Detects numbers in non-decimal bases and converts EACH independently to
+    // base 10 BEFORE performing any arithmetic.
+    //
+    // Correct methodology (avoids the reported bug):
+    //   1. Convert 744₈ → 484₁₀  (independently)
+    //   2. Convert 362₈ → 242₁₀  (independently)
+    //   3. Sum in base 10: 484 + 242 = 726
+    //   NEVER operate in the source base first.
+    //
+    // Supports:
+    //   - Subscript notation:  745₈, 3A5₁₆, 1010₂
+    //   - C-style prefixes:    0x3A5, 0b1010, 0o745
+    //   - Keyword notation:    "745 octal", "3A5 hexadecimal", "1010 en binario"
+    //   - Result-base request: "expresa en hexadecimal", "convierte a base 16"
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    static _tryBaseConversionProblem(text) {
+        // Quick guard: must contain a base indicator
+        var hasBaseIndicator =
+            /[\u2080-\u2089]/.test(text) ||
+            /\b0x[0-9A-Fa-f]+\b/.test(text) ||
+            /\b0b[01]+\b/.test(text) ||
+            /\b0o[0-7]+\b/.test(text) ||
+            /\boctal\b|\bhexadecimal\b|\bbinario\b|\bbinary\b/i.test(text) ||
+            /\ben\s+base\s+\d+/i.test(text);
+        if (!hasBaseIndicator) return null;
+
+        var baseNumbers = MathEngine.parseBaseNumbers(text);
+        if (!baseNumbers || baseNumbers.length === 0) return null;
+
+        var steps = [];
+
+        // Single number: pure conversion question
+        // e.g., "Convierte 745₈ a decimal" or "¿Cuánto es 0x3A5 en decimal?"
+        if (baseNumbers.length === 1) {
+            var single = baseNumbers[0];
+            steps.push('Conversión: ' + single.digits + ' (base ' + single.base + ') → ' + single.value + ' (base 10)');
+            // Check if the question asks for a non-decimal output base
+            var outBase = QuizMathValidator._detectOutputBase(text);
+            if (outBase && outBase !== 10) {
+                var converted = MathEngine.toBase(single.value, outBase);
+                if (converted) {
+                    steps.push('En base ' + outBase + ': ' + converted);
+                    // Return the decimal value for option matching, but record the base representation
+                    return { value: single.value, steps: steps, baseRepresentation: converted, outputBase: outBase };
+                }
+            }
+            return { value: single.value, steps: steps };
+        }
+
+        // Multiple numbers: detect operation and compute in base 10
+        // Convert each number to base 10 first (the correct methodology)
+        for (var i = 0; i < baseNumbers.length; i++) {
+            steps.push(
+                'Convertir ' + baseNumbers[i].digits +
+                ' (base ' + baseNumbers[i].base + ') → ' +
+                baseNumbers[i].value + ' (base 10)'
+            );
+        }
+
+        // Determine operation between numbers by inspecting the text between them
+        // Build a synthetic base-10 expression and evaluate it
+        var lower = text.toLowerCase();
+        var result = null;
+        var opDesc = '';
+
+        // Try to reconstruct the expression: replace each base-number with its decimal value
+        var syntheticExpr = text;
+        // Replace from right to left to preserve indices
+        var sorted = baseNumbers.slice().sort(function(a, b) { return b.pos - a.pos; });
+        for (var j = 0; j < sorted.length; j++) {
+            syntheticExpr =
+                syntheticExpr.slice(0, sorted[j].pos) +
+                sorted[j].value.toFixed(0) +
+                syntheticExpr.slice(sorted[j].end);
+        }
+
+        // Now try explicit arithmetic on the synthetic decimal expression
+        var arith = QuizMathValidator._tryExplicitArithmetic(syntheticExpr);
+        if (arith) {
+            result = arith.value;
+            opDesc = 'Expresión en base 10: ' + syntheticExpr.trim() + ' = ' + result;
+            steps.push(opDesc);
+        } else {
+            // Fallback: detect keyword-based operation
+            var vals = baseNumbers.map(function(n) { return n.value; });
+            if (/suma|sumar|a\u00f1ade|\+/i.test(lower)) {
+                result = vals.reduce(function(a, b) { return a.plus(b); }, new Decimal(0));
+                opDesc = 'Suma en base 10: ' + vals.join(' + ') + ' = ' + result;
+            } else if (/resta|restar|sustrae|\-/i.test(lower) && vals.length === 2) {
+                result = vals[0].minus(vals[1]);
+                opDesc = 'Resta en base 10: ' + vals[0] + ' - ' + vals[1] + ' = ' + result;
+            } else if (/multiplic|producto|por\b|\*/i.test(lower) && vals.length === 2) {
+                result = vals[0].times(vals[1]);
+                opDesc = 'Multiplicación en base 10: ' + vals[0] + ' × ' + vals[1] + ' = ' + result;
+            } else if (/divid|entre|÷/i.test(lower) && vals.length === 2) {
+                if (vals[1].isZero()) return null;
+                result = vals[0].div(vals[1]);
+                opDesc = 'División en base 10: ' + vals[0] + ' ÷ ' + vals[1] + ' = ' + result;
+            } else {
+                // Default: sum all when no explicit operator found
+                result = vals.reduce(function(a, b) { return a.plus(b); }, new Decimal(0));
+                opDesc = 'Suma en base 10: ' + vals.join(' + ') + ' = ' + result;
+            }
+            steps.push(opDesc);
+        }
+
+        if (result === null) return null;
+
+        // Check if result should be expressed in a different base
+        var outputBase = QuizMathValidator._detectOutputBase(text);
+        if (outputBase && outputBase !== 10) {
+            var baseResult = MathEngine.toBase(result.floor(), outputBase);
+            if (baseResult) {
+                steps.push('Resultado en base ' + outputBase + ': ' + baseResult);
+                return { value: result, steps: steps, baseRepresentation: baseResult, outputBase: outputBase };
+            }
+        }
+
+        console.log('[MathVerify] Base conversion: ' + baseNumbers.map(function(n) {
+            return n.digits + '₍' + n.base + '₎=' + n.value;
+        }).join(', ') + ' → result=' + result);
+
+        return { value: result, steps: steps };
+    }
+
+    /**
+     * Detects the output base requested by a question.
+     * e.g., "expresa en hexadecimal" → 16, "convierte a base 8" → 8
+     * @param {string} text
+     * @returns {number|null}
+     */
+    static _detectOutputBase(text) {
+        var lower = text.toLowerCase();
+        var m;
+        // "a base N" or "en base N"
+        m = lower.match(/(?:a|en)\s+base\s+(\d+)/);
+        if (m) { var b = parseInt(m[1], 10); if (b >= 2 && b <= 36) return b; }
+        // Named bases
+        if (/(?:expresa|convierte|resultado|escribe|da)\b[^.]*\bhexadecimal\b/i.test(text)) return 16;
+        if (/(?:expresa|convierte|resultado|escribe|da)\b[^.]*\boctal\b/i.test(text)) return 8;
+        if (/(?:expresa|convierte|resultado|escribe|da)\b[^.]*\b(?:binario|binary)\b/i.test(text)) return 2;
+        if (/(?:expresa|convierte)\b[^.]*\bdecimal\b/i.test(text)) return 10;
+        return null;
     }
 
 }

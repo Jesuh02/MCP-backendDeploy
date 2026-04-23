@@ -355,7 +355,16 @@ Ejemplos que NUNCA activan la etiqueta (preguntas informativas, hipotéticas o s
   - "¿Qué nota tiene la escala musical?" → NO (uso de la palabra "nota" sin contexto de evaluación)
   - "¿Qué se necesita para sacar 10?" → NO (pregunta hipotética o criterial)
 Regla semántica: la intención debe ser una ACCIÓN DIRECTA de asignación de nota a ESTA entrega concreta, no una consulta, comparación, criterio o pregunta hipotética.
-Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] (escala 0-10 siempre, NUNCA 0-100).`;
+Si usas [GRADING_REQUEST] con nota, el formato es: [GRADING_REQUEST: <número>] (escala 0-10 siempre, NUNCA 0-100).
+
+FORMATO OBLIGATORIO cuando uses [GRADING_REQUEST]:
+[GRADING_REQUEST: <número>]
+<análisis general de la entrega>
+
+## Retroalimentación
+<retroalimentación detallada que incluya: fortalezas de la entrega, áreas de mejora específicas y sugerencias concretas para mejorar el desempeño>
+
+La sección "## Retroalimentación" es OBLIGATORIA e IRRENUNCIABLE cada vez que uses [GRADING_REQUEST]. Sin ella la calificación es inválida.`;
 
                 if (taskDescription) {
                     systemPrompt += `\n\nContexto de la tarea: ${taskDescription}`;
@@ -872,11 +881,15 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 // Post-process vision response for grading signals
                 let esCalificacion = false;
                 let nota = null;
+                let feedback = null;
                 const gradingSignal = content.match(/^\[GRADING_REQUEST(?::\s*(\d+(?:\.\d+)?))?\]\s*/i);
                 if (gradingSignal) {
                     esCalificacion = true;
                     if (gradingSignal[1]) nota = parseFloat(gradingSignal[1]);
                     content = content.replace(gradingSignal[0], '');
+                    // Extract dedicated feedback section
+                    const fbMatch = content.match(/##\s*Retroalimentaci[oó]n\s*\n([\s\S]+?)(?=\n##\s|$)/i);
+                    feedback = fbMatch ? fbMatch[1].trim() : content.trim();
                 }
 
                 return Result.ok({
@@ -885,6 +898,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                     usage: visionResponse.usage,
                     esCalificacion,
                     nota,
+                    feedback: feedback || null,
                 });
             }
 
@@ -1041,6 +1055,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             let content = response.content;
             let esCalificacion = false;
             let nota = null;
+            let feedback = null;
 
             // Extract signal from LLM response (Semantic Detection)
             const gradingSignal = content.match(/^\[GRADING_REQUEST(?::\s*(\d+(?:\.\d+)?))?\]\s*/i);
@@ -1051,6 +1066,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 }
                 // Cleanup the tag so user doesn't see it
                 content = content.replace(gradingSignal[0], '');
+                // Extract the dedicated ## Retroalimentación section as feedback;
+                // fallback to full content when the section is missing.
+                const fbMatch = content.match(/##\s*Retroalimentaci[oó]n\s*\n([\s\S]+?)(?=\n##\s|$)/i);
+                feedback = fbMatch ? fbMatch[1].trim() : content.trim();
             }
 
             // 7. Repair malformed quiz JSON before sending to the client
@@ -1073,6 +1092,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 usage: response.usage,
                 esCalificacion,
                 nota,
+                feedback: feedback || null,
                 // Raw DB rows from the last successful query_database call.
                 // The controller uses this to build an Excel with the EXACT same data
                 // that the LLM described, preventing row-count mismatches.

@@ -1219,6 +1219,134 @@ export class MathEngine {
         const magB = MathEngine.orderOfMagnitude(b);
         return Math.abs(magA - magB) <= 1;
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Base Conversion
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Converts a number string in a given base to a Decimal (base 10).
+     * Supports uppercase/lowercase hex digits (A-F).
+     * @param {string} numStr - Number string in the given base (e.g., "745" for octal, "3A5" for hex)
+     * @param {number} base - Source base (2–36)
+     * @returns {Decimal|null} Decimal value, or null if invalid
+     */
+    static fromBase(numStr, base) {
+        if (!numStr || typeof numStr !== 'string') return null;
+        if (!Number.isInteger(base) || base < 2 || base > 36) return null;
+        const digits = '0123456789abcdefghijklmnopqrstuvwxyz';
+        const s = numStr.trim().toLowerCase();
+        if (!s) return null;
+        let result = new Decimal(0);
+        const b = new Decimal(base);
+        for (let i = 0; i < s.length; i++) {
+            const d = digits.indexOf(s[i]);
+            if (d < 0 || d >= base) return null; // invalid digit for this base
+            result = result.times(b).plus(d);
+        }
+        return result;
+    }
+
+    /**
+     * Converts a non-negative Decimal integer to a string in the target base.
+     * @param {Decimal} value - Non-negative integer
+     * @param {number} base - Target base (2–36)
+     * @returns {string|null}
+     */
+    static toBase(value, base) {
+        if (!value || !Number.isInteger(base) || base < 2 || base > 36) return null;
+        const digits = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        let n = value.abs().floor();
+        if (n.isZero()) return '0';
+        const b = new Decimal(base);
+        let result = '';
+        while (n.gt(0)) {
+            const rem = n.mod(b).toNumber();
+            result = digits[rem] + result;
+            n = n.minus(rem).div(b).floor();
+        }
+        return (value.lt(0) ? '-' : '') + result;
+    }
+
+    /**
+     * Parses all numbers with explicit base notation from text.
+     * Handles subscript notation: 745₈, 3A5₁₆, 1010₂, 1F4₁₆
+     * Handles C-style prefixes: 0x3A5, 0b1010, 0o745
+     * Handles keyword notation: "745 octal", "3A5 hexadecimal", "1010 binario"
+     * Returns an array sorted by position in text (leftmost first).
+     * @param {string} text
+     * @returns {Array<{raw: string, digits: string, value: Decimal, base: number, pos: number, end: number}>}
+     */
+    static parseBaseNumbers(text) {
+        if (!text) return [];
+        const results = [];
+
+        // Subscript digits map for unicode subscripts ₀–₉
+        const subMap = { '₀':0,'₁':1,'₂':2,'₃':3,'₄':4,'₅':5,'₆':6,'₇':7,'₈':8,'₉':9 };
+
+        // Helper: read subscript number starting at pos in text
+        function readSubscript(s, pos) {
+            let n = '';
+            while (pos < s.length && subMap[s[pos]] !== undefined) {
+                n += subMap[s[pos]];
+                pos++;
+            }
+            return n ? parseInt(n, 10) : null;
+        }
+
+        // 1. Subscript-notation: e.g., 745₈ or 3A5F₁₆ or 1010₂
+        //    Number digits: [0-9A-Fa-f]+, followed by subscript digits
+        const subRe = /([0-9A-Fa-f]+)([\u2080-\u2089]+)/g;
+        let m;
+        while ((m = subRe.exec(text)) !== null) {
+            const digitStr = m[1];
+            let baseStr = '';
+            for (const ch of m[2]) baseStr += subMap[ch];
+            const base = parseInt(baseStr, 10);
+            if (base < 2 || base > 36) continue;
+            const value = MathEngine.fromBase(digitStr, base);
+            if (value === null) continue;
+            results.push({ raw: m[0], digits: digitStr, value, base, pos: m.index, end: m.index + m[0].length });
+        }
+
+        // 2. C-style prefix: 0x..., 0b..., 0o...
+        const prefixRe = /\b(0x([0-9A-Fa-f]+)|0b([01]+)|0o([0-7]+))\b/g;
+        while ((m = prefixRe.exec(text)) !== null) {
+            let digitStr, base;
+            if (m[2] !== undefined) { digitStr = m[2]; base = 16; }
+            else if (m[3] !== undefined) { digitStr = m[3]; base = 2; }
+            else if (m[4] !== undefined) { digitStr = m[4]; base = 8; }
+            else continue;
+            // Avoid double-counting if already captured by subscript notation
+            if (results.some(r => r.pos === m.index)) continue;
+            const value = MathEngine.fromBase(digitStr, base);
+            if (value === null) continue;
+            results.push({ raw: m[0], digits: digitStr, value, base, pos: m.index, end: m.index + m[0].length });
+        }
+
+        // 3. Keyword notation: "745 en base 8", "3A5 en base 16", "1010 en binario",
+        //    "745 octal", "3A5 hexadecimal", "FF en hexadecimal"
+        const keywordMap = [
+            { re: /\b([0-9A-Fa-f]+)\s+en\s+base\s+(\d+)/g, getBase: (m) => parseInt(m[2], 10), getDigits: (m) => m[1] },
+            { re: /\b([0-9A-Fa-f]+)\s+(?:en\s+)?(?:base\s+)?(?:hexadecimal|hex)\b/gi, getBase: () => 16, getDigits: (m) => m[1] },
+            { re: /\b([0-7]+)\s+(?:en\s+)?(?:base\s+)?octal\b/gi, getBase: () => 8, getDigits: (m) => m[1] },
+            { re: /\b([01]+)\s+(?:en\s+)?(?:base\s+)?(?:binario|binary|bin)\b/gi, getBase: () => 2, getDigits: (m) => m[1] },
+        ];
+        for (const { re, getBase, getDigits } of keywordMap) {
+            while ((m = re.exec(text)) !== null) {
+                const base = getBase(m);
+                const digitStr = getDigits(m);
+                if (!digitStr || base < 2 || base > 36) continue;
+                if (results.some(r => r.pos <= m.index && r.end >= m.index + m[0].length)) continue;
+                const value = MathEngine.fromBase(digitStr, base);
+                if (value === null) continue;
+                results.push({ raw: m[0], digits: digitStr, value, base, pos: m.index, end: m.index + m[0].length });
+            }
+        }
+
+        results.sort((a, b) => a.pos - b.pos);
+        return results;
+    }
 }
 
 export default MathEngine;
