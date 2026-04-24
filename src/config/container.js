@@ -160,6 +160,10 @@ import { PeriodDomainService } from '../modules/period/period.service.js';
 import { SupabasePeriodRepository } from '../modules/period/infrastructure/supabase.period.repository.js';
 import { PeriodController } from '../modules/period/period.controller.js';
 
+import { IcfesDomainService } from '../modules/icfes/icfes.service.js';
+import { SupabaseIcfesRepository } from '../modules/icfes/infrastructure/supabase.icfes.repository.js';
+import { IcfesController } from '../modules/icfes/icfes.controller.js';
+
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los
  * controladores listos para montar en las rutas Express.
@@ -509,6 +513,11 @@ export function createContainer() {
     const excelController = new ExcelController({ excelService });
     const institucionController = new InstitucionController({ institucionService, userRepository: userRepo });
 
+    // ICFES (Saber 11 – adaptive exam)
+    const icfesRepository = client ? new SupabaseIcfesRepository(client) : null;
+    const icfesService = icfesRepository ? new IcfesDomainService({ icfesRepository }) : null;
+    const icfesController = icfesService ? new IcfesController({ icfesService }) : null;
+
     // WhatsApp
     const whatsAppController = safeInit('WhatsAppController', () => new WhatsAppController({
         whatsAppService: whatsAppDomainService,
@@ -563,6 +572,7 @@ export function createContainer() {
         excelController,
         institucionController,
         whatsAppController,
+        icfesController,
 
         // Servicios de dominio
         authService,

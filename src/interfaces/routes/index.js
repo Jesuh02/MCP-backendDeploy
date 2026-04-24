@@ -39,6 +39,7 @@ import { whatsappRoutes } from '../../modules/whatsapp/whatsapp.routes.js';
 import { createCourseActiveGuard } from '../../shared/middleware/courseActiveGuard.js';
 import { createTenantMiddleware } from '../../shared/middleware/TenantMiddleware.js';
 import { publicRegisterRoutes } from '../../modules/auth/public-register.routes.js';
+import { icfesRoutes } from '../../modules/icfes/icfes.routes.js';
 
 export function createRouter(deps) {
     const router = Router();
@@ -121,6 +122,10 @@ export function createRouter(deps) {
     router.use('/streaming', videoStreamingRoutes(deps));
     router.use('/rag', ragRoutes(deps));
     router.use('/excel', excelRoutes(deps));
+
+    if (deps.icfesController) {
+        router.use('/icfes', icfesRoutes(deps));
+    }
 
     return router;
 }
