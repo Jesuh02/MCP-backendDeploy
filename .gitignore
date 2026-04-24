@@ -123,3 +123,4 @@ scripts/migrate_tasks_period_id.sql
 scripts/consulidadodenotas.txt
 scripts/periodos.txt
 scripts/reporte_plataforma_1776619148463.xlsx
+scripts/migration_icfes_answer_audit.sql
