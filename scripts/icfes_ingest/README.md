@@ -47,10 +47,29 @@ npm install pdfjs-dist@^4 pngjs@^7
 
 ```
 DATABASE_URL=postgresql://user:pass@host:5432/db         # obligatoria
+
+# Cloudflare R2 — si están las 4, las imágenes se suben automáticamente a R2
+R2_ACCOUNT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+R2_ACCESS_KEY_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+R2_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
+R2_BUCKET_NAME=coursev-files                             # opcional (default coursev-files)
+R2_PUBLIC_URL=https://pub-xxxxxxxxxxxx.r2.dev            # obligatoria si usas R2
+ICFES_R2_PREFIX=icfes                                    # opcional (default icfes)
+
+# Fallback local (si NO hay R2 configurado)
 ICFES_IMAGE_BASE_URL=https://cdn.coursev.co/icfes        # opcional (default: file:// local)
+
+# LLM (resolución de respuestas correctas)
 OPENAI_API_KEY=sk-...                                    # opcional: habilita resolver LLM
 ICFES_ANSWER_MODEL=gpt-4o-mini                           # opcional (default)
 ICFES_ANSWER_MIN_CONF=0.8                                # opcional (default 0.8)
+```
+
+Forzar el adaptador desde la CLI:
+
+```powershell
+node scripts/icfes_ingest/index.js --storage=r2     # obliga a usar R2 (falla si no hay env)
+node scripts/icfes_ingest/index.js --storage=local  # obliga a guardar en disco
 ```
 
 ## Resolución de respuestas correctas (clave para falencia_score / IRT)
@@ -107,8 +126,11 @@ node scripts/icfes_ingest/index.js --no-llm
 - **DB**: filas en `icfes_questions` (con `source_reference` único tipo
   `2016/fisica/Fisica 2010.pdf#q12p3`), sus 4 opciones en `icfes_question_options`
   y las imágenes asociadas en `icfes_question_images`.
-- **Imágenes**: en `data/icfes_images/*.{png,jpg}` (o CDN si configuraste
-  `ICFES_IMAGE_BASE_URL`).
+- **Imágenes**: en `data/icfes_images/*.{png,jpg}` (modo local) o subidas a
+  Cloudflare R2 cuando configuras las env `R2_*`. Las URLs públicas quedan
+  guardadas en `icfes_question_images.url` y son consumidas tal cual por el
+  frontend (`IcfesExamView.vue` ya las renderiza por `position: stem |
+  option_a..d`).
 
 ## Idempotencia
 
@@ -120,9 +142,10 @@ duplica filas.
 - **Revisión manual de pendientes**: la vista `v_icfes_questions_pending_review`
   lista las preguntas sin respuesta correcta confirmada. Úsala para curación
   o para dirigir re-ejecuciones con mejores JSON.
-- Las **imágenes** se asocian como `position='stem'` a la primera pregunta de
-  cada página. Para asignación fina por bbox (stem vs. option_X) hay que
-  evolucionar `pdf-extractor.js` usando las coordenadas del `paintImageXObject`.
+- Las **imágenes** se asocian a la pregunta cuyo rango Y las contiene y se
+  clasifican como `stem` o `option_a..d` usando la posición Y de cada
+  marcador A./B./C./D. Para PDFs sin coordenadas Y de imagen embebida (poco
+  común), caen al fallback `stem` de la pregunta más cercana por encima.
 - Los **embeddings** (`icfes_question_embeddings`) se generan en un job aparte
   para evitar costos durante la ingesta masiva; implementa el puerto
   `EmbedderPort` y llámalo desde un nuevo caso de uso `GenerateEmbeddings`.

@@ -14,6 +14,7 @@ import { resolve } from 'node:path'
 import { scanLibrary } from './adapters/folder-catalog.js'
 import { createPdfExtractor } from './adapters/pdf-extractor.js'
 import { createLocalImageStorage } from './adapters/image-storage.js'
+import { createR2ImageStorage } from './adapters/r2-image-storage.js'
 import { createTaxonomyResolver } from './adapters/taxonomy-resolver.js'
 import { createPgRepository } from './adapters/pg-repository.js'
 import { createJsonAnswerKeyResolver } from './adapters/answer-key-json.js'
@@ -23,22 +24,37 @@ import { createIngestPdfUseCase } from './application/ingest-pdf.js'
 import { createIngestLibraryUseCase } from './application/ingest-library.js'
 
 function parseArgs(argv) {
-  const opts = { dryRun: false, area: null, year: null, noLlm: false }
+  const opts = { dryRun: false, area: null, year: null, noLlm: false, storage: null }
   for (const a of argv.slice(2)) {
     if (a === '--dry-run') opts.dryRun = true
     else if (a === '--no-llm') opts.noLlm = true
     else if (a.startsWith('--area=')) opts.area = a.slice(7).toUpperCase()
     else if (a.startsWith('--year=')) opts.year = Number(a.slice(7))
     else if (a.startsWith('--root=')) opts.root = a.slice(7)
+    else if (a.startsWith('--storage=')) opts.storage = a.slice(10).toLowerCase()
   }
   return opts
+}
+
+// Selecciona el adaptador de almacenamiento de imágenes (DIP):
+//   - --storage=r2|local   fuerza el adaptador
+//   - sin flag             usa R2 si están configuradas las env vars, si no local
+function buildImageStorage(forced) {
+  const wantR2 = forced === 'r2' ||
+    (!forced && process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY)
+  if (wantR2) {
+    console.log('[icfes] image storage: Cloudflare R2')
+    return createR2ImageStorage()
+  }
+  console.log('[icfes] image storage: local (configura R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_PUBLIC_URL para subir a Cloudflare R2)')
+  return createLocalImageStorage()
 }
 
 async function main() {
   const opts = parseArgs(process.argv)
   const root = opts.root || resolve(process.cwd(), 'docs/icfes_content')
 
-  const imageStorage = createLocalImageStorage()
+  const imageStorage = buildImageStorage(opts.storage)
   const extractor    = createPdfExtractor(imageStorage)
   const repo         = opts.dryRun ? { insert: async () => 1, close: async () => {} } : createPgRepository()
   const taxonomy     = opts.dryRun
