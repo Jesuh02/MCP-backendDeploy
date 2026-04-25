@@ -36,17 +36,22 @@ Reglas SOLID respetadas:
 
 ## Instalación de dependencias
 
-```powershell
-cd MCP-backendDeploy
-npm install pdfjs-dist@^4 pngjs@^7
-```
+Ya están en `package.json` (`pdfjs-dist`, `pngjs`, `pg`, `@aws-sdk/client-s3`,
+`openai`, `dotenv`).
 
-> `pg` y `dotenv` ya están en `package.json`.
+```powershell
+cd mcp-backend-deploy
+npm install
+```
 
 ## Variables de entorno
 
-```
-DATABASE_URL=postgresql://user:pass@host:5432/db         # obligatoria
+```ini
+# Postgres directo (Supabase: Settings → Database → Connection string → URI)
+# Ejemplo Supabase (pooler, recomendado): 
+#   postgresql://postgres.<project-ref>:<db-password>@aws-0-us-east-1.pooler.supabase.com:5432/postgres
+# La codificación URL del password es obligatoria si contiene '!', '@', ':' o '/'.
+DATABASE_URL=postgresql://...
 
 # Cloudflare R2 — si están las 4, las imágenes se suben automáticamente a R2
 R2_ACCOUNT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -64,6 +69,9 @@ OPENAI_API_KEY=sk-...                                    # opcional: habilita re
 ICFES_ANSWER_MODEL=gpt-4o-mini                           # opcional (default)
 ICFES_ANSWER_MIN_CONF=0.8                                # opcional (default 0.8)
 ```
+
+> El adaptador `pg-repository.js` detecta automáticamente hosts gestionados
+> (Supabase, Neon, Railway, RDS) y activa TLS sin configuración extra.
 
 Forzar el adaptador desde la CLI:
 
@@ -96,25 +104,27 @@ JOIN icfes_question_options o ON o.question_id = q.id
 WHERE o.is_correct AND coalesce(o.answer_confidence, 0) >= 0.9;
 ```
 
-Antes de la primera ingesta, aplica la migración de auditoría (idempotente):
+Antes de la primera ingesta, aplica la migración (idempotente) que crea el
+esquema completo (tablas, columnas de auditoría y vista de revisión pendiente):
 
 ```powershell
-psql $env:DATABASE_URL -f scripts/migration_icfes_answer_audit.sql
+npm run icfes:migrate
 ```
 
 ## Uso
 
 ```powershell
-# Ingesta completa (real)
-node scripts/icfes_ingest/index.js
+# 1. Migración (una sola vez por entorno) — crea tablas + semilla de taxonomía
+npm run icfes:migrate
+
+# 2. Ingesta completa — sube imágenes a R2 e inserta preguntas en Postgres
+npm run icfes:ingest
 
 # Prueba en seco — no escribe en DB, solo valida extracción
-node scripts/icfes_ingest/index.js --dry-run
+npm run icfes:ingest:dry
 
-# Filtrar por área ICFES
+# Filtrar por área ICFES o año (flags directos)
 node scripts/icfes_ingest/index.js --area=CN
-
-# Filtrar por año
 node scripts/icfes_ingest/index.js --year=2023
 
 # Deshabilitar LLM (solo JSON curado)
