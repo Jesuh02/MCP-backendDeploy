@@ -13,7 +13,11 @@
     "dev": "node --watch src/index.js",
     "test": "node --test src/**/*.test.js",
     "lint": "eslint src/",
-    "security-check": "npm audit"
+    "security-check": "npm audit",
+    "icfes:migrate": "node scripts/run-sql.mjs scripts/migration_icfes_schema.sql",
+    "icfes:ingest": "node scripts/icfes_ingest/index.js",
+    "icfes:ingest:dry": "node scripts/icfes_ingest/index.js --dry-run",
+    "icfes:ingest:r2": "node scripts/icfes_ingest/index.js --storage=r2"
   },
   "keywords": [
     "mcp",
