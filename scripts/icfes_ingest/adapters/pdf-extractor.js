@@ -1,14 +1,20 @@
 // Extractor de preguntas desde PDFs del ICFES.
-// Estrategia:
-//   1. pdfjs-dist saca los ítems de texto con sus coordenadas (x,y) por página.
+//
+// Flujo:
+//   1. pdfjs-dist saca los items de texto con sus coordenadas (x,y) por página.
 //   2. Agrupamos los items por líneas (mismo y) y ordenamos por y descendente.
 //   3. Detectamos preguntas por regex: /^\s*(\d{1,3})[.)\s]+/ al inicio de línea.
 //   4. Dentro de cada pregunta detectamos las 4 opciones A./B./C./D.
-//   5. Extraemos imágenes embebidas (paintImageXObject / paintJpegXObject) y
-//      las asociamos a la pregunta cuyo rango vertical las contiene.
-//
-// El extractor emite preguntas aunque tengan <4 opciones (quedan descartadas
-// en el caso de uso por isValidQuestion). Esto permite observabilidad.
+//      Guardamos el Y de cada marcador de opción para poder clasificar
+//      imágenes después.
+//   5. Recorremos la lista de operadores y trackeamos la matriz de
+//      transformación corriente (CTM) con su pila save/restore. Cuando
+//      aparece una operación de pintar imagen (`paintImageXObject`,
+//      `paintJpegXObject`, `paintInlineImageXObject`) usamos la CTM activa
+//      para conocer la posición Y de la imagen en la página.
+//   6. Asociamos cada imagen a la pregunta cuyo rango [yBottom..yTop] la
+//      contiene, y clasificamos su `position` como `stem` (por encima de la
+//      primera opción) o `option_x` (más cercana por encima a la opción x).
 
 import { readFile } from 'node:fs/promises'
 import { newQuestion, newOption, newImage } from '../domain/models.js'
@@ -18,7 +24,6 @@ async function loadPdfjs() {
   // El build legacy corre bien en Node 18+ sin depender de DOM.
   // eslint-disable-next-line
   const mod = await import('pdfjs-dist/legacy/build/pdf.mjs')
-  // pdfjs intenta cargar un worker por defecto; lo desactivamos para Node.
   if (mod.GlobalWorkerOptions) mod.GlobalWorkerOptions.workerSrc = ''
   return mod
 }
@@ -26,26 +31,25 @@ async function loadPdfjs() {
 const QUESTION_START = /^\s*(\d{1,3})\s*[.)]\s+/
 const OPTION_START   = /^\s*([ABCD])\s*[.)]\s+/
 
-// Agrupa items de texto de una página en líneas ordenadas top→bottom.
+// ───── Texto / líneas ─────────────────────────────────────────────────────
+
 function groupLines(items) {
   const lines = new Map()
   for (const it of items) {
     if (!it.str?.trim()) continue
-    const y = Math.round(it.transform[5])   // quantización para agrupar
+    const y = Math.round(it.transform[5])
     const x = it.transform[4]
-    const key = y
-    if (!lines.has(key)) lines.set(key, [])
-    lines.get(key).push({ x, str: it.str })
+    if (!lines.has(y)) lines.set(y, [])
+    lines.get(y).push({ x, str: it.str })
   }
   return [...lines.entries()]
-    .sort((a, b) => b[0] - a[0])             // y descendente = top primero
+    .sort((a, b) => b[0] - a[0])
     .map(([y, arr]) => ({
       y,
       text: arr.sort((a, b) => a.x - b.x).map(t => t.str).join(' ').replace(/\s+/g, ' ').trim(),
     }))
 }
 
-// Parte las líneas de una página en bloques de pregunta.
 function splitIntoQuestions(lines, pageNum, source) {
   const blocks = []
   let current = null
@@ -58,10 +62,10 @@ function splitIntoQuestions(lines, pageNum, source) {
         yTop: l.y,
         yBottom: l.y,
         page: pageNum,
-        lines: [l.text.replace(QUESTION_START, '')],
+        lines: [{ y: l.y, text: l.text.replace(QUESTION_START, '') }],
       }
     } else if (current) {
-      current.lines.push(l.text)
+      current.lines.push({ y: l.y, text: l.text })
       current.yBottom = l.y
     }
   }
@@ -69,20 +73,22 @@ function splitIntoQuestions(lines, pageNum, source) {
   return blocks.map(b => parseBlock(b, source))
 }
 
-// Convierte un bloque crudo en Question con stem + opciones.
+// Un bloque crudo → { question, block (con optionYs) } listo para imágenes.
 function parseBlock(block, source) {
   const stemLines = []
   const opts = { A: [], B: [], C: [], D: [] }
+  const optionYs = { A: null, B: null, C: null, D: null }
   let currentOpt = null
   for (const line of block.lines) {
-    const m = line.match(OPTION_START)
+    const m = line.text.match(OPTION_START)
     if (m) {
       currentOpt = m[1]
-      opts[currentOpt].push(line.replace(OPTION_START, ''))
+      if (optionYs[currentOpt] == null) optionYs[currentOpt] = line.y
+      opts[currentOpt].push(line.text.replace(OPTION_START, ''))
     } else if (currentOpt) {
-      opts[currentOpt].push(line)
+      opts[currentOpt].push(line.text)
     } else {
-      stemLines.push(line)
+      stemLines.push(line.text)
     }
   }
   const options = ['A','B','C','D']
@@ -90,7 +96,7 @@ function parseBlock(block, source) {
     .map(k => newOption(k, opts[k].join(' ').trim(), false))
 
   return {
-    block,
+    block: { ...block, optionYs },
     question: newQuestion({
       stem: stemLines.join(' ').trim(),
       options,
@@ -104,20 +110,53 @@ function parseBlock(block, source) {
   }
 }
 
-// Lee imágenes embebidas de una página. Tolerante a errores.
+// ───── CTM tracking + extracción de imágenes con coordenadas ───────────────
+
+// Multiplicación de matrices afines 2D (formato pdf: [a,b,c,d,e,f]).
+function mul(m1, m2) {
+  return [
+    m1[0]*m2[0] + m1[2]*m2[1],
+    m1[1]*m2[0] + m1[3]*m2[1],
+    m1[0]*m2[2] + m1[2]*m2[3],
+    m1[1]*m2[2] + m1[3]*m2[3],
+    m1[0]*m2[4] + m1[2]*m2[5] + m1[4],
+    m1[1]*m2[4] + m1[3]*m2[5] + m1[5],
+  ]
+}
+
 async function extractPageImages(page, imageStorage, sourceKey) {
   const out = []
   let opList
   try { opList = await page.getOperatorList() } catch { return out }
-  const OPS = opList.fnArray ? (await loadPdfjs()).OPS : null
+  if (!opList?.fnArray?.length) return out
+  const pdfjs = await loadPdfjs()
+  const OPS = pdfjs.OPS
   if (!OPS) return out
-  const imageOps = new Set([OPS.paintImageXObject, OPS.paintJpegXObject, OPS.paintInlineImageXObject])
+
+  const imageOps = new Set([
+    OPS.paintImageXObject,
+    OPS.paintJpegXObject,
+    OPS.paintInlineImageXObject,
+  ])
+
+  const stack = []
+  let ctm = [1, 0, 0, 1, 0, 0]
 
   for (let i = 0; i < opList.fnArray.length; i++) {
-    if (!imageOps.has(opList.fnArray[i])) continue
+    const op = opList.fnArray[i]
     const args = opList.argsArray[i]
+
+    if (op === OPS.save) { stack.push(ctm); continue }
+    if (op === OPS.restore) { ctm = stack.pop() ?? ctm; continue }
+    if (op === OPS.transform && Array.isArray(args) && args.length === 6) {
+      ctm = mul(ctm, args)
+      continue
+    }
+    if (!imageOps.has(op)) continue
+
     const name = args?.[0]
     if (!name) continue
+
     let img
     try {
       img = await new Promise((res, rej) => {
@@ -125,23 +164,36 @@ async function extractPageImages(page, imageStorage, sourceKey) {
         if (got) res(got)
       })
     } catch { continue }
+
     const saved = await persistImage(img, imageStorage, `${sourceKey}_${name}`)
-    if (saved) out.push(saved)
+    if (!saved) continue
+
+    // Bbox aproximado del XObject: el espacio de imagen va de (0,0) a (1,1)
+    // y se transforma por la CTM. Bottom-left ≈ (e, f); altura visible ≈ |d|.
+    const x0 = ctm[4]
+    const y0 = ctm[5]
+    const h  = Math.abs(ctm[3]) || 0
+    out.push({
+      url: saved.url,
+      width: img.width,
+      height: img.height,
+      x: x0,
+      y: y0,
+      yCenter: y0 + h / 2,
+      yTop: y0 + h,
+    })
   }
   return out
 }
 
-// Normaliza el objeto imagen de pdfjs y lo envía al storage.
 async function persistImage(img, storage, baseKey) {
   try {
     const data = img.data || (img.bitmap && await bitmapToBytes(img.bitmap))
     if (!data) return null
-    // Si ya son bytes JPEG (FFD8FF), guardar tal cual.
     if (data[0] === 0xFF && data[1] === 0xD8 && data[2] === 0xFF) {
       const url = await storage.save(data, 'jpg', baseKey)
       return { url, width: img.width, height: img.height }
     }
-    // RGBA/RGB crudo → PNG vía pngjs (carga perezosa, opcional).
     const png = await tryEncodePng(data, img.width, img.height, img.kind)
     if (!png) return null
     const url = await storage.save(png, 'png', baseKey)
@@ -150,7 +202,6 @@ async function persistImage(img, storage, baseKey) {
 }
 
 async function bitmapToBytes(bitmap) {
-  // En Node, bitmap suele ser { width, height, data:Uint8ClampedArray }
   if (bitmap?.data) return new Uint8Array(bitmap.data.buffer || bitmap.data)
   return null
 }
@@ -160,7 +211,6 @@ async function tryEncodePng(data, width, height, kind) {
   let pngjs
   try { pngjs = (await import('pngjs')).PNG } catch { return null }
   const png = new pngjs({ width, height })
-  // kind: 1=grayscale1bpp 2=RGB_24BPP 3=RGBA_32BPP (api pdfjs)
   const rgba = toRgba(data, width, height, kind)
   if (!rgba) return null
   png.data = Buffer.from(rgba)
@@ -179,15 +229,51 @@ function toRgba(data, w, h, kind) {
     }
     return out
   }
-  if (data.length === px) {            // grayscale 8bpp
+  if (data.length === px) {
     for (let i = 0; i < px; i++) { out[i*4]=out[i*4+1]=out[i*4+2]=data[i]; out[i*4+3]=255 }
     return out
   }
   return null
 }
 
+// ───── Asociación imagen → pregunta y clasificación de posición ────────────
+
+function findOwnerBlock(blocks, img) {
+  // Pdf y crece hacia arriba: yTop > yBottom en valor numérico.
+  for (const b of blocks) {
+    if (img.yCenter <= b.block.yTop && img.yCenter >= b.block.yBottom) return b
+  }
+  // Fallback: pregunta más cercana por encima (típico cuando la imagen
+  // queda en medio del bloque y no hay líneas debajo registradas).
+  let best = null, bestDist = Infinity
+  for (const b of blocks) {
+    if (b.block.yTop < img.yCenter) continue
+    const d = b.block.yTop - img.yCenter
+    if (d < bestDist) { bestDist = d; best = b }
+  }
+  return best
+}
+
+function classifyImagePosition(img, optionYs) {
+  const yc = img.yCenter
+  const ys = ['A','B','C','D']
+    .map(k => ({ k, y: optionYs[k] }))
+    .filter(o => o.y != null)
+    .sort((a, b) => b.y - a.y) // de mayor Y (A) a menor (D)
+  if (!ys.length) return 'stem'
+  const firstOptY = ys[0].y
+  if (yc > firstOptY) return 'stem'
+  // Encuentra la opción cuyo Y sea el más cercano por encima del centro.
+  let owner = ys[ys.length - 1]
+  for (const o of ys) {
+    if (o.y >= yc) owner = o
+  }
+  return `option_${owner.k.toLowerCase()}`
+}
+
+// ───── Fábrica del extractor ──────────────────────────────────────────────
+
 /**
- * Fábrica del adaptador.
  * @param {{ save:(b:Uint8Array,ext:string,key:string)=>Promise<string> }} imageStorage
  * @returns {{ extract:(src:any)=>AsyncGenerator<import('../domain/models.js').Question> }}
  */
@@ -196,7 +282,11 @@ export function createPdfExtractor(imageStorage) {
     async *extract(src) {
       const pdfjs = await loadPdfjs()
       const buf = await readFile(src.filePath)
-      const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), disableWorker: true, isEvalSupported: false }).promise
+      const doc = await pdfjs.getDocument({
+        data: new Uint8Array(buf),
+        disableWorker: true,
+        isEvalSupported: false,
+      }).promise
       const sourceKey = src.reference.replace(/[^\w]+/g, '_')
 
       for (let p = 1; p <= doc.numPages; p++) {
@@ -207,17 +297,34 @@ export function createPdfExtractor(imageStorage) {
         if (!parsed.length) { page.cleanup(); continue }
 
         const images = await extractPageImages(page, imageStorage, `${sourceKey}_p${p}`)
-        // Asociar cada imagen a la pregunta cuyo rango [yTop..yBottom] la contiene.
-        // pdfjs no da la Y del XObject; como heurística MVP las asociamos a la
-        // primera pregunta de la página (position='stem').
-        for (const { question, block } of parsed) {
-          const pageImgs = images.splice(0, Math.min(images.length, 1))
-          const withImgs = {
-            ...question,
-            images: pageImgs.map((img, i) =>
-              newImage('stem', img.url, `${src.reference} p${block.page} q${block.number}`, i)),
+
+        // Buckets de imágenes por bloque (pregunta) con posición clasificada.
+        const buckets = new Map(parsed.map(b => [b.block.number, []]))
+        for (const img of images) {
+          const owner = findOwnerBlock(parsed, img)
+          if (!owner) continue
+          const position = classifyImagePosition(img, owner.block.optionYs)
+          buckets.get(owner.block.number).push({ ...img, position })
+        }
+
+        for (const b of parsed) {
+          const bucket = buckets.get(b.block.number) || []
+          // Orden estable: stem primero, luego A→D, luego por Y descendente.
+          bucket.sort((a, c) => {
+            const order = (p) => p === 'stem' ? 0 : 1 + 'abcd'.indexOf(p.slice(-1))
+            return order(a.position) - order(c.position) || c.yCenter - a.yCenter
+          })
+          const out = {
+            ...b.question,
+            images: bucket.map((img, i) =>
+              newImage(
+                img.position,
+                img.url,
+                `${src.reference} p${b.block.page} q${b.block.number}`,
+                i,
+              )),
           }
-          yield withImgs
+          yield out
         }
         page.cleanup()
       }
