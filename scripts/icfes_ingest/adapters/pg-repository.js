@@ -4,12 +4,30 @@
 import pg from 'pg'
 const { Pool } = pg
 
+// Servicios gestionados (Supabase, Neon, Railway, AWS RDS, …) exigen TLS.
+// Autodetección por host para evitar que el usuario tenga que configurar nada.
+function inferSslConfig(connectionString) {
+  if (!connectionString) return false
+  if (/sslmode=disable/i.test(connectionString)) return false
+  if (/sslmode=(require|verify-ca|verify-full)/i.test(connectionString)) {
+    return { rejectUnauthorized: false }
+  }
+  if (/\b(supabase\.co|supabase\.net|neon\.tech|railway\.app|rds\.amazonaws\.com)\b/i.test(connectionString)) {
+    return { rejectUnauthorized: false }
+  }
+  return false
+}
+
 /**
  * @param {string} connectionString
  */
 export function createPgRepository(connectionString = process.env.DATABASE_URL) {
   if (!connectionString) throw new Error('DATABASE_URL no configurada')
-  const pool = new Pool({ connectionString, max: 4 })
+  const pool = new Pool({
+    connectionString,
+    max: 4,
+    ssl: inferSslConfig(connectionString),
+  })
   let auditColsChecked = false
   let hasAuditCols = false
 
