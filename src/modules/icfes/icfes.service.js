@@ -43,13 +43,17 @@ function selectPedagogicalOrder(candidates) {
     return ordered.slice(0, EXAM_SIZE);
 }
 
-// Convierte fila de BD → DTO del frontend (sin exponer is_correct).
+// Convierte fila de BD → DTO del frontend.
+// NOTA: incluye `correct` y `explanation` para soportar feedback inmediato
+// tras cada respuesta (modo simulacro pedagógico).
 function toClientQuestion(row) {
     const sub = row.icfes_subtopics || {};
     const topic = sub.icfes_topics || {};
-    const options = (row.icfes_question_options || [])
-        .sort((a, b) => a.label.localeCompare(b.label))
-        .map(o => ({ id: o.label, text: o.content }));
+    const sortedOpts = (row.icfes_question_options || [])
+        .slice()
+        .sort((a, b) => a.label.localeCompare(b.label));
+    const options = sortedOpts.map(o => ({ id: o.label, text: o.content }));
+    const correctOpt = sortedOpts.find(o => o.is_correct);
     const images = (row.icfes_question_images || [])
         .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
         .map(img => ({
@@ -65,6 +69,8 @@ function toClientQuestion(row) {
         stem: row.stem,
         options,
         images,
+        correct: correctOpt?.label ?? null,
+        explanation: row.explanation ?? null,
     };
 }
 
