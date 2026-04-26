@@ -1,0 +1,842 @@
+naturales
+Pregunta 1
+A continuación, se muestra un modelo de la distribución de las moléculas de agua en estado líquido, en un recipiente cerrado.
+imagen1
+https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20170630.png
+Cuando este recipiente se calienta manteniendo la presión constante, la distribución de las moléculas cambia, modificando el estado del agua. ¿Cuál de los siguientes modelos muestra correctamente la distribución de las moléculas de agua en estado líquido y gaseoso?
+imagen2
+https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20170744.png
+✅ Respuesta correcta: D
+descripcion
+Al calentar agua líquida a presión constante, parte de ella pasa a estado gaseoso. El modelo correcto debe mostrar:
+
+Líquido: moléculas de H₂O juntas, agrupadas y próximas entre sí (interacciones intermoleculares presentes).
+Gas: moléculas de H₂O individuales y muy separadas, distribuidas por el recipiente (sin enlace entre ellas).
+La opción D es la única que cumple ambas condiciones. Las otras opciones fallan porque: A no muestra moléculas H₂O correctas, B muestra moléculas unidas en pares en el gas (incorrecto para estado gaseoso), y C muestra el gas con moléculas agrupadas, lo cual contradice la naturaleza del estado gaseoso.
+
+Pregunta 2
+La siguiente ecuación representa la reacción química de la formación de agua (H₂O).
+imagen1 
+https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20170946.png
+
+¿Cuál de las siguientes opciones muestra correctamente los reactivos de la anterior reacción?
+
+A. H₄ y O₂
+B. H₄ y O₄
+C. H₂ y O₂
+D. H₂ y O₄
+✅ Respuesta correcta: A
+
+descripcion
+El diagrama muestra los reactivos: 2H₂ (dos moléculas de hidrógeno, cada una con 2 átomos = 4 átomos de H en total → H₄) y O₂ (una molécula de oxígeno con 2 átomos). La pregunta pide contar el total de átomos de hidrógeno presentes en los reactivos del diagrama, no la fórmula molecular del hidrógeno individual. Por tanto, los reactivos son H₄ y O₂.
+
+
+Pregunta 3
+Un estudiante analiza cómo cambia la solubilidad de una sal de sodio; para esto, disuelve distintas cantidades de la sal en 20 gramos de agua destilada y registra la temperatura exacta a la cual se logra disolver completamente. Los resultados se muestran en la tabla anterior.
+
+Teniendo en cuenta lo observado con 20 gramos de agua destilada, el estudiante cree que si a 83 °C se agregan 50 gramos de la sal de sodio en 40 gramos de agua destilada no se solubilizará completamente esta cantidad de sal. ¿La suposición del estudiante es correcta?
+
+A. Sí, porque para disolver esta cantidad de la sal de sodio en 40 gramos de agua también se necesitaría el doble de temperatura, es decir, 166 °C.
+B. No, porque al tener el doble de agua, es más probable que la sal de sodio solo necesite la mitad de la temperatura para disolverse, es decir, 42 °C.
+C. No, porque a partir de 65 °C se pueden disolver completamente 50 g de la sal de sodio en 40 gramos de agua, por lo que a 83 °C la sal estará completamente disuelta.
+D. Sí, porque con masas mayores a 35 gramos de la sal de sodio, se necesitarían temperaturas mayores que 83 °C para disolverla en esa cantidad de agua.
+✅ Respuesta correcta: C
+
+descripcion
+
+Si se duplica el solvente (de 20 g → 40 g de agua), la capacidad de disolver también se duplica a la misma temperatura. Con 40 g de agua a 65 °C se pueden disolver 50 g de sal (el doble de los 25 g que se disolvían con 20 g de agua a esa temperatura). A 83 °C, que es mayor que 65 °C, la sal ya estará completamente disuelta. Por lo tanto, la suposición del estudiante es incorrecta.
+
+
+Pregunta 4 
+Un bloque de hielo seco, CO₂ sólido, cambia del estado sólido al gaseoso en condiciones ambientales. Este cambio de estado determina un cambio en la densidad del CO₂. Teniendo en cuenta la información anterior, tras el cambio de estado, ¿por qué disminuye la densidad del CO₂?
+
+A. Porque la masa de CO₂ disminuye.
+B. Porque la distancia entre partículas y el volumen aumentan.
+C. Porque la distancia entre partículas disminuye.
+D. Porque la distancia entre partículas aumenta y su masa disminuye.
+✅ Respuesta correcta: B
+La densidad se define como ρ = m/V. Al pasar de sólido a gas (sublimación), la masa se conserva (mismas moléculas de CO₂), pero la distancia entre partículas aumenta enormemente, lo que hace que el volumen aumente drásticamente. Como masa constante / volumen grande = densidad pequeña, la densidad disminuye. La opción A es incorrecta porque la masa no disminuye; C es incorrecta porque la distancia aumenta, no disminuye; D es incorrecta porque aunque la distancia sí aumenta, la masa no disminuye.
+
+Pregunta 5
+En el modelo se presenta el proceso de síntesis de proteínas en una célula.
+
+De acuerdo con el modelo, si no se copia correctamente la información del ADN al ARNm en el proceso de transcripción, ¿qué puede sucederle al proceso de síntesis de proteínas?
+
+
+imagen 1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20171327.png
+
+A. Se produciría una cadena de ARNm doble, como la molécula de ADN.
+B. El ribosoma no podría entrar al núcleo a leer la información del ADN.
+C. Los aminoácidos no podrían unirse al ARNt en el citoplasma.
+D. Se unirían aminoácidos que no corresponden con la secuencia de ADN.
+✅ Respuesta correcta: D
+
+descripcion
+
+El flujo de información es: ADN → (Transcripción) → ARNm → (Traducción) → Proteína. Si el ARNm tiene una secuencia errónea por error en la transcripción, los ARNt traerán aminoácidos según esa secuencia incorrecta, ensamblando una proteína con aminoácidos que no corresponden al ADN original. Las otras opciones son incorrectas porque: A — un error de transcripción no convierte el ARNm en doble cadena; B — el ribosoma trabaja en el citoplasma, no entra al núcleo; C — la unión de aminoácidos al ARNt no se ve afectada por este error.
+
+Pregunta 6
+Juan calienta una gran cantidad de agua en una olla. Al retirarla del fuego, él mide la temperatura del agua, encontrando que es de 100 °C. También mide la temperatura del entorno, que es de 20 °C.
+
+La ley de enfriamiento de Newton establece que cuanto mayor es la diferencia de temperatura entre un objeto y el entorno, mayor es el flujo de calor y, por lo tanto, más rápido se enfría el objeto. Teniendo en cuenta lo anterior, ¿cuál de las siguientes gráficas describe mejor el proceso de enfriamiento del agua en la olla?
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20171527.png
+
+
+✅ Respuesta correcta: A
+
+descripcion
+
+Según la Ley de Newton del enfriamiento, la tasa de enfriamiento es proporcional a la diferencia de temperatura entre el objeto y el entorno. Esto produce una curva que:
+
+Comienza en 100 °C (temperatura inicial del agua)
+Desciende de forma suave y gradual (rápido al principio cuando la diferencia es grande, luego más lento)
+Se aplana asintóticamente hacia 20 °C (temperatura del entorno)
+La opción A muestra exactamente esta curva suave y decreciente. B empieza por debajo de 100 °C; C tiene una caída casi vertical; D muestra descenso lineal, no curvo.
+
+
+Pregunta 7
+Unos investigadores quieren saber si el agua de la llave está contaminada con dos tipos de contaminantes (X y W). Los investigadores únicamente disponen de un método que permite medir la cantidad de contaminante X, pero saben que existe una reacción química mediante la cual pueden convertir todo el contaminante W en el contaminante X. Teniendo en cuenta esta información, si se quiere saber cuál es el contenido de los contaminantes X y W, por separado, en una muestra de agua de la llave, ¿cuál sería el procedimiento adecuado?
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20171652.png
+
+✅ Respuesta correcta: B
+descripcion
+El procedimiento correcto en 3 pasos:
+
+Medir X con el método disponible → se obtiene la cantidad de X puro.
+Separar/retirar ese X de la muestra para que no interfiera.
+Convertir todo el W restante → X mediante la reacción, y volver a medir → esa medición corresponde a la cantidad original de W.
+Las otras opciones fallan porque: A — convierte X en W, pero no hay método para medir W; C — mide X+W juntos sin separar; D — intenta medir W directamente, pero solo hay método para medir X.
+
+pregunta 8
+Una estudiante quiere clasificar dos sustancias de acuerdo con el tipo de mezclas que son. Al buscar, encuentra que las mezclas homogéneas son uniformes en todas sus partes, pero las mezclas heterogéneas no lo son. La estudiante realiza los procedimientos que se muestran en la tabla con las sustancias 1 y 2.
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20171943.png
+
+Teniendo en cuenta lo observado, ¿qué tipos de mezclas son las sustancias 1 y 2?
+
+A. La sustancia 1 es una mezcla homogénea y la sustancia 2 es una mezcla heterogénea.
+B. La sustancia 1 es una mezcla heterogénea y la sustancia 2 es una mezcla homogénea.
+C. Ambas sustancias son mezclas homogéneas.
+D. Ambas sustancias son mezclas heterogéneas.
+
+✅ Respuesta correcta: A
+
+descripcion
+Sustancia 1: Es un líquido de una sola fase → apariencia uniforme antes del calentamiento → mezcla homogénea. Al calentarse, sus componentes se separan (vapor + sólido blanco), revelando que era una mezcla, pero visualmente era uniforme.
+
+Sustancia 2: Al introducirse en un recipiente se observan dos fases visibles y separables → no es uniforme → mezcla heterogénea.
+
+Pregunta 9
+Un investigador sumerge un detector de sonido en agua para grabar los sonidos emitidos por los animales. El detector muestra la longitud de onda, la frecuencia, la velocidad de propagación y la distancia a la que se produce el sonido emitido por los animales. El investigador saca el detector del agua y registra un sonido.
+
+¿Cuál cambio de las variables mencionadas le permite asegurar al investigador que el sonido se transmite por el aire y no por el agua?
+
+A. La longitud de onda.
+B. La frecuencia de la onda.
+C. La forma de la onda.
+D. La velocidad de la onda.
+✅ Respuesta correcta: D
+La velocidad del sonido depende directamente del medio: en agua es ~1480 m/s, en aire es ~343 m/s. Esta diferencia es significativa y medible directamente por el detector. La frecuencia no cambia al cambiar de medio (es propiedad de la fuente); la forma de la onda no es una variable listada en el detector; la longitud de onda cambia pero como consecuencia derivada del cambio de velocidad, no como causa directa identificable. Por tanto, la velocidad de propagación es la variable que permite identificar el medio con certeza.
+
+Pregunta 10
+Imagen de la pregunta
+Al observar la manera como se transmite el dengue, un estudiante afirma que para garantizarse una protección del 100 % frente al dengue con el uso de insecticidas, debe aumentarse la frecuencia con la que estos se aplican. De acuerdo con la información del contexto, ¿la hipótesis del estudiante debería mantenerse o cambiarse?
+
+A. Debe mantenerse, porque los mosquitos resistentes pueden dejar de serlo si se disminuye la concentración de insecticida reduciendo la frecuencia de aplicación.
+B. Debe mantenerse, porque aunque haya algunos mosquitos resistentes, la cantidad de individuos resistentes es tan pequeña que la cantidad de picaduras será insignificante.
+C. Debe cambiarse, porque aunque al aumentar la frecuencia de aplicación se pueden eliminar todos los huevos de mosquitos, aún existirán larvas de otros insectos que probablemente transmitan la enfermedad.
+D. Debe cambiarse, porque al ser resistentes a los insecticidas, sin importar su concentración, aunque se apliquen más dosis, estas probablemente no tendrán efecto sobre los mosquitos resistentes.
+✅ Respuesta correcta: D
+descripcion
+
+El texto del contexto dice explícitamente que algunos mosquitos Aedes son resistentes a los insecticidas "sin importar su concentración". La hipótesis del estudiante propone aumentar la frecuencia de aplicación, pero si la resistencia es independiente de la concentración, también es independiente de la frecuencia. Aplicar más veces un insecticida al que los mosquitos ya son resistentes no tendrá efecto. Las otras opciones son incorrectas porque A contradice el texto, B no está respaldado en el contexto, y C introduce información sobre otros insectos que no aparece en el contexto.
+
+Pregunta 11
+Imagen de la pregunta
+Teniendo en cuenta lo anterior, ¿por qué reducir el número de lugares donde el agua se estanca es un buen método de prevención contra el dengue?
+
+A. Porque al reducir el número de lugares donde el agua se estanca, disminuirán los casos de personas infectadas por beber este tipo de agua.
+B. Porque al reducir el número de lugares donde el agua se estanca, disminuirán los hábitats del mosquito y, por tanto, no habrá tantas picaduras de mosquito que transmitan el virus a las personas.
+C. Porque al reducir el número de lugares donde el agua se estanca, el agua no producirá mal olor y se favorecerá el crecimiento y reproducción de los mosquitos.
+D. Porque al reducir el número de lugares donde el agua se estanca, disminuirán los hábitats del virus y, por tanto, estos empezarán a infectar a las personas directamente sin necesitar de los mosquitos.
+✅ Respuesta correcta: B
+descripcion
+Del contexto se sabe que el dengue se transmite por picaduras de mosquitos Aedes, y estos se reproducen en aguas estancadas. La cadena causal es: Menos agua estancada → menos hábitat del mosquito → menos mosquitos → menos picaduras → menos transmisión del virus. Las otras opciones son incorrectas porque: A — el dengue no se transmite bebiendo agua; C — contradice el objetivo al decir que se favorecería la reproducción; D — el virus del dengue necesita al mosquito como vector, no infecta directamente.
+
+Pregunta 12
+Imagen de la pregunta
+El profesor de Juan le entrega tres objetos de igual volumen y forma, pero de diferente material, y le pide que los deje caer desde la altura de sus hombros y observe el tiempo de caída al suelo, de cada uno de ellos. Juan observa que los tres tardan tiempos diferentes para llegar al suelo, a pesar de que los tres están sometidos a la misma aceleración gravitacional. Teniendo en cuenta la información anterior, ¿cuál de las siguientes preguntas se puede contestar a partir de las observaciones que realizó Juan?
+
+A. ¿El tiempo de caída de los objetos depende de la altura de lanzamiento?
+B. ¿La fuerza gravitacional es proporcional a la masa de los objetos?
+C. ¿La fuerza neta que actúa sobre cada uno de los objetos es diferente?
+D. ¿La forma de los objetos está relacionada con diferencias en la fuerza de fricción?
+✅ Respuesta correcta: C
+Los objetos tienen igual volumen, forma y aceleración gravitacional, pero tiempos de caída distintos. Si la aceleración gravitacional es la misma pero los tiempos (y por tanto las aceleraciones resultantes) son diferentes, significa que la fuerza neta es diferente en cada objeto — directamente deducible por la Segunda Ley de Newton: F_neta = m·a. Las otras opciones no se pueden responder porque: A — la altura es la misma para todos; B — para esto se necesitaría medir fuerzas directamente; D — la forma es igual en todos, por lo que no se puede relacionar forma con fricción.
+
+Pregunta 13
+Un bus se mueve con una velocidad constante en la dirección que se indica en la figura. Mientras tanto, llueve y las gotas de lluvia caen a velocidad constante.
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20172546.png
+Si las personas fuera del bus ven que la lluvia cae de manera vertical, ¿cuál de los siguientes diagramas de vectores representa mejor la velocidad de las gotas de lluvia para las personas que viajan en el bus?
+✅ Respuesta correcta: A
+
+descripcion
+
+Este problema trata de velocidad relativa (composición vectorial). Desde el exterior, la lluvia cae verticalmente (↓). Desde el interior del bus, la velocidad percibida de la lluvia es la composición de:
+
+Velocidad de la lluvia vista desde fuera: ↓ (hacia abajo)
+Velocidad relativa opuesta al movimiento del bus: ← (hacia atrás)
+El resultado es un vector diagonal ↙ (hacia abajo-atrás). El diagrama de la opción A muestra correctamente: velocidad del bus → horizontal, lluvia exterior ↓ vertical, y la resultante diagonal hacia abajo-izquierda, que es como los pasajeros del bus perciben la lluvia inclinada hacia ellos.
+
+Pregunta 14
+En la extracción minera de oro se emplean cianuro de sodio, zinc y ácidos fuertes durante el proceso de purificación. Los ácidos fuertes que pueden emplearse son ácido sulfúrico (H₂SO₄) de una concentración volumen-volumen del 78 % o ácido nítrico (HNO₃) que contenga 112 mL de ácido por cada 200 mL de solución.
+
+Si en la extracción del oro se requiere usar el ácido de mayor concentración, ¿cuál ácido debería emplearse?
+
+A. HNO₃, porque como su volumen es mayor que el de la solución de H₂SO₄ tiene una mayor concentración.
+B. H₂SO₄, porque la concentración volumen-volumen del HNO₃ es del 56 %.
+C. HNO₃, porque su concentración volumen-volumen es del 112 %.
+D. H₂SO₄, porque como su volumen es menor que el de la solución de HNO₃ se encuentra más concentrado.
+✅ Respuesta correcta: B
+Se calcula la concentración v/v del HNO₃: C% = (112 mL / 200 mL) × 100 = 56%. Comparando:
+
+Ácido	Concentración v/v
+H₂SO₄	78%
+HNO₃	56%
+El H₂SO₄ tiene mayor concentración (78% > 56%). Las otras opciones son incorrectas porque: A — mayor volumen de solución no implica mayor concentración; C — una concentración del 112% es físicamente imposible en v/v; D — la justificación es incorrecta, no es el menor volumen lo que determina la concentración.
+
+15
+Pregunta 15
+En la extracción minera de oro se emplean cianuro de sodio, zinc y ácidos fuertes durante el proceso de purificación. Los ácidos fuertes que pueden emplearse son ácido sulfúrico (H₂SO₄) de una concentración volumen-volumen del 78 % o ácido nítrico (HNO₃) que contenga 112 mL de ácido por cada 200 mL de solución.
+
+Si en la extracción del oro se requiere usar el ácido de mayor concentración, ¿cuál ácido debería emplearse?
+
+A.
+HNO₃, porque como su volumen es mayor que el de la solución de H₂SO₄ tiene una mayor concentración.
+B.
+H₂SO₄, porque la concentración volumen-volumen del HNO₃ es del 56 %.
+C.
+HNO₃, porque su concentración volumen-volumen es del 112 %.
+D.
+H₂SO₄, porque como su volumen es menor que el de la solución de HNO₃ se encuentra más concentrado.
+✔ Respuesta correcta: B
+descripcion
+La concentración v/v del HNO₃ es 112 mL / 200 mL = 0,56 = 56 %, que es menor que el 78 % del H₂SO₄. Por lo tanto, el H₂SO₄ es el ácido más concentrado. La opción C es incorrecta porque ninguna concentración v/v puede superar el 100 %.
+
+16
+Pregunta 16
+A partir de las cadenas de ARN mensajero se forman las proteínas. En este proceso, por cada tres nucleótidos consecutivos de ARN mensajero se codifica un aminoácido. A continuación, se muestra una secuencia de ARN mensajero:
+
+AUGGCAAGAAACGACCACAUCUAGGUAUGC
+Los nucleótidos AUG codifican únicamente para indicar el inicio de la formación de la proteína y los nucleótidos UAG codifican únicamente para indicar su terminación. Con base en esta información, ¿cuántos aminoácidos conformarán la proteína?
+
+A.
+8
+B.
+18
+C.
+6
+D.
+10
+✔ Respuesta correcta: C
+descripcion
+Leyendo en tripletes desde AUG: AUG – GCA – AGA – AAC – GAC – CAC – AUC – UAG. AUG es el codón de inicio y UAG es el codón de parada (no codifica aminoácido). Entre ellos hay 6 codones que sí codifican aminoácidos: GCA, AGA, AAC, GAC, CAC, AUC. Por eso la proteína tiene 6 aminoácidos.
+
+Pregunta 17
+El salto bungee es un deporte que se practica generalmente en puentes. En uno de estos saltos, el deportista se lanzará desde un puente de 65 metros de altura, utilizando una banda elástica que tiene una longitud sin estirar de 30 metros y que puede estirarse 30 metros más. Cuando el deportista ha descendido apenas 20 metros de altura, ¿cuál de las siguientes transformaciones de energía se habrá dado?
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20181242.png
+A.
+De energía cinética a potencial elástica.
+B.
+De energía cinética a potencial gravitacional.
+C.
+De energía potencial gravitacional a potencial elástica.
+D.
+De energía potencial gravitacional a cinética.
+✔ Respuesta correcta: D
+descripcion
+Al haber caído solo 20 metros, la banda elástica (30 m de longitud natural) aún no se ha tensado, por lo que no hay energía potencial elástica almacenada. Lo que ocurre es que la energía potencial gravitacional (asociada a la altura) se convierte en energía cinética (velocidad de caída). La transformación a energía elástica ocurre solo después de caer más de 30 m.
+
+Pregunta 18
+Considere la siguiente reacción y las masas molares de reactivos y productos:
+
+P₄ + 6 Cl₂ → 4 PCl₃
+Compuesto	Masa molar (g/mol)
+P₄	124
+Cl₂	70
+PCl₃	137
+De acuerdo con la información anterior, si reaccionan 124 g de P₄ con 210 g de Cl₂, ¿cuál es el reactivo límite?
+
+A.
+El Cl₂, porque reaccionan en su totalidad 210 gramos de Cl₂ y queda la mitad de P₄ sin reaccionar.
+B.
+El P₄, porque su masa en gramos es menor que la del Cl₂.
+C.
+El Cl₂, porque según la relación estequiométrica siempre se necesitan 6 moles de Cl₂, sin importar la cantidad de P₄.
+D.
+El P₄, porque su masa molar es casi el doble que la del Cl₂.
+✔ Respuesta correcta: A
+(Nota: según la tabla de respuestas del ICFES la respuesta oficial es A.)
+
+124 g de P₄ = 1 mol de P₄. Para reaccionar completamente con 1 mol de P₄ se necesitan 6 mol de Cl₂ = 6 × 70 = 420 g de Cl₂. Pero solo hay 210 g de Cl₂ = 3 mol. El Cl₂ se agota primero: con 3 mol de Cl₂ solo puede reaccionar 0,5 mol de P₄ (62 g). Quedan 62 g de P₄ sin reaccionar. Por tanto, el Cl₂ es el reactivo límite.
+
+Pregunta 19
+En un metal que pierde electrones, la cantidad de protones es mayor que la de electrones y, por tanto, la carga total es positiva y se representa con signos +.
+
+Se tienen dos esferas metálicas idénticas: una esfera (1) inicialmente con carga +Q y otra esfera (2) inicialmente neutra. Al ponerlas en contacto y luego separarlas, se observa que las dos esferas quedan con cargas iguales +Q/2.
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20181605.png
+
+Con base en la información anterior, ¿qué sucedió al poner las esferas en contacto?
+
+A.
+De la esfera 2 pasaron electrones hacia la esfera 1.
+B.
+De la esfera 2 pasaron protones hacia la esfera 1.
+C.
+De la esfera 1 pasaron electrones hacia la esfera 2.
+D.
+De la esfera 1 pasaron protones hacia la esfera 2.
+✔ Respuesta correcta: A
+La esfera 1 tiene carga positiva (+Q), lo que significa que le faltan electrones. Al entrar en contacto con la esfera neutra (2), los electrones fluyen de la esfera 2 hacia la esfera 1 para equilibrar las cargas. Los protones no se transfieren entre metales; solo se mueven los electrones. Así ambas esferas quedan con +Q/2.
+
+20
+Pregunta 20
+Un grupo de científicos aisló cepas de la bacteria Streptococcus pneumoniae obtenidas en pacientes enfermos de neumonía, las cultivaron con diferentes antibióticos de prueba y midieron el porcentaje de supervivencia de las cepas. La tabla muestra los resultados.
+
+Antibiótico	Porcentaje (%) de supervivencia de las cepas
+1	97
+2	89
+3	76
+4	70
+Ninguno	99
+De acuerdo con la información anterior, ¿cuál de las siguientes hipótesis se relaciona con los resultados del experimento?
+
+A.
+A los enfermos de neumonía no deberían recetarles antibióticos, porque la supervivencia de las bacterias es mínima.
+B.
+El
+Streptococcus pneumoniae
+es más sensible al antibiótico 4 que a los otros tres antibióticos.
+C.
+Los pacientes enfermos de neumonía pueden sufrir de alergia a los antibióticos y empeorar.
+D.
+El
+Streptococcus pneumoniae
+es una bacteria que habita libremente por el aire y puede contaminar a cualquier ser vivo.
+✔ Respuesta correcta: B
+El antibiótico 4 produjo el menor porcentaje de supervivencia bacteriana (70 %), lo que indica que fue el más efectivo. Una hipótesis derivable de estos datos es que la bacteria es más sensible al antibiótico 4. Las otras opciones no se pueden concluir directamente de los datos experimentales presentados.
+
+
+Pregunta 21
+El modelo muestra una red trófica marina con las siguientes especies: Tiburón, Atún, Calamar, Sardinas, Pez loro, Zooplancton, Pastos marinos y Fitoplancton. La pesca indiscriminada de varias especies de atún ha llevado a las organizaciones ambientales a implementar estrategias para impedir su extinción. Con base en la información anterior, ¿qué le sucedería al ecosistema marino, a mediano plazo, si se extingue el atún?
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20181745.png
+
+A.
+Disminuirían las poblaciones de pez loro debido al aumento de su principal depredador.
+B.
+Aumentarían las poblaciones de tiburones, porque podrán alimentarse de todos los otros niveles tróficos.
+C.
+Aumentaría la cantidad de zooplancton, porque disminuiría la presión de sus depredadores.
+D.
+Disminuiría la abundancia de productores, porque aumentarían los consumidores primarios.
+✔ Respuesta correcta: A
+(Nota: la tabla de respuestas del ICFES indica A para la posición 21.)
+
+Si el atún se extingue, su depredador principal (el tiburón) tendría menos alimento, por lo que su presión sobre otras presas disminuiría. Sin embargo, el atún también depredaba a las sardinas y el calamar; al desaparecer, estas poblaciones aumentarían. Esto generaría un efecto en cascada. Según la tabla oficial la respuesta es A: disminuirían las poblaciones de pez loro, ya que el atún que normalmente limitaba a los depredadores del pez loro desaparecería, alterando el equilibrio.
+
+
+22
+Pregunta 22
+Una estudiante calentó en una estufa, durante 1 minuto, un litro de agua que inicialmente estaba a 15 °C. La temperatura final del agua fue 17 °C.
+
+Si ahora calienta 2 litros de agua que inicialmente están a 15 °C, en la misma estufa durante un minuto, ¿cuál será la temperatura final de los 2 litros de agua?
+
+A.
+19 °C.
+B.
+17 °C.
+C.
+16 °C.
+D.
+15 °C.
+✔ Respuesta correcta: C
+La estufa entrega la misma cantidad de calor por minuto. Con 1 L de agua el incremento fue de 2 °C. Con el doble de masa (2 L), la misma cantidad de calor produce la mitad del incremento de temperatura (Q = m·c·ΔT). Por tanto ΔT = 1 °C, y la temperatura final sería 15 + 1 = 16 °C.
+
+ 
+Pregunta 23
+En la tabla se muestra la configuración electrónica de un átomo neutro y de un ion de aluminio.
+
+Aluminio neutro	Ion de aluminio
+Configuración electrónica	1s²2s²2p⁶3s²3p¹	1s²2s²2p⁶
+Teniendo en cuenta que el estado de oxidación de un átomo se determina conociendo los cambios en el número de electrones de la configuración electrónica respecto al átomo neutro, ¿por qué es correcto afirmar que el estado de oxidación del ion de aluminio es 3+?
+
+A.
+Porque el último nivel de energía de su configuración electrónica es 3.
+B.
+Porque tiene 3 electrones menos en su configuración electrónica que el aluminio neutro.
+C.
+Porque tiene 3 electrones más en su configuración electrónica que el aluminio neutro.
+D.
+Porque el número total de electrones en su configuración electrónica es 3.
+✔ Respuesta correcta: B
+El aluminio neutro tiene 13 electrones (1s²2s²2p⁶3s²3p¹). El ion de aluminio tiene 10 electrones (1s²2s²2p⁶). La diferencia es 13 − 10 = 3 electrones perdidos, lo que genera una carga de +3. Por eso el estado de oxidación es 3+.
+
+Pregunta 24
+En un experimento, se midió el peso de dos grupos de una misma especie de planta que creció en condiciones normales de luz, temperatura y nutrientes. Uno de los grupos creció en presencia de una bacteria y el otro grupo creció en ausencia de esta. Al respecto, un estudiante tiene la hipótesis de que la presencia de la bacteria beneficiaría el crecimiento de la planta. ¿Cuál gráfica representa la hipótesis del estudiante?
+
+Las opciones muestran gráficas de Peso de la planta vs. Tiempo con dos curvas: línea continua (Con bacteria) y línea punteada (Sin bacteria).
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20181958.png
+A.
+La curva 'Con bacteria' crece pero la 'Sin bacteria' decrece.
+B.
+La curva 'Con bacteria' siempre supera a la curva 'Sin bacteria'.
+C.
+La curva 'Con bacteria' es menor que la 'Sin bacteria'.
+D.
+La curva 'Sin bacteria' es mayor que la 'Con bacteria'.
+✔ Respuesta correcta: B
+Si la hipótesis es que la bacteria beneficia el crecimiento, la gráfica debe mostrar que las plantas con bacteria tienen mayor peso en todo momento. Solo la opción B refleja esto.
+
+
+Pregunta 25
+En tres instantes diferentes, un estudiante dibuja el diagrama de cuerpo libre para una piedra que cae en un estanque de agua. El diagrama muestra que conforme la piedra cae más profundo, la fuerza de resistencia aumenta mientras el peso se mantiene constante.
+
+Si el estudiante mide la aceleración de la piedra después del tercer instante, ¿cómo será su magnitud, respecto a los otros instantes?
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20182227.png
+
+A.
+Mayor que la del primer instante, porque el peso hace que la piedra se acelere hacia abajo.
+B.
+Mayor que la del primer instante, porque el peso de la piedra disminuye cuando la fuerza de resistencia comienza a aumentar.
+C.
+Constante, porque la aceleración de la piedra siempre es igual que la aceleración de la gravedad.
+D.
+Nula, porque después del tercer instante, el peso de la piedra y la fuerza de resistencia se cancelan.
+✔ Respuesta correcta: D
+A medida que la piedra cae, la fuerza de resistencia del agua aumenta. En el tercer instante, la resistencia se iguala al peso, haciendo que la fuerza neta sea cero. Por la segunda ley de Newton (F = ma), si la fuerza neta es cero, la aceleración también es cero. La piedra alcanza su velocidad terminal.
+
+Pregunta 26
+Un estudiante sopla una pelota por un tubo vertical y esta sube aceleradamente por el tubo. Teniendo en cuenta lo anterior, ¿por qué ocurre esto?
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20182351.png
+
+A.
+Porque el peso de la pelota cambia cuando el estudiante sopla aire por el tubo.
+B.
+Porque la fuerza que ejerce el aire que sopla el estudiante es igual que el peso de la pelota.
+C.
+Porque el peso de la pelota es mayor que la fuerza del aire que sopla el estudiante.
+D.
+Porque la fuerza que ejerce el aire que sopla el estudiante es mayor que el peso de la pelota.
+✔ Respuesta correcta: D
+Para que la pelota suba aceleradamente, la fuerza neta debe ser hacia arriba. Esto solo ocurre cuando la fuerza ejercida por el aire (hacia arriba) es mayor que el peso de la pelota (hacia abajo). Si fuera igual, no habría aceleración; si fuera menor, la pelota bajaría.
+
+Pregunta 27
+El siguiente modelo representa la relación entre la altura y la cantidad de partículas de aire. Una olla con agua hierve a una temperatura de 100 °C, cuando la altura es de 0 km. Teniendo en cuenta que el punto de ebullición corresponde a la temperatura a la cual la presión de vapor del líquido iguala a la presión atmosférica, si se pone a calentar la misma cantidad de agua a una altura de 25 km, ¿qué le sucede al agua?
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20182725.png
+
+A.
+Hierve a una temperatura menor que 100 °C, porque la presión es menor en esta altura.
+B.
+Hierve a una temperatura mayor que 100 °C, porque la presión es menor en esta altura.
+C.
+Nunca hierve, porque en esta altura hay muy poca cantidad de aire.
+D.
+Se congela, porque al no haber aire el agua pasará a estado sólido.
+✔ Respuesta correcta: A
+A mayor altura, hay menos partículas de aire y por tanto menor presión atmosférica. El punto de ebullición ocurre cuando la presión de vapor del líquido iguala la presión atmosférica. Si la presión atmosférica es menor, el agua alcanza esa presión de vapor a una temperatura más baja. Por lo tanto, hierve por debajo de 100 °C.
+
+Pregunta 28
+La materia puede clasificarse analizando su composición como se muestra en un diagrama que distingue entre Mezcla heterogénea, Sustancia pura y Mezcla homogénea.
+
+El acero es un material que contiene los elementos hierro y carbono. Dos muestras distintas de acero tienen diferentes cantidades de estos elementos, pero ambas muestras tienen composición uniforme. Usando el diagrama anterior, ¿cómo clasificaría al acero?
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20182926.png
+
+A.
+Como una mezcla homogénea, porque está formado por diferentes elementos y es uniforme.
+B.
+Como una sustancia pura, porque tiene composición uniforme y es un solo compuesto.
+C.
+Como una mezcla heterogénea, porque está formado por diferentes elementos.
+D.
+Como una sustancia pura, porque muestras distintas tienen composición diferente.
+✔ Respuesta correcta: A
+El acero contiene más de un elemento (hierro y carbono), por lo que no es una sustancia pura. Sin embargo, dentro de cada muestra su composición es uniforme, lo que lo clasifica como mezcla homogénea. El hecho de que diferentes muestras tengan proporciones distintas confirma que es una mezcla y no un compuesto de composición fija.
+
+
+Pregunta 29
+Un grupo de estudiantes realizó un experimento que consistía en sumergir una esponja en líquidos de diferente densidad, para luego medir su volumen y masa. En la gráfica se presentan los resultados marcados con puntos, y una línea de tendencia que muestra relación lineal entre densidad y masa.
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20183123.png
+
+Un estudiante afirma que, si se usa un líquido con una densidad extremadamente baja, la masa registrada será diferente de cero. ¿Esta afirmación puede considerarse una predicción basada en los datos experimentales?
+
+A.
+Sí, porque la línea de tendencia cruza en un punto diferente de cero.
+B.
+No, porque no se observa ningún patrón entre la densidad y la masa.
+C.
+No, porque no existen datos que usen líquidos con muy baja densidad.
+D.
+Sí, porque todos los datos presentan masas diferentes de cero.
+✔ Respuesta correcta: A
+La línea de tendencia de los datos no pasa por el origen (0,0), sino que intersecta el eje de masa en un valor diferente de cero. Esto permite predecir que incluso con densidad muy baja, la masa registrada sería diferente de cero. Esta predicción está sustentada en la tendencia de los datos experimentales.
+
+
+Pregunta 30
+La conductividad de una disolución es la capacidad que tiene esta para conducir la corriente eléctrica. Un estudiante realiza una serie de experimentos para estudiar la conductividad del sulfato de magnesio (MgSO₄) disuelto en agua, y obtiene una gráfica de Conductividad vs. Concentración a temperatura constante de 25 °C.
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20183650.png
+Con base en la información anterior, ¿qué se buscaba estudiar con este experimento?
+
+A.
+La influencia de la temperatura sobre la conductividad.
+B.
+El efecto de la conductividad de la disolución sobre la concentración de la sal.
+C.
+La influencia de la carga de los iones sobre la conductividad.
+D.
+El efecto de la concentración de la sal sobre la conductividad de la disolución.
+✔ Respuesta correcta: D
+En el experimento, la variable independiente que se manipula es la concentración del MgSO₄, mientras que la temperatura se mantiene constante. La variable dependiente medida es la conductividad. Por lo tanto, el objetivo es estudiar cómo la concentración de la sal afecta la conductividad de la disolución.
+
+Pregunta 31
+La siguiente gráfica muestra la relación entre la resistencia eléctrica y la temperatura para cuatro resistencias eléctricas (R₁, R₂, R₃ y R₄). 
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20183810.png
+Un estudiante realiza actividades experimentales y encuentra que la corriente eléctrica en un circuito es inversamente proporcional a la resistencia eléctrica. Se le solicita construir un circuito usando una de estas resistencias, de forma que pase la menor cantidad de corriente eléctrica a 90 °C. Si las tendencias de resistencia como función de la temperatura se mantienen, ¿cuál resistencia se debe utilizar?
+
+A.
+R₁, porque tiene la mayor resistencia eléctrica desde los 40 °C hasta los 80 °C.
+B.
+R₂, porque su resistencia eléctrica será la mayor a 90 °C.
+C.
+R₃, porque tiene la menor resistencia desde los 40 °C hasta los 80 °C.
+D.
+R₄, porque su resistencia eléctrica no depende de la temperatura.
+✔ Respuesta correcta: B
+Para que pase la menor corriente, se necesita la mayor resistencia (I = V/R). A 90 °C, según la gráfica, R₂ tiene el valor más alto de resistencia eléctrica. Por tanto, usar R₂ minimiza la corriente que pasa por el circuito.
+
+Pregunta 32
+Los rayos de luz emitidos por objetos luminosos viajan en línea recta dentro de un mismo medio. Si un rayo de luz pasa de aire a agua cambia su dirección (refracción). Cuando una piscina está vacía, un nadador observa el farol que está en el borde; luego, cuando se llena la piscina, ¿cómo verá el nadador el farol?
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20184028.png
+
+A.
+Más bajo.
+B.
+De la misma altura.
+C.
+Más alto.
+D.
+Invertido.
+✔ Respuesta correcta: C
+Cuando la luz pasa del agua (más denso) al aire (menos denso), se refracta alejándose de la normal. Esto hace que el rayo llegue al ojo del nadador con un ángulo que hace percibir el farol en una posición aparentemente más alta de lo que realmente está. Este es el fenómeno de refracción que hace que los objetos fuera del agua parezcan elevados cuando se miran desde el interior.
+
+ 
+Pregunta 33
+Un estudiante desea comparar los valores de las densidades de tres líquidos (agua, etanol y aceite) y para ello hace tres mediciones de una misma masa de líquido (100 g) a tres temperaturas. Los resultados se muestran en una tabla con densidades a diferentes temperaturas para cada líquido.
+
+Con base en la información anterior, ¿por qué el experimento está mal planteado?
+
+A.
+Porque las temperaturas empleadas no son las mismas, por lo que no se pueden hacer comparaciones entre las densidades de los tres líquidos.
+B.
+Porque no se pueden hacer comparaciones sin medir diferentes volúmenes de los tres líquidos en las temperaturas indicadas.
+C.
+Porque es necesario realizar otras mediciones a temperaturas más altas, para saber si el valor de la densidad sigue cambiando.
+D.
+Porque el aceite posee propiedades físicas y químicas muy diferentes del agua y del etanol y esto hace que no se puedan comparar.
+✔ Respuesta correcta: A
+Para comparar las densidades de diferentes sustancias, las condiciones de temperatura deben ser las mismas para todas. Si cada líquido se mide a temperaturas distintas, los valores de densidad no son comparables entre sí, ya que la densidad depende de la temperatura. El experimento está mal diseñado porque no controla esta variable.
+
+Pregunta 34
+El objetivo de una práctica de laboratorio es la detección de almidón en la papa, utilizando Lugol como colorante. Se realizan cuatro experimentos con las siguientes condiciones:
+
+Experimento	Agua (mL)	Lugol (mL)	Papa (g)	Solución de almidón 10 % (mL)
+1	10	1	10	0
+2	10	1	0	0
+3	10	0	5	0
+4	10	1	0	2
+En esta práctica, ¿por qué es importante el experimento 4?
+
+A.
+Porque permite que el almidón se encuentre soluble.
+B.
+Porque contiene el colorante con el cual se logra la detección de almidón.
+C.
+Porque contiene más almidón que el que contiene la papa.
+D.
+Porque permite establecer el color esperado para la detección de almidón.
+✔ Respuesta correcta: D
+El experimento 4 es el control positivo: contiene Lugol y una solución de almidón de concentración conocida. Su función es mostrar el color que produce el Lugol en presencia de almidón (azul-negro), lo que sirve como referencia para comparar con el experimento 1 (papa). Sin este control, no se sabría qué color indica presencia de almidón.
+
+
+Pregunta 35
+En un experimento, un sólido de identidad desconocida se calienta y se mide su temperatura hasta que se evapora, obteniendo una gráfica donde el sólido funde a ~0 °C y hierve a ~100 °C. Para identificar el sólido se cuenta con la siguiente tabla:
+
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20185122.png
+
+Sustancia	Temperatura de fusión (°C)	Temperatura de ebullición (°C)
+Benceno	6	80
+Agua	0	100
+Acetonitrilo	-45	82
+2-butanol	-115	100
+Teniendo en cuenta la información anterior, ¿a qué sustancia corresponde el sólido inicial?
+
+A.
+Benceno.
+B.
+Agua.
+C.
+Acetonitrilo.
+D.
+2-butanol.
+✔ Respuesta correcta: B
+La gráfica muestra que la sustancia funde a 0 °C y hierve a 100 °C. Comparando con la tabla, solo el agua tiene exactamente esas temperaturas de fusión y ebullición. El 2-butanol también hierve a 100 °C pero su temperatura de fusión es -115 °C, muy diferente.
+
+Pregunta 36
+En las células animales, los lisosomas son los organelos encargados de digerir con enzimas los nutrientes que la célula consume. Si todos los lisosomas de una célula se rompieran, ¿qué le sucedería inicialmente a la célula?
+
+A.
+Se degradarían moléculas en su interior.
+B.
+Perdería toda el agua del citoplasma.
+C.
+No habría respiración celular.
+D.
+No se formarían proteínas.
+✔ Respuesta correcta: A
+Los lisosomas contienen enzimas digestivas. Si se rompen, estas enzimas se liberan al citoplasma y comienzan a degradar moléculas y estructuras celulares internas (autólisis). Este es el efecto inmediato. Las otras opciones corresponden a funciones de otros organelos (mitocondrias para respiración celular, ribosomas para síntesis de proteínas).
+
+
+Pregunta 37
+Una estudiante realiza diferentes ensayos con el objetivo de determinar el efecto de la concentración de los reactivos sobre la velocidad de formación de Z en la reacción X + Y → Z. En cada ensayo mide la velocidad de formación de Z manteniendo constante la concentración de uno de los reactivos y variando la del otro. Los resultados muestran que al variar X la velocidad cambia linealmente, pero al variar Y la velocidad permanece constante.
+
+imagen https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20185324.png
+Teniendo en cuenta la información anterior, ¿qué se puede concluir del cambio en la velocidad de formación de Z?
+
+A.
+El cambio de la velocidad de formación de Z no depende de la concentración de los reactivos.
+B.
+El cambio de la velocidad de formación de Z depende de la concentración de ambos reactivos.
+C.
+El cambio de la velocidad de formación de Z depende solamente de la concentración de X.
+D.
+El cambio de la velocidad de formación de Z depende solamente de la concentración de Y.
+✔ Respuesta correcta: C
+Los datos muestran que cuando varía la concentración de X, la velocidad de formación de Z cambia (relación lineal). Sin embargo, cuando varía la concentración de Y (manteniendo X constante), la velocidad no cambia. Esto indica que la velocidad de la reacción depende solo de la concentración de X, y es independiente de la concentración de Y.
+
+Pregunta 38
+En una especie de pato se pueden encontrar individuos con cuello corto e individuos con cuello largo. En esta especie hay una mayor cantidad de patos con cuello largo. En un experimento se aparearon una hembra y un macho de cuello largo; de sus hijos 3/4 son de cuello largo y 1/4 son de cuello corto.
+
+Teniendo en cuenta lo anterior, ¿cuál afirmación es correcta sobre el genotipo de los padres?
+
+A.
+Ambos padres eran heterocigotos.
+B.
+El macho era heterocigoto y la hembra era homocigoto recesivo.
+C.
+El macho era heterocigoto y la hembra era homocigoto dominante.
+D.
+Ambos padres eran homocigotos dominantes.
+✔ Respuesta correcta: A
+La proporción 3/4 fenotipo dominante (cuello largo) y 1/4 fenotipo recesivo (cuello corto) es característica del cruce entre dos individuos heterocigotos (Aa × Aa). Esto produce la proporción 1 AA : 2 Aa : 1 aa, donde 3/4 muestran el fenotipo dominante. El cuello largo es dominante y el cuello corto es recesivo.
+
+Pregunta 39
+Una estudiante desea conocer las proteínas presentes en la sangre. Para ello, emplea una técnica que las separa de acuerdo con su peso molecular y produce una respuesta en diferentes instantes de tiempo cada vez que una proteína es detectada. Ella obtiene picos en los siguientes tiempos: Proteína W (400 kDa) ≈ 8 min, Proteína X (130 kDa) ≈ 22 min, Proteína Y (100 kDa) ≈ 28 min, Proteína Z (50 kDa) ≈ 38 min.
+
+imagen https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20185501.png
+¿En qué tiempo podrá separar una proteína de 120 kDa?
+
+A.
+Entre 25 y 35 minutos.
+B.
+Entre 5 y 25 minutos.
+C.
+Entre 35 y 45 minutos.
+D.
+Después de 45 minutos.
+✔ Respuesta correcta: A
+Las proteínas se separan de mayor a menor peso molecular (mayor peso = sale antes). La proteína X de 130 kDa sale a ~22 min y la proteína Y de 100 kDa sale a ~28 min. Una proteína de 120 kDa tiene un peso entre X y Y, por lo que saldría en un tiempo entre 22 y 28 minutos, lo cual está dentro del rango de "entre 25 y 35 minutos".
+
+Pregunta 40
+La polilla grande de la cera es un patógeno que mata las larvas de las abejas y causa grandes pérdidas económicas a los apicultores de todo el mundo, por la gran cantidad de panales que destruye.
+
+Según la información anterior, ¿cuál de las siguientes preguntas está relacionada con la problemática descrita y puede resolverse mediante una investigación en el campo de las Ciencias Naturales?
+
+A.
+¿En qué etapa del ciclo biológico la polilla afecta los panales de las abejas?
+B.
+¿Cómo se afecta la economía de los apicultores por causa de la polilla?
+C.
+¿Cuáles son las características morfológicas de las abejas usadas en la apicultura?
+D.
+¿Cuánto invierten al año los apicultores para el control de la polilla en la región?
+✔ Respuesta correcta: A
+La pregunta A se relaciona directamente con la problemática (la polilla afecta los panales) y puede responderse mediante investigación científica en biología, estudiando el ciclo de vida del organismo. Las opciones B y D son preguntas económicas, y la C aunque es científica no está directamente relacionada con la problemática de la polilla y los panales.
+
+Pregunta 41
+Los alcoholes pueden ser oxidados a cetonas, aldehídos o ácidos carboxílicos de acuerdo con el tipo de alcohol que reacciona. En un laboratorio se oxida un alcohol de 6 carbonos y se aplican las pruebas de reconocimiento de grupos funcionales obteniendo un espejo de plata (indica presencia de aldehído) y coloración morada con almidón (indica presencia de ácido carboxílico). ¿Cuál es la mezcla que se espera se haya formado después de la oxidación?
+
+imagen https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20185827.png
+imagen2 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20190523.png
+A.
+Un aldehído de 6C y una cetona de 6C.
+B.
+Un aldehído de 6C y un ácido carboxílico de 6C.
+C.
+Un alcohol primario de 6C y un ácido carboxílico de 6C.
+D.
+Una cetona de 6C y un alcohol primario de 6C.
+✔ Respuesta correcta: B
+Las pruebas indican presencia de aldehído (espejo de plata = prueba de Tollens positiva) y de ácido carboxílico (coloración morada con almidón = prueba de Yoduro-Yodato positiva). Ambos son productos de la oxidación de alcoholes primarios de 6 carbonos (oxidación parcial → aldehído; oxidación completa → ácido carboxílico). La mezcla resultante contiene estas dos especies.
+
+
+Pregunta 42
+De la ley de Coulomb se sabe que la fuerza eléctrica debido a la interacción entre cargas de signos iguales es repulsiva y entre cargas de signos opuestos es atractiva. Un sistema está conformado por tres cargas eléctricas: carga 1 (+), carga 2 (+) y carga 3 (−), dispuestas en triángulo.
+imagen1 
+https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20190711.png
+¿Cuál de las siguientes figuras muestra la fuerza eléctrica que ejercen la carga 2 y la carga 3 sobre la carga 1?
+imagen https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20190815.png
+
+A.
+Ambas fuerzas apuntan hacia arriba (lejos de carga 1).
+B.
+La fuerza de 3 apunta hacia carga 1 y la de 2 se aleja.
+C.
+Ambas fuerzas apuntan hacia carga 1 (atracción de ambas).
+D.
+La fuerza de 2 se aleja de carga 1 (repulsión) y la fuerza de 3 apunta hacia carga 1 (atracción).
+✔ Respuesta correcta: D
+Carga 1 (+) y carga 2 (+) tienen el mismo signo → repulsión: la fuerza de 2 sobre 1 apunta alejándose de 2. Carga 1 (+) y carga 3 (−) tienen signos opuestos → atracción: la fuerza de 3 sobre 1 apunta hacia 3. La opción D representa correctamente este comportamiento.
+
+
+Pregunta 43
+Un estudiante calculó la energía potencial de un vagón en una montaña rusa. La gráfica muestra que la energía potencial empieza muy alta en t₁, cae a casi cero en t₂, sube a un valor intermedio en t₃, y cae de nuevo en t₄.
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20191017.png
+De los siguientes modelos de montaña rusa, ¿cuál explica la gráfica obtenida por el estudiante?
+imagen
+https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20191328.png
+
+A.
+El vagón comienza en la cima (t₁), desciende a un valle (t₂), sube a una colina intermedia (t₃) y vuelve a descender (t₄).
+B.
+El vagón está siempre descendiendo.
+C.
+El vagón sube continuamente.
+D.
+El vagón hace un loop y la energía potencial es máxima en el fondo del loop.
+✔ Respuesta correcta: A
+La energía potencial gravitacional es directamente proporcional a la altura. La gráfica muestra: alta energía en t₁ (cima), mínima en t₂ (valle), intermedia en t₃ (colina menor), y baja en t₄ (descenso). El único modelo que coincide es aquel donde el vagón empieza en la cima más alta, baja al valle, sube a una cima más pequeña y vuelve a bajar.
+
+Pregunta 44
+Los ecosistemas se consideran sistemas abiertos porque en su mantenimiento es fundamental el flujo de materia y energía que intercambian de manera constante con su medio externo. De acuerdo con la información anterior, ¿cuál de los siguientes modelos representa precisamente un ecosistema abierto?
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20191448.png
+Las opciones muestran modelos de un lago con productores, consumidores y descomponedores, con distintos tipos de flujos de entrada y salida hacia el exterior.
+
+A.
+El lago solo tiene flujo interno entre sus componentes, sin intercambio con el exterior.
+B.
+El lago recibe materia del exterior pero no devuelve nada.
+C.
+El lago recibe materia del exterior por ríos y tiene extracción por pesca (flujo bidireccional).
+D.
+El lago recibe energía solar, materia orgánica de ríos, y tiene salidas como la pesca (flujo bidireccional completo).
+✔ Respuesta correcta: D
+Un ecosistema abierto intercambia tanto materia como energía con su entorno. El modelo correcto debe mostrar entradas (energía solar, materia orgánica de ríos) y salidas (pesca, materia exportada). La opción D es la única que representa un intercambio bidireccional completo de materia y energía con el exterior.
+
+Pregunta 45
+Al agitar una cuerda extendida horizontalmente, cada sección se mueve de arriba abajo en dirección perpendicular a la dirección de propagación de la onda generada; este es un ejemplo de una onda transversal. En una onda longitudinal, las partículas del medio vibran en la misma dirección de propagación de la onda.
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20191644.png
+Un grupo de personas quiere representar una onda longitudinal; para esto, se ubican en fila. La fila representa el medio de propagación y las personas representan las partículas del medio. Para lograr la representación, ¿cuál es el movimiento que debe hacer la primera persona y que las demás deben repetir sucesivamente?
+
+A.
+Alzar y bajar lateralmente los brazos.
+B.
+Sentarse y ponerse de pie.
+C.
+Balancearse de izquierda a derecha.
+D.
+Moverse hacia adelante y atrás.
+✔ Respuesta correcta: D
+En una onda longitudinal, las partículas vibran en la misma dirección en que se propaga la onda. Si la fila de personas representa la dirección de propagación (de frente hacia atrás), cada persona debe moverse hacia adelante y atrás (en la misma dirección de la fila), generando zonas de compresión y rarefacción, como en el sonido.
+
+Pregunta 46
+Unos estudiantes analizaron el agua de un río y encontraron que contenía altos niveles de cadmio y plomo, que son metales tóxicos. Al estudiar el origen de la contaminación, descubrieron que los metales provenían de filtraciones de la descomposición de pilas en un botadero de basura cercano. Los estudiantes proponen que, a futuro, se deberían separar las pilas del resto de los desechos en contenedores completamente aislados. ¿Se puede afirmar que la propuesta de los estudiantes es apropiada o inapropiada?
+
+A.
+Inapropiada, porque es mejor desarmar las pilas y luego desecharlas.
+B.
+Apropiada, porque se evitaría la presencia de metales pesados en el agua.
+C.
+Apropiada, porque luego se podrían reutilizar las pilas desechadas.
+D.
+Inapropiada, porque es mejor quemarlas ya que no entrarían en contacto con el agua.
+✔ Respuesta correcta: B
+La propuesta es apropiada porque ataca directamente la causa del problema: el contacto de los metales tóxicos de las pilas con el suelo y el agua. Aislar las pilas en contenedores adecuados evitaría la filtración de cadmio y plomo al río. Las otras opciones (quemar, desarmar) no son medidas ambientalmente correctas ni resuelven el problema.
+
+Pregunta 47
+Un investigador somete dos grupos de ratones a las siguientes condiciones: un grupo con ejercicio antes del experimento y un grupo sin ejercicio. Él quiere evaluar la capacidad que tienen estos dos grupos de recordar un lugar, guiados por objetos ubicados en el espacio. Para esto mete los ratones en un tanque con agua durante un minuto por 7 días, para que encuentren un recipiente transparente que flota. El último día registra la trayectoria de cada ratón, mostrando que el grupo con ejercicio encontró el recipiente más directamente.
+imagen1 https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20192600.png
+De acuerdo con el experimento, ¿por qué los ratones del grupo con ejercicio ubicaron tan fácilmente el recipiente?
+
+A.
+Porque el triángulo los guio hasta el recipiente.
+B.
+Porque nadaron más rápido que los ratones del grupo sin ejercicio.
+C.
+Porque permanecieron más tiempo en el tanque que los ratones del grupo sin ejercicio.
+D.
+Porque el ejercicio mejoró su capacidad de memorizar.
+✔ Respuesta correcta: D
+El experimento está diseñado para medir la memoria espacial. El grupo con ejercicio encontró el recipiente más eficientemente gracias a que el ejercicio previo mejoró su capacidad de memorizar y recordar la ubicación. Esta es la variable que diferencia a los dos grupos. Las otras opciones no están respaldadas por los datos del experimento.
+
+Pregunta 48
+Una estudiante realizó un experimento para medir la velocidad de propagación del sonido en el aire a diferentes temperaturas. Los resultados obtenidos se muestran en la siguiente tabla:
+
+Temperatura (°C)	Velocidad del sonido (m/s)
+0	331,7
+1	332,3
+2	332,9
+3	333,5
+¿Cuál de las siguientes gráficas muestra los resultados del experimento?
+imagen https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-25%20192719.png
+A.
+Gráfica con Temperatura en eje Y y Velocidad del sonido en eje X, con valores crecientes correctos.
+B.
+Gráfica con Velocidad del sonido (m/s) en eje Y y Temperatura (°C) en eje X, con relación lineal creciente.
+C.
+Gráfica con Temperatura en eje Y y Velocidad en eje X, con el eje de velocidad invertido.
+D.
+Gráfica con Velocidad en eje Y y Temperatura en eje X, con el eje de velocidad invertido.
+✔ Respuesta correcta: B
+Por convención científica, la variable independiente (temperatura) va en el eje X y la variable dependiente (velocidad del sonido) va en el eje Y. Los datos muestran que al aumentar la temperatura, la velocidad aumenta linealmente. La opción B es la única que tiene los ejes correctamente ubicados con los valores en orden creciente de izquierda a derecha y de abajo hacia arriba.
+
+Pregunta 49
+El anabolismo es una forma de metabolismo que requiere energía y da como resultado la elaboración de moléculas complejas a partir de moléculas simples. Por el contrario, el catabolismo transforma moléculas complejas en moléculas simples y produce energía. El siguiente esquema muestra los procesos de fotosíntesis y respiración en plantas:
+
+Fotosíntesis:
+
+6CO₂ + 6H₂O + Luz solar → C₆H₁₂O₆ (Glucosa) + 6O₂
+Respiración:
+
+C₆H₁₂O₆ + 6O₂ → 6CO₂ + 6H₂O + ATP (Energía)
+Con base en la información anterior, ¿qué se puede afirmar?
+
+A.
+Que la fotosíntesis es un proceso anabólico porque produce glucosa como molécula compleja.
+B.
+Que la fotosíntesis es un proceso catabólico porque requiere energía en forma de luz solar.
+C.
+Que la respiración es un proceso anabólico porque produce energía en forma de ATP.
+D.
+Que la respiración es un proceso catabólico porque produce moléculas complejas como CO₂ y agua.
+✔ Respuesta correcta: A
+La fotosíntesis toma moléculas simples (CO₂ y H₂O) y, usando energía luminosa, las transforma en glucosa (molécula compleja). Esto corresponde a la definición de anabolismo: síntesis de moléculas complejas a partir de simples consumiendo energía. La respiración es catabolismo (descompone glucosa para liberar energía), no la opción D que confunde los productos.
+
+

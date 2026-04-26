@@ -17,7 +17,9 @@
     "icfes:migrate": "node scripts/run-sql.mjs scripts/migration_icfes_schema.sql",
     "icfes:ingest": "node scripts/icfes_ingest/index.js",
     "icfes:ingest:dry": "node scripts/icfes_ingest/index.js --dry-run",
-    "icfes:ingest:r2": "node scripts/icfes_ingest/index.js --storage=r2"
+    "icfes:ingest:r2": "node scripts/icfes_ingest/index.js --storage=r2",
+    "icfes:seed:naturales-2024-2025": "node scripts/icfes_seed/seed-naturales-2024-2025.mjs",
+    "icfes:seed:naturales-2024-2025:dry": "node scripts/icfes_seed/seed-naturales-2024-2025.mjs --dry-run"
   },
   "keywords": [
     "mcp",
