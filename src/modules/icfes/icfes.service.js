@@ -137,6 +137,7 @@ export class IcfesDomainService {
         let correct = 0, incorrect = 0, unanswered = 0;
         const bySubtopic = new Map();
         const attemptRows = [];
+        const review = [];
 
         for (const ans of input.answers || []) {
             const qid = Number(ans.questionId);
@@ -165,6 +166,24 @@ export class IcfesDomainService {
                 selected_option_id: selectedOpt?.id ?? null,
                 is_correct: isCorrect,
                 response_time_ms: Math.max(0, Math.min(600000, Number(ans.timeMs) || 0)),
+            });
+
+            review.push({
+                questionId: String(qid),
+                stem: q.stem,
+                subtopic: subKey,
+                selected: ans.selected ?? null,
+                correct: correctOpt?.label ?? null,
+                isCorrect,
+                explanation: q.explanation ?? null,
+                options: options
+                    .slice()
+                    .sort((a, b) => a.label.localeCompare(b.label))
+                    .map(o => ({
+                        id: o.label,
+                        text: o.content,
+                        isCorrect: !!o.is_correct,
+                    })),
             });
         }
 
@@ -199,6 +218,7 @@ export class IcfesDomainService {
             createdAt: new Date().toISOString(),
             total, correct, incorrect, unanswered,
             grade, durationSeconds, breakdown, recommendations,
+            questions: review,
         };
         return Result.ok(result);
     }
