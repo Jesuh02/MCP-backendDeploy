@@ -125,3 +125,4 @@ scripts/periodos.txt
 scripts/reporte_plataforma_1776619148463.xlsx
 scripts/migration_icfes_answer_audit.sql
 scripts/migration_icfes_schema.sql
+scripts/seed_icfes_naturales_2024_2025.sql
