@@ -133,7 +133,13 @@ export class SupabaseSubjectRepository {
         // 4. Subject collaborators
         await this.client.from('subject_collaborators').delete().eq('subject_id', id);
 
-        // 5. Delete the subject itself
+        // 5. Manual grades for this subject
+        await this.client.from('manual_grades').delete().eq('subject_id', id);
+
+        // 6. Grade periods (tasks already deleted above; safe to remove periods now)
+        await this.client.from('grade_periods').delete().eq('subject_id', id);
+
+        // 7. Delete the subject itself
         const { error } = await this.client.from('subjects').delete().eq('id', id);
         if (error) throw new Error(error.message);
         return true;
