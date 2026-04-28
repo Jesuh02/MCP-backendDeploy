@@ -110,6 +110,10 @@ export class LLMController {
                 institutionName,
                 // Vision: base64-encoded image for multimodal analysis
                 imageBase64: value.imageBase64 || null,
+                // Fast mode: shorten primary-model timeout to 10s so chat UIs (ChatBot,
+                // DatabaseQuery view, WhatsApp) fail over to DeepSeek faster instead of
+                // waiting up to 5 min for Qwen.
+                fastMode: value.fastMode === true,
             };
 
             // ── INSTITUTION LOOKUP SHORT-CIRCUIT ──────────────────────────────────
