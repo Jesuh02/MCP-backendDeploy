@@ -177,8 +177,13 @@ export class LLMService {
      * @returns {Promise<any>}
      * @private
      */
-    async _invokeWithFallback(invokeFn) {
-        const PRIMARY_TIMEOUT_MS = 300000; // 300s (5 min) — allow Qwen3.6 Plus time to respond
+    async _invokeWithFallback(invokeFn, opts = {}) {
+        const DEFAULT_PRIMARY_TIMEOUT_MS = 300000; // 300s (5 min) — allow Qwen3.6 Plus time to respond
+        // Allow callers (e.g. ChatBot, DatabaseQuery, WhatsApp) to shorten the
+        // primary-model timeout so the request fails over to DeepSeek faster.
+        const PRIMARY_TIMEOUT_MS = Number.isFinite(opts.primaryTimeoutMs) && opts.primaryTimeoutMs > 0
+            ? opts.primaryTimeoutMs
+            : DEFAULT_PRIMARY_TIMEOUT_MS;
         const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
         const fallbackModelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
 
@@ -188,7 +193,7 @@ export class LLMService {
                 const result = await Promise.race([
                     invokeFn(this.primaryModel),
                     new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Primary model timeout (5min)')), PRIMARY_TIMEOUT_MS)
+                        setTimeout(() => reject(new Error(`Primary model timeout (${Math.round(PRIMARY_TIMEOUT_MS / 1000)}s)`)), PRIMARY_TIMEOUT_MS)
                     ),
                 ]);
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -223,6 +228,9 @@ export class LLMService {
      */
     async generateResponse(messages, tools = [], opts = {}) {
         const toolChoice = opts.toolChoice || 'auto';
+        const fallbackOpts = Number.isFinite(opts.primaryTimeoutMs) && opts.primaryTimeoutMs > 0
+            ? { primaryTimeoutMs: opts.primaryTimeoutMs }
+            : {};
         await this._ensureInitialized();
         if (!this.model) throw new Error("LLM disabled");
 
@@ -260,7 +268,7 @@ export class LLMService {
 
             // If no tools, just invoke directly
             if (!tools || tools.length === 0) {
-                const response = await this._invokeWithFallback(model => model.invoke(sanitizedMessages));
+                const response = await this._invokeWithFallback(model => model.invoke(sanitizedMessages), fallbackOpts);
 
                 // --- USER REQUESTED LOGGING ---
                 console.log("\n📤 [LLM RESPONSE] -------------------------------------------");
@@ -306,7 +314,7 @@ export class LLMService {
                     }
                     throw bindErr;
                 }
-            });
+            }, fallbackOpts);
 
             // --- USER REQUESTED LOGGING ---
             console.log("\n📤 [LLM RESPONSE (WITH TOOLS)] ------------------------------");
@@ -328,7 +336,7 @@ export class LLMService {
                 console.warn("Tool call error detected, retrying without tools...");
                 try {
                     const sanitizedMessages = this.sanitizeMessages(messages);
-                    const response = await this._invokeWithFallback(model => model.invoke(sanitizedMessages));
+                    const response = await this._invokeWithFallback(model => model.invoke(sanitizedMessages), fallbackOpts);
 
                     // --- USER REQUESTED LOGGING ---
                     console.log("\n📤 [LLM RESPONSE (RETRY)] -----------------------------------");
