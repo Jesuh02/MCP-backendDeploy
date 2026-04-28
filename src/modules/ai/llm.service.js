@@ -55,7 +55,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number, tenantId?: string, availableTenants?: string[], institutionName?: string }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null, fastMode = false }) {
             if (!prompt || prompt.trim().length === 0) {
                 return Result.fail(new ValidationError('El prompt es requerido'));
             }
@@ -910,6 +910,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 // When tools are available but optional (general knowledge question from
                 // admin/teacher), use 'auto' so the LLM can answer directly without DB.
                 toolChoice: needsMCPTools ? (toolsAvailableButOptional ? 'auto' : 'required') : 'auto',
+                ...fastTimeout,
             });
 
             // If the model returned tool_calls, execute them using MCPService and feed results back.
@@ -952,10 +953,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                             // If query_database returned data successfully, don't pass tools so the LLM formulates a text response
                             const gotData = toolName === 'query_database' && toolResult && (toolResult.success || toolResult.results);
                             const nextTools = gotData ? [] : tools;
-                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools: nextTools });
+                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools: nextTools, ...fastTimeout });
                         } catch (execErr) {
                             const errStr = String(execErr && (execErr.message || execErr));
-                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_ERROR name=${toolName}]\n${errStr}`, fullPrompt, { model, tools });
+                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_ERROR name=${toolName}]\n${errStr}`, fullPrompt, { model, tools, ...fastTimeout });
                         }
                     }
 
@@ -988,7 +989,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                         const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
                         response = await this.llm.chat(
                             systemPrompt + `\n\n[TOOL_RESULT name=${inlineCall.tool}]\n${resultStr}\n[END_TOOL_RESULT]`,
-                            fullPrompt, { model, tools: [] }
+                            fullPrompt, { model, tools: [], ...fastTimeout }
                         );
                         inlineSucceeded = true;
                     } catch (e) {
@@ -998,7 +999,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                     // If inline execution failed, cascade to Strategy 2 so we don't return raw SQL to the user.
                     if (!inlineSucceeded) {
                         try {
-                            const fallbackResult = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model);
+                            const fallbackResult = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model, fastMode);
                             if (fallbackResult !== null && fallbackResult !== undefined) {
                                 response = fallbackResult;
                                 if (fallbackResult._rawQueryData) rawQueryData = fallbackResult._rawQueryData;
@@ -1011,7 +1012,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                     // Strategy 2: two-step direct DB query (SQL generation + execution + final answer).
                     // Runs when the model produced no tool call at all (neither via tool_calls nor inline JSON).
                     try {
-                        const fallbackResult = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model);
+                        const fallbackResult = await this._directDbQueryFallback(systemPrompt, fullPrompt, prompt, model, fastMode);
                         if (fallbackResult !== null && fallbackResult !== undefined) {
                             response = fallbackResult;
                             if (fallbackResult._rawQueryData) rawQueryData = fallbackResult._rawQueryData;
@@ -1691,7 +1692,8 @@ Responde de forma clara y constructiva.`;
      * Step 2: Execute via MCPService directly.
      * Step 3: Ask the model to format the result in Markdown.
      */
-    async _directDbQueryFallback(systemPrompt, fullPrompt, originalPrompt, model) {
+    async _directDbQueryFallback(systemPrompt, fullPrompt, originalPrompt, model, fastMode = false) {
+        const fastTimeout = fastMode ? { primaryTimeoutMs: 10000 } : {};
         // Step 1: generate SQL
         // Extract any role-based access restrictions AND user identity from the existing systemPrompt
         const restrictionMatch = systemPrompt.match(/(?:NIVEL DE ACCESO|RESTRICCIÓN DE ACCESO)[\s\S]*$/);
@@ -1709,7 +1711,7 @@ Responde de forma clara y constructiva.`;
             'Puedes usar CTEs (WITH ... AS (...) SELECT ...) para consultas complejas.',
         ].join('\n') + restrictionCtx;
 
-        const sqlResponse = await this.llm.chat(sqlSystemPrompt, originalPrompt, { model, tools: [] });
+        const sqlResponse = await this.llm.chat(sqlSystemPrompt, originalPrompt, { model, tools: [], ...fastTimeout });
         const sqlText = String(sqlResponse.content || '').trim();
 
         // Extract SQL from possible code block (also supports CTEs starting with WITH)
@@ -1735,7 +1737,7 @@ Responde de forma clara y constructiva.`;
         const finalResponse = await this.llm.chat(
             systemPrompt + `\n\n[DATOS OBTENIDOS DE LA BASE DE DATOS]\n${resultStr}\n[FIN DE DATOS]\n\nFormula ahora tu respuesta en Markdown claro usando SOLO los datos anteriores. No inventes valores.`,
             fullPrompt,
-            { model, tools: [] }
+            { model, tools: [], ...fastTimeout }
         );
         // Attach raw rows so callers can build Excel from the same data the LLM described
         if (toolResult && toolResult.success && Array.isArray(toolResult.results) && toolResult.results.length > 0) {

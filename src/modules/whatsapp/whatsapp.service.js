@@ -1280,7 +1280,7 @@ export class WhatsAppDomainService {
         if (hasGradingIndicator && this.llmService && typeof this.llmService.processPrompt === 'function') {
             try {
                 const prompt = `Eres un clasificador de intención. Has recibido el siguiente mensaje de WhatsApp: "${message.trim()}"\n\nResponde SOLO con una de estas etiquetas exactas:\n- ASSIGN_GRADE (si la intención es asignar o modificar una nota a un estudiante)\n- QUERY_ABOUT_GRADES (si la intención es preguntar sobre conteos, estadísticas o historiales de calificaciones)\n- OTHER (ninguna de las anteriores).`;
-                const result = await this.llmService.processPrompt({ prompt, userId: null });
+                const result = await this.llmService.processPrompt({ prompt, userId: null, fastMode: true });
                 let label = null;
                 if (result && result.isOk && result.isOk()) {
                     const val = result.getValue();
@@ -1437,6 +1437,7 @@ export class WhatsAppDomainService {
                     forceMCPTools: true,
                     tenantId: currentTenantId,
                     institutionName: currentInstitutionName,
+                    fastMode: true,
                 });
 
                 if (llmResult && llmResult.isOk && llmResult.isOk()) {
@@ -1541,6 +1542,7 @@ export class WhatsAppDomainService {
                 // Institution context so the LLM knows which DB it is querying
                 tenantId: currentTenantId,
                 institutionName: currentInstitutionName,
+                fastMode: true,
             });
 
             console.log('[WhatsApp] LLM processPrompt result:', result && (result.isOk ? (result.isOk() ? 'ok' : 'fail') : typeof result));
