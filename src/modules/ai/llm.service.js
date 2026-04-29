@@ -60,6 +60,10 @@ export class LLMDomainService {
                 return Result.fail(new ValidationError('El prompt es requerido'));
             }
 
+            // When fastMode is enabled, shorten the primary model timeout so the LLM
+            // adapter falls back faster to the secondary model if the primary is slow.
+            const fastTimeout = fastMode ? { primaryTimeoutMs: 10000 } : {};
+
             try {
                 // ── MULTI-TENANT INSTITUTION AWARENESS ────────────────────────────────
                 // Determine institution context for this request.
