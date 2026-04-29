@@ -222,6 +222,12 @@ export class MCPService {
             schemaText += `- notifications.user_id → usuarios.id\n`;
             schemaText += `- videos.course_id → courses.id\n`;
             schemaText += `\n**⚠️ CADENA CORRECTA PARA TAREAS→CURSOS:** tasks.topic_id → topics.materia_id → subjects.id → subjects.course_id → courses.id\n`;
+            schemaText += `\n**⚠️ COLUMNAS DE FECHA — IMPORTANTE:**\n`;
+            schemaText += `- En la tabla \`courses\`, la columna \`creation_date\` es de tipo TEXT (no timestamp). NUNCA uses EXTRACT() ni funciones de fecha directamente sobre \`creation_date\`.\n`;
+            schemaText += `- Para filtrar cursos por fecha de creación, USA SIEMPRE la columna \`created_at\` (timestamp) en lugar de \`creation_date\`.\n`;
+            schemaText += `- Ejemplo CORRECTO para "cursos de diciembre 2025": WHERE c.created_at >= '2025-12-01' AND c.created_at < '2026-01-01'\n`;
+            schemaText += `- Ejemplo PROHIBIDO: EXTRACT(YEAR FROM c.creation_date) — falla porque creation_date es texto.\n`;
+            schemaText += `- Si necesitas EXTRACT sobre una columna text, primero conviértela: EXTRACT(YEAR FROM (c.columna)::timestamp). Pero PREFIERE usar columnas timestamp nativas (created_at, updated_at, last_modified_date).\n`;
 
             // Cache the result per-tenant
             this._tenantSchemaCaches.set(tenantId, { schema: schemaText, time: now });
