@@ -127,3 +127,4 @@ scripts/migration_icfes_answer_audit.sql
 scripts/migration_icfes_schema.sql
 scripts/seed_icfes_naturales_2024_2025.sql
 scripts/seed_icfes_lectura_critica_2022.sql
+scripts/seed_icfes_ingles_2024_2025.sql
