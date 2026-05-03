@@ -19,7 +19,8 @@
     "icfes:ingest:dry": "node scripts/icfes_ingest/index.js --dry-run",
     "icfes:ingest:r2": "node scripts/icfes_ingest/index.js --storage=r2",
     "icfes:seed:naturales-2024-2025": "node scripts/icfes_seed/seed-naturales-2024-2025.mjs",
-    "icfes:seed:naturales-2024-2025:dry": "node scripts/icfes_seed/seed-naturales-2024-2025.mjs --dry-run"
+    "icfes:seed:naturales-2024-2025:dry": "node scripts/icfes_seed/seed-naturales-2024-2025.mjs --dry-run",
+    "icfes:seed:lectura-critica-2022": "node scripts/run-sql.mjs scripts/seed_icfes_lectura_critica_2022.sql"
   },
   "keywords": [
     "mcp",
@@ -45,7 +46,7 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "decimal.js": "^10.6.0",
-    "dotenv": "^16.4.1",
+    "dotenv": "^16.6.1",
     "exceljs": "^4.4.0",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
