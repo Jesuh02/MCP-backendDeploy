@@ -20,7 +20,9 @@
     "icfes:ingest:r2": "node scripts/icfes_ingest/index.js --storage=r2",
     "icfes:seed:naturales-2024-2025": "node scripts/icfes_seed/seed-naturales-2024-2025.mjs",
     "icfes:seed:naturales-2024-2025:dry": "node scripts/icfes_seed/seed-naturales-2024-2025.mjs --dry-run",
-    "icfes:seed:lectura-critica-2022": "node scripts/run-sql.mjs scripts/seed_icfes_lectura_critica_2022.sql"
+    "icfes:seed:lectura-critica-2022": "node scripts/run-sql.mjs scripts/seed_icfes_lectura_critica_2022.sql",
+    "icfes:fill-explanations": "node scripts/icfes_fill_explanations.mjs",
+    "icfes:fill-explanations:dry": "node scripts/icfes_fill_explanations.mjs --dry-run --limit=5"
   },
   "keywords": [
     "mcp",
