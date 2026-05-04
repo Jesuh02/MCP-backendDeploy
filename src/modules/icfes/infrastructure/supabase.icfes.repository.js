@@ -107,7 +107,7 @@ export class SupabaseIcfesRepository {
         const { data, error } = await this.client
             .from('icfes_questions')
             .select(`
-                id, stem, difficulty, explanation, subtopic_id, source_year,
+                id, stem, reading_passage, difficulty, explanation, subtopic_id, source_year,
                 icfes_subtopics:subtopic_id ( id, name, icfes_topics:topic_id ( id, name, area_id ) ),
                 icfes_question_options ( id, label, content, is_correct ),
                 icfes_question_images ( id, option_id, position, url, alt, order_index )
