@@ -12,6 +12,10 @@ import { idempotencyGuard } from '../shared/middleware/IdempotencyMiddleware.js'
 export function createApp() {
     const app = express();
 
+    // Trust Railway/Nginx reverse-proxy so req.protocol returns 'https'
+    // and req.ip reflects the real client IP.
+    app.set('trust proxy', 1);
+
     // ── CORS — must be the VERY FIRST middleware so preflight responses
     //    always carry the correct headers, even if later middleware
     //    (body parsers, Helmet, etc.) fail or short-circuit. ──
