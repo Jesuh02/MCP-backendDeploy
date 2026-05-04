@@ -67,6 +67,7 @@ function toClientQuestion(row) {
         subtopic: sub.name ?? null,
         difficulty: row.difficulty,
         stem: row.stem,
+        readingPassage: row.reading_passage ?? null,
         options,
         images,
         correct: correctOpt?.label ?? null,
@@ -177,6 +178,7 @@ export class IcfesDomainService {
             review.push({
                 questionId: String(qid),
                 stem: q.stem,
+                readingPassage: q.reading_passage ?? null,
                 subtopic: subKey,
                 selected: ans.selected ?? null,
                 correct: correctOpt?.label ?? null,
