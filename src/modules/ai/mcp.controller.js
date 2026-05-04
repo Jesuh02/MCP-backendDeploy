@@ -29,8 +29,15 @@ export class MCPController {
         // Store connection
         this.sseConnections.set(sessionId, { res, connectedAt: Date.now() });
 
-        // Send endpoint URL
-        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        // Send endpoint URL — use MCP_PUBLIC_URL env var first, then trust-proxy
+        // headers (Railway sets X-Forwarded-Proto / X-Forwarded-Host), then fallback.
+        const proto = process.env.MCP_PUBLIC_URL
+            ? ''
+            : (req.headers['x-forwarded-proto']?.split(',')[0].trim() || req.protocol);
+        const host  = process.env.MCP_PUBLIC_URL
+            ? ''
+            : (req.headers['x-forwarded-host']?.split(',')[0].trim() || req.get('host'));
+        const baseUrl = process.env.MCP_PUBLIC_URL || `${proto}://${host}`;
         res.write(`event: endpoint\ndata: ${baseUrl}/api/v1/mcp/message?sessionId=${sessionId}\n\n`);
         // Heartbeat
         const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 30000);
