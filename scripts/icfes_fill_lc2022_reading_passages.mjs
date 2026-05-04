@@ -30,6 +30,7 @@
  */
 
 import pg from 'pg'
+import { createClient } from '@supabase/supabase-js'
 
 const { Pool } = pg
 
@@ -39,9 +40,13 @@ const DRY_RUN = args.includes('--dry-run')
 const FORCE   = args.includes('--force')
 
 // ── DB connection ─────────────────────────────────────────────────────────────
-const DATABASE_URL = process.env.DATABASE_URL
-if (!DATABASE_URL) {
-  console.error('ERROR: DATABASE_URL no está definida.')
+const DATABASE_URL     = process.env.DATABASE_URL
+const SUPABASE_URL     = process.env.SUPABASE_URL
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY
+const USE_SUPABASE     = !DATABASE_URL && !!SUPABASE_URL && !!SUPABASE_SERVICE_KEY
+
+if (!DATABASE_URL && !USE_SUPABASE) {
+  console.error('ERROR: Define DATABASE_URL, o bien SUPABASE_URL + SUPABASE_SERVICE_KEY.')
   process.exit(1)
 }
 
@@ -52,10 +57,13 @@ function inferSsl(url) {
   return false
 }
 
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: inferSsl(DATABASE_URL),
-})
+const pool = DATABASE_URL
+  ? new Pool({ connectionString: DATABASE_URL, ssl: inferSsl(DATABASE_URL) })
+  : null
+
+const supabase = USE_SUPABASE
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } })
+  : null
 
 // ── Question groups ───────────────────────────────────────────────────────────
 // Each group: the leader's stem embeds the full passage.
@@ -91,33 +99,14 @@ const GROUPS = [
  * The question is always the LAST paragraph; the passage is everything in between.
  */
 function splitLeaderStem(stem) {
-  const parts = stem.split('\n\n')
-  // parts[0]       → header ("TEXTO: «…» — author")
-  // parts[1..n-2]  → passage paragraphs
-  // parts[n-1]     → question text
+  const parts = stem.replace(/\r\n/g, '\n').split('\n\n')
   const passage  = parts.slice(1, -1).join('\n\n').trim()
   const question = parts[parts.length - 1].trim()
   return { passage, question }
 }
 
-/**
- * Returns a cleaned stem for a follower question.
- * If the second paragraph (after the header) is a pure placeholder like
- *   "[Texto completo del cuento con los cinco personajes.]"
- * it is dropped and the rest becomes the stem.
- * Otherwise (e.g. Q15 "Considere los siguientes enunciados…" or Q19 "[Párrafo 2]…")
- * only the header line is stripped and the rest is kept.
- *
- * A "pure placeholder" paragraph:
- *   - Starts with "[" AND ends with "]"  (the whole paragraph is bracket-enclosed)
- *   - Examples that match:   [Texto completo del cuento con los cinco personajes.]
- *                            [Monólogo completo de Hamlet sobre el ser o no ser.]
- *                            [Infografía con apartados: …]
- *   - Examples that do NOT: [Párrafo 2] ¿A qué se debe esto?… (ends with "." not "]")
- *                           Considere los siguientes enunciados… (no leading "[")
- */
 function cleanFollowerStem(stem) {
-  const parts = stem.split('\n\n')
+  const parts = stem.replace(/\r\n/g, '\n').split('\n\n')
   const secondPara = (parts[1] || '').trim()
   const isPurePlaceholder = /^\[[\s\S]*\]$/.test(secondPara)
 
@@ -130,23 +119,58 @@ function cleanFollowerStem(stem) {
   }
 }
 
+// ── DB helpers ────────────────────────────────────────────────────────────────
+async function fetchGroup(client, members) {
+  if (pool) {
+    const { rows } = await client.query(
+      `SELECT id, source_reference, stem, reading_passage
+         FROM public.icfes_questions
+        WHERE source_reference = ANY($1)
+        ORDER BY source_reference`,
+      [members],
+    )
+    return rows
+  }
+  // Supabase JS path
+  const { data, error } = await supabase
+    .from('icfes_questions')
+    .select('id, source_reference, stem, reading_passage')
+    .in('source_reference', members)
+    .order('source_reference')
+  if (error) throw new Error(`Supabase select failed: ${error.message}`)
+  return data || []
+}
+
+async function updateQuestion(client, id, stem, reading_passage) {
+  if (pool) {
+    await client.query(
+      `UPDATE public.icfes_questions
+          SET stem            = $1,
+              reading_passage = $2,
+              updated_at      = now()
+        WHERE id = $3`,
+      [stem, reading_passage, id],
+    )
+    return
+  }
+  // Supabase JS path
+  const { error } = await supabase
+    .from('icfes_questions')
+    .update({ stem, reading_passage, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw new Error(`Supabase update failed: ${error.message}`)
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function run() {
-  const client = await pool.connect()
+  const client = pool ? await pool.connect() : null
   try {
-    await client.query('BEGIN')
+    if (client) await client.query('BEGIN')
 
     let totalUpdated = 0
 
     for (const group of GROUPS) {
-      // 1. Fetch all questions in the group
-      const { rows } = await client.query(
-        `SELECT id, source_reference, stem, reading_passage
-           FROM public.icfes_questions
-          WHERE source_reference = ANY($1)
-          ORDER BY source_reference`,
-        [group.members],
-      )
+      const rows = await fetchGroup(client, group.members)
 
       if (!rows.length) {
         console.warn(`⚠️  Group ${group.leader}: no questions found — skipping.`)
@@ -172,7 +196,6 @@ async function run() {
       for (const row of rows) {
         const isLeader = row.source_reference === group.leader
 
-        // Skip if already has passage and not forcing
         if (row.reading_passage && !FORCE) {
           console.log(`    ✅ ${row.source_reference} already has reading_passage — skip.`)
           continue
@@ -189,33 +212,26 @@ async function run() {
           continue
         }
 
-        await client.query(
-          `UPDATE public.icfes_questions
-              SET stem            = $1,
-                  reading_passage = $2,
-                  updated_at      = now()
-            WHERE id = $3`,
-          [newStem, passage, row.id],
-        )
+        await updateQuestion(client, row.id, newStem, passage)
         totalUpdated++
         console.log(`    ✅ ${row.source_reference} updated.`)
       }
     }
 
     if (DRY_RUN) {
-      await client.query('ROLLBACK')
+      if (client) await client.query('ROLLBACK')
       console.log('\n🔍  Dry-run: no changes committed.')
     } else {
-      await client.query('COMMIT')
+      if (client) await client.query('COMMIT')
       console.log(`\n✅  Done. ${totalUpdated} questions updated.`)
     }
   } catch (err) {
-    await client.query('ROLLBACK')
+    if (client) await client.query('ROLLBACK').catch(() => {})
     console.error('❌  Error:', err.message)
     throw err
   } finally {
-    client.release()
-    await pool.end()
+    if (client) client.release()
+    if (pool) await pool.end()
   }
 }
 
