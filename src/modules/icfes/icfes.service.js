@@ -15,6 +15,28 @@ const DIFFICULTY_PLAN = [
 
 function clamp01(x) { return Math.max(0, Math.min(1, x)); }
 
+/**
+ * Propaga `reading_passage` a preguntas que lo referencian ("texto anterior")
+ * pero no tienen el campo en la BD, buscando una pregunta hermana dentro del
+ * mismo subtopic + año que sí tenga el pasaje.
+ * Opera sobre las filas en memoria; no escribe en la BD.
+ */
+const REFERENCES_PREV_TEXT = /\btexto\s+anterior\b/i;
+
+function propagatePassages(orderedRows) {
+    for (const q of orderedRows) {
+        if (!q.reading_passage && REFERENCES_PREV_TEXT.test(q.stem || '')) {
+            const sibling = orderedRows.find(
+                other =>
+                    other.reading_passage &&
+                    other.subtopic_id === q.subtopic_id &&
+                    other.source_year === q.source_year,
+            );
+            if (sibling) q.reading_passage = sibling.reading_passage;
+        }
+    }
+}
+
 function pickByDifficulty(pool, targetDiff, used) {
     // Devuelve una pregunta del pool que esté en dificultad == target (o lo más cercano).
     const remaining = pool.filter(p => !used.has(p.id));
@@ -106,6 +128,9 @@ export class IcfesDomainService {
         // Ordenar `full` según el plan.
         const byId = new Map(full.map(r => [r.id, r]));
         const ordered = picked.map(p => byId.get(p.id)).filter(Boolean);
+
+        // Propagar reading_passage a preguntas que lo referencian pero no lo tienen.
+        propagatePassages(ordered);
 
         const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
         const session = await this.repo.createSession({
