@@ -186,7 +186,7 @@ mcp-backend-deploy/
 └── scripts/                          # SQL de migración, seed ICFES, utilidades
 ```
 
-## 🔌 Endpoints principales (`/api/v1/`)
+## 🔌 Endpoints principales  (`/api/v1/`)
 
 | Endpoint | Método | Función |
 |---|---:|---|
