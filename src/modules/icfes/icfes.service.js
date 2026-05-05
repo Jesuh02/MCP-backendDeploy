@@ -16,12 +16,22 @@ const DIFFICULTY_PLAN = [
 function clamp01(x) { return Math.max(0, Math.min(1, x)); }
 
 /**
- * Propaga `reading_passage` a preguntas que lo referencian ("texto anterior")
- * pero no tienen el campo en la BD, buscando una pregunta hermana dentro del
- * mismo subtopic + año que sí tenga el pasaje.
+ * Propaga `reading_passage` a preguntas que lo referencian (p.ej. "texto
+ * anterior", "en el texto", "según el texto", "del texto", "infografía",
+ * "fragmento") pero no tienen el campo en la BD, buscando una pregunta
+ * hermana dentro del mismo subtopic + año que sí tenga el pasaje.
  * Opera sobre las filas en memoria; no escribe en la BD.
  */
-const REFERENCES_PREV_TEXT = /\btexto\s+anterior\b/i;
+const REFERENCES_PREV_TEXT = new RegExp(
+    [
+        '\\btexto\\s+anterior\\b',
+        '\\b(?:en|del|al|según|segun|sobre|tras|para|con|por)\\s+el\\s+texto\\b',
+        '\\bel\\s+texto\\b',
+        '\\bla\\s+(?:infografía|infografia|lectura|fuente|imagen|figura|tabla|gráfica|grafica|gráfico|grafico|noticia|columna|reseña|resena|carta|crónica|cronica|fábula|fabula|historieta|caricatura|viñeta|vineta)\\b',
+        '\\bel\\s+(?:fragmento|párrafo|parrafo|enunciado|autor|título|titulo|gráfico|grafico|cuadro|esquema)\\b',
+    ].join('|'),
+    'i',
+);
 
 function propagatePassages(orderedRows) {
     for (const q of orderedRows) {
@@ -164,6 +174,9 @@ export class IcfesDomainService {
 
         const questionIds = (input.answers || []).map(a => Number(a.questionId)).filter(Boolean);
         const full = await this.repo.getQuestionsFull(questionIds);
+        // Propagar reading_passage a preguntas que lo referencian pero no lo
+        // tienen en la BD, para que la pantalla de revisión muestre el texto.
+        propagatePassages(full);
         const byId = new Map(full.map(r => [r.id, r]));
 
         let correct = 0, incorrect = 0, unanswered = 0;
