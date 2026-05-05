@@ -43,11 +43,27 @@ Fuente: Chumpitazi, M. (2014). Insectos a la carta. Infografías S.O.S., con dat
 
 const REFS = ['LC-2022-Q04', 'LC-2022-Q05', 'LC-2022-Q06', 'LC-2022-Q07'];
 
+// Algunas instalaciones tienen filas duplicadas ingeridas directamente desde el
+// PDF sin la referencia canónica `LC-2022-QNN`. Cubrimos también esos
+// `source_reference` (patrones q4p4..q7p4 / q4p45..q7p45 del PDF de lectura
+// crítica 2022) para que también obtengan el pasaje completo.
+const REF_LIKE_PATTERNS = [
+  '2022/lectura critica/Lectura critica.pdf#q4p4',
+  '2022/lectura critica/Lectura critica.pdf#q5p4',
+  '2022/lectura critica/Lectura critica.pdf#q6p4',
+  '2022/lectura critica/Lectura critica.pdf#q7p4',
+  '2022/lectura critica/leectura critica.pdf#q4p45',
+  '2022/lectura critica/leectura critica.pdf#q5p45',
+  '2022/lectura critica/leectura critica.pdf#q6p45',
+  '2022/lectura critica/leectura critica.pdf#q7p45',
+];
+
 async function run() {
+  const allRefs = [...REFS, ...REF_LIKE_PATTERNS];
   const { data: questions, error: fetchErr } = await supabase
     .from('icfes_questions')
     .select('id, source_reference, reading_passage')
-    .in('source_reference', REFS);
+    .in('source_reference', allRefs);
 
   if (fetchErr) { console.error('Error fetching:', fetchErr.message); process.exit(1); }
   if (!questions?.length) { console.error('No se encontraron preguntas con esas referencias.'); process.exit(1); }
