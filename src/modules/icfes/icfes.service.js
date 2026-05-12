@@ -34,16 +34,52 @@ const REFERENCES_PREV_TEXT = new RegExp(
 );
 
 function propagatePassages(orderedRows) {
+    // Construir mapa: "subtopicId|sourceYear" → reading_passage
+    // desde cualquier pregunta del grupo que ya tenga el texto.
+    const passageByGroup = new Map();
     for (const q of orderedRows) {
-        if (!q.reading_passage && REFERENCES_PREV_TEXT.test(q.stem || '')) {
-            const sibling = orderedRows.find(
-                other =>
-                    other.reading_passage &&
-                    other.subtopic_id === q.subtopic_id &&
-                    other.source_year === q.source_year,
-            );
-            if (sibling) q.reading_passage = sibling.reading_passage;
+        if (q.reading_passage) {
+            const key = `${q.subtopic_id}|${q.source_year}`;
+            if (!passageByGroup.has(key)) passageByGroup.set(key, q.reading_passage);
         }
+    }
+    // Propagar a TODAS las preguntas del mismo grupo sin importar si el
+    // enunciado menciona explícitamente "el texto anterior" o no.
+    // (p.ej. "De lo expresado en los dos primeros párrafos", "según el cómic",
+    //  "de acuerdo con los argumentos de Descartes", etc.)
+    for (const q of orderedRows) {
+        if (!q.reading_passage) {
+            const key = `${q.subtopic_id}|${q.source_year}`;
+            const passage = passageByGroup.get(key);
+            if (passage) q.reading_passage = passage;
+        }
+    }
+}
+
+/**
+ * Segunda pasada: para preguntas que todavía no tienen `reading_passage`
+ * (porque el ancla no estaba en el pool de candidatos, p.ej. ya fue vista),
+ * consulta la BD directamente por subtopic_id + source_year.
+ */
+async function propagatePassagesFromDB(rows, repo) {
+    // Sin filtro de regex: cualquier pregunta sin reading_passage es candidata.
+    // findPassagesForSubtopics sólo devuelve registros con passage no nulo,
+    // por lo que preguntas realmente independientes no recibirán texto espurio.
+    const missing = rows.filter(q => !q.reading_passage);
+    if (!missing.length) return;
+    const pairs = [];
+    const seen = new Set();
+    for (const q of missing) {
+        const key = `${q.subtopic_id}|${q.source_year}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            pairs.push({ subtopicId: q.subtopic_id, sourceYear: q.source_year });
+        }
+    }
+    const passageMap = await repo.findPassagesForSubtopics(pairs);
+    for (const q of missing) {
+        const passage = passageMap.get(`${q.subtopic_id}|${q.source_year}`);
+        if (passage) q.reading_passage = passage;
     }
 }
 
@@ -133,14 +169,19 @@ export class IcfesDomainService {
             return Result.fail(`No hay preguntas disponibles para ${area.code}. Ejecuta la ingesta.`);
         }
         const picked = selectPedagogicalOrder(candidates);
-        const full = await this.repo.getQuestionsFull(picked.map(q => q.id));
 
-        // Ordenar `full` según el plan.
-        const byId = new Map(full.map(r => [r.id, r]));
+        // Hidratar TODOS los candidatos (no sólo los 20 elegidos) para que
+        // propagatePassages pueda encontrar preguntas ancla aunque no hayan
+        // sido seleccionadas en el plan pedagógico.
+        const allFull = await this.repo.getQuestionsFull(candidates.map(q => q.id));
+        propagatePassages(allFull);
+
+        const byId = new Map(allFull.map(r => [r.id, r]));
         const ordered = picked.map(p => byId.get(p.id)).filter(Boolean);
 
-        // Propagar reading_passage a preguntas que lo referencian pero no lo tienen.
-        propagatePassages(ordered);
+        // Segunda pasada: si el ancla fue excluida del pool (ya vista por el
+        // estudiante), consultar la BD directamente por subtopic + año.
+        await propagatePassagesFromDB(ordered, this.repo);
 
         const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
         const session = await this.repo.createSession({
@@ -177,6 +218,7 @@ export class IcfesDomainService {
         // Propagar reading_passage a preguntas que lo referencian pero no lo
         // tienen en la BD, para que la pantalla de revisión muestre el texto.
         propagatePassages(full);
+        await propagatePassagesFromDB(full, this.repo);
         const byId = new Map(full.map(r => [r.id, r]));
 
         let correct = 0, incorrect = 0, unanswered = 0;
