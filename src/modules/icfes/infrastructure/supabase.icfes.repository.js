@@ -117,6 +117,33 @@ export class SupabaseIcfesRepository {
         return data || [];
     }
 
+    /**
+     * Para cada par (subtopicId, sourceYear) devuelve el primer reading_passage
+     * no nulo que exista en la BD. Usado como fallback cuando el ancla del
+     * grupo de preguntas no estaba en el pool de candidatos.
+     * @param {{ subtopicId: number, sourceYear: string|null }[]} pairs
+     * @returns {Promise<Map<string, string>>}  clave: `${subtopicId}|${sourceYear}`
+     */
+    async findPassagesForSubtopics(pairs) {
+        if (!pairs.length) return new Map();
+        const subtopicIds = [...new Set(pairs.map(p => p.subtopicId).filter(Boolean))];
+        if (!subtopicIds.length) return new Map();
+        const { data, error } = await this.client
+            .from('icfes_questions')
+            .select('subtopic_id, source_year, reading_passage')
+            .in('subtopic_id', subtopicIds)
+            .not('reading_passage', 'is', null)
+            .limit(200);
+        if (error) return new Map();
+        const result = new Map();
+        for (const row of data || []) {
+            if (!row.reading_passage) continue;
+            const key = `${row.subtopic_id}|${row.source_year}`;
+            if (!result.has(key)) result.set(key, row.reading_passage);
+        }
+        return result;
+    }
+
     // ─── Sesiones ────────────────────────────────────────────────────────
     async createSession({ studentId, areaId, expiresAt }) {
         const { data, error } = await this.client
