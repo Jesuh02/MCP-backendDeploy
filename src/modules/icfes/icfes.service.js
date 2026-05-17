@@ -15,6 +15,74 @@ const DIFFICULTY_PLAN = [
 
 function clamp01(x) { return Math.max(0, Math.min(1, x)); }
 
+/**
+ * Propaga `reading_passage` a preguntas que lo referencian (p.ej. "texto
+ * anterior", "en el texto", "según el texto", "del texto", "infografía",
+ * "fragmento") pero no tienen el campo en la BD, buscando una pregunta
+ * hermana dentro del mismo subtopic + año que sí tenga el pasaje.
+ * Opera sobre las filas en memoria; no escribe en la BD.
+ */
+const REFERENCES_PREV_TEXT = new RegExp(
+    [
+        '\\btexto\\s+anterior\\b',
+        '\\b(?:en|del|al|según|segun|sobre|tras|para|con|por)\\s+el\\s+texto\\b',
+        '\\bel\\s+texto\\b',
+        '\\bla\\s+(?:infografía|infografia|lectura|fuente|imagen|figura|tabla|gráfica|grafica|gráfico|grafico|noticia|columna|reseña|resena|carta|crónica|cronica|fábula|fabula|historieta|caricatura|viñeta|vineta)\\b',
+        '\\bel\\s+(?:fragmento|párrafo|parrafo|enunciado|autor|título|titulo|gráfico|grafico|cuadro|esquema)\\b',
+    ].join('|'),
+    'i',
+);
+
+function propagatePassages(orderedRows) {
+    // Construir mapa: "subtopicId|sourceYear" → reading_passage
+    // desde cualquier pregunta del grupo que ya tenga el texto.
+    const passageByGroup = new Map();
+    for (const q of orderedRows) {
+        if (q.reading_passage) {
+            const key = `${q.subtopic_id}|${q.source_year}`;
+            if (!passageByGroup.has(key)) passageByGroup.set(key, q.reading_passage);
+        }
+    }
+    // Propagar a TODAS las preguntas del mismo grupo sin importar si el
+    // enunciado menciona explícitamente "el texto anterior" o no.
+    // (p.ej. "De lo expresado en los dos primeros párrafos", "según el cómic",
+    //  "de acuerdo con los argumentos de Descartes", etc.)
+    for (const q of orderedRows) {
+        if (!q.reading_passage) {
+            const key = `${q.subtopic_id}|${q.source_year}`;
+            const passage = passageByGroup.get(key);
+            if (passage) q.reading_passage = passage;
+        }
+    }
+}
+
+/**
+ * Segunda pasada: para preguntas que todavía no tienen `reading_passage`
+ * (porque el ancla no estaba en el pool de candidatos, p.ej. ya fue vista),
+ * consulta la BD directamente por subtopic_id + source_year.
+ */
+async function propagatePassagesFromDB(rows, repo) {
+    // Sin filtro de regex: cualquier pregunta sin reading_passage es candidata.
+    // findPassagesForSubtopics sólo devuelve registros con passage no nulo,
+    // por lo que preguntas realmente independientes no recibirán texto espurio.
+    const missing = rows.filter(q => !q.reading_passage);
+    if (!missing.length) return;
+    const pairs = [];
+    const seen = new Set();
+    for (const q of missing) {
+        const key = `${q.subtopic_id}|${q.source_year}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            pairs.push({ subtopicId: q.subtopic_id, sourceYear: q.source_year });
+        }
+    }
+    const passageMap = await repo.findPassagesForSubtopics(pairs);
+    for (const q of missing) {
+        const passage = passageMap.get(`${q.subtopic_id}|${q.source_year}`);
+        if (passage) q.reading_passage = passage;
+    }
+}
+
 function pickByDifficulty(pool, targetDiff, used) {
     // Devuelve una pregunta del pool que esté en dificultad == target (o lo más cercano).
     const remaining = pool.filter(p => !used.has(p.id));
@@ -67,6 +135,7 @@ function toClientQuestion(row) {
         subtopic: sub.name ?? null,
         difficulty: row.difficulty,
         stem: row.stem,
+        readingPassage: row.reading_passage ?? null,
         options,
         images,
         correct: correctOpt?.label ?? null,
@@ -100,11 +169,19 @@ export class IcfesDomainService {
             return Result.fail(`No hay preguntas disponibles para ${area.code}. Ejecuta la ingesta.`);
         }
         const picked = selectPedagogicalOrder(candidates);
-        const full = await this.repo.getQuestionsFull(picked.map(q => q.id));
 
-        // Ordenar `full` según el plan.
-        const byId = new Map(full.map(r => [r.id, r]));
+        // Hidratar TODOS los candidatos (no sólo los 20 elegidos) para que
+        // propagatePassages pueda encontrar preguntas ancla aunque no hayan
+        // sido seleccionadas en el plan pedagógico.
+        const allFull = await this.repo.getQuestionsFull(candidates.map(q => q.id));
+        propagatePassages(allFull);
+
+        const byId = new Map(allFull.map(r => [r.id, r]));
         const ordered = picked.map(p => byId.get(p.id)).filter(Boolean);
+
+        // Segunda pasada: si el ancla fue excluida del pool (ya vista por el
+        // estudiante), consultar la BD directamente por subtopic + año.
+        await propagatePassagesFromDB(ordered, this.repo);
 
         const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
         const session = await this.repo.createSession({
@@ -138,6 +215,10 @@ export class IcfesDomainService {
 
         const questionIds = (input.answers || []).map(a => Number(a.questionId)).filter(Boolean);
         const full = await this.repo.getQuestionsFull(questionIds);
+        // Propagar reading_passage a preguntas que lo referencian pero no lo
+        // tienen en la BD, para que la pantalla de revisión muestre el texto.
+        propagatePassages(full);
+        await propagatePassagesFromDB(full, this.repo);
         const byId = new Map(full.map(r => [r.id, r]));
 
         let correct = 0, incorrect = 0, unanswered = 0;
@@ -177,6 +258,7 @@ export class IcfesDomainService {
             review.push({
                 questionId: String(qid),
                 stem: q.stem,
+                readingPassage: q.reading_passage ?? null,
                 subtopic: subKey,
                 selected: ans.selected ?? null,
                 correct: correctOpt?.label ?? null,

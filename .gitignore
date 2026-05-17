@@ -10,6 +10,10 @@ node_modules/
 .env.local
 .env.*.local
 
+# Firebase / Google Service Account credentials (NEVER commit these)
+*firebase-adminsdk*.json
+*service-account*.json
+
 # IDE
 .vscode/
 .idea/
@@ -126,3 +130,7 @@ scripts/reporte_plataforma_1776619148463.xlsx
 scripts/migration_icfes_answer_audit.sql
 scripts/migration_icfes_schema.sql
 scripts/seed_icfes_naturales_2024_2025.sql
+scripts/seed_icfes_lectura_critica_2022.sql
+scripts/seed_icfes_ingles_2024_2025.sql
+scripts/migration_icfes_reading_passage.sql
+scripts/backfill_icfes_reading_passages.sql

@@ -1,0 +1,242 @@
+Pregunta 1
+Enunciado: En una bolsa hay 3 bolas rojas, 3 negras y 12 blancas. Una persona afirma que al
+sacar una bola al azar, los tres colores tienen la misma probabilidad de salir. Esta afirmación
+es...
+● A. verdadera, pues el número de bolas de cada color no importa.
+● B. falsa, pues no se sabe el número total de bolas en la bolsa.
+● C. falsa, pues hay más bolas de un color que de los otros dos.
+● D. verdadera, pues las bolas están repartidas de igual manera.
+Respuesta Correcta: C
+Justificación: En la bolsa hay en total 18 bolas y, por tanto, la probabilidad de seleccionar al
+azar una roja es de 3/18, una negra, de 3/18; una blanca, de 12/18. Luego, como 3 < 12
+entonces el color blanco tiene una mayor probabilidad de ser elegido al azar.
+Pregunta 2
+Enunciado: Información base: La torre de Pisa en Toscana es uno de los sitios turísticos más
+representativos de Italia. Con respecto a la vertical, la torre se ha inclinado 4° como se muestra
+en la gráfica. ¿Cuánto mide el otro ángulo?
+imagen https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-05-02%20211145.png
+● A. 4°
+● B. 14°
+● C. 86°
+● D. 90°
+Respuesta Correcta: C
+Justificación: La suma de los dos ángulos debe ser igual a 90°. Como el ángulo de inclinación
+de la torre es de 4°, entonces el otro ángulo mide 90° - 4° = 86°.
+Pregunta 3
+Enunciado: Aproximadamente, ¿qué porcentaje del total de personas que visitaron la torre esa
+semana entraron sin hacer reserva? 
+● A. 56%
+● B. 50%
+● C. 44%
+● D. 40%
+Respuesta Correcta: C
+Justificación: El total de personas que entraron sin reserva fue de 3.100, y el total de
+personas con reserva fue de 3.900, para un total de 7.000 visitantes. El porcentaje sin reserva
+fue de (3.100/7.000) * 100 = 44% aproximadamente.
+Pregunta 4
+Enunciado: El proceso que muestra cómo se obtiene el dinero recaudado en la semana, de
+cada forma de venta, es: 1. Sumar la cantidad de personas... 2. Multiplicar... 3. Comparar...
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-05-02%20211701.png
+¿Cuál de las siguientes preguntas NO se puede resolver empleando una parte del proceso
+anterior?
+● A. ¿Con cuál tipo de entrada se recaudó más dinero?
+● B. ¿Cuántas personas ingresaron en la semana?
+● C. ¿Cuál es la ganancia total del sitio turístico?
+● D. ¿Cuánto dinero se recaudó por tipo de entrada?
+Respuesta Correcta: C
+Justificación: Con el proceso solo se puede calcular el dinero recaudado por concepto de
+entradas. Sin embargo, otros valores, como los gastos, son desconocidos, por lo que no es
+posible calcular la ganancia total del sitio.
+Pregunta 5
+Enunciado: El recaudo total de la semana, registrada en la tabla, fue aproximadamente de...
+● A. 14 mil euros.
+● B. 140 mil euros.
+● C. 120 euros.
+● D. 120.000 euros.
+Respuesta Correcta: B
+Justificación: Entradas sin reserva: 3.100 x 17 = 52.700 euros. Entradas con reserva: 3.900 x
+22,5 = 87.750 euros. Total: aproximadamente 140 mil euros.
+Pregunta 6
+Enunciado: La mediana de la cantidad de turistas sin reserva que ingresan a la torre es 300; la
+de los que ingresan con reserva es 600. Solamente teniendo esto en cuenta, ¿es correcto
+afirmar que entran el doble de turistas con reserva que sin ella?
+● A. No, la mediana es una medida de localización central.
+● B. No, la mediana muestra la dispersión de los datos.
+● C. Sí, la mediana me da el promedio de los datos.
+● D. Sí, la mediana me da la mitad de los datos.
+Respuesta Correcta: A
+Justificación: La mediana es el valor que está en la posición central cuando los datos están
+ordenados y, por tanto, no caracteriza necesariamente los totales en la suma de los valores de
+cada conjunto de datos.
+Pregunta 7
+Enunciado: El dueño de un parque recreativo planea construir tres piscinas y decorar sus
+bordes con baldosas blancas y azules. Según la observación de las figuras 1, 2 y 3, puede
+afirmarse correctamente que el número de baldosas...
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-05-02%20211859.png
+● A. azules se incrementa en seis de una piscina a la del siguiente tamaño.
+● B. blancas aumenta en ocho a medida que crece el tamaño de las piscinas.
+● C. azules es el doble de la cantidad de baldosas blancas en cada piscina.
+● D. blancas es la tercera parte de la cantidad de las baldosas azules.
+Respuesta Correcta: A
+Justificación: En la figura 1 hay 12 baldosas azules, en la 2 hay 18 (12+6), en la 3 hay 24
+(18+6). Se concluye que el número aumenta en 6 de un tamaño al siguiente.
+Pregunta 8
+Enunciado: Se lanzan cuatro fichas que tienen dos caras cada una. Una de las fichas es azul
+por sus dos caras, otra es blanca por sus dos caras y las otras fichas tienen una cara azul y
+una cara blanca. ¿Cuál de los siguientes eventos es imposible que ocurra?
+● A. Obtener una cara azul y tres caras blancas.
+● B. Obtener dos caras azules y dos caras blancas.
+● C. Obtener tres caras azules y una cara blanca.
+● D. Obtener cuatro caras azules y cero blancas.
+Respuesta Correcta: D
+Justificación: Dado que hay una ficha con sus dos caras blancas, en cualquier lanzamiento
+siempre se obtendrá al menos una cara blanca. Por tanto, es imposible obtener cuatro caras
+azules y cero blancas.
+Pregunta 9
+Enunciado: El costo de la boleta en un cinema depende de la edad de la persona. ¿La gráfica
+que representa esta función a trozos es?
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-05-02%20212032.png
+Respuesta Correcta: A
+Justificación: Con la información de la tabla se construye la gráfica evaluando los tramos:
+5.000 (0 a 8), 7.000 (8 a 16), 10.000 (16 a 56) y 6.000 (más de 56).
+Pregunta 10
+Enunciado: En la figura se muestra la construcción de una cometa triangular (M=150°). Se
+realiza un análisis de pasos para saber si volará. Del análisis, el paso en el que se comete un
+error es el...
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-05-02%20212311.png
+● A. I
+● B. III, porque la suma de los ángulos internos de un triángulo debe ser 180°
+● C. VII
+● D. VIII
+Respuesta Correcta: B
+Justificación: La suma de los ángulos internos de un triángulo debe ser igual a 180° y no 160°
+como afirma el paso III.
+Pregunta 11
+Enunciado: Se realizó una encuesta a 200 clientes. La afirmación verdadera acerca de los
+resultados (35% Bueno) es:
+A. Más de 30 clientes consideran que la calidad del servicio que ofrece la empresa es excelente.
+B. Menos de 50 clientes consideran que la calidad del servicio que ofrece la empresa es regular.
+C. Menos de 55 clientes están satisfechos con el servicio que ofrece la empresa.
+D. Más de 60 clientes consideran que la calidad del servicio que ofrece la empresa es bueno.
+Respuesta Correcta: D. Más de 60 clientes consideran que la calidad del servicio que ofrece
+la empresa es bueno.
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-05-02%20212444.png
+Justificación: El 35% de 200 clientes es igual a 70 clientes. Por tanto, es verdadero que más
+de 60 clientes la consideran buena.
+Pregunta 12
+Enunciado: En una clase de Matemáticas se plantea la actividad de dividir un segmento MN
+en dos partes congruentes. ¿La construcción geométrica que debió hacer el estudiante fue?
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-05-02%20212710.png
+Respuesta Correcta: D
+Justificación: Se construyen dos triángulos equiláteros MNP y MNQ, luego se traza el
+segmento PQ intersecando a MN en R.
+Pregunta 13
+Enunciado: El tiempo adicional consumido por la familia Ramírez en enero fue:
+● A. 1 hora y 11 minutos.
+● B. 1 hora y 51 minutos.
+● C. 3 horas y 40 minutos.
+● D. 5 horas y 31 minutos.
+Respuesta Correcta: B
+Justificación: Plan local = 220 min. Consumo enero = 331 min. Diferencia = 111 minutos = 1
+hora y 51 minutos.
+RESPONDA LAS PREGUNTAS 13 Y 14 DE ACUERDO CON LA SIGUIENTE INFORMACIÓN
+La gráfica y la tabla muestran parte de la información que recibe la familia Ramírez en su factura telefónica del 
+mes de enero.
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-05-02%20213202.png
+Pregunta 14
+Enunciado: ¿Cuál de los siguientes datos NO se necesita para hallar la diferencia entre el
+valor del minuto del plan y el valor del minuto adicional?
+A. La cantidad de minutos del plan.
+B. El valor del consumo adicional.
+C. El total de cargos del mes. 
+D. El valor del plan local
+Respuesta Correcta: C. El total de cargos del mes.
+Justificación: Para la diferencia solo se requiere el costo y los minutos del plan local, y el
+costo y los minutos adicionales. El total de cargos es innecesario.
+Pregunta 15
+Enunciado: Isabel llegó al hospital con el turno 180 (Nivel III). Tras 6 horas, el tablero va en
+240. ¿Aproximadamente cuántas personas por hora llegaron?
+A. 60 personas por hora.
+B. 40 personas por hora.
+C. 15 personas por hora.
+D. 10 personas por hora
+Respuesta Correcta: D. 10 personas por hora.
+Justificación: Llegaron 60 personas en 6 horas (240 - 180 = 60). Por tanto, 60 / 6 = 10
+personas por hora.
+Pregunta 16
+Enunciado: Se traslada y amplía un cuadrilátero. Si dos vértices son (-5, 7) y (-1, 1), ¿cuáles
+son las coordenadas de los otros dos vértices?
+A. (-1,5) y (3,7).
+B. (5,-1) y (7,3).
+C. (5,7) y (1,1).
+D. (1,5) y (-5,-7)
+Respuesta Correcta: A. (-1, 5) y (3, 7)
+Justificación: Al realizar la traslación y ampliación descrita, los vértices resultantes completan
+la figura en las coordenadas dadas.
+Pregunta 17
+Enunciado: Un empresario compra un apartamento de $80.000.000. Respecto a la tabla de
+cuotas, es verdadero afirmar que...
+A. el empresario paga más por el apartamento dependiendo de la cantidad de cuotas que decida pagar.
+B. de manera proporcional, a mayor cantidad de cuotas menor valor se pagará en cada una de ellas.
+C. el empresario paga solo el valor del apartamento únicamente cuando elige el menor número de cuotas.
+D. de manera proporcional, a mayor valor pagado por cuota, más tiempo se tardará en pagar la deuda
+Respuesta Correcta: B. de manera proporcional, a mayor cantidad de cuotas menor valor se
+pagará en cada una de ellas.
+Justificación: El número de cuotas y el valor de la cuota son inversamente proporcionales;
+entre mayor sea el número de cuotas, menor es el valor de la cuota (el total siempre es
+$80.000.000).
+Pregunta 18
+Enunciado: Para ambientar una reunión se cuenta con 3 CD, cada uno con canciones de salsa
+y merengue. ¿Qué diagrama de árbol representa seleccionar una canción de cada uno?
+imagen:https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-05-02%20214432.png
+Respuesta Correcta: A
+Justificación: Cada CD ofrece dos posibilidades (S o M), por lo que el diagrama correcto se
+bifurca en dos opciones en cada una de las tres etapas.
+Pregunta 19
+Enunciado: ¿Cuál de las siguientes expresiones corresponde a la curva que describe la
+temperatura del animal en función del tiempo?
+A.
+F(t)=2cos(
+3
+2π
+	​
+
+t)+36
+
+B.
+F(t)=3cos(
+3
+2π
+	​
+
+t)+38
+
+C.
+F(t)=2\sen(
+3
+2π
+	​
+
+t)+36
+
+D.
+F(t)=3\sen(
+3
+2π
+	​
+
+t)+38
+Respuesta Correcta: C. F(t) = 2 sen(2π/3 t) + 36
+Justificación: La amplitud es 2, el desplazamiento vertical es 36 y el periodo es 3. Evaluando
+en t=0, F(0)=36, lo que cumple con la función seno.
+Pregunta 20
+Enunciado: La velocidad máxima de un auto es 100 km/h. Pilar afirma que en 100 horas
+avanzará 1 km. La afirmación es...
+A. falsa, porque a la velocidad máxima en una hora recorrerá 100 km.
+B. 
+verdadera, porque al dividir la velocidad máxima entre 100 horas se obtiene 1 km.
+C. falsa, porque en 100 horas el auto recorrerá 100 km.
+D. verdadera, porque al dividir 100 entre 1, se obtiene el valor 100.
+Respuesta Correcta: A. falsa, porque a la velocidad máxima en una hora recorrerá 100 km.
+Justificación: 100 km/h significa que cada hora recorre 100 km. En 100 horas recorrerá
+100.000 km, por lo que la afirmación de Pilar es falsa.
