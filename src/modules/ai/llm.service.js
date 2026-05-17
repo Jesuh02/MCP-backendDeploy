@@ -1591,11 +1591,53 @@ Responde de forma clara y constructiva.`;
             .trim();
     }
 
+    _normalizeIntentText(text = '') {
+        return String(text)
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
     /** @private */
     _isReinforcementRequest(prompt) {
-        const keywords = ['refuerzo', 'reinforcement', 'quiz', 'examen', 'pregunta', 'evalua', 'genera pregunta'];
-        const lower = (prompt || '').toLowerCase();
-        return keywords.some(k => lower.includes(k));
+        const normalizedPrompt = this._normalizeIntentText(prompt);
+        if (!normalizedPrompt) return false;
+
+        const explicitQuizIntentPatterns = [
+            /\bquiz\b/,
+            /\bcuestionario\b/,
+            /\bmultiple[ -]?choice\b/,
+            /\bpreguntas?\s+de\s+(seleccion|opcion)\s+multiple\b/,
+            /\b(?:genera|generar|crea|crear|haz|hacer|elabora|prepara|redacta)\s+(?:\d+\s+)?(?:un\s+)?(?:quiz|cuestionario|examen|preguntas?|ejercicios?)\b/,
+            /\b(?:preguntas?|ejercicios?)\s+de\s+(?:refuerzo|practica|evaluacion)\b/,
+            /\brefuerzo\s+(?:tipo\s+)?(?:quiz|cuestionario|examen|preguntas?|ejercicios?)\b/,
+            /\bevalua\s+con\s+(?:preguntas?|ejercicios?|quiz)\b/,
+            /\bgenera\s+pregunta\b/,
+        ];
+
+        if (explicitQuizIntentPatterns.some(pattern => pattern.test(normalizedPrompt))) {
+            return true;
+        }
+
+        const conversationalFeedbackPatterns = [
+            /\bplan\s+de\s+(?:refuerzo|mejora|trabajo|acompanamiento)\b/,
+            /\bque\s+(?:puede|debe)\s+mejorar\b/,
+            /\bcomo\s+puede\s+mejorar\b/,
+            /\bareas?\s+de\s+mejora\b/,
+            /\bretroalimentacion\b/,
+            /\bfeedback\b/,
+            /\bfortalezas\b/,
+            /\bdebilidades\b/,
+            /\banal(?:isis|iza)\b/,
+        ];
+
+        if (conversationalFeedbackPatterns.some(pattern => pattern.test(normalizedPrompt))) {
+            return false;
+        }
+
+        return false;
     }
 
     /** @private */

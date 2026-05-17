@@ -1,0 +1,614 @@
+Pregunta 1
+Un sistema de transporte masivo tiene varias estaciones (E1, E2, …) sobre una avenida. En condiciones normales, de una estación a otra un bus se demora 4 minutos, y en cada parada 30 segundos. En la figura los círculos sombreados representan las paradas de cada ruta (R1, R2, …).
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20214302.png
+Un usuario que quiere ir de E1 a E10 en el menor tiempo determinó, con base en la figura, que la ruta que más le convenía era R2 y estimó el tiempo así:
+  I. Contó la cantidad de tramos entre estaciones consecutivas que había en su recorrido: 10.
+  II. Multiplicó el número obtenido en I (10) por la cantidad de minutos (4) que tardará entre dos estaciones consecutivas: 40 minutos.
+  III. Al resultado anterior le sumó 30 segundos por la parada que hará en E6: 40,5 minutos.
+
+Este procedimiento es incorrecto en el(los) paso(s):
+A. I solamente.
+B. I y II solamente.
+C. II solamente.
+D. II y III solamente.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: A
+Solución:
+Entre las estaciones E1 y E10 hay 10 estaciones, pero solo 9 tramos consecutivos (E1-E2, E2-E3, …, E9-E10). El usuario contó 10 tramos cuando en realidad son 9, por lo que el error está únicamente en el paso I. El paso II y el paso III son correctos en su lógica (multiplicar tramos por minutos y sumar 30 s por parada).
+
+Pregunta 2
+Una persona que vive en Colombia tiene inversiones en dólares en EE. UU. y sabe que la tasa de cambio del dólar respecto al peso colombiano se mantendrá constante este mes (1 USD = 2.000 COP) y que su inversión en dólares le dará ganancias del 3 % en el mismo período. Un amigo le asegura que en pesos sus ganancias también serán del 3 %.
+
+La afirmación de su amigo es:
+A. correcta, pues, sin importar las variaciones en la tasa de cambio, la proporción en que aumenta la inversión en dólares es la misma que en pesos.
+B. incorrecta, pues debería conocerse el valor exacto de la inversión para poder calcular la cantidad de dinero que ganará.
+C. correcta, pues el 3 % representa una proporción fija en cualquiera de las dos monedas, puesto que la tasa de cambio permanecerá constante.
+D. incorrecta, pues el 3 % representa un incremento, que será mayor en pesos colombianos, pues en esta moneda cada dólar representa un valor 2.000 veces mayor.
+Imagen del enunciado (página original):
+Respuesta correcta: C
+Solución:
+Si la tasa de cambio es constante, multiplicar la inversión en dólares por una constante (2.000) preserva la proporción del crecimiento. Sea V la inversión en USD; en COP es 2.000·V. Tras la ganancia: 1,03·V (USD) = 2.000·(1,03·V) = 1,03·(2.000·V) (COP). Es el mismo 3 %. La condición decisiva es la constancia de la tasa.
+
+
+Pregunta 3
+Las directivas de un colegio organizan un viaje a un museo con 140 estudiantes que deben dividirse en 3 grupos. Cada grupo va en una franja diferente, pero el costo total de las entradas se asume equitativamente entre los estudiantes. La tabla muestra horarios, máximos y precios:
+  Franja 1: 8–10 h, máx. 50, $35.000 por estudiante.
+  Franja 2: 10–12 h, máx. 40, $40.000.
+  Franja 3: 12–14 h, máx. 30, $50.000.
+  Franja 4: 14–16 h, máx. 60, $45.000.
+
+Las directivas eligieron las franjas 1, 3 y 4. ¿Esta elección garantiza que asistan todos los estudiantes al menor precio posible?
+A. Sí, porque esas franjas suman exactamente 140 estudiantes.
+B. No, porque es posible obtener un precio menor eligiendo la franja 2 en lugar de la franja 3.
+C. Sí, porque se incluyó la franja 1, que es la de menor precio por estudiante.
+D. No, porque los estudiantes que van en la franja 3 pagan más.
+Imagen del enunciado (página original):
+Respuesta correcta: B
+Solución:
+Las capacidades son máximas (no obligatorias). Con franjas 1, 3, 4 distribuyendo 50 + 30 + 60 = 140, costo total = 50·35.000 + 30·50.000 + 60·45.000 = 5.950.000. Si en lugar de la 3 se usa la 2 (con 50 + 40 + 50 = 140), costo total = 50·35.000 + 40·40.000 + 50·45.000 = 5.600.000, menor que 5.950.000. Como los 140 estudiantes pagan equitativamente, también disminuye el precio por estudiante. Por tanto la elección no es la de menor precio.
+
+
+RESPONDA LAS PREGUNTAS 4 a 6 DE ACUERDO CON LA SIGUIENTE INFORMACIÓN
+La capacitación en informática básica tiene 4 módulos:
+• Módulo I — Fundamentación: 40 h, $35.000 por hora.
+• Módulo II — Procesador de texto: 30 h, $30.000 por hora.
+• Módulo III — Hoja de cálculo: 40 h, $40.000 por hora.
+• Módulo IV — Presentación con diapositivas: 10 h, $45.000 por hora.
+Cada módulo se dicta en cursos de mínimo 20 y máximo 30 personas de la misma dependencia.
+Pregunta 4
+La empresa pagará $4.200.000 por capacitar a los trabajadores de la dependencia "Insumos" en el módulo I; esto quiere decir que la dependencia tiene entre:
+A. 20 y 30 trabajadores.
+B. 41 y 60 trabajadores.
+C. 61 y 90 trabajadores.
+D. 80 y 120 trabajadores.
+Imagen del enunciado (página original):
+
+
+Respuesta correcta: C
+Solución:
+Costo de un curso del módulo I = 40 h · $35.000 = $1.400.000 (para 20–30 personas). 4.200.000 ÷ 1.400.000 = 3 cursos. Por tanto el número de trabajadores está entre 3·20 = 60 y 3·30 = 90, es decir, entre 61 y 90.
+Pregunta 5
+Si se les cobrara a los 50 trabajadores de la dependencia "Recursos Humanos" la capacitación del módulo II, y todos pagaran el mismo valor, ¿cuánto debería pagar cada uno por esa capacitación?
+A. $18.000
+B. $36.000
+C. $450.000
+D. $900.000
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+Costo por curso del módulo II = 30 h · $30.000 = $900.000. Para 50 personas se requieren 2 cursos (por ejemplo 25 + 25), costo total = 1.800.000. Dividido entre 50 = $36.000 por persona.
+Pregunta 6
+La empresa paga $900.000 por la capacitación de los 40 funcionarios de la dependencia "Importaciones". De acuerdo con el valor pagado, la capacitación corresponde al módulo:
+A. I.
+B. II.
+C. III.
+D. IV.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: D
+Solución:
+40 funcionarios requieren 2 cursos (por ejemplo 20 + 20). Costo por curso = 900.000 ÷ 2 = 450.000. Comparando: I = 40·35.000 = 1.400.000; II = 30·30.000 = 900.000; III = 40·40.000 = 1.600.000; IV = 10·45.000 = 450.000. Coincide con el módulo IV
+
+
+RESPONDA LAS PREGUNTAS 7 y 8 DE ACUERDO CON LA SIGUIENTE INFORMACIÓN
+La figura muestra el número de muertes causadas por la obesidad y su porcentaje respecto al total de muertes por año en cuatro países (P1, P2, P3, P4). En la tabla 1 se presenta la clasificación del estado nutricional según el IMC y en la tabla 2 los porcentajes de población entre 26 y 60 años en P2 por rangos de IMC.
+imagen https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20214646.png
+
+
+Pregunta 7
+Se necesita comparar la información sobre la obesidad con la de muertes causadas por otra enfermedad en P3. En P3 el número de muertes por esa enfermedad al año es 1.700. Tomando este valor, multiplicándolo por 100 y dividiéndolo entre el total de muertes en P3, se obtiene el porcentaje de fallecimientos. ¿Es posible determinar qué porcentaje de muertes en P3 ocurre por esta otra enfermedad?
+A. Sí, porque adicionando el número de muertes de los países se obtiene el total de muertes que permite calcular el porcentaje pedido.
+B. Sí, porque solamente falta conocer el número total de muertes en P3, que se obtiene con la información de la figura.
+C. No, porque en la figura faltan los datos sobre el número total de muertes en cada país.
+D. No, porque los datos de P3 son información sobre las muertes por obesidad.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+En P3, las 7.200 muertes por obesidad equivalen al 8 % del total. Total = 7.200 ÷ 0,08 = 90.000 muertes. Por tanto el % por la otra enfermedad = (1.700 · 100) ÷ 90.000 ≈ 1,89 %. Sí se puede calcular usando exclusivamente los datos de la figura para P3.
+Pregunta 8
+El IMC se calcula dividiendo el peso (kg) entre la estatura (m) al cuadrado. Un hombre de P2, de 30 años, pesa 75 kg y mide 3/2 m. Puede afirmarse que forma parte del:
+A. 1 % de hombres entre 26 y 60 con bajo peso.
+B. 50 % con sobrepeso.
+C. 1 % con obesidad alta.
+D. 13 % con obesidad leve.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: D
+Solución:
+IMC = 75 ÷ (3/2)² = 75 ÷ 2,25 ≈ 33,3 kg/m². Cae en el rango 30,0 – 34,9 (obesidad leve). En la tabla, el 13 % de los hombres entre 26 y 60 años en P2 tiene obesidad leve.
+
+
+RESPONDA LAS PREGUNTAS 9 a 13 DE ACUERDO CON LA SIGUIENTE INFORMACIÓN
+Para transportar mango y banano desde un pueblo a las ciudades W y Z, un comerciante usa 3 camiones de 5 toneladas cada uno; por cada camión contrata 2 trabajadores en cada viaje. Compra el banano a $400.000 la tonelada y el mango a $500.000. La tabla muestra precios de venta y costos por ciudad: W vende banano a $1.000.000 y mango a $1.300.000 con transporte $150.000 y trabajador $180.000; Z vende banano a $1.200.000 y mango a $1.350.000 con transporte $180.000 y trabajador $200.000.
+Pregunta 9
+Una persona afirma que para el comerciante es más rentable vender 6 toneladas de mango en la ciudad Z que en W. La afirmación es correcta porque:
+A. el dinero recibido en la venta del producto en Z es mayor que en W.
+B. la diferencia entre el precio de venta por tonelada es mayor que la diferencia entre el costo de transporte por camión.
+C. la diferencia entre las ventas totales en cada ciudad es mayor que la diferencia entre los gastos totales.
+D. el dinero total gastado en empleados y transporte es mayor en W que en Z.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+Para 6 ton se requieren 2 camiones (cada uno hasta 5 ton) con 2 trabajadores cada uno. Ventas: W = 6·1.300.000 = 7.800.000; Z = 6·1.350.000 = 8.100.000. Diferencia ventas = 300.000. Gastos: W = 2·150.000 + 4·180.000 = 1.020.000; Z = 2·180.000 + 4·200.000 = 1.160.000. Diferencia gastos = 140.000. Como 300.000 > 140.000, la rentabilidad neta en Z supera a la de W.
+Pregunta 10
+Los 3 camiones se cargan con 5 toneladas de banano cada uno para la ciudad W. ¿Cuál es la ganancia que obtiene el comerciante siguiendo el procedimiento descrito?
+A. $5.670.000
+B. $5.970.000
+C. $7.470.000
+D. $8.010.000
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+Paso 1: 3·5 = 15 ton. Paso 2: 1.000.000 − 400.000 = 600.000 por tonelada. Paso 3: 15·600.000 = 9.000.000. Paso 4: transporte 3·150.000 = 450.000 + trabajadores 6·180.000 = 1.080.000 → 1.530.000. Paso 5: 9.000.000 − 1.530.000 = 7.470.000.
+Pregunta 11
+En diciembre, por cada 5 toneladas vendidas, cada uno de los dos empleados por camión recibe un bono del 0,3 % del dinero recibido en la venta de esas 5 ton. Dos empleados transportaron y vendieron 47 ton de mango en la ciudad W. Aplicando el procedimiento descrito, el bono recibido por cada empleado fue, aproximadamente, de:
+A. 526.000 pesos.
+B. 175.000 pesos.
+C. 148.000 pesos.
+D. 87.000 pesos.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+Paso 1: 47 mod 5 = 2. Paso 2: 47 − 2 = 45. Paso 3: 45·1.300.000 = 58.500.000. Paso 4: 0,3 % de 58.500.000 = 175.500. Aproximadamente $175.000.
+
+
+Pregunta 12
+Si se transportan 7 toneladas de fruta a la ciudad W y 10 toneladas a la ciudad Z, ¿cuál es la gráfica que muestra correctamente la relación de costos por ciudad?
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20214938.png
+A. Gráfica A.
+B. Gráfica B.
+C. Gráfica C.
+D. Gráfica D.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+7 ton a W requieren 2 camiones (2 trabajadores cada uno): transporte 2·150.000 = 300.000; trabajadores 4·180.000 = 720.000. 10 ton a Z requieren 2 camiones: transporte 2·180.000 = 360.000; trabajadores 4·200.000 = 800.000. La gráfica que muestra estos cuatro valores con los costos de trabajadores mayores a los de transporte en ambas ciudades es la opción B.
+
+Pregunta 13
+Durante enero el comerciante vendió 100 toneladas de mango y 50 de banano y contrató 10 trabajadores. Con esta información es posible conocer:
+A. la ganancia de los productores.
+B. el pago que recibirá cada trabajador en enero.
+C. los costos totales del comerciante.
+D. el número mínimo de viajes que se realizaron desde el pueblo.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: D
+Solución:
+Total = 150 toneladas. Cada camión carga 5 ton; con los 3 camiones se transportan 15 ton por viaje (cuando todos cargan al máximo). Por tanto el número mínimo de viajes desde el pueblo es 150 ÷ 15 = 10 viajes. Las demás opciones requieren información adicional (ciudad de destino, distribución, etc.).
+
+
+Pregunta 14
+Si en un rectángulo se aumenta la longitud de uno de sus lados en 100 %, su área:
+A. aumenta en un 50 %.
+B. se duplica.
+C. no cambia.
+D. aumenta en 100 unidades.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+Aumentar 100 % es duplicar. Si los lados son a y b, área inicial = ab. Al duplicar a queda 2a·b = 2ab → el área se duplica.
+
+
+
+Pregunta 14
+Si en un rectángulo se aumenta la longitud de uno de sus lados en 100 %, su área:
+A. aumenta en un 50 %.
+B. se duplica.
+C. no cambia.
+D. aumenta en 100 unidades.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+Aumentar 100 % es duplicar. Si los lados son a y b, área inicial = ab. Al duplicar a queda 2a·b = 2ab → el área se duplica.
+
+
+Pregunta 15
+En un mes, una tienda vende 1.250 unidades del producto cuando no tiene competencia. Suponiendo un comportamiento análogo al de la gráfica del estudio, ¿cuántas unidades se venderán aproximadamente si compite contra 3 marcas?
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20215221.png
+A. Entre 480 y 520.
+B. Entre 680 y 720.
+C. Entre 730 y 780.
+D. Entre 930 y 970.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: A
+Solución:
+En la gráfica, sin competencia se venden ~600 unidades; con 3 marcas compitiendo se venden ~240. La proporción 240 ÷ 600 = 0,4. Aplicada a 1.250 unidades: 1.250·0,4 = 500. El intervalo "entre 480 y 520" es el correcto.
+
+
+Pregunta 16
+Una escuela de natación tiene 16 estudiantes que se reparten en 2 piscinas según su estatura: las personas con estatura inferior a 1,80 m van a la piscina menos profunda y las demás a la más profunda. El director escucha que el promedio actual es 1,70 m y propone aumentar el número de alumnos para que el promedio sea 1,80 m, afirmando que así se igualará la cantidad de personas en las dos piscinas. La afirmación es errónea porque:
+A. las 16 personas se encuentran actualmente en la piscina menos profunda; debe aceptar otros 16 alumnos con estatura > 1,80 m.
+B. el promedio no permite determinar la cantidad de personas en cada piscina; se requieren otras medidas.
+C. incrementar el promedio a 1,80 m es insuficiente; debe aceptar más estudiantes con altura de 1,80 m hasta igualar.
+D. aunque el promedio sea inferior a 1,80 m, no significa que la cantidad de personas en las piscinas sea diferente.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: D
+Solución:
+El promedio resume todas las estaturas en un único valor pero no informa cuántos están por debajo o por encima de 1,80 m. Es perfectamente posible que el promedio sea 1,70 m y, sin embargo, ya haya igual cantidad de personas en cada piscina (o cualquier otra distribución). Por eso la afirmación del director es errónea.
+
+
+Pregunta 17
+La figura se compone de un cuadrado de lado k y un semicírculo. Se calculó el área de la figura con el procedimiento mostrado, llegando a Aₛ = (k²π)/8 y A_f = (k²/8)(π+8) [equivalente]. ¿El procedimiento es correcto?
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20215511.png
+A. incorrecto, ya que Aₛ equivale a k²π/2.
+B. correcto, pues el radio equivale a k/2.
+C. correcto, ya que se ha sumado A_c y 4·Aₛ.
+D. incorrecto, pues Aₛ equivale a k²π/4.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+El semicírculo está construido sobre uno de los lados del cuadrado, por lo que su diámetro = k y su radio r = k/2. El área del semicírculo es Aₛ = (π·r²)/2 = π·(k/2)²/2 = πk²/8, que es exactamente lo que calcula el procedimiento. Por tanto el procedimiento es correcto y la justificación es que el radio equivale a k/2.
+
+
+Pregunta 18
+El animador eligió tres números positivos X, Z, W y entregó como pistas R = X·Z, S = X·W y T = Z·W. ¿Cómo se halla X?
+A. R + S
+B. √(R·S·T)
+C. (R + S − T)/2
+D. √(R·S/T)
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: D
+Solución:
+(R·S)/T = (X·Z)·(X·W) ÷ (Z·W) = X². Como X es positivo, X = √(R·S/T).
+
+
+Pregunta 19
+Tabla de gasto en publicidad y ganancias (en millones):
+  2000 → publicidad 200, ganancia 8.000.
+  2001 → publicidad 280, ganancia 10.400.
+  2002 → publicidad 250, ganancia 9.500.
+La función G(p) que representa la ganancia G en función del gasto p es:
+A. G(p) = 30p + 2.000
+B. G(p) = 10p
+C. G(p) = 40p
+D. G(p) = 40p − 800
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: A
+Solución:
+Probando una relación lineal G = a·p + b con los datos: 8.000 = 200a + b; 10.400 = 280a + b. Restando: 2.400 = 80a → a = 30. Entonces b = 8.000 − 200·30 = 2.000. Verificación con 2002: G(250) = 30·250 + 2.000 = 9.500 ✓. La función es G(p) = 30p + 2.000, que corresponde a la opción A.
+
+
+Pregunta 20
+En un campeonato internacional, los organizadores entregan medallas solo a los tres primeros puestos. La tabla muestra el número de formas posibles f de ocupar los tres primeros puestos según n participantes:
+  n = 3 → f = 6;  n = 4 → f = 24;  n = 5 → f = 60;  n = 6 → f = 120; …
+Una forma de generalizar es:
+A. f = n!/((n−3)!·3!)
+B. f = 3·(3^(n−2) − 1)
+C. f = n!/(n−3)!
+D. f = n·(n−1)·(n−2)²
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+Como importa el orden (oro, plata, bronce), se trata de permutaciones de n elementos tomados de 3: V(n,3) = n·(n−1)·(n−2) = n!/(n−3)!. Verificación: n=3 → 6, n=4 → 24, n=5 → 60, n=6 → 120 ✓. La opción correcta es C: f = n!/(n−3)!. La opción A [n!/((n−3)!·3!)] es la fórmula de combinaciones, que no distingue el orden y no es correcta aquí.
+
+
+Pregunta 21
+En una feria robótica, los robots P y Q juegan tenis de mesa. Cuando el marcador es 7 a 2 a favor de P, se reprograman para que por cada 2 puntos de P, Q anote 3. ¿Cuál ecuación permite determinar cuándo Q igualará en puntos a P?
+A. x = 0, donde x es la cantidad de puntos que anotará P.
+B. 7 + x = (3/2)x + 2
+C. 7 + 2x = 2 + 3x, donde x es el número de "bloques" de 2 puntos para P.
+D. x + y = 7 + 2
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+Sea x el número de bloques de 2 puntos que anota P (cada bloque va con 3 puntos para Q). Tras x bloques: P = 7 + 2x; Q = 2 + 3x. Q iguala a P cuando 7 + 2x = 2 + 3x → x = 5. En ese momento P = Q = 17. La ecuación que modela la igualdad es la opción correspondiente a 7 + 2x = 2 + 3x.
+
+
+Pregunta 22
+Un cartabón tiene forma de triángulo rectángulo escaleno; su hipotenusa mide el doble del cateto menor (ángulos 30°, 60°, 90°). Si el cateto más largo mide 32 cm, ¿cuánto mide su cateto menor?
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20215839.png
+A. 32/3 cm
+B. 64/3 cm
+C. (32√3)/3 cm
+D. 27 cm
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+Si el cateto menor es c, la hipotenusa es 2c. Por Pitágoras: 32² + c² = (2c)² → 1024 = 3c² → c = 32/√3 = (32√3)/3 ≈ 18,48 cm.
+
+
+Pregunta 23
+Un conjunto S tiene promedio 9 y desviación estándar 3. Se construye T sumando 4 a cada elemento de S. El promedio y la desviación estándar de T son, respectivamente:
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20215927.png
+A. 9 y 3.
+B. 9 y 7.
+C. 13 y 3.
+D. 13 y 7.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+Sumar una constante c a cada dato corre la media en c (9 + 4 = 13) pero no afecta la dispersión, por lo que la desviación estándar permanece igual (3). Promedio 13 y desviación 3.
+
+Pregunta 24
+En un triángulo se realiza un corte paralelo a la base que pasa por la mitad de la altura. Para encontrar la altura se usó sen(45°) = h/120. Tomando sen(45°) = √2/2 ≈ 0,71, ¿a qué distancia de la base se cortó la altura?
+A. 85 cm.
+B. 60 cm.
+C. 42 cm.
+D. 30 cm.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+h = 120 · sen(45°) ≈ 120·0,71 = 85,2 cm. El corte se realiza a la mitad: 85,2/2 ≈ 42,6 cm. Aproximadamente 42 cm.
+
+
+Pregunta 25
+Una prueba atlética tiene récord mundial de 10,49 s y récord olímpico de 10,50 s. ¿Es posible que un atleta registre un tiempo, en el mismo tipo de prueba, que rompa el récord olímpico pero no el mundial?
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20220153.png
+A. Sí, porque puede registrar, por ejemplo, 10,497 s, que está entre los dos tiempos récord.
+B. Sí, porque puede registrar un tiempo menor que 10,4 y marcaría un nuevo récord.
+C. No, porque no existe un registro posible entre los dos tiempos récord.
+D. No, porque cualquier registro menor que el récord olímpico va a ser menor que el récord mundial.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: A
+Solución:
+Cualquier tiempo en el intervalo abierto (10,49 ; 10,50) es menor que 10,50 (rompe el olímpico) pero mayor que 10,49 (no rompe el mundial). Por ejemplo 10,497 s.
+
+
+Pregunta 26
+Resultados de una encuesta sobre el parque automotor del transporte intermunicipal en Colombia (Superintendencia de Puertos y Transporte, 2009): Buseta 23 %, Automóvil 24 %, Camioneta 18 %, Campero 18 %, Bus escalera 9 %, Bus 7 %, Microbús 1 %. Es correcto afirmar que:
+A. la mayor parte del parque automotor son automóviles, camionetas y camperos.
+B. la mitad del parque automotor corresponde a automóviles, camionetas y camperos.
+C. la mayor parte del parque automotor son buses, microbuses y busetas.
+D. la mitad del parque automotor corresponde a buses, microbuses y busetas.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: A
+Solución:
+Automóvil (24 %) + Camioneta (18 %) + Campero (18 %) = 60 %, que representa la mayor parte del parque automotor. En cambio, Bus (7 %) + Microbús (1 %) + Buseta (23 %) = 31 %, que es menos de la mitad. Por tanto la afirmación correcta es A: la mayor parte del parque automotor son automóviles, camionetas y camperos.
+Pregunta 27
+Un hotel asigna a cada habitación una extensión telefónica de 4 dígitos diferentes formados con 2, 3, 4 y 5. ¿Cuántas habitaciones del hotel pueden tener extensión telefónica?
+A. 24
+B. 56
+C. 120
+D. 256
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: A
+Solución:
+Permutaciones de los 4 dígitos sin repetición: 4! = 4·3·2·1 = 24.
+
+
+Pregunta 27
+Un hotel asigna a cada habitación una extensión telefónica de 4 dígitos diferentes formados con 2, 3, 4 y 5. ¿Cuántas habitaciones del hotel pueden tener extensión telefónica?
+A. 24
+B. 56
+C. 120
+D. 256
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: A
+Solución:
+Permutaciones de los 4 dígitos sin repetición: 4! = 4·3·2·1 = 24.
+
+Pregunta 28
+Se ubica una escalera contra un muro a 12 m del suelo. La distancia horizontal entre el pie de la escalera y el muro es 5 m. ¿Cuál es el coseno del ángulo θ que forman el suelo y la escalera?
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20223236.png
+A. 12/13
+B. 12/5
+C. 5/13
+D. 13/5
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+Largo de la escalera (hipotenusa) = √(12² + 5²) = √169 = 13 m. El ángulo θ se forma entre el suelo y la escalera. El cateto adyacente a θ es la distancia horizontal (5 m) y la hipotenusa es la escalera (13 m). Por tanto cos(θ) = cateto adyacente / hipotenusa = 5/13, que corresponde a la opción C.
+
+Pregunta 29
+En grado undécimo, los cursos 11A y 11B tienen: mujeres 22 (11A) y 23 (11B), hombres 18 (11A) y 12 (11B); totales 40 (11A), 35 (11B), 75 en total. La probabilidad de escoger una estudiante mujer es 3/5. Este valor corresponde a la razón entre el número total de mujeres y: 
+de . Este valor corresponde a la razón entre el número total de mujeres y
+A. el número total de estudiantes de grado undécimo.
+B. el número total de hombres de grado undécimo.
+C. el número total de mujeres del curso 11B.
+D. el número total de hombres del curso 11A.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: A
+Solución:
+Total de mujeres = 22 + 23 = 45. Total de estudiantes = 75. La probabilidad es 45/75 = 3/5, que se obtiene como cociente entre el total de mujeres (45) y el total de estudiantes de grado undécimo (75). La opción correcta es A: el número total de estudiantes de grado undécimo.
+
+
+Pregunta 30
+En una baraja de póquer (52 cartas) hay cartas Picas y Tréboles (negras) y Diamantes y Corazones (rojas), numeradas A, 2, 3, …, 10, J, Q, K. Si la probabilidad de escoger una carta que cumpla dos características determinadas es cero, estas características podrían ser:
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20223516.png
+A. una carta negra y un número par.
+B. una carta roja y ser de picas.
+C. una carta de corazones y un número impar.
+D. una carta roja K y ser de diamantes.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+Probabilidad cero ⇔ las dos características son mutuamente excluyentes (no existe carta que las cumpla simultáneamente). Las picas son de color negro, por lo que ninguna carta puede ser simultáneamente roja y de picas.
+
+
+Pregunta 31
+Octágono regular inscrito en una circunferencia de radio 2. En el triángulo OPQ formado por dos vértices consecutivos P, Q y el centro O, se tiene la expresión x = 2·sen(45°)/sen(67,5°). Esta x corresponde a la medida de:
+imagen https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20223727.png
+A. ángulo OPQ.
+B. segmento PQ.
+C. ángulo QOP.
+D. segmento OQ.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+En el triángulo OPQ: OP = OQ = 2 (radios) y el ángulo central es 360°/8 = 45°. Por isósceles, los ángulos en P y Q son (180° − 45°)/2 = 67,5°. Por la ley de senos: PQ/sen(45°) = OP/sen(67,5°) → PQ = 2·sen(45°)/sen(67,5°). La expresión calcula el lado PQ.
+
+
+Pregunta 32
+Trapecio isósceles dibujado en el plano cartesiano de modo que el eje Y lo divide en dos figuras iguales. Dos de los vértices son (−4, 2) y (−2, 8). ¿Cuáles son las coordenadas de los otros dos vértices?
+A. (8,2) y (2,4).
+B. (2,8) y (4,2).
+C. (−2,−4) y (−8,−2).
+D. (−4,−2) y (−2,−8).
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+La condición "el eje Y divide al trapecio en dos figuras iguales" significa simetría axial respecto al eje Y. La reflexión de (x, y) por el eje Y produce (−x, y). Entonces (−4, 2) → (4, 2) y (−2, 8) → (2, 8). Las coordenadas de los otros dos vértices son (4, 2) y (2, 8), que corresponde a la opción B.
+
+
+Pregunta 33
+En una fábrica con 100 empleados que viven cerca y se desplazan únicamente en bus o caminando: 60 % son mujeres, 20 % de las mujeres se desplazan en bus, 40 % de los hombres se desplazan caminando. ¿Cuál tabla representa correctamente la información?
+imagen https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20224025.png
+A. Tabla A.
+B. Tabla B.
+C. Tabla C.
+D. Tabla D.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+60 mujeres y 40 hombres. Mujeres en bus = 0,20·60 = 12; mujeres caminando = 60 − 12 = 48. Hombres caminando = 0,40·40 = 16; hombres en bus = 40 − 16 = 24. La tabla correcta tiene: bus → 24 hombres, 12 mujeres; caminando → 16 hombres, 48 mujeres (total 100).
+
+RESPONDA LAS PREGUNTAS 34 y 35 DE ACUERDO CON LA SIGUIENTE INFORMACIÓN
+Ángela solicita un crédito por $6.000.000 con dos modalidades:
+• Modalidad I: cuota = abono al crédito + interés. El abono es valor del crédito ÷ 6, y el interés es 5 % del saldo del crédito.
+• Modalidad II: valor de la cuota = (valor del crédito + 20 % del valor del crédito) ÷ 12, en 12 cuotas iguales.
+En cualquier modalidad, el saldo del crédito cada mes es la diferencia entre el saldo del mes anterior y el abono al crédito realizado en el mes.
+Pregunta 34
+Después de analizar la información, Ángela afirma: "Con la modalidad I, el valor de la cuota disminuirá $50.000 cada mes". La afirmación es correcta porque:
+A. el interés total del crédito será $300.000 y cada mes disminuirá $50.000.
+B. cada mes se abonará al crédito $1.000.000 y el interés disminuirá $50.000.
+C. cada mes aumentará el abono al crédito $50.000, de manera que el interés disminuirá.
+D. el abono al crédito disminuirá $50.000 cada mes, al igual que el interés.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+Modalidad I: abono fijo = 6.000.000/6 = 1.000.000 cada mes. El saldo disminuye 1.000.000 cada mes, por lo que el interés (5 % del saldo) disminuye 5 %·1.000.000 = 50.000 cada mes. Como cuota = abono + interés, la cuota disminuye 50.000 cada mes.
+Pregunta 35
+¿Cuál(es) de los siguientes procesos podría utilizar la entidad para calcular el interés total del crédito de Ángela en la modalidad II?
+  Proceso 1. Calcular el 20 % de $6.000.000.
+  Proceso 2. Calcular el 20 % de $6.000.000 y multiplicarlo por 12.
+  Proceso 3. Calcular el valor de la cuota, multiplicarlo por 12 y al resultado restarle $6.000.000.
+A. 1 solamente.
+B. 2 solamente.
+C. 1 y 3 solamente.
+D. 2 y 3 solamente.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+En modalidad II, el total pagado es 12·cuota = 1,2·V = 7.200.000. Interés total = 7.200.000 − 6.000.000 = 1.200.000, equivalente al 20 % de 6.000.000 (Proceso 1 ✓). El Proceso 3 (cuota·12 − valor del crédito) entrega también 1.200.000 ✓. El Proceso 2 multiplica indebidamente y da 14.400.000 ✗.
+
+
+Pregunta 36
+Sobre una circunferencia de centro O se localizan dos puntos P y P' diferentes. ¿Cuál de las siguientes figuras NO puede resultar al unir entre sí los tres puntos P, P' y O?
+A. Un triángulo isósceles.
+B. Un radio de la circunferencia.
+C. Un triángulo equilátero.
+D. Un diámetro de la circunferencia.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+Al unir tres puntos pueden obtenerse: triángulo isósceles (OP = OP' siempre), triángulo equilátero (cuando ∠POP' = 60° y la cuerda PP' iguala el radio), o un diámetro (cuando P, O, P' son colineales con O entre P y P'). Sin embargo, no es posible obtener un único radio uniendo los tres puntos, porque al unir tres puntos distintos siempre se obtienen al menos dos segmentos.
+
+
+Pregunta 37
+Una fábrica de lápices selecciona 100 lápices: 8 miden 149 mm, 16 miden 150 mm, 65 miden 151 mm y 11 miden 152 mm. Con un margen de error del 3 %, el porcentaje de los lápices producidos que miden 150 mm está entre:
+A. 8 % y 16 %.
+B. 13 % y 19 %.
+C. 15 % y 18 %.
+D. 16 % y 65 %.
+
+ 
+Respuesta correcta: B
+Solución:
+En la muestra, el porcentaje de lápices de 150 mm es 16/100 = 16 %. Aplicando el margen de error de ±3 %, el intervalo es 13 % a 19 %.
+
+
+RESPONDA LAS PREGUNTAS 38 y 39 DE ACUERDO CON LA SIGUIENTE INFORMACIÓN
+En la gráfica se muestran los resultados de cinco jugadores de tenis (A, B, C, D, E) en los torneos del Grand Slam (Abierto de Australia, Roland Garros, Wimbledon, Abierto de EE. UU.). En Australia y EE. UU. se juega en cancha dura, Roland Garros en arcilla y Wimbledon en césped. Los títulos por jugador son: A 5/7, B 10/15, C 16/23, D 14/18, E 11/16.
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20224610.png
+
+Pregunta 38
+¿Cuál de los jugadores de la gráfica consiguió un mayor porcentaje de victorias en las finales del Grand Slam? La conclusión "fue el jugador C" es incorrecta porque:
+A. el jugador C no ganó Roland Garros antes de los 24 años.
+B. el más efectivo es el jugador A con 100 % de torneos ganados antes de los 24 años.
+C. el más efectivo es el jugador D con 77,8 % de efectividad en finales.
+D. no supera los torneos ganados en cancha dura del jugador A.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: C
+Solución:
+Efectividad en finales = títulos/finales: A 5/7 ≈ 71,4 %; B 10/15 ≈ 66,7 %; C 16/23 ≈ 69,6 %; D 14/18 ≈ 77,8 %; E 11/16 = 68,75 %. El jugador con mayor efectividad en finales es D con 77,8 %, no C.
+
+
+Pregunta 39
+Considerando solamente los torneos jugados en cancha dura (Australia y EE. UU.), ¿cuál es el promedio de torneos ganados por los cinco jugadores?
+A. 1,2
+B. 2,0
+C. 2,6
+D. 4,4
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: D
+Solución:
+Sumando los títulos en cancha dura para los cinco jugadores según la gráfica y dividiendo entre 5 se obtiene 22/5 = 4,4. Promedio = 4,4 torneos por jugador.
+
+
+Pregunta 40
+Se construyen racionales mayores que un entero k usando k + 1/j (con j entero positivo); a mayor j, más cercano a k. ¿Cuántos racionales se pueden construir cercanos a k y menores que k + 1/11?
+A. 10, que es la cantidad de racionales menores que 11.
+B. Una cantidad infinita, pues existen infinitos enteros positivos j > 11.
+C. 11, que es el número que equivale en este caso a j.
+D. Uno, pues el racional más cercano a k se halla con j = 10.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+Para que k + 1/j < k + 1/11 se necesita 1/j < 1/11, es decir, j > 11. Existen infinitos enteros positivos mayores que 11 (12, 13, 14, …), por lo que se pueden construir infinitos racionales con esa propiedad.
+
+
+Pregunta 41
+Una cancha de fútbol mide 100 m × 60 m. Un arquitecto realiza una maqueta cuyas medidas son 100 veces menores que las originales. La maqueta medirá:
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20224944.png
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20225112.png
+A. 6×10⁻² m y 1×10⁻² m.
+B. 6×10⁻² cm y 1×10⁻² cm.
+C. 6×10¹ m y 1×10² m.
+D. 6×10¹ cm y 1×10² cm.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: D
+Solución:
+Lados reducidos: 60 m / 100 = 0,6 m = 60 cm = 6×10¹ cm; 100 m / 100 = 1 m = 100 cm = 1×10² cm. Por tanto la maqueta mide 6×10¹ cm × 1×10² cm.
+
+
+Pregunta 42
+A partir del origen, los ejes y un punto que pertenece a la gráfica de f(x) = 5/x (con x > 0) se construyen rectángulos. Su área se describe con A(x) = x·f(x). ¿Cuál gráfica corresponde a A(x)?
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20225310.png
+imagen: https://pub-9f393625246c4018b5613be60b01bda1.r2.dev/icfes/Captura%20de%20pantalla%202026-04-29%20225401.png
+A. Gráfica A.
+B. Gráfica B.
+C. Gráfica C.
+D. Gráfica D.
+Imagen del enunciado (página original):
+ 
+Respuesta correcta: B
+Solución:
+A(x) = x·f(x) = x·(5/x) = 5 para todo x > 0. Es una función constante, por lo que su gráfica es la recta horizontal y = 5 (válida para x > 0). La opción B corresponde a esa recta.
+
+
