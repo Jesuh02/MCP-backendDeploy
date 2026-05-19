@@ -170,6 +170,54 @@ export class MetaWhatsAppAdapter {
     }
 
     /**
+     * Envía una imagen por URL pública.
+     * @param {string} phoneNumber — E.164
+     * @param {string} imageUrl — URL pública de la imagen (JPG, PNG, WebP, GIF).
+     * @param {string} [caption] — Texto opcional debajo de la imagen (max 1024 chars).
+     * @returns {Promise<{messageId: string}>}
+     */
+    async sendImageMessage(phoneNumber, imageUrl, caption = '') {
+        const to = phoneNumber.replace(/^\+/, '');
+        const body = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to,
+            type: 'image',
+            image: {
+                link: imageUrl,
+                ...(caption ? { caption: caption.substring(0, 1024) } : {}),
+            },
+        };
+        const response = await this._request('POST', this.messagesUrl, body);
+        return { messageId: response?.messages?.[0]?.id || null };
+    }
+
+    /**
+     * Envía un documento (PDF u otro) por URL pública.
+     * @param {string} phoneNumber — E.164
+     * @param {string} documentUrl — URL pública del documento.
+     * @param {string} [filename] — Nombre de archivo mostrado al destinatario.
+     * @param {string} [caption] — Texto opcional (max 1024 chars).
+     * @returns {Promise<{messageId: string}>}
+     */
+    async sendDocumentMessage(phoneNumber, documentUrl, filename = 'reporte.pdf', caption = '') {
+        const to = phoneNumber.replace(/^\+/, '');
+        const body = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to,
+            type: 'document',
+            document: {
+                link: documentUrl,
+                filename,
+                ...(caption ? { caption: caption.substring(0, 1024) } : {}),
+            },
+        };
+        const response = await this._request('POST', this.messagesUrl, body);
+        return { messageId: response?.messages?.[0]?.id || null };
+    }
+
+    /**
      * Marca un mensaje como leído.
      * @param {string} waMessageId
      * @returns {Promise<void>}
