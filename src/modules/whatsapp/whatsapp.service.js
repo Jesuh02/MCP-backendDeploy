@@ -1387,6 +1387,61 @@ export class WhatsAppDomainService {
     // internal helper shared by multiple intents.  Returns a chat response
     // string if the user asked for an Excel file (roles 2 and 3) or `null` when the
     // message does not refer to Excel and normal handling should continue.
+    /**
+     * Fetches report data once via the BI LLM pipeline (or MCP fallback).
+     * This is the SINGLE source of truth for all report formats (Excel, PDF, etc.),
+     * ensuring every format receives the exact same rows from the exact same SQL query.
+     *
+     * @param {string}   q         Clean business query (format keywords already stripped).
+     * @param {object}   user      Resolved user.
+     * @param {number[]} userRoles Role IDs.
+     * @returns {Promise<{ rawData: object[]|null, source: 'llm'|'mcp' }>}
+     */
+    async _fetchReportData(q, user, userRoles) {
+        // ── Step 1: LLM BI pipeline — same prompt used by the normal chat flow ──
+        if (this.llmService) {
+            const username = user?.username || 'usuario';
+            const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${q}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema' (salvo que necesites confirmar la estructura de tablas).\n2. 📌 OBLIGATORIO: usa la herramienta 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.). No inventes datos.\n   - Para invocarla, responde primero con un bloque JSON EXACTO:\n` +
+                "```json\n" +
+                "{\"tool\":\"query_database\",\"arguments\":{\"query\":\"<tu SQL aquí>\"}}\n" +
+                "```\n" +
+                `   Debes esperar a que el backend ejecute ese SQL y componer tu reporte utilizando la respuesta.\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta "query_database" del agente MCP y espera su respuesta antes de concluir.\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.).\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra username o nombre (first_name, last_name). Haz JOIN con usuarios.\n- Para cursos: muestra título (title). Haz JOIN con courses.\n- Para temas: muestra nombre (name). Para tareas: muestra título (title).\n- Si una columna es FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible.\n\n🎯 ¡Bienvenido/a, ${username}!`;
+
+            const currentTenantId = getCurrentTenantId();
+            const currentTenantCfg = currentTenantId ? TENANT_CONFIGS.find(t => t.id === currentTenantId) : null;
+            const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
+
+            try {
+                const llmResult = await this.llmService.processPrompt({
+                    prompt: biPrompt,
+                    model: preferredModel,
+                    userId: user.id,
+                    username: user.username,
+                    userRoles,
+                    fromWhatsApp: true,
+                    forceMCPTools: true,
+                    tenantId: currentTenantId,
+                    institutionName: currentTenantCfg?.name || null,
+                    fastMode: true,
+                });
+
+                if (llmResult && llmResult.isOk && llmResult.isOk()) {
+                    const rawData = llmResult.getValue()?.rawQueryData;
+                    if (Array.isArray(rawData) && rawData.length > 0) {
+                        console.log(`[WhatsApp] _fetchReportData: LLM returned ${rawData.length} rows`);
+                        return { rawData, source: 'llm' };
+                    }
+                }
+                console.warn('[WhatsApp] _fetchReportData: LLM did not return rawQueryData, falling back to MCP');
+            } catch (e) {
+                console.warn('[WhatsApp] _fetchReportData: LLM call failed, falling back to MCP:', e.message);
+            }
+        }
+
+        // ── Step 2: MCP fallback ───────────────────────────────────────────────
+        return { rawData: null, source: 'mcp' };
+    }
+
     async _maybeHandleExcel(text, user, userRoles = []) {
         if (!/\bexcel\b/i.test(text)) return null;
 
@@ -1397,76 +1452,32 @@ export class WhatsAppDomainService {
             return '❌ Servicio de generación de Excel no disponible.';
         }
 
-        // strip leading command and any stray mentions of "excel" so the
-        // MCP agent receives only the business query text.  Leaving the word
-        // "excel" in the prompt was confusing the agent and often resulted in
-        // aggregated count responses instead of detailed row data.
         let q = text.replace(/^\/excel\s*/i, '');
         q = q.replace(/\bexcel\b/gi, '').trim();
-        // also remove common filler phrases that users type when requesting an
-        // Excel file.  We keep keywords like "pagos"/"username" so that the
-        // database agent can still detect them.
         q = q.replace(/dame un\s+excel/gi, '').trim();
         if (!q) {
-            // if after stripping we have nothing sensible, bail out early
             return '❌ Debes indicar qué datos quieres en el Excel. Ejemplo: "/excel usuarios activos"';
         }
-        console.log("[WhatsApp] Excel query sanitized to:", q);
+        console.log('[WhatsApp] Excel query sanitized to:', q);
 
         try {
-            // ── Step 1: run the same BI LLM flow as _handleGeneralQuestion so the SQL
-            // and returned rows are IDENTICAL to a normal data query.  rawQueryData in
-            // the LLM result holds the exact rows query_database returned — we use those
-            // directly so the Excel row count always matches what the LLM described.
-            if (this.llmService) {
-                const username = user?.username || 'usuario';
-                const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${q}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema' (salvo que necesites confirmar la estructura de tablas).\n2. 📌 OBLIGATORIO: usa la herramienta 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.). No inventes datos.\n   - Para invocarla, responde primero con un bloque JSON EXACTO:\n` +
-                    "```json\n" +
-                    "{\"tool\":\"query_database\",\"arguments\":{\"query\":\"<tu SQL aquí>\"}}\n" +
-                    "```\n" +
-                    `   Debes esperar a que el backend ejecute ese SQL y componer tu reporte utilizando la respuesta.\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta "query_database" del agente MCP y espera su respuesta antes de concluir.\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.).\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra username o nombre (first_name, last_name). Haz JOIN con usuarios.\n- Para cursos: muestra título (title). Haz JOIN con courses.\n- Para temas: muestra nombre (name). Para tareas: muestra título (title).\n- Si una columna es FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible.\n\n🎯 ¡Bienvenido/a, ${username}!`;
+            const { rawData, source } = await this._fetchReportData(q, user, userRoles);
 
-                const currentTenantId = getCurrentTenantId();
-                const currentTenantCfg = currentTenantId ? TENANT_CONFIGS.find(t => t.id === currentTenantId) : null;
-                const currentInstitutionName = currentTenantCfg?.name || null;
-                const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
-
-                const llmResult = await this.llmService.processPrompt({
-                    prompt: biPrompt,
-                    model: preferredModel,
+            if (rawData) {
+                console.log(`[WhatsApp] Excel: using ${rawData.length} rows from ${source}`);
+                const gen = await this.excelService.buildFromRawData({
+                    data: rawData,
                     userId: user.id,
                     username: user.username,
-                    userRoles,
-                    fromWhatsApp: true,
-                    forceMCPTools: true,
-                    tenantId: currentTenantId,
-                    institutionName: currentInstitutionName,
-                    fastMode: true,
+                    query: q,
                 });
-
-                if (llmResult && llmResult.isOk && llmResult.isOk()) {
-                    const val = llmResult.getValue();
-                    const rawData = val.rawQueryData;
-                    if (Array.isArray(rawData) && rawData.length > 0) {
-                        console.log(`[WhatsApp] Excel: using rawQueryData from LLM (${rawData.length} rows)`);
-                        const gen = await this.excelService.buildFromRawData({
-                            data: rawData,
-                            userId: user.id,
-                            username: user.username,
-                            query: q,
-                        });
-                        if (gen && gen.isOk && gen.isOk()) {
-                            const v = gen.getValue();
-                            return `✅ Excel generado: ${v.url} (filas: ${v.rows})`;
-                        }
-                    } else {
-                        console.warn('[WhatsApp] Excel: LLM did not return rawQueryData, falling back to MCP direct query');
-                    }
+                if (gen && gen.isOk && gen.isOk()) {
+                    const v = gen.getValue();
+                    return `✅ Excel generado: ${v.url} (filas: ${v.rows})`;
                 }
             }
 
-            // ── Step 2 (fallback): generate Excel via direct MCP query when LLM path
-            // could not supply rawQueryData (e.g. llmService unavailable or tool loop skipped).
+            // MCP fallback: no rawData from LLM
             const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id, username: user?.username, userRoles });
             if (gen && gen.isOk && gen.isOk()) {
                 const v = gen.getValue();
@@ -1875,7 +1886,6 @@ export class WhatsAppDomainService {
             return '❌ Servicio de generación de PDF no disponible.';
         }
 
-        // Strip /pdf prefix and the word "pdf" from the query
         let q = text.replace(/^\/pdf\s*/i, '');
         q = q.replace(/\bpdf\b/gi, '').trim();
         q = q.replace(/dame un\s+pdf/gi, '').trim();
@@ -1886,49 +1896,21 @@ export class WhatsAppDomainService {
         console.log('[WhatsApp] PDF query sanitized to:', q);
 
         try {
-            let pdfResult = null;
+            // Use the shared data-fetching pipeline — SAME query and SAME prompt as Excel
+            // so both formats always produce identical row counts.
+            const { rawData, source } = await this._fetchReportData(q, user, userRoles);
 
-            // ── Step 1: try LLM path to get rawQueryData (same rows as LLM response) ──
-            if (this.llmService) {
-                const username = user?.username || 'usuario';
-                const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${q}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence. Usa la herramienta 'query_database' para obtener datos reales.\n\nREGLA: NUNCA muestres IDs numéricos en los resultados.\n\n🎯 Usuario: ${username}`;
-
-                const currentTenantId = getCurrentTenantId();
-                const currentTenantCfg = currentTenantId ? TENANT_CONFIGS.find(t => t.id === currentTenantId) : null;
-                const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
-
-                const llmResult = await this.llmService.processPrompt({
-                    prompt: biPrompt,
-                    model: preferredModel,
+            let pdfResult;
+            if (rawData) {
+                console.log(`[WhatsApp] PDF: using ${rawData.length} rows from ${source}`);
+                pdfResult = await this.pdfService.buildFromRawData({
+                    data: rawData,
                     userId: user.id,
                     username: user.username,
-                    userRoles,
-                    fromWhatsApp: true,
-                    forceMCPTools: true,
-                    tenantId: currentTenantId,
-                    institutionName: currentTenantCfg?.name || null,
-                    fastMode: true,
+                    query: q,
                 });
-
-                if (llmResult && llmResult.isOk && llmResult.isOk()) {
-                    const val = llmResult.getValue();
-                    const rawData = val.rawQueryData;
-                    if (Array.isArray(rawData) && rawData.length > 0) {
-                        console.log(`[WhatsApp] PDF: using rawQueryData from LLM (${rawData.length} rows)`);
-                        pdfResult = await this.pdfService.buildFromRawData({
-                            data: rawData,
-                            userId: user.id,
-                            username: user.username,
-                            query: q,
-                        });
-                    } else {
-                        console.warn('[WhatsApp] PDF: LLM did not return rawQueryData, falling back to MCP direct query');
-                    }
-                }
-            }
-
-            // ── Step 2 (fallback): generate PDF via direct MCP query ──────────────
-            if (!pdfResult) {
+            } else {
+                // MCP fallback
                 pdfResult = await this.pdfService.generateFromQuery({
                     query: q,
                     userId: user.id,
@@ -1945,7 +1927,7 @@ export class WhatsAppDomainService {
 
             const { url: pdfUrl, chartUrl, rows } = pdfResult.getValue();
 
-            // ── Step 3: send chart image inline in WhatsApp ───────────────────────
+            // Send chart image inline in WhatsApp
             if (chartUrl && from) {
                 try {
                     await this._sendImage(from, chartUrl, `📊 Gráfica del reporte (${rows} registros)`);
