@@ -57,6 +57,7 @@ export class WhatsAppDomainService {
         courseRepository,
         chatMessageRepository,
         excelService,
+        pdfService,
     }) {
         this.whatsAppPort = whatsAppPort;
         this.sessionRepo = whatsAppSessionRepo;
@@ -71,6 +72,7 @@ export class WhatsAppDomainService {
         this.courseRepo = courseRepository;
         this.chatMessageRepo = chatMessageRepository;
         this.excelService = excelService;
+        this.pdfService = pdfService || null;
 
         this.channelAvailabilityCache = {
             checkedAt: 0,
@@ -821,12 +823,13 @@ export class WhatsAppDomainService {
                 // Allow teachers (2) and admins (3) to use MCP queries from WhatsApp.
                 const roleAllows = userRoles.includes(3) || userRoles.includes(4) || userRoles.includes(2);
 
-                // If the user is asking for an Excel file, skip the direct MCP
+                // If the user is asking for an Excel or PDF file, skip the direct MCP
                 // shortcut entirely — let intent classification route the message
-                // to _handleGeneralQuestion (which calls _maybeHandleExcel first).
+                // to _handleGeneralQuestion (which calls _maybeHandleExcel/_maybeHandlePdf first).
                 const isExcelRequest = /\bexcel\b/i.test(text);
+                const isPdfRequest   = /\bpdf\b/i.test(text);
 
-                if (canUseMCP && !isExcelRequest && (roleAllows || looksLikeDbQuery)) {
+                if (canUseMCP && !isExcelRequest && !isPdfRequest && (roleAllows || looksLikeDbQuery)) {
                     let mcpResult = null;
                     try {
                         mcpResult = await this._callMcpForTenant(
@@ -1265,6 +1268,7 @@ export class WhatsAppDomainService {
         if (text.startsWith('/consulta')) return { intent: 'MCP_QUERY', requiresRole: 'admin' };
         if (text.startsWith('/ayuda')) return { intent: 'HELP', requiresRole: null };
         if (text.startsWith('/desvincular')) return { intent: 'UNLINK', requiresRole: null };
+        if (text.startsWith('/pdf')) return { intent: 'GENERAL_QUESTION', requiresRole: 'teacher' };
         if (text.startsWith('/mi_progreso')) return { intent: 'MY_PROGRESS', requiresRole: null };
         if (text.startsWith('/mis_instituciones')) return { intent: 'MY_INSTITUTIONS', requiresRole: null };
 
@@ -1481,6 +1485,10 @@ export class WhatsAppDomainService {
         try {
             if (!this.llmService) return 'El servicio de IA no está disponible en este momento. Verifica que DEEPSEEK_API_KEY esté configurado y USE_LLM no esté desactivado.';
 
+            // early exit for pdf requests
+            const pdfResp = await this._maybeHandlePdf(text, user, userRoles, session.phoneNumber || null);
+            if (pdfResp !== null) return pdfResp;
+
             // early exit for excel requests
             const excelResp = await this._maybeHandleExcel(text, user, userRoles);
             if (excelResp !== null) return excelResp;
@@ -1649,6 +1657,9 @@ export class WhatsAppDomainService {
      */
     async _handleStudentProgress(text, user, userRoles = []) {
         try {
+            const pdfResp = await this._maybeHandlePdf(text, user, userRoles, null);
+            if (pdfResp !== null) return pdfResp;
+
             const excelResp = await this._maybeHandleExcel(text, user, userRoles);
             if (excelResp !== null) return excelResp;
 
@@ -1834,11 +1845,197 @@ export class WhatsAppDomainService {
     // UTILIDADES INTERNAS
     // ═══════════════════════════════════════════════════════════
 
+    // ═══════════════════════════════════════════════════════════
+    // PDF — solicitud de reporte con gráfica
+    // ═══════════════════════════════════════════════════════════
+
     /**
-     * Envía una respuesta de texto por WhatsApp.
-     * @param {string} to — Número destino.
-     * @param {string} text — Contenido del mensaje.
+     * Handles PDF report requests from WhatsApp.
+     * Detects /pdf or messages containing "pdf" keyword.
+     * Generates:
+     *   1. A chart PNG image (via QuickChart.io) → sent directly as image in WhatsApp
+     *   2. A styled PDF with data table + embedded chart → URL sent as text message
+     *
+     * Returns a string message (PDF URL) for the caller to forward, or null when the
+     * message is not a PDF request.
+     *
+     * @param {string}   text       Sanitized incoming message text.
+     * @param {object}   user       Resolved user object.
+     * @param {number[]} userRoles  User role IDs.
+     * @param {string|null} from   Sender phone (E.164). Used to send chart image inline.
+     * @returns {Promise<string|null>}
      */
+    async _maybeHandlePdf(text, user, userRoles = [], from = null) {
+        if (!/\bpdf\b/i.test(text)) return null;
+
+        if (!this._hasPermission(userRoles, 'teacher')) {
+            return '❌ Solo docentes y administradores pueden generar reportes PDF.';
+        }
+        if (!this.pdfService) {
+            return '❌ Servicio de generación de PDF no disponible.';
+        }
+
+        // Strip /pdf prefix and the word "pdf" from the query
+        let q = text.replace(/^\/pdf\s*/i, '');
+        q = q.replace(/\bpdf\b/gi, '').trim();
+        q = q.replace(/dame un\s+pdf/gi, '').trim();
+        q = q.replace(/genera(?:r)?\s+(?:un\s+)?reporte\s*/gi, '').trim();
+        if (!q) {
+            return '❌ Debes indicar qué datos quieres en el PDF. Ejemplo: "/pdf usuarios activos"';
+        }
+        console.log('[WhatsApp] PDF query sanitized to:', q);
+
+        try {
+            let pdfResult = null;
+
+            // ── Step 1: try LLM path to get rawQueryData (same rows as LLM response) ──
+            if (this.llmService) {
+                const username = user?.username || 'usuario';
+                const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${q}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence. Usa la herramienta 'query_database' para obtener datos reales.\n\nREGLA: NUNCA muestres IDs numéricos en los resultados.\n\n🎯 Usuario: ${username}`;
+
+                const currentTenantId = getCurrentTenantId();
+                const currentTenantCfg = currentTenantId ? TENANT_CONFIGS.find(t => t.id === currentTenantId) : null;
+                const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
+
+                const llmResult = await this.llmService.processPrompt({
+                    prompt: biPrompt,
+                    model: preferredModel,
+                    userId: user.id,
+                    username: user.username,
+                    userRoles,
+                    fromWhatsApp: true,
+                    forceMCPTools: true,
+                    tenantId: currentTenantId,
+                    institutionName: currentTenantCfg?.name || null,
+                    fastMode: true,
+                });
+
+                if (llmResult && llmResult.isOk && llmResult.isOk()) {
+                    const val = llmResult.getValue();
+                    const rawData = val.rawQueryData;
+                    if (Array.isArray(rawData) && rawData.length > 0) {
+                        console.log(`[WhatsApp] PDF: using rawQueryData from LLM (${rawData.length} rows)`);
+                        pdfResult = await this.pdfService.buildFromRawData({
+                            data: rawData,
+                            userId: user.id,
+                            username: user.username,
+                            query: q,
+                        });
+                    } else {
+                        console.warn('[WhatsApp] PDF: LLM did not return rawQueryData, falling back to MCP direct query');
+                    }
+                }
+            }
+
+            // ── Step 2 (fallback): generate PDF via direct MCP query ──────────────
+            if (!pdfResult) {
+                pdfResult = await this.pdfService.generateFromQuery({
+                    query: q,
+                    userId: user.id,
+                    username: user?.username,
+                    userRoles,
+                });
+            }
+
+            if (!pdfResult || !pdfResult.isOk || !pdfResult.isOk()) {
+                const err = pdfResult?.getError?.();
+                const msg = err?.message || (typeof err === 'string' ? err : 'No se pudo generar el PDF.');
+                return `❌ ${msg}`;
+            }
+
+            const { url: pdfUrl, chartUrl, rows } = pdfResult.getValue();
+
+            // ── Step 3: send chart image inline in WhatsApp ───────────────────────
+            if (chartUrl && from) {
+                try {
+                    await this._sendImage(from, chartUrl, `📊 Gráfica del reporte (${rows} registros)`);
+                } catch (imgErr) {
+                    console.warn('[WhatsApp] PDF: could not send chart image:', imgErr.message);
+                }
+            }
+
+            return `📄 *Reporte PDF generado* (${rows} registros):\n${pdfUrl}`;
+        } catch (e) {
+            console.error('[WhatsApp] PDF generation failed:', e);
+            return '❌ Error generando PDF. Intenta de nuevo más tarde.';
+        }
+    }
+
+    /**
+     * Sends an image via WhatsApp (YCloud or Meta adapter).
+     * @param {string} to      — E.164 number.
+     * @param {string} url     — Public image URL.
+     * @param {string} caption — Optional caption.
+     */
+    async _sendImage(to, url, caption = '') {
+        // YCloud
+        if (this._isYCloudEnabled()) {
+            const fromNumber = process.env.YCLOUD_WHATSAPP_NUMBER || process.env.YCLOUD_PHONE;
+            const instanceId = process.env.YCLOUD_INSTANCE_ID || process.env.YCLOUD_ID;
+            const baseUrl    = (process.env.YCLOUD_BASE_URL || 'https://api.ycloud.com/v2').replace(/\/$/, '');
+            const candidates = [];
+            if (fromNumber) {
+                candidates.push({
+                    url: `${baseUrl}/whatsapp/messages/sendDirectly`,
+                    payload: { from: fromNumber, to, type: 'image', image: { link: url, caption } },
+                });
+            }
+            if (instanceId) {
+                candidates.push({
+                    url: `${baseUrl}/instances/${instanceId}/messages`,
+                    payload: { to: to.replace(/^\+/, ''), type: 'image', image: { link: url, caption } },
+                });
+            }
+            if (candidates.length) {
+                try { return await this._ycloudPost(candidates); } catch {/* fall through */}
+            }
+        }
+        // Meta adapter
+        if (this.whatsAppPort && typeof this.whatsAppPort.sendImageMessage === 'function') {
+            return this.whatsAppPort.sendImageMessage(to, url, caption);
+        }
+        // Fallback: send URL as text
+        return this._sendReply(to, `${caption}\n${url}`.trim());
+    }
+
+    /**
+     * Sends a document (PDF) via WhatsApp (YCloud or Meta adapter).
+     * @param {string} to       — E.164 number.
+     * @param {string} url      — Public document URL.
+     * @param {string} filename — Displayed filename.
+     * @param {string} caption  — Optional caption.
+     */
+    async _sendDocument(to, url, filename = 'reporte.pdf', caption = '') {
+        // YCloud
+        if (this._isYCloudEnabled()) {
+            const fromNumber = process.env.YCLOUD_WHATSAPP_NUMBER || process.env.YCLOUD_PHONE;
+            const instanceId = process.env.YCLOUD_INSTANCE_ID || process.env.YCLOUD_ID;
+            const baseUrl    = (process.env.YCLOUD_BASE_URL || 'https://api.ycloud.com/v2').replace(/\/$/, '');
+            const candidates = [];
+            if (fromNumber) {
+                candidates.push({
+                    url: `${baseUrl}/whatsapp/messages/sendDirectly`,
+                    payload: { from: fromNumber, to, type: 'document', document: { link: url, filename, caption } },
+                });
+            }
+            if (instanceId) {
+                candidates.push({
+                    url: `${baseUrl}/instances/${instanceId}/messages`,
+                    payload: { to: to.replace(/^\+/, ''), type: 'document', document: { link: url, filename, caption } },
+                });
+            }
+            if (candidates.length) {
+                try { return await this._ycloudPost(candidates); } catch {/* fall through */}
+            }
+        }
+        // Meta adapter
+        if (this.whatsAppPort && typeof this.whatsAppPort.sendDocumentMessage === 'function') {
+            return this.whatsAppPort.sendDocumentMessage(to, url, filename, caption);
+        }
+        // Fallback: send URL as text
+        return this._sendReply(to, `${caption}\n${url}`.trim());
+    }
+
     /**
      * Envía una respuesta de texto por WhatsApp.
      * @param {string} to — Número destino.

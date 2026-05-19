@@ -146,6 +146,7 @@ import { AppDistributionDomainService } from '../modules/app-distribution/app-di
 import { AppDistributionController } from '../modules/app-distribution/app-distribution.controller.js';
 
 import { ExcelDomainService } from '../modules/excel/excel.service.js';
+import { PdfDomainService } from '../modules/pdf/pdf.service.js';
 
 import { InstitucionDomainService } from '../modules/institucion/institucion.service.js';
 import { SupabaseInstitucionRepository } from '../modules/institucion/infrastructure/supabase.institucion.repository.js';
@@ -423,9 +424,10 @@ export function createContainer() {
         supabaseService: supabase,
     });
 
-    // MCPService legacy (singleton interno) — se inyecta en ExcelDomainService
+    // MCPService legacy (singleton interno) — se inyecta en ExcelDomainService y PdfDomainService
     const mcpServiceLegacy = new MCPService();
     const excelService = new ExcelDomainService({ mcpService: mcpServiceLegacy, fileStoragePort: storageAdapter });
+    const pdfService   = new PdfDomainService({ mcpService: mcpServiceLegacy, fileStoragePort: storageAdapter });
 
     // LearningContextService — contexto de aprendizaje unificado (SRP)
     const ragServiceInstance = safeInit('RAGService', () => new RAGService());
@@ -451,6 +453,7 @@ export function createContainer() {
         // execute SQL queries and generate Excel via existing MCP APIs.
         mcpDomainService: mcpServiceLegacy,
         excelService,
+        pdfService,
         llmDomainService,
         submissionRepository: submissionRepo,
         progressRepository: progressRepo,
