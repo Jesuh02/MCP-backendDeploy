@@ -1861,6 +1861,65 @@ export class WhatsAppDomainService {
     // ═══════════════════════════════════════════════════════════
 
     /**
+     * Detecta si el texto es una solicitud de ANÁLISIS (no solo descarga de datos).
+     * Ejemplo: "análisis de los cursos comprados", "informe de ventas"
+     */
+    _isAnalysisRequest(text) {
+        return /\b(an[áa]lisis|analiza(?:r)?|informe|análisis\s+de|analiza\s+la|reporte\s+de\s+an[áa]lisis)\b/i.test(text);
+    }
+
+    /**
+     * Llama al LLM para generar texto de análisis ejecutivo a partir de datos ya obtenidos.
+     * No hace consultas a la BD — recibe los datos como parámetro.
+     * @returns {Promise<string|null>} Texto en Markdown o null si falla.
+     */
+    async _generateAnalysisText(q, data, user, userRoles) {
+        if (!this.llmService) return null;
+        try {
+            const sample = JSON.stringify(data.slice(0, 50), null, 2);
+            const analysisPrompt =
+                `Eres un experto en Business Intelligence y análisis de datos educativos.\n` +
+                `Se te proporcionan los siguientes datos reales de la consulta: "${q}"\n\n` +
+                `DATOS:\n${sample}\n\n` +
+                `Escribe un análisis ejecutivo completo en español. El análisis debe:\n` +
+                `1. Ser argumentado y profundo, no solo una lista de hechos.\n` +
+                `2. Incluir porcentajes y números específicos de los datos.\n` +
+                `3. Identificar tendencias, patrones y anomalías.\n` +
+                `4. Proporcionar recomendaciones estratégicas concretas.\n\n` +
+                `Usa EXACTAMENTE este formato con estas secciones:\n\n` +
+                `## Resumen ejecutivo\n[Descripción breve de los hallazgos más importantes]\n\n` +
+                `## Hallazgos principales\n- [Hallazgo con número concreto]\n- [Hallazgo con número concreto]\n\n` +
+                `## Análisis detallado\n[Análisis profundo de patrones y tendencias]\n\n` +
+                `## Recomendaciones estratégicas\n1. [Recomendación concreta]\n2. [Recomendación concreta]\n\n` +
+                `## Conclusiones\n[Síntesis del análisis y el impacto esperado]\n\n` +
+                `IMPORTANTE: Basa el análisis ÚNICAMENTE en los datos proporcionados. No inventes cifras.`;
+
+            const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
+            const result = await this.llmService.processPrompt({
+                prompt: analysisPrompt,
+                model: preferredModel,
+                userId: user.id,
+                username: user.username,
+                userRoles,
+                fromWhatsApp: true,
+                forceMCPTools: false,
+                fastMode: false,
+            });
+
+            if (result && result.isOk && result.isOk()) {
+                const answer = result.getValue();
+                return typeof answer === 'string'
+                    ? answer
+                    : (answer?.response || answer?.text || null);
+            }
+            return null;
+        } catch (e) {
+            console.warn('[WhatsApp] _generateAnalysisText failed:', e.message);
+            return null;
+        }
+    }
+
+    /**
      * Handles PDF report requests from WhatsApp.
      * Detects /pdf or messages containing "pdf" keyword.
      * Generates:
@@ -1895,6 +1954,7 @@ export class WhatsAppDomainService {
         }
         console.log('[WhatsApp] PDF query sanitized to:', q);
 
+        const isAnalysis = this._isAnalysisRequest(q);
         try {
             // Use the shared data-fetching pipeline — SAME query and SAME prompt as Excel
             // so both formats always produce identical row counts.
@@ -1902,13 +1962,26 @@ export class WhatsAppDomainService {
 
             let pdfResult;
             if (rawData) {
-                console.log(`[WhatsApp] PDF: using ${rawData.length} rows from ${source}`);
-                pdfResult = await this.pdfService.buildFromRawData({
-                    data: rawData,
-                    userId: user.id,
-                    username: user.username,
-                    query: q,
-                });
+                console.log(`[WhatsApp] PDF: using ${rawData.length} rows from ${source}, isAnalysis=${isAnalysis}`);
+
+                if (isAnalysis) {
+                    // Generate LLM narrative analysis text, then build analytical PDF
+                    const analysisText = await this._generateAnalysisText(q, rawData, user, userRoles);
+                    pdfResult = await this.pdfService.buildAnalyticalReport({
+                        data: rawData,
+                        query: q,
+                        analysisText: analysisText || '',
+                        userId: user.id,
+                        username: user.username,
+                    });
+                } else {
+                    pdfResult = await this.pdfService.buildFromRawData({
+                        data: rawData,
+                        userId: user.id,
+                        username: user.username,
+                        query: q,
+                    });
+                }
             } else {
                 // MCP fallback
                 pdfResult = await this.pdfService.generateFromQuery({
@@ -1925,18 +1998,22 @@ export class WhatsAppDomainService {
                 return `❌ ${msg}`;
             }
 
-            const { url: pdfUrl, chartUrl, rows } = pdfResult.getValue();
+            const val = pdfResult.getValue();
+            const { url: pdfUrl, rows } = val;
+            // buildAnalyticalReport returns chartUrls[], buildFromRawData returns chartUrl
+            const chartUrls = val.chartUrls || (val.chartUrl ? [val.chartUrl] : []);
 
-            // Send chart image inline in WhatsApp
-            if (chartUrl && from) {
+            // Send first chart image inline in WhatsApp
+            if (chartUrls.length > 0 && from) {
                 try {
-                    await this._sendImage(from, chartUrl, `📊 Gráfica del reporte (${rows} registros)`);
+                    await this._sendImage(from, chartUrls[0], `📊 Gráfica del reporte (${rows} registros)`);
                 } catch (imgErr) {
                     console.warn('[WhatsApp] PDF: could not send chart image:', imgErr.message);
                 }
             }
 
-            return `📄 *Reporte PDF generado* (${rows} registros):\n${pdfUrl}`;
+            const label = isAnalysis ? '📊 *Análisis PDF generado*' : '📄 *Reporte PDF generado*';
+            return `${label} (${rows} registros):\n${pdfUrl}`;
         } catch (e) {
             console.error('[WhatsApp] PDF generation failed:', e);
             return '❌ Error generando PDF. Intenta de nuevo más tarde.';
