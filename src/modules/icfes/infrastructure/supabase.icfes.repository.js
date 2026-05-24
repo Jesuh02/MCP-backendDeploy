@@ -5,15 +5,30 @@
  * - Sólo queries. Sin reglas de negocio.
  * - Joins anidados en una sola llamada para minimizar round-trips
  *   (requisito del flujo del pipeline: "start" debe responder < 300ms).
+ *
+ * Split de clientes:
+ * - this.qb  (questionBankClient) — banco de preguntas de sólo lectura.
+ *            Por defecto apunta a QA (vxuksizvwrkctrvpciyp) donde reside
+ *            el catálogo de preguntas ICFES ya cargado.
+ * - this.client                  — tenant activo en la petición; se usa para
+ *            sesiones, intentos y métricas de habilidad (datos del estudiante).
  */
 export class SupabaseIcfesRepository {
-    constructor(client) {
+    /**
+     * @param {import('@supabase/supabase-js').SupabaseClient} client
+     *   Cliente del tenant activo (proxy por petición). Usado para sesiones/intentos.
+     * @param {import('@supabase/supabase-js').SupabaseClient} [questionBankClient]
+     *   Cliente del tenant que aloja el banco de preguntas (p.ej. QA - Develop).
+     *   Si no se suministra se usa el mismo `client`.
+     */
+    constructor(client, questionBankClient = null) {
         this.client = client;
+        this.qb = questionBankClient || client;
     }
 
     // ─── Áreas ────────────────────────────────────────────────────────────
     async listAreas() {
-        const { data, error } = await this.client
+        const { data, error } = await this.qb
             .from('icfes_areas')
             .select('id, code, name')
             .order('id', { ascending: true });
@@ -22,7 +37,7 @@ export class SupabaseIcfesRepository {
     }
 
     async findAreaByCode(code) {
-        const { data, error } = await this.client
+        const { data, error } = await this.qb
             .from('icfes_areas')
             .select('id, code, name')
             .eq('code', code)
@@ -45,8 +60,8 @@ export class SupabaseIcfesRepository {
         // 2) preguntas ya vistas (cross-session)
         const seenIds = await this._seenQuestionIds(studentId);
 
-        // 3) pool de candidatos activos
-        let q = this.client
+        // 3) pool de candidatos activos (banco de preguntas de QA)
+        let q = this.qb
             .from('icfes_questions')
             .select('id, subtopic_id, difficulty')
             .eq('is_active', true)
@@ -71,7 +86,7 @@ export class SupabaseIcfesRepository {
     }
 
     async _subtopicIdsByArea(areaId) {
-        const { data, error } = await this.client
+        const { data, error } = await this.qb
             .from('icfes_subtopics')
             .select('id, icfes_topics!inner(area_id)')
             .eq('icfes_topics.area_id', areaId);
@@ -104,7 +119,7 @@ export class SupabaseIcfesRepository {
     // ─── Hidratar las preguntas elegidas ──────────────────────────────────
     async getQuestionsFull(questionIds) {
         if (!questionIds.length) return [];
-        const { data, error } = await this.client
+        const { data, error } = await this.qb
             .from('icfes_questions')
             .select(`
                 id, stem, reading_passage, difficulty, explanation, subtopic_id, source_year,
@@ -128,7 +143,7 @@ export class SupabaseIcfesRepository {
         if (!pairs.length) return new Map();
         const subtopicIds = [...new Set(pairs.map(p => p.subtopicId).filter(Boolean))];
         if (!subtopicIds.length) return new Map();
-        const { data, error } = await this.client
+        const { data, error } = await this.qb
             .from('icfes_questions')
             .select('subtopic_id, source_year, reading_passage')
             .in('subtopic_id', subtopicIds)
@@ -192,13 +207,29 @@ export class SupabaseIcfesRepository {
     async listSessionsByStudent(studentId, limit = 20) {
         const { data, error } = await this.client
             .from('icfes_exam_sessions')
-            .select('id, area_id, status, score, started_at, finished_at, icfes_areas:area_id ( code, name )')
+            .select('id, area_id, status, score, started_at, finished_at')
             .eq('student_id', studentId)
             .eq('status', 'completed')
             .order('finished_at', { ascending: false })
             .limit(limit);
         if (error) throw new Error(error.message);
-        return data || [];
+        if (!data?.length) return [];
+
+        // Resolve area metadata from the question-bank DB (may differ from this.client).
+        const areaIds = [...new Set(data.map(s => s.area_id).filter(Boolean))];
+        const areaMap = new Map();
+        if (areaIds.length) {
+            const { data: areas } = await this.qb
+                .from('icfes_areas')
+                .select('id, code, name')
+                .in('id', areaIds);
+            if (areas) areas.forEach(a => areaMap.set(a.id, a));
+        }
+
+        return data.map(s => ({
+            ...s,
+            icfes_areas: s.area_id != null ? (areaMap.get(s.area_id) ?? null) : null,
+        }));
     }
 }
 
