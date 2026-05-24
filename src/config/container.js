@@ -8,7 +8,7 @@ import { CachedCourseReadRepository } from '../shared/database/CachedCourseReadR
 import { withCircuitBreaker } from '../shared/infrastructure/CircuitBreaker.js';
 import { SupabaseOutboxRepository } from '../shared/outbox/SupabaseOutboxRepository.js';
 import { OutboxProcessor } from '../shared/outbox/OutboxProcessor.js';
-import { initializeTenantRegistry, createTenantAwareProxy } from './tenantRegistry.js';
+import { initializeTenantRegistry, createTenantAwareProxy, getTenantClient } from './tenantRegistry.js';
 
 import { R2StorageAdapter } from '../modules/storage/infrastructure/r2.storage.adapter.js';
 import { FCMAdapter } from '../modules/notification/infrastructure/fcm.adapter.js';
@@ -517,7 +517,19 @@ export function createContainer() {
     const institucionController = new InstitucionController({ institucionService, userRepository: userRepo });
 
     // ICFES (Saber 11 – adaptive exam)
-    const icfesRepository = client ? new SupabaseIcfesRepository(client) : null;
+    // El banco de preguntas vive en el tenant QA (vxuksizvwrkctrvpciyp).
+    // ICFES_QUESTIONS_TENANT_ID controla qué tenant es la fuente de preguntas;
+    // por defecto 'qa-develop'. Las sesiones y métricas del estudiante se
+    // siguen guardando en el tenant activo de la petición (this.client).
+    const icfesQuestionsClient = (() => {
+        const qTenantId = process.env.ICFES_QUESTIONS_TENANT_ID || 'qa-develop';
+        const qClient = getTenantClient(qTenantId);
+        if (qClient && qClient !== client) {
+            console.log(`[ICFES] Banco de preguntas → tenant "${qTenantId}"`);
+        }
+        return qClient || client;
+    })();
+    const icfesRepository = client ? new SupabaseIcfesRepository(client, icfesQuestionsClient) : null;
     const icfesService = icfesRepository ? new IcfesDomainService({ icfesRepository }) : null;
     const icfesController = icfesService ? new IcfesController({ icfesService }) : null;
 
