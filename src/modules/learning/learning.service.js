@@ -296,12 +296,19 @@ export class LearningDomainService {
     const job = () => videoJobs.get(jobId);
     try {
       const videoUrl = await this._renderVideo(script);
-      videoJobs.set(jobId, { ...job(), status: 'completed', videoUrl });
+      // Store raw CDN URL privately so the controller can proxy it.
+      // The public-facing videoUrl is built by the controller as the stream endpoint.
+      videoJobs.set(jobId, { ...job(), status: 'completed', _cdnVideoUrl: videoUrl });
       console.info(`[LearningService] Video job ${jobId} completed.`);
     } catch (err) {
       console.error(`[LearningService] Video job ${jobId} failed: ${err?.message}`);
       videoJobs.set(jobId, { ...job(), status: 'error', error: err.message });
     }
+  }
+
+  /** Returns the raw CDN URL for the stream proxy endpoint. */
+  getCdnVideoUrl(jobId) {
+    return videoJobs.get(jobId)?._cdnVideoUrl || null;
   }
 
   /** Returns the current state of a video job, or null if not found / expired. */
