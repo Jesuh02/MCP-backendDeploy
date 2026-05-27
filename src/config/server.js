@@ -172,8 +172,8 @@ export function startServer(app, port = 3000) {
         console.log('');
     });
 
-    // Server timeouts
-    server.setTimeout(300000); // 5 min
+    // Server timeouts — generous for long-running AI generation endpoints (comic/video)
+    server.setTimeout(660000); // 11 min
     server.keepAliveTimeout = 120 * 1000;
     server.headersTimeout = 121 * 1000;
 

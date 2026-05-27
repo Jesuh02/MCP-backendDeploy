@@ -300,19 +300,20 @@ export class LearningDomainService {
 
   async _renderVideo(script) {
     const apiKey = process.env.OPENROUTER_API_KEY;
-    const resp = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
+
+    // Build a concise text-to-video prompt from the script scenes
+    const sceneSummary = script.scenes
+      .slice(0, 4)
+      .map((s, i) => `Scene ${i + 1}: ${s.imagePrompt}`)
+      .join('. ');
+    const prompt = `Educational video about "${script.title}". ${sceneSummary}`;
+
+    // Step 1: Submit video generation job to OpenRouter /api/v1/videos
+    const genResp = await axios.post(
+      'https://openrouter.ai/api/v1/videos',
       {
         model: this.videoModel,
-        modalities: ['video', 'text'],
-        messages: [
-          {
-            role: 'user',
-            content:
-              `Generate an animated educational video. Title: ${script.title}.\n` +
-              `Scenes:\n${script.scenes.map((s, i) => `${i + 1}. ${s.imagePrompt} — narration: ${s.narration}`).join('\n')}`,
-          },
-        ],
+        prompt,
       },
       {
         headers: {
@@ -321,17 +322,39 @@ export class LearningDomainService {
           'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://coursev.app',
           'X-Title': 'CourseV Learning',
         },
-        timeout: 180_000,
+        timeout: 30_000,
       }
     );
-    const message = resp?.data?.choices?.[0]?.message;
-    const url =
-      message?.videos?.[0]?.video_url?.url ||
-      (Array.isArray(message?.content)
-        ? message.content.find((b) => b?.type === 'video_url')?.video_url?.url
-        : null);
-    if (!url) throw new Error('El proveedor de video no devolvió una URL.');
-    return url;
+
+    const pollingUrl = genResp?.data?.polling_url;
+    if (!pollingUrl) throw new Error('No se obtuvo polling_url del proveedor de video.');
+
+    // Step 2: Poll until the video is ready (Kling can take several minutes)
+    const maxWaitMs = 8 * 60 * 1000; // 8 minutes
+    const pollIntervalMs = 6_000;
+    const deadline = Date.now() + maxWaitMs;
+
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      const pollResp = await axios.get(pollingUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        timeout: 15_000,
+      });
+      const data = pollResp?.data;
+      const jobStatus = data?.status;
+
+      if (jobStatus === 'completed') {
+        const url = data?.unsigned_urls?.[0] || data?.data?.[0]?.url;
+        if (url) return url;
+        throw new Error('Generación completada pero sin URL de video.');
+      }
+      if (jobStatus === 'failed' || jobStatus === 'error') {
+        throw new Error(`Generación de video fallida: ${data?.error || 'error desconocido'}`);
+      }
+      console.info(`[LearningService] Video generation status: ${jobStatus}, waiting...`);
+    }
+
+    throw new Error('Tiempo de espera agotado esperando el video (máx 8 min).');
   }
 }
 
