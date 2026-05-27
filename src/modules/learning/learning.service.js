@@ -87,7 +87,7 @@ export class LearningDomainService {
     // Best-in-class OpenRouter models, overridable by env
     this.imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
     this.textModel = process.env.OPENROUTER_LEARNING_MODEL || process.env.OPENROUTER_CHAT_MODEL || 'qwen/qwen-2.5-72b-instruct';
-    this.videoModel = process.env.OPENROUTER_VIDEO_MODEL || ''; // optional
+    this.videoModel = process.env.OPENROUTER_VIDEO_MODEL || 'kwaivgi/kling-v3.0-pro';
   }
 
   // ───────────────────────── COMIC ─────────────────────────
