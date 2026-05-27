@@ -113,8 +113,11 @@ export function idempotencyGuard(req, res, next) {
         // Si el request original aún está en progreso, retornamos 409
         return res.status(409).json({
             success: false,
-            error: 'Solicitud duplicada detectada. Por favor espera unos segundos antes de reintentar.',
-            code: 'DUPLICATE_REQUEST'
+            error: {
+                code: 'DUPLICATE_REQUEST',
+                message: 'Solicitud duplicada detectada. Por favor espera unos segundos antes de reintentar.',
+                statusCode: 409,
+            },
         });
     }
 
