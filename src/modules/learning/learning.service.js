@@ -85,7 +85,7 @@ export class LearningDomainService {
     this.learningContextService = learningContextService;
     this.llmAdapter = llmAdapter;
     // Best-in-class OpenRouter models, overridable by env
-    this.imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image-preview';
+    this.imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
     this.textModel = process.env.OPENROUTER_LEARNING_MODEL || process.env.OPENROUTER_CHAT_MODEL || 'qwen/qwen-2.5-72b-instruct';
     this.videoModel = process.env.OPENROUTER_VIDEO_MODEL || ''; // optional
   }
@@ -178,17 +178,58 @@ export class LearningDomainService {
     );
 
     const message = resp?.data?.choices?.[0]?.message;
-    // OpenRouter returns images either in message.images[].image_url.url
-    // (Gemini image preview) or as a base64 in content blocks. Handle both.
+
+    // Debug: log response shape without dumping large base64 blobs
+    try {
+      const shape = {
+        messageKeys: message ? Object.keys(message) : null,
+        contentType: Array.isArray(message?.content) ? 'array' : typeof message?.content,
+        contentLen: Array.isArray(message?.content) ? message.content.length : undefined,
+        contentBlocks: Array.isArray(message?.content)
+          ? message.content.map(b => ({ type: b?.type, hasImageUrl: !!b?.image_url, hasSource: !!b?.source, hasInlineData: !!b?.inlineData }))
+          : undefined,
+        hasImages: !!message?.images,
+      };
+      console.log('[LearningService] _renderImage response shape:', JSON.stringify(shape));
+    } catch (_) { /* non-critical */ }
+
+    // 1. OpenRouter images[] array (some providers, e.g. older Gemini variants)
     const fromImages = message?.images?.[0]?.image_url?.url;
     if (fromImages) return fromImages;
 
+    // 2. Content is an array of blocks — most common for OpenRouter/Gemini/Anthropic
     if (Array.isArray(message?.content)) {
       for (const block of message.content) {
-        if (block?.type === 'output_image' && block.image_url?.url) return block.image_url.url;
+        // Standard OpenRouter image_url block
         if (block?.type === 'image_url' && block.image_url?.url) return block.image_url.url;
+        // OpenRouter output_image block
+        if (block?.type === 'output_image' && block.image_url?.url) return block.image_url.url;
+        // Anthropic-style: { type: 'image', source: { type: 'base64', media_type, data } }
+        if (block?.type === 'image' && block.source?.type === 'base64' && block.source?.data) {
+          return `data:${block.source.media_type || 'image/png'};base64,${block.source.data}`;
+        }
+        // Anthropic-style: { type: 'image', source: { type: 'url', url } }
+        if (block?.type === 'image' && block.source?.url) return block.source.url;
+        // Gemini native inlineData: { inlineData: { mimeType, data } }
+        if (block?.inlineData?.data) {
+          return `data:${block.inlineData.mimeType || 'image/png'};base64,${block.inlineData.data}`;
+        }
+        // Fallback: any block that carries a direct base64 data field
+        if (block?.data && block?.mimeType) {
+          return `data:${block.mimeType};base64,${block.data}`;
+        }
       }
     }
+
+    // 3. Content is a string — look for embedded markdown image or raw data URI
+    if (typeof message?.content === 'string') {
+      const mdImg = message.content.match(/!\[.*?\]\((data:image\/[^)]+)\)/);
+      if (mdImg) return mdImg[1];
+      const dataUri = message.content.match(/(data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{20,})/);
+      if (dataUri) return dataUri[1];
+    }
+
+    console.warn('[LearningService] _renderImage: no image found in response for model', this.imageModel);
     return '';
   }
 
