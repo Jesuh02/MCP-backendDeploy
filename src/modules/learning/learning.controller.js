@@ -57,6 +57,18 @@ export class LearningController {
       next(err);
     }
   };
+
+  getVideoStatus = async (req, res, next) => {
+    try {
+      const { jobId } = req.params;
+      if (!jobId) return res.status(400).json({ error: 'jobId is required' });
+      const job = this.learningService.getVideoStatus(jobId);
+      if (!job) return res.status(404).json({ error: 'Job not found or expired' });
+      res.json(job);
+    } catch (err) {
+      next(err);
+    }
+  };
 }
 
 export default LearningController;

@@ -18,6 +18,11 @@ import axios from 'axios';
 
 const DEFAULT_PANEL_COUNT = 6;
 
+// In-process async job store for video generation.
+// Single-instance deployments (Railway) are fine; for multi-instance add Redis.
+const videoJobs = new Map(); // jobId -> { status, title, posterUrl, videoUrl?, slides?, durationSeconds, error?, createdAt }
+const VIDEO_JOB_TTL_MS = 30 * 60 * 1000; // 30 min
+
 const COMIC_SYSTEM_PROMPT = `Eres un guionista pedagógico que transforma material de estudio en una historieta (cómic) didáctica.
 Devuelves SIEMPRE un único objeto JSON válido (sin Markdown, sin texto fuera del JSON) con la forma exacta:
 {
@@ -234,6 +239,16 @@ export class LearningDomainService {
   }
 
   // ───────────────────────── VIDEO ─────────────────────────
+
+  /**
+   * Returns immediately with { status: 'processing', jobId } when a real video
+   * model is configured so that the HTTP connection is never held open for
+   * more than the time needed to build the script + poster (~30 s).
+   * Clients must poll GET /api/learning/video/status/:jobId.
+   *
+   * When no video model is configured the slideshow is built inline and
+   * returned with status: 'completed'.
+   */
   async generateVideo({ courseId, topicId, taskId, userId }) {
     const ctxResult = await this.learningContextService.buildLearningContext({ courseId, topicId, taskId, userId });
     if (ctxResult.isFail && ctxResult.isFail()) throw ctxResult.getError();
@@ -252,30 +267,29 @@ export class LearningDomainService {
 
     const title = String(script.title || ctx?.topic?.name || 'Video educativo');
     const firstScene = script.scenes[0] || {};
-    const posterUrl = await this._renderImageSafely(
-      String(firstScene.imagePrompt || title)
-    );
+    const posterUrl = await this._renderImageSafely(String(firstScene.imagePrompt || title));
+    const durationSeconds = Math.max(45, Math.min(120, script.scenes.length * 10));
 
-    // If a real video model is wired in env, call it (single-shot for now).
+    // ── Async path: video model configured ──────────────────
     if (this.videoModel && process.env.OPENROUTER_API_KEY) {
-      try {
-        const videoUrl = await this._renderVideo(script);
-        return {
-          jobId: `video_${Date.now()}`,
-          title,
-          videoUrl,
-          posterUrl,
-          durationSeconds: Math.max(45, Math.min(120, script.scenes.length * 10)),
-        };
-      } catch (err) {
-        console.warn('[LearningService] video render failed, falling back to slideshow:', err?.message);
-      }
+      const jobId = `video_${Date.now()}`;
+      videoJobs.set(jobId, {
+        status: 'processing',
+        title,
+        posterUrl,
+        durationSeconds,
+        createdAt: Date.now(),
+      });
+      // Start background job — do NOT await so the HTTP response is sent immediately.
+      this._startVideoJob(jobId, script, posterUrl).catch((err) =>
+        console.error('[LearningService] Unhandled background video job error:', err?.message)
+      );
+      return { jobId, status: 'processing', title, posterUrl, durationSeconds };
     }
 
-    // Slideshow fallback: generate one image per scene and return slides.
-    // The client renders them as an animated photo-story player.
+    // ── Inline slideshow fallback (no video model) ───────────
     console.info('[LearningService] No video model configured — building image slideshow fallback.');
-    const scenes = script.scenes.slice(0, 8); // cap for latency
+    const scenes = script.scenes.slice(0, 8);
     const slidesRaw = await Promise.all(
       scenes.map(async (scene) => ({
         imageUrl: await this._renderImageSafely(String(scene.imagePrompt || title)),
@@ -283,19 +297,62 @@ export class LearningDomainService {
         duration: 8,
       }))
     );
-    // Fill missing images with the poster so every slide has something to show
-    const slides = slidesRaw.map((s) => ({
-      ...s,
-      imageUrl: s.imageUrl || posterUrl || '',
-    }));
+    const slides = slidesRaw.map((s) => ({ ...s, imageUrl: s.imageUrl || posterUrl || '' }));
     return {
       jobId: `slides_${Date.now()}`,
+      status: 'completed',
       title,
       videoUrl: '',
       posterUrl: slides[0]?.imageUrl || posterUrl || '',
       durationSeconds: slides.length * 8,
       slides,
     };
+  }
+
+  /** Polls OpenRouter in the background and updates the job entry when done. */
+  async _startVideoJob(jobId, script, posterUrl) {
+    const job = () => videoJobs.get(jobId);
+    try {
+      const videoUrl = await this._renderVideo(script);
+      videoJobs.set(jobId, { ...job(), status: 'completed', videoUrl });
+      console.info(`[LearningService] Video job ${jobId} completed.`);
+    } catch (err) {
+      console.warn(`[LearningService] Video job ${jobId} failed (${err?.message}), building slideshow fallback.`);
+      try {
+        const title = job()?.title || 'Video educativo';
+        const scenes = script.scenes.slice(0, 8);
+        const slidesRaw = await Promise.all(
+          scenes.map(async (scene) => ({
+            imageUrl: await this._renderImageSafely(String(scene.imagePrompt || title)),
+            narration: String(scene.narration || ''),
+            duration: 8,
+          }))
+        );
+        const slides = slidesRaw.map((s) => ({ ...s, imageUrl: s.imageUrl || posterUrl || '' }));
+        videoJobs.set(jobId, {
+          ...job(),
+          status: 'completed',
+          videoUrl: '',
+          slides,
+          posterUrl: slides[0]?.imageUrl || posterUrl || '',
+          durationSeconds: slides.length * 8,
+        });
+      } catch (fallbackErr) {
+        videoJobs.set(jobId, { ...job(), status: 'error', error: err.message });
+      }
+    }
+  }
+
+  /** Returns the current state of a video job, or null if not found / expired. */
+  getVideoStatus(jobId) {
+    const job = videoJobs.get(jobId);
+    if (!job) return null;
+    // Evict old finished jobs
+    if (job.status !== 'processing' && Date.now() - job.createdAt > VIDEO_JOB_TTL_MS) {
+      videoJobs.delete(jobId);
+      return null;
+    }
+    return job;
   }
 
   async _renderVideo(script) {
