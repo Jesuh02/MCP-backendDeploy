@@ -51,12 +51,32 @@ function buildUnauthKey(req) {
 // (e.g. toggle endpoints). They must NOT be deduplicated.
 const EXCLUDED_PATHS = ['/likes/toggle'];
 
+// Long-running endpoints (AI generation) whose duration far exceeds the default
+// 10s dedup window. Excluded because:
+//   1. The frontend already serializes calls with its own in-flight flag.
+//   2. A duplicate within 10s would be wrongly 409'd while the original is still
+//      running (response not yet cached), breaking legitimate retries after
+//      navigation/remount.
+//   3. After 10s the entry expires and a duplicate would WRONGLY start a second
+//      expensive generation — opposite of what dedup is supposed to do.
+// For these endpoints, idempotency must be enforced at the application layer
+// (e.g. job table keyed by userId+topicId+taskId), not in this middleware.
+const LONG_RUNNING_PATHS = [
+    '/learning/comic',
+    '/learning/video',
+    '/learning/comic/regenerate-panel',
+];
+
 export function idempotencyGuard(req, res, next) {
     // Solo aplicar a métodos de escritura
     if (req.method !== 'POST') return next();
 
     // Skip idempotency for intentional toggle endpoints
     if (EXCLUDED_PATHS.some(p => req.path.endsWith(p))) return next();
+
+    // Skip idempotency for long-running AI generation endpoints.
+    // See LONG_RUNNING_PATHS comment above for rationale.
+    if (LONG_RUNNING_PATHS.some(p => req.path.endsWith(p))) return next();
 
     // ── Throttle para requests sin token de autenticación ──
     // Agrupa TODOS los POST sin auth al mismo path+IP, sin importar el body,
