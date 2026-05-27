@@ -110,6 +110,9 @@ import { ReinforcementDomainService } from '../modules/reinforcement/reinforceme
 import { SupabaseReinforcementRepository } from '../modules/reinforcement/infrastructure/supabase.reinforcement.repository.js';
 import { ReinforcementController } from '../modules/reinforcement/reinforcement.controller.js';
 
+import { LearningDomainService } from '../modules/learning/learning.service.js';
+import { LearningController } from '../modules/learning/learning.controller.js';
+
 import { ReinforcementResultService } from '../modules/reinforcement-result/reinforcement-result.service.js';
 import { SupabaseReinforcementResultRepository } from '../modules/reinforcement-result/infrastructure/supabase.reinforcement-result.repository.js';
 import { ReinforcementResultController } from '../modules/reinforcement-result/reinforcement-result.controller.js';
@@ -498,6 +501,10 @@ export function createContainer() {
     const rolController = new RolController({ rolService });
     const fileContextController = new FileContextController({ fileContextService });
     const reinforcementController = new ReinforcementController({ reinforcementService, learningContextService });
+
+    // Learning (AI comic + video) — depends on learningContextService for materials and on llmAdapter for chat
+    const learningService = new LearningDomainService({ learningContextService, llmAdapter });
+    const learningController = new LearningController({ learningService });
     const reinforcementResultController = new ReinforcementResultController({ reinforcementResultService });
     const chatMessageController = new ChatMessageController({ chatMessageService });
 
@@ -576,6 +583,7 @@ export function createContainer() {
         reinforcementController,
         reinforcementResultController,
         chatMessageController,
+        learningController,
 
         ttsController,
         llmController,

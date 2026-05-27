@@ -40,6 +40,7 @@ import { createCourseActiveGuard } from '../../shared/middleware/courseActiveGua
 import { createTenantMiddleware } from '../../shared/middleware/TenantMiddleware.js';
 import { publicRegisterRoutes } from '../../modules/auth/public-register.routes.js';
 import { icfesRoutes } from '../../modules/icfes/icfes.routes.js';
+import { learningRoutes } from '../../modules/learning/learning.routes.js';
 
 export function createRouter(deps) {
     const router = Router();
@@ -125,6 +126,10 @@ export function createRouter(deps) {
 
     if (deps.icfesController) {
         router.use('/icfes', icfesRoutes(deps));
+    }
+
+    if (deps.learningController) {
+        router.use('/learning', learningRoutes(deps));
     }
 
     return router;
