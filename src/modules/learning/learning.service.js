@@ -257,7 +257,6 @@ export class LearningDomainService {
     );
 
     // If a real video model is wired in env, call it (single-shot for now).
-    // Otherwise surface a typed error so the UI shows the graceful state.
     if (this.videoModel && process.env.OPENROUTER_API_KEY) {
       try {
         const videoUrl = await this._renderVideo(script);
@@ -269,17 +268,34 @@ export class LearningDomainService {
           durationSeconds: Math.max(45, Math.min(120, script.scenes.length * 10)),
         };
       } catch (err) {
-        console.warn('[LearningService] video render failed, returning stub:', err?.message);
+        console.warn('[LearningService] video render failed, falling back to slideshow:', err?.message);
       }
     }
 
-    // Graceful fallback: tell client video gen is not configured.
-    const err = new Error(
-      'La generación de video con IA no está habilitada en este servidor. ' +
-      'Configura OPENROUTER_VIDEO_MODEL para activarla.'
+    // Slideshow fallback: generate one image per scene and return slides.
+    // The client renders them as an animated photo-story player.
+    console.info('[LearningService] No video model configured — building image slideshow fallback.');
+    const scenes = script.scenes.slice(0, 8); // cap for latency
+    const slidesRaw = await Promise.all(
+      scenes.map(async (scene) => ({
+        imageUrl: await this._renderImageSafely(String(scene.imagePrompt || title)),
+        narration: String(scene.narration || ''),
+        duration: 8,
+      }))
     );
-    err.statusCode = 501;
-    throw err;
+    // Fill missing images with the poster so every slide has something to show
+    const slides = slidesRaw.map((s) => ({
+      ...s,
+      imageUrl: s.imageUrl || posterUrl || '',
+    }));
+    return {
+      jobId: `slides_${Date.now()}`,
+      title,
+      videoUrl: '',
+      posterUrl: slides[0]?.imageUrl || posterUrl || '',
+      durationSeconds: slides.length * 8,
+      slides,
+    };
   }
 
   async _renderVideo(script) {
