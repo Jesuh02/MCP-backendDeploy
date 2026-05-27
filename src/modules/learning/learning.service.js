@@ -18,6 +18,11 @@ import axios from 'axios';
 
 const DEFAULT_PANEL_COUNT = 6;
 
+// In-process async job store for video generation.
+// Single-instance deployments (Railway) are fine; for multi-instance add Redis.
+const videoJobs = new Map(); // jobId -> { status, title, posterUrl, videoUrl?, slides?, durationSeconds, error?, createdAt }
+const VIDEO_JOB_TTL_MS = 30 * 60 * 1000; // 30 min
+
 const COMIC_SYSTEM_PROMPT = `Eres un guionista pedagógico que transforma material de estudio en una historieta (cómic) didáctica.
 Devuelves SIEMPRE un único objeto JSON válido (sin Markdown, sin texto fuera del JSON) con la forma exacta:
 {
@@ -234,6 +239,16 @@ export class LearningDomainService {
   }
 
   // ───────────────────────── VIDEO ─────────────────────────
+
+  /**
+   * Returns immediately with { status: 'processing', jobId } when a real video
+   * model is configured so that the HTTP connection is never held open for
+   * more than the time needed to build the script + poster (~30 s).
+   * Clients must poll GET /api/learning/video/status/:jobId.
+   *
+   * When no video model is configured the slideshow is built inline and
+   * returned with status: 'completed'.
+   */
   async generateVideo({ courseId, topicId, taskId, userId }) {
     const ctxResult = await this.learningContextService.buildLearningContext({ courseId, topicId, taskId, userId });
     if (ctxResult.isFail && ctxResult.isFail()) throw ctxResult.getError();
@@ -252,50 +267,98 @@ export class LearningDomainService {
 
     const title = String(script.title || ctx?.topic?.name || 'Video educativo');
     const firstScene = script.scenes[0] || {};
-    const posterUrl = await this._renderImageSafely(
-      String(firstScene.imagePrompt || title)
-    );
+    const posterUrl = await this._renderImageSafely(String(firstScene.imagePrompt || title));
+    const durationSeconds = Math.max(45, Math.min(120, script.scenes.length * 10));
 
-    // If a real video model is wired in env, call it (single-shot for now).
-    if (this.videoModel && process.env.OPENROUTER_API_KEY) {
-      try {
-        const videoUrl = await this._renderVideo(script);
-        return {
-          jobId: `video_${Date.now()}`,
-          title,
-          videoUrl,
-          posterUrl,
-          durationSeconds: Math.max(45, Math.min(120, script.scenes.length * 10)),
-        };
-      } catch (err) {
-        console.warn('[LearningService] video render failed, falling back to slideshow:', err?.message);
-      }
-    }
-
-    // Slideshow fallback: generate one image per scene and return slides.
-    // The client renders them as an animated photo-story player.
-    console.info('[LearningService] No video model configured — building image slideshow fallback.');
-    const scenes = script.scenes.slice(0, 8); // cap for latency
-    const slidesRaw = await Promise.all(
+    // Pre-generate slide images in parallel RIGHT NOW so they are ready when the
+    // video job finishes (or fails). This prevents the slow sequential re-generation
+    // in the fallback path.
+    const scenes = script.scenes.slice(0, 8);
+    const slidesPromise = Promise.all(
       scenes.map(async (scene) => ({
         imageUrl: await this._renderImageSafely(String(scene.imagePrompt || title)),
         narration: String(scene.narration || ''),
         duration: 8,
       }))
     );
-    // Fill missing images with the poster so every slide has something to show
-    const slides = slidesRaw.map((s) => ({
-      ...s,
-      imageUrl: s.imageUrl || posterUrl || '',
-    }));
+
+    // ── Async path: video model configured ──────────────────
+    if (this.videoModel && process.env.OPENROUTER_API_KEY) {
+      const jobId = `video_${Date.now()}`;
+      videoJobs.set(jobId, {
+        status: 'processing',
+        title,
+        posterUrl,
+        durationSeconds,
+        createdAt: Date.now(),
+      });
+      // Start background job — do NOT await so the HTTP response is sent immediately.
+      this._startVideoJob(jobId, script, posterUrl, slidesPromise).catch((err) =>
+        console.error('[LearningService] Unhandled background video job error:', err?.message)
+      );
+      return { jobId, status: 'processing', title, posterUrl, durationSeconds };
+    }
+
+    // ── Inline slideshow fallback (no video model) ───────────
+    console.info('[LearningService] No video model configured — building image slideshow fallback.');
+    const slidesRaw = await slidesPromise;
+    const slides = slidesRaw.map((s) => ({ ...s, imageUrl: s.imageUrl || posterUrl || '' }));
     return {
       jobId: `slides_${Date.now()}`,
+      status: 'completed',
       title,
       videoUrl: '',
       posterUrl: slides[0]?.imageUrl || posterUrl || '',
       durationSeconds: slides.length * 8,
       slides,
     };
+  }
+
+  /** Polls OpenRouter in the background and updates the job entry when done.
+   * @param {Promise} slidesPromise — pre-generated slides (started in generateVideo).
+   */
+  async _startVideoJob(jobId, script, posterUrl, slidesPromise) {
+    const job = () => videoJobs.get(jobId);
+    try {
+      const videoUrl = await this._renderVideo(script);
+      videoJobs.set(jobId, { ...job(), status: 'completed', videoUrl });
+      console.info(`[LearningService] Video job ${jobId} completed.`);
+    } catch (err) {
+      console.warn(`[LearningService] Video job ${jobId} failed (${err?.message}), using pre-generated slides.`);
+      try {
+        // Await the pre-generated slides (should already be resolved by now).
+        const slidesRaw = await (slidesPromise || Promise.resolve([]));
+        const slides = slidesRaw.length > 0
+          ? slidesRaw.map((s) => ({ ...s, imageUrl: s.imageUrl || posterUrl || '' }))
+          : script.scenes.slice(0, 8).map((scene) => ({
+              imageUrl: posterUrl || '',
+              narration: String(scene.narration || ''),
+              duration: 8,
+            }));
+        videoJobs.set(jobId, {
+          ...job(),
+          status: 'completed',
+          videoUrl: '',
+          slides,
+          posterUrl: slides[0]?.imageUrl || posterUrl || '',
+          durationSeconds: slides.length * 8,
+        });
+      } catch (fallbackErr) {
+        videoJobs.set(jobId, { ...job(), status: 'error', error: err.message });
+      }
+    }
+  }
+
+  /** Returns the current state of a video job, or null if not found / expired. */
+  getVideoStatus(jobId) {
+    const job = videoJobs.get(jobId);
+    if (!job) return null;
+    // Evict old finished jobs
+    if (job.status !== 'processing' && Date.now() - job.createdAt > VIDEO_JOB_TTL_MS) {
+      videoJobs.delete(jobId);
+      return null;
+    }
+    return job;
   }
 
   async _renderVideo(script) {
@@ -329,8 +392,10 @@ export class LearningDomainService {
     const pollingUrl = genResp?.data?.polling_url;
     if (!pollingUrl) throw new Error('No se obtuvo polling_url del proveedor de video.');
 
-    // Step 2: Poll until the video is ready (Kling can take several minutes)
-    const maxWaitMs = 8 * 60 * 1000; // 8 minutes
+    // Step 2: Poll until the video is ready.
+    // Keep well under the frontend's 5.8-min polling window (70 × 5 s) so the
+    // slideshow fallback has time to materialise before the client gives up.
+    const maxWaitMs = 2 * 60 * 1000; // 2 minutes
     const pollIntervalMs = 6_000;
     const deadline = Date.now() + maxWaitMs;
 
@@ -354,7 +419,7 @@ export class LearningDomainService {
       console.info(`[LearningService] Video generation status: ${jobStatus}, waiting...`);
     }
 
-    throw new Error('Tiempo de espera agotado esperando el video (máx 8 min).');
+    throw new Error('Tiempo de espera agotado esperando el video (máx 2 min).');
   }
 }
 
