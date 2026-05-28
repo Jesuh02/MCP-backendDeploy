@@ -78,6 +78,9 @@ export function createRouter(deps) {
     if (deps.reinforcementController) {
         router.get('/reinforcement/poll-generation/:jobId', deps.reinforcementController.pollGeneration);
     }
+    if (deps.learningController) {
+        router.get('/learning/video/status/:jobId', deps.learningController.getVideoStatus);
+    }
 
     router.use(authMiddleware);
 
