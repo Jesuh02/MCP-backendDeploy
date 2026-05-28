@@ -267,17 +267,17 @@ export class LearningDomainService {
     }
 
     const title = String(script.title || ctx?.topic?.name || 'Video educativo');
-    const firstScene = script.scenes[0] || {};
-    const posterUrl = await this._renderImageSafely(String(firstScene.imagePrompt || title));
     const durationSeconds = Math.max(45, Math.min(120, script.scenes.length * 10));
 
     // ── Async path: video model configured ──────────────────
+    // Return immediately after script generation so the HTTP connection is never
+    // held open longer than ~20 s. Poster + video generation happen in the background.
     if (this.videoModel && process.env.OPENROUTER_API_KEY) {
       const jobId = `video_${Date.now()}`;
       videoJobs.set(jobId, {
         status: 'processing',
         title,
-        posterUrl,
+        posterUrl: '',
         durationSeconds,
         createdAt: Date.now(),
       });
@@ -285,7 +285,7 @@ export class LearningDomainService {
       this._startVideoJob(jobId, script).catch((err) =>
         console.error('[LearningService] Unhandled background video job error:', err?.message)
       );
-      return { jobId, status: 'processing', title, posterUrl, durationSeconds };
+      return { jobId, status: 'processing', title, posterUrl: '', durationSeconds };
     }
 
     // No video model configured — surface an error so the UI shows a clear message.
@@ -296,6 +296,13 @@ export class LearningDomainService {
   async _startVideoJob(jobId, script) {
     const job = () => videoJobs.get(jobId);
     try {
+      // Generate poster image in the background (non-blocking update to the job).
+      const firstScene = script.scenes?.[0] || {};
+      this._renderImageSafely(String(firstScene.imagePrompt || script.title || '')).then((posterUrl) => {
+        const current = videoJobs.get(jobId);
+        if (current) videoJobs.set(jobId, { ...current, posterUrl });
+      });
+
       const cdnUrl = await this._renderVideo(script);
 
       // Download from Kling CDN and upload to Cloudflare R2 for a permanent, CORS-safe URL.
