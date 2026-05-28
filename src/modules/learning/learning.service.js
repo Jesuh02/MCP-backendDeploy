@@ -351,6 +351,7 @@ export class LearningDomainService {
       {
         model: this.videoModel,
         prompt,
+        duration: Number(process.env.OPENROUTER_VIDEO_DURATION) || 10,
       },
       {
         headers: {
