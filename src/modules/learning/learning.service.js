@@ -86,9 +86,10 @@ export class LearningDomainService {
    * @param {import('../ai/learning-context.service.js').LearningContextService} deps.learningContextService
    * @param {object} deps.llmAdapter — must expose chat(systemPrompt, userPrompt, options)
    */
-  constructor({ learningContextService, llmAdapter }) {
+  constructor({ learningContextService, llmAdapter, fileStoragePort = null }) {
     this.learningContextService = learningContextService;
     this.llmAdapter = llmAdapter;
+    this.fileStoragePort = fileStoragePort;
     // Best-in-class OpenRouter models, overridable by env
     this.imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
     this.textModel = process.env.OPENROUTER_LEARNING_MODEL || process.env.OPENROUTER_CHAT_MODEL || 'qwen/qwen-2.5-72b-instruct';
@@ -281,7 +282,7 @@ export class LearningDomainService {
         createdAt: Date.now(),
       });
       // Start background job — do NOT await so the HTTP response is sent immediately.
-      this._startVideoJob(jobId, script, posterUrl).catch((err) =>
+      this._startVideoJob(jobId, script).catch((err) =>
         console.error('[LearningService] Unhandled background video job error:', err?.message)
       );
       return { jobId, status: 'processing', title, posterUrl, durationSeconds };
@@ -291,24 +292,35 @@ export class LearningDomainService {
     throw new Error('No hay modelo de video configurado. Contacta al administrador.');
   }
 
-  /** Polls OpenRouter in the background and updates the job entry when done. */
-  async _startVideoJob(jobId, script, posterUrl) {
+  /** Polls OpenRouter in the background, then uploads the video to R2 for permanent storage. */
+  async _startVideoJob(jobId, script) {
     const job = () => videoJobs.get(jobId);
     try {
-      const videoUrl = await this._renderVideo(script);
-      // Store raw CDN URL privately so the controller can proxy it.
-      // The public-facing videoUrl is built by the controller as the stream endpoint.
-      videoJobs.set(jobId, { ...job(), status: 'completed', _cdnVideoUrl: videoUrl });
+      const cdnUrl = await this._renderVideo(script);
+
+      // Download from Kling CDN and upload to Cloudflare R2 for a permanent, CORS-safe URL.
+      let videoUrl = cdnUrl;
+      if (this.fileStoragePort) {
+        try {
+          const dlResp = await axios.get(cdnUrl, { responseType: 'arraybuffer', timeout: 120_000 });
+          const buffer = Buffer.from(dlResp.data);
+          const contentType = dlResp.headers['content-type'] || 'video/mp4';
+          const { publicUrl } = await this.fileStoragePort.uploadBufferWithAutoKey(
+            buffer, `learning_${jobId}.mp4`, contentType, 'learning/videos'
+          );
+          videoUrl = publicUrl;
+          console.info(`[LearningService] Video job ${jobId} uploaded to R2: ${publicUrl}`);
+        } catch (r2Err) {
+          console.warn(`[LearningService] R2 upload failed for job ${jobId}, falling back to CDN URL: ${r2Err?.message}`);
+        }
+      }
+
+      videoJobs.set(jobId, { ...job(), status: 'completed', videoUrl });
       console.info(`[LearningService] Video job ${jobId} completed.`);
     } catch (err) {
       console.error(`[LearningService] Video job ${jobId} failed: ${err?.message}`);
       videoJobs.set(jobId, { ...job(), status: 'error', error: err.message });
     }
-  }
-
-  /** Returns the raw CDN URL for the stream proxy endpoint. */
-  getCdnVideoUrl(jobId) {
-    return videoJobs.get(jobId)?._cdnVideoUrl || null;
   }
 
   /** Returns the current state of a video job, or null if not found / expired. */

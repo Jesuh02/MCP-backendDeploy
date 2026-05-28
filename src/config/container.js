@@ -503,7 +503,7 @@ export function createContainer() {
     const reinforcementController = new ReinforcementController({ reinforcementService, learningContextService });
 
     // Learning (AI comic + video) — depends on learningContextService for materials and on llmAdapter for chat
-    const learningService = new LearningDomainService({ learningContextService, llmAdapter });
+    const learningService = new LearningDomainService({ learningContextService, llmAdapter, fileStoragePort: storageAdapter });
     const learningController = new LearningController({ learningService });
     const reinforcementResultController = new ReinforcementResultController({ reinforcementResultService });
     const chatMessageController = new ChatMessageController({ chatMessageService });
