@@ -1357,11 +1357,13 @@ export class WhatsAppDomainService {
      *   "envíale a X@y.com un correo con..."
      *   "manda un correo a X@y.com con un excel..."
      *   "envía un email/gmail a X@y.com..."
+     *   "dile a X@y.com que..."
+     *   "escríbele a X@y.com..."
      */
     _isEmailIntent(text) {
         const hasEmailKeyword = /\b(correo|email|gmail|mail)\b/i.test(text);
         const hasEmailAddress = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/.test(text);
-        const hasSendVerb = /\b(env[ií]a(?:le)?|manda(?:le)?|remite|enviar|mandar)\b/i.test(text);
+        const hasSendVerb = /\b(env[ií]a(?:le)?|manda(?:le)?|remite|enviar|mandar|d[ií]le?|av[ií]sa(?:le)?|escr[ií]be(?:le)?|cu[eé]nta(?:le)?|notif[ií]ca(?:le)?|inf[oó]rma(?:le)?|comun[ií]ca(?:le)?)\b/i.test(text);
         return (hasSendVerb && hasEmailKeyword) || (hasSendVerb && hasEmailAddress) || (hasEmailAddress && hasEmailKeyword);
     }
 
@@ -1383,6 +1385,13 @@ export class WhatsAppDomainService {
         let contentDescription = text
             .replace(/env[ií]a(?:le)?(?:\s+a)?\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
             .replace(/manda(?:le)?(?:\s+a)?\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
+            .replace(/d[ií]le?\s+a\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
+            .replace(/av[ií]sa(?:le)?\s+a\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
+            .replace(/escr[ií]be(?:le)?\s+a\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
+            .replace(/cu[eé]nta(?:le)?\s+a\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
+            .replace(/notif[ií]ca(?:le)?\s+a\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
+            .replace(/inf[oó]rma(?:le)?\s+a\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
+            .replace(/comun[ií]ca(?:le)?\s+a\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
             .replace(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, '')
             .replace(/\bpor\s+(?:correo|email|gmail|mail)\b/gi, '')
             .replace(/\bun\s+(?:correo|email|gmail|mail)\s+con\b/gi, '')
@@ -1391,7 +1400,10 @@ export class WhatsAppDomainService {
             .replace(/\bun\s+archivo\b/gi, '')
             .replace(/\benv[ií]a(?:le)?\b/gi, '')
             .replace(/\bmanda(?:le)?\b/gi, '')
-            .replace(/\bdile?\s+(?:a\s+)?/gi, '')
+            .replace(/\bd[ií]le?\s+(?:a\s+)?/gi, '')
+            .replace(/\bav[ií]sa(?:le)?\s+(?:a\s+)?/gi, '')
+            .replace(/\bescr[ií]be(?:le)?\s+(?:a\s+)?/gi, '')
+            .replace(/\bcu[eé]nta(?:le)?\s+(?:a\s+)?/gi, '')
             .replace(/\benv[ií]ale\s+(?:a\s+)?/gi, '')
             .replace(/^[\s,]+|[\s,]+$/g, '')
             .replace(/\s{2,}/g, ' ')
