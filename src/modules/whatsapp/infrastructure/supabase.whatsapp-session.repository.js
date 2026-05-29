@@ -140,12 +140,13 @@ export class SupabaseWhatsAppSessionRepository {
             .from(this.table)
             .upsert(sessionData, { onConflict: 'user_id' })
             .select('*')
-            .single();
+            .maybeSingle();
 
         if (error) {
             console.error('[WhatsAppSessionRepo] save error:', error.message);
             throw new Error(`Error saving WhatsApp session: ${error.message}`);
         }
+        if (!data) throw new Error('Error saving WhatsApp session: no row returned after upsert');
         return WhatsAppSession.fromSupabaseRow(data);
     }
 
@@ -161,7 +162,7 @@ export class SupabaseWhatsAppSessionRepository {
             .update({...updates, updated_at: new Date().toISOString() })
             .eq('id', sessionId)
             .select('*')
-            .single();
+            .maybeSingle();
 
         if (error) {
             console.error('[WhatsAppSessionRepo] update error:', error.message);
