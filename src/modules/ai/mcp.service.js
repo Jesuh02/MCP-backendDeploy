@@ -46,6 +46,26 @@ export class MCPDomainService {
     }
 
     /**
+     * Ejecuta una consulta SQL cruda contra la base de datos.
+     * @param {string} query - Sentencia SQL (SELECT/INSERT/UPDATE/DELETE/WITH).
+     * @returns {Promise<Result>}
+     */
+    async executeQuery(query) {
+        if (!query || typeof query !== 'string' || !query.trim()) {
+            return Result.fail(new ValidationError('query es requerido y debe ser una cadena SQL no vacía'));
+        }
+        if (!this.supabase || typeof this.supabase.executeRawSQL !== 'function') {
+            return Result.fail(new ValidationError('supabaseService no disponible para ejecutar consultas'));
+        }
+        try {
+            const data = await this.supabase.executeRawSQL(query);
+            return Result.ok({ query, results: data, rowCount: Array.isArray(data) ? data.length : null });
+        } catch (err) {
+            return Result.fail(new ValidationError(`Ejecución SQL falló: ${err.message}`));
+        }
+    }
+
+    /**
      * Obtiene información de un usuario.
      * @param {{ userId?: number, username?: string }} params
      * @returns {Promise<Result>}
