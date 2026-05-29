@@ -273,7 +273,11 @@ app.post('/tools/call', async(req, res) => {
 
             if (isSQL) {
                 console.log('📊 Executing raw SQL query...');
-                result = await mcpService.processQuery(args.query, { includeSchema: true });
+                // NOTE: includeSchema=false → el cliente MCP (Claude) tiene la tool
+                // get_database_schema disponible. Adjuntar el esquema completo en
+                // cada respuesta hace que el LLM perciba sólo el esquema y no los
+                // datos. Ver bug reportado: query_database devolvía siempre el esquema.
+                result = await mcpService.processQuery(args.query, { includeSchema: false });
             } else {
                 console.log('🤖 Processing Natural Language Query via Agent...');
                 // Use Agent DIRECTLY for Natural Language (bypasses processQuery snapshot logic)
