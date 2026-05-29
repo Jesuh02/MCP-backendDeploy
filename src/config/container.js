@@ -457,6 +457,7 @@ export function createContainer() {
         mcpDomainService: mcpServiceLegacy,
         excelService,
         pdfService,
+        emailService: emailAdapter,
         llmDomainService,
         submissionRepository: submissionRepo,
         progressRepository: progressRepo,

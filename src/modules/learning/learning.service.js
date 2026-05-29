@@ -292,7 +292,9 @@ export class LearningDomainService {
     throw new Error('No hay modelo de video configurado. Contacta al administrador.');
   }
 
-  /** Polls OpenRouter in the background, then uploads the video to R2 for permanent storage. */
+  /** Polls OpenRouter in the background, then uploads the video to R2 for permanent storage.
+   * If video rendering fails (e.g. 402 insufficient credits, model unavailable) the job
+   * automatically falls back to a narrated slideshow so the user always gets something. */
   async _startVideoJob(jobId, script) {
     const job = () => videoJobs.get(jobId);
     try {
@@ -303,31 +305,52 @@ export class LearningDomainService {
         if (current) videoJobs.set(jobId, { ...current, posterUrl });
       });
 
-      const cdnUrl = await this._renderVideo(script);
-
-      // Download from Kling CDN and upload to Cloudflare R2 for a permanent, CORS-safe URL.
-      let videoUrl = cdnUrl;
-      if (this.fileStoragePort) {
-        try {
-          const dlResp = await axios.get(cdnUrl, { responseType: 'arraybuffer', timeout: 120_000 });
-          const buffer = Buffer.from(dlResp.data);
-          const contentType = dlResp.headers['content-type'] || 'video/mp4';
-          const { publicUrl } = await this.fileStoragePort.uploadBufferWithAutoKey(
-            buffer, `learning_${jobId}.mp4`, contentType, 'learning/videos'
-          );
-          videoUrl = publicUrl;
-          console.info(`[LearningService] Video job ${jobId} uploaded to R2: ${publicUrl}`);
-        } catch (r2Err) {
-          console.warn(`[LearningService] R2 upload failed for job ${jobId}, falling back to CDN URL: ${r2Err?.message}`);
+      let videoUrl = null;
+      try {
+        const cdnUrl = await this._renderVideo(script);
+        videoUrl = cdnUrl;
+        // Download from Kling CDN and upload to Cloudflare R2 for a permanent, CORS-safe URL.
+        if (this.fileStoragePort) {
+          try {
+            const dlResp = await axios.get(cdnUrl, { responseType: 'arraybuffer', timeout: 120_000 });
+            const buffer = Buffer.from(dlResp.data);
+            const contentType = dlResp.headers['content-type'] || 'video/mp4';
+            const { publicUrl } = await this.fileStoragePort.uploadBufferWithAutoKey(
+              buffer, `learning_${jobId}.mp4`, contentType, 'learning/videos'
+            );
+            videoUrl = publicUrl;
+            console.info(`[LearningService] Video job ${jobId} uploaded to R2: ${publicUrl}`);
+          } catch (r2Err) {
+            console.warn(`[LearningService] R2 upload failed for job ${jobId}, falling back to CDN URL: ${r2Err?.message}`);
+          }
         }
+        videoJobs.set(jobId, { ...job(), status: 'completed', videoUrl });
+        console.info(`[LearningService] Video job ${jobId} completed.`);
+      } catch (videoErr) {
+        const httpStatus = videoErr?.response?.status;
+        const insufficientCredits = httpStatus === 402;
+        console.warn(`[LearningService] Video render failed for job ${jobId} (HTTP ${httpStatus || videoErr?.message}), falling back to slideshow. insufficientCredits=${insufficientCredits}`);
+        const slides = await this._buildSlideshow(script);
+        videoJobs.set(jobId, { ...job(), status: 'completed', slides, insufficientCredits });
+        console.info(`[LearningService] Video job ${jobId} completed as slideshow (${slides.length} slides).`);
       }
-
-      videoJobs.set(jobId, { ...job(), status: 'completed', videoUrl });
-      console.info(`[LearningService] Video job ${jobId} completed.`);
     } catch (err) {
       console.error(`[LearningService] Video job ${jobId} failed: ${err?.message}`);
       videoJobs.set(jobId, { ...job(), status: 'error', error: err.message });
     }
+  }
+
+  /** Generates one image per scene and returns a slides array as a fallback when video is unavailable. */
+  async _buildSlideshow(script) {
+    const scenes = script.scenes.slice(0, 8);
+    const perScene = Math.max(5, Math.round((script.scenes.length * 10) / scenes.length));
+    return await Promise.all(
+      scenes.map(async (scene) => ({
+        narration: String(scene.narration || ''),
+        imageUrl: await this._renderImageSafely(String(scene.imagePrompt || scene.narration || '')),
+        duration: perScene,
+      }))
+    );
   }
 
   /** Returns the current state of a video job, or null if not found / expired. */
