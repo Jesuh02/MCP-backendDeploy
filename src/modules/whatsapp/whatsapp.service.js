@@ -1462,12 +1462,25 @@ export class WhatsAppDomainService {
                 const q = contentDescription || text;
                 console.log(`[WhatsApp] email+Excel request — query: "${q}" → to: ${recipientEmail}`);
 
+                // Try LLM pipeline first; fall back to MCP (same as _maybeHandleExcel)
+                let resolvedData = null;
                 const { rawData } = await this._fetchReportData(q, user, userRoles);
-                if (!rawData || rawData.length === 0) {
+                if (rawData && rawData.length > 0) {
+                    resolvedData = rawData;
+                } else {
+                    console.warn('[WhatsApp] email+Excel: LLM did not return rawQueryData, falling back to MCP generateFromQuery');
+                    const gen = await this.excelService.generateFromQuery({ query: q, userId: user.id, username: user?.username, userRoles });
+                    if (gen && gen.isOk && gen.isOk()) {
+                        const v = gen.getValue();
+                        if (v.data && v.data.length > 0) resolvedData = v.data;
+                    }
+                }
+
+                if (!resolvedData || resolvedData.length === 0) {
                     return '❌ No se encontraron datos para generar el Excel. Intenta con una consulta más específica.';
                 }
 
-                const buffer = await this.excelService.buildBuffer(rawData, q, senderName);
+                const buffer = await this.excelService.buildBuffer(resolvedData, q, senderName);
                 attachments.push({
                     filename: `reporte_${Date.now()}.xlsx`,
                     content: buffer,
@@ -1477,9 +1490,9 @@ export class WhatsAppDomainService {
                 bodyHtml  = this._buildEmailHtml(
                     senderName,
                     'Reporte Excel adjunto',
-                    `<p>Se adjunta el archivo Excel con <strong>${rawData.length} registros</strong> correspondientes a la consulta:</p><p style="background:#F5F3FF;padding:12px 16px;border-radius:8px;font-style:italic;">${q}</p>`,
+                    `<p>Se adjunta el archivo Excel con <strong>${resolvedData.length} registros</strong> correspondientes a la consulta:</p><p style="background:#F5F3FF;padding:12px 16px;border-radius:8px;font-style:italic;">${q}</p>`,
                 );
-                confirmMsg = `✅ Correo enviado a *${recipientEmail}* con el Excel de ${rawData.length} registros.`;
+                confirmMsg = `✅ Correo enviado a *${recipientEmail}* con el Excel de ${resolvedData.length} registros.`;
 
             } else if (attachmentType === 'pdf') {
                 if (!this._hasPermission(userRoles, 'teacher')) {
