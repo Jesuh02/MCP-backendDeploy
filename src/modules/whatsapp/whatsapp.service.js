@@ -1602,12 +1602,22 @@ export class WhatsAppDomainService {
                         const userRequest = (contentDescription && contentDescription.length > 15)
                             ? contentDescription
                             : text;
-                        const prompt = `El usuario de WhatsApp te pidió exactamente esto: "${userRequest}". Tu tarea es redactar el cuerpo de ese correo fielmente a lo que pidió, de parte de ${senderName} (plataforma CourseV), dirigido a ${recipientEmail}. Sé fiel y específico al pedido. Responde ÚNICAMENTE con el cuerpo del correo en HTML bien formateado. No incluyas el asunto, encabezados tipo "Asunto:", ni explicaciones. Máximo 300 palabras.`;
-                        const llmResult = await this.llmService.processPrompt({ prompt, userId: null, fastMode: true });
+                        const prompt = `Eres un redactor de correos. NO consultes bases de datos, NO pidas seleccionar institución, NO uses herramientas: solo redacta el correo solicitado.\n\nRemitente: ${senderName} (plataforma CourseV)\nDestinatario: ${recipientEmail}\n\nPedido textual del remitente (escrito en WhatsApp): "${userRequest}"\n\nRedacta el CUERPO del correo en HTML bien formateado, fiel y específico al pedido, en primera persona del remitente y dirigido al destinatario por su nombre cuando sea posible. Responde ÚNICAMENTE con el HTML del cuerpo (sin "Asunto:", sin explicaciones, sin menús de instituciones). Máximo 300 palabras.`;
+                        const llmResult = await this.llmService.processPrompt({
+                            prompt,
+                            userId: user?.id ?? null,
+                            username: senderName,
+                            userRoles,
+                            fastMode: true,
+                            fromWhatsApp: true,
+                        });
                         if (llmResult?.isOk?.()) {
                             const val = llmResult.getValue();
-                            const llmText = typeof val === 'string' ? val : (val?.response || val?.text || '');
-                            if (llmText && llmText.trim().length > 20) composedBody = llmText.trim();
+                            // Ignore tenant-selection prompts that may slip through.
+                            if (!val?.requiresTenantSelection) {
+                                const llmText = typeof val === 'string' ? val : (val?.response || val?.text || '');
+                                if (llmText && llmText.trim().length > 20) composedBody = llmText.trim();
+                            }
                         }
                     } catch (e) {
                         console.warn('[WhatsApp] LLM email compose failed:', e.message);
