@@ -25,6 +25,8 @@ export class MCPController {
             'Connection': 'keep-alive',
             'X-Accel-Buffering': 'no',
         });
+        // Flush headers immediately so the proxy doesn't buffer until the first write.
+        res.flushHeaders();
 
         // Store connection
         this.sseConnections.set(sessionId, { res, connectedAt: Date.now() });
@@ -39,8 +41,12 @@ export class MCPController {
             : (req.headers['x-forwarded-host']?.split(',')[0].trim() || req.get('host'));
         const baseUrl = process.env.MCP_PUBLIC_URL || `${proto}://${host}`;
         res.write(`event: endpoint\ndata: ${baseUrl}/api/v1/mcp/message?sessionId=${sessionId}\n\n`);
-        // Heartbeat
-        const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 30000);
+        // Heartbeat every 15s — well below Railway's proxy idle timeout (60s).
+        // Use a real SSE event (not just a comment) so intermediate proxies that
+        // skip SSE comment frames still reset their idle-connection timer.
+        const heartbeat = setInterval(() => {
+            if (!res.writableEnded) res.write('event: ping\ndata: {}\n\n');
+        }, 15000);
         req.on('close', () => {
             clearInterval(heartbeat);
             this.sseConnections.delete(sessionId);
