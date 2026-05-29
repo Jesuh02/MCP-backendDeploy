@@ -1511,19 +1511,85 @@ export class WhatsAppDomainService {
                 if (!this._hasPermission(userRoles, 'teacher')) {
                     return '❌ Solo docentes y administradores pueden generar archivos PDF.';
                 }
-                const pdfResponse = await this._maybeHandlePdf(contentDescription || text, user, userRoles, from);
-                const urlMatch = pdfResponse && String(pdfResponse).match(/https?:\/\/\S+/);
-                if (urlMatch) {
-                    const pdfUrl = urlMatch[0];
-                    subject  = `Reporte PDF CourseV — ${new Date().toLocaleDateString('es-CO')}`;
+                if (!this.pdfService) {
+                    return '❌ Servicio de generación de PDF no disponible.';
+                }
+                const q = contentDescription || text;
+                console.log(`[WhatsApp] email+PDF request — query: "${q}" → to: ${recipientEmail}`);
+
+                // Generate PDF using same pipeline as _maybeHandlePdf but WITHOUT
+                // sending chart images to the WhatsApp chat (email flow, not chat flow).
+                const { rawData } = await this._fetchReportData(q, user, userRoles);
+                let pdfResult;
+                if (rawData && rawData.length > 0) {
+                    const isAnalysis = this._isAnalysisRequest(q);
+                    if (isAnalysis) {
+                        const analysisText = await this._generateAnalysisText(q, rawData, user, userRoles);
+                        pdfResult = await this.pdfService.buildAnalyticalReport({
+                            data: rawData, query: q, analysisText: analysisText || '',
+                            userId: user.id, username: user.username,
+                        });
+                    } else {
+                        pdfResult = await this.pdfService.buildFromRawData({
+                            data: rawData, userId: user.id, username: user.username, query: q,
+                        });
+                    }
+                } else {
+                    pdfResult = await this.pdfService.generateFromQuery({
+                        query: q, userId: user.id, username: user?.username, userRoles,
+                    });
+                }
+
+                if (!pdfResult || !pdfResult.isOk || !pdfResult.isOk()) {
+                    const err = pdfResult?.getError?.();
+                    const msg = err?.message || (typeof err === 'string' ? err : 'No se pudo generar el PDF.');
+                    return `❌ ${msg}`;
+                }
+
+                const { url: pdfUrl, rows: pdfRows } = pdfResult.getValue();
+
+                // Fetch the PDF buffer from the uploaded URL to send as a real attachment.
+                // Falls back to a URL link if the fetch fails (e.g. network timeout).
+                let pdfBuffer = null;
+                try {
+                    const fetchTimeoutMs = Number(process.env.PDF_FETCH_TIMEOUT_MS || 20000);
+                    const pdfCtrl = new AbortController();
+                    const pdfTimer = setTimeout(() => pdfCtrl.abort(), fetchTimeoutMs);
+                    const pdfResp = await fetch(pdfUrl, { signal: pdfCtrl.signal });
+                    clearTimeout(pdfTimer);
+                    if (pdfResp.ok) {
+                        const arrayBuf = await pdfResp.arrayBuffer();
+                        pdfBuffer = Buffer.from(arrayBuf);
+                    }
+                } catch (fetchErr) {
+                    console.warn('[WhatsApp] email+PDF: could not fetch buffer for attachment:', fetchErr.message);
+                }
+
+                subject = `Reporte PDF CourseV — ${q.slice(0, 60)}`;
+                if (pdfBuffer) {
+                    attachments.push({
+                        filename: `reporte_${Date.now()}.pdf`,
+                        content: pdfBuffer,
+                        contentType: 'application/pdf',
+                    });
+                    bodyHtml = this._buildEmailHtml(
+                        senderName,
+                        'Reporte PDF adjunto',
+                        `<p>Se adjunta el reporte PDF con <strong>${pdfRows} registros</strong> correspondientes a la consulta:</p>`
+                        + `<p style="background:#F5F3FF;padding:12px 16px;border-radius:8px;font-style:italic;">${q}</p>`
+                        + `<p>También disponible en línea: <a href="${pdfUrl}" style="color:#7C3AED;">${pdfUrl}</a></p>`,
+                    );
+                    confirmMsg = `✅ Correo enviado a *${recipientEmail}* con el PDF adjunto (${pdfRows} registros).`;
+                } else {
+                    // Buffer fetch failed — send URL link as fallback
                     bodyHtml = this._buildEmailHtml(
                         senderName,
                         'Reporte PDF',
-                        `<p>Tu reporte PDF está disponible en el siguiente enlace:</p><p><a href="${pdfUrl}" style="color:#7C3AED;">${pdfUrl}</a></p>`,
+                        `<p>Tu reporte PDF con <strong>${pdfRows} registros</strong> está disponible en:</p>`
+                        + `<p><a href="${pdfUrl}" style="color:#7C3AED;">${pdfUrl}</a></p>`
+                        + `<p style="background:#F5F3FF;padding:12px 16px;border-radius:8px;font-style:italic;">Consulta: ${q}</p>`,
                     );
-                    confirmMsg = `✅ Correo enviado a *${recipientEmail}* con el enlace al PDF.`;
-                } else {
-                    return pdfResponse || '❌ No se pudo generar el PDF para enviar por correo.';
+                    confirmMsg = `✅ Correo enviado a *${recipientEmail}* con el enlace al PDF (${pdfRows} registros).`;
                 }
 
             } else {
