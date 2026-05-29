@@ -336,6 +336,24 @@ export class ExcelDomainService {
         return workbook.xlsx.writeBuffer();
     }
 
+    /**
+     * Builds an Excel Buffer from pre-fetched row data without uploading to storage.
+     * Used for email attachments.
+     * @param {object[]} data
+     * @param {string} [query]
+     * @param {string} [username]
+     * @returns {Promise<Buffer>}
+     */
+    async buildBuffer(data, query = '', username = 'Sistema') {
+        return this._buildStyledWorkbook({
+            data: Array.isArray(data) ? data : [],
+            sheetTitle: 'Reporte',
+            query,
+            username,
+            generatedAt: new Date(),
+        });
+    }
+
     // ─── Data extraction (unchanged logic) ────────────────────────────────────
 
     _extractData(result) {

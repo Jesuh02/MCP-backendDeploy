@@ -58,6 +58,7 @@ export class WhatsAppDomainService {
         chatMessageRepository,
         excelService,
         pdfService,
+        emailService,
     }) {
         this.whatsAppPort = whatsAppPort;
         this.sessionRepo = whatsAppSessionRepo;
@@ -73,6 +74,7 @@ export class WhatsAppDomainService {
         this.chatMessageRepo = chatMessageRepository;
         this.excelService = excelService;
         this.pdfService = pdfService || null;
+        this.emailService = emailService || null;
 
         this.channelAvailabilityCache = {
             checkedAt: 0,
@@ -823,13 +825,14 @@ export class WhatsAppDomainService {
                 // Allow teachers (2) and admins (3) to use MCP queries from WhatsApp.
                 const roleAllows = userRoles.includes(3) || userRoles.includes(4) || userRoles.includes(2);
 
-                // If the user is asking for an Excel or PDF file, skip the direct MCP
+                // If the user is asking for an Excel, PDF, or email, skip the direct MCP
                 // shortcut entirely — let intent classification route the message
                 // to _handleGeneralQuestion (which calls _maybeHandleExcel/_maybeHandlePdf first).
                 const isExcelRequest = /\bexcel\b/i.test(text);
                 const isPdfRequest   = /\bpdf\b/i.test(text);
+                const isEmailRequest = this._isEmailIntent(text);
 
-                if (canUseMCP && !isExcelRequest && !isPdfRequest && (roleAllows || looksLikeDbQuery)) {
+                if (canUseMCP && !isExcelRequest && !isPdfRequest && !isEmailRequest && (roleAllows || looksLikeDbQuery)) {
                     let mcpResult = null;
                     try {
                         mcpResult = await this._callMcpForTenant(
@@ -928,6 +931,9 @@ export class WhatsAppDomainService {
                 switch (intentLabel) {
                     case 'UNLINK':
                         response = await this._handleUnlinkCommand(session.userId);
+                        break;
+                    case 'SEND_EMAIL':
+                        response = await this._handleEmailRequest(text, user, userRoles, from);
                         break;
                     // grading is disabled for WhatsApp, so we never route aquí. If
                     // the intent somehow is set to GRADE_TASK we fall through to the
@@ -1272,7 +1278,10 @@ export class WhatsAppDomainService {
         if (text.startsWith('/mi_progreso')) return { intent: 'MY_PROGRESS', requiresRole: null };
         if (text.startsWith('/mis_instituciones')) return { intent: 'MY_INSTITUTIONS', requiresRole: null };
 
-        // 1b. Heuristic: institution lookup question
+        // 1b. Heuristic: email send request
+        if (this._isEmailIntent(text)) return { intent: 'SEND_EMAIL', requiresRole: null };
+
+        // 1c. Heuristic: institution lookup question
         if (this._isInstitutionLookupIntent(text)) return { intent: 'MY_INSTITUTIONS', requiresRole: null };
 
         // 2. Detección explícita de intención de calificar — en casos ambiguos
@@ -1329,6 +1338,200 @@ export class WhatsAppDomainService {
     _isProgressIntent(text) {
         const keywords = ['progreso', 'avance', 'cómo van', 'como van', 'mi progreso'];
         return keywords.some(kw => text.includes(kw));
+    }
+
+    /**
+     * Detects if the message is a request to send an email to someone.
+     * Matches patterns like:
+     *   "envíale a X@y.com un correo con..."
+     *   "manda un correo a X@y.com con un excel..."
+     *   "envía un email/gmail a X@y.com..."
+     */
+    _isEmailIntent(text) {
+        const hasEmailKeyword = /\b(correo|email|gmail|mail)\b/i.test(text);
+        const hasEmailAddress = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/.test(text);
+        const hasSendVerb = /\b(env[ií]a(?:le)?|manda(?:le)?|remite|enviar|mandar)\b/i.test(text);
+        return (hasSendVerb && hasEmailKeyword) || (hasSendVerb && hasEmailAddress) || (hasEmailAddress && hasEmailKeyword);
+    }
+
+    /**
+     * Parses an email request from natural language text.
+     * Extracts recipient address, attachment type, and content description.
+     * @param {string} text
+     * @returns {{ recipientEmail: string|null, attachmentType: 'excel'|'pdf'|null, contentDescription: string }}
+     */
+    _parseEmailRequest(text) {
+        const emailMatch = text.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
+        const recipientEmail = emailMatch ? emailMatch[1] : null;
+
+        const wantsExcel = /\bexcel\b/i.test(text);
+        const wantsPdf   = /\bpdf\b/i.test(text);
+        const attachmentType = wantsExcel ? 'excel' : wantsPdf ? 'pdf' : null;
+
+        // Strip routing/send parts to get the core content description
+        let contentDescription = text
+            .replace(/env[ií]a(?:le)?(?:\s+a)?\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
+            .replace(/manda(?:le)?(?:\s+a)?\s+[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi, '')
+            .replace(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, '')
+            .replace(/\bpor\s+(?:correo|email|gmail|mail)\b/gi, '')
+            .replace(/\bun\s+(?:correo|email|gmail|mail)\s+con\b/gi, '')
+            .replace(/\bun\s+excel\b/gi, '')
+            .replace(/\bun\s+pdf\b/gi, '')
+            .replace(/\bun\s+archivo\b/gi, '')
+            .replace(/\benv[ií]a(?:le)?\b/gi, '')
+            .replace(/\bmanda(?:le)?\b/gi, '')
+            .replace(/^[\s,]+|[\s,]+$/g, '')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+
+        return { recipientEmail, attachmentType, contentDescription };
+    }
+
+    /**
+     * Builds a branded HTML email body.
+     * @param {string} senderName
+     * @param {string|null} title
+     * @param {string} body  — May be raw text or an HTML snippet.
+     * @returns {string}
+     */
+    _buildEmailHtml(senderName, title, body) {
+        const escapedTitle = title ? String(title).replace(/</g, '&lt;').replace(/>/g, '&gt;') : null;
+        const bodyContent  = String(body || '').trim();
+        const dateStr = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
+        return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F6;padding:32px 0;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr><td style="background:linear-gradient(135deg,#7C3AED 0%,#4F46E5 100%);padding:28px 40px;">
+          <span style="color:#fff;font-size:20px;font-weight:700;">CourseV</span>
+        </td></tr>
+        ${escapedTitle ? `<tr><td style="padding:24px 40px 0;"><span style="font-size:18px;font-weight:700;color:#111827;">${escapedTitle}</span></td></tr>` : ''}
+        <tr><td style="padding:20px 40px;color:#374151;font-size:15px;line-height:1.7;">${bodyContent}</td></tr>
+        <tr><td style="padding:16px 40px;border-top:1px solid #E5E7EB;font-size:12px;color:#9CA3AF;">
+          Enviado por ${String(senderName).replace(/</g, '&lt;')} vía CourseV Platform · ${dateStr} COT
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+    }
+
+    /**
+     * Handler: envío de correo electrónico con contenido opcional (Excel, PDF, texto).
+     * Triggered when the user asks to send an email to someone from WhatsApp.
+     * @param {string}   text       Sanitized incoming message text.
+     * @param {object}   user       Resolved user.
+     * @param {number[]} userRoles  User role IDs.
+     * @param {string|null} from   Sender phone (E.164), used for PDF generation.
+     * @returns {Promise<string>}
+     */
+    async _handleEmailRequest(text, user, userRoles = [], from = null) {
+        if (!this.emailService) {
+            return '❌ Servicio de correo no configurado en el servidor.';
+        }
+
+        const { recipientEmail, attachmentType, contentDescription } = this._parseEmailRequest(text);
+
+        if (!recipientEmail) {
+            return '❌ No encontré una dirección de correo válida.\nEjemplo: _"envíale a usuario@dominio.com un correo con un excel del top 10 de docentes"_';
+        }
+
+        // Validate email format (defense-in-depth; SMTP rejects invalid ones anyway)
+        if (!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(recipientEmail)) {
+            return `❌ La dirección *${recipientEmail}* no parece válida.`;
+        }
+
+        const senderName = user?.username || 'Usuario CourseV';
+        const attachments = [];
+        let bodyHtml = '';
+        let subject  = `Reporte CourseV — ${new Date().toLocaleDateString('es-CO')}`;
+        let confirmMsg = '';
+
+        try {
+            if (attachmentType === 'excel') {
+                if (!this._hasPermission(userRoles, 'teacher')) {
+                    return '❌ Solo docentes y administradores pueden generar archivos Excel.';
+                }
+                if (!this.excelService) {
+                    return '❌ Servicio de Excel no disponible.';
+                }
+                const q = contentDescription || text;
+                console.log(`[WhatsApp] email+Excel request — query: "${q}" → to: ${recipientEmail}`);
+
+                const { rawData } = await this._fetchReportData(q, user, userRoles);
+                if (!rawData || rawData.length === 0) {
+                    return '❌ No se encontraron datos para generar el Excel. Intenta con una consulta más específica.';
+                }
+
+                const buffer = await this.excelService.buildBuffer(rawData, q, senderName);
+                attachments.push({
+                    filename: `reporte_${Date.now()}.xlsx`,
+                    content: buffer,
+                    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                });
+                subject   = `Reporte Excel CourseV — ${q.slice(0, 60)}`;
+                bodyHtml  = this._buildEmailHtml(
+                    senderName,
+                    'Reporte Excel adjunto',
+                    `<p>Se adjunta el archivo Excel con <strong>${rawData.length} registros</strong> correspondientes a la consulta:</p><p style="background:#F5F3FF;padding:12px 16px;border-radius:8px;font-style:italic;">${q}</p>`,
+                );
+                confirmMsg = `✅ Correo enviado a *${recipientEmail}* con el Excel de ${rawData.length} registros.`;
+
+            } else if (attachmentType === 'pdf') {
+                if (!this._hasPermission(userRoles, 'teacher')) {
+                    return '❌ Solo docentes y administradores pueden generar archivos PDF.';
+                }
+                const pdfResponse = await this._maybeHandlePdf(contentDescription || text, user, userRoles, from);
+                const urlMatch = pdfResponse && String(pdfResponse).match(/https?:\/\/\S+/);
+                if (urlMatch) {
+                    const pdfUrl = urlMatch[0];
+                    subject  = `Reporte PDF CourseV — ${new Date().toLocaleDateString('es-CO')}`;
+                    bodyHtml = this._buildEmailHtml(
+                        senderName,
+                        'Reporte PDF',
+                        `<p>Tu reporte PDF está disponible en el siguiente enlace:</p><p><a href="${pdfUrl}" style="color:#7C3AED;">${pdfUrl}</a></p>`,
+                    );
+                    confirmMsg = `✅ Correo enviado a *${recipientEmail}* con el enlace al PDF.`;
+                } else {
+                    return pdfResponse || '❌ No se pudo generar el PDF para enviar por correo.';
+                }
+
+            } else {
+                // Plain text / general email — compose body via LLM when available
+                let composedBody = contentDescription || text;
+                if (this.llmService && typeof this.llmService.processPrompt === 'function') {
+                    try {
+                        const prompt = `Redacta un correo electrónico profesional en español para enviar a ${recipientEmail}. Contenido solicitado: ${contentDescription || text}. El remitente es ${senderName} de la plataforma CourseV. Responde SOLO con el cuerpo del correo en HTML, sin incluir asunto, encabezado ni explicaciones adicionales. Máximo 300 palabras.`;
+                        const llmResult = await this.llmService.processPrompt({ prompt, userId: null, fastMode: true });
+                        if (llmResult?.isOk?.()) {
+                            const val = llmResult.getValue();
+                            const llmText = typeof val === 'string' ? val : (val?.response || val?.text || '');
+                            if (llmText && llmText.trim().length > 20) composedBody = llmText.trim();
+                        }
+                    } catch (e) {
+                        console.warn('[WhatsApp] LLM email compose failed:', e.message);
+                    }
+                }
+                subject   = `Mensaje de CourseV — ${senderName}`;
+                bodyHtml  = this._buildEmailHtml(senderName, null, composedBody);
+                confirmMsg = `✅ Correo enviado a *${recipientEmail}*.`;
+            }
+
+            const result = await this.emailService.sendEmail({ to: recipientEmail, subject, html: bodyHtml, attachments });
+            if (!result.success) {
+                console.error('[WhatsApp] email send failed:', result.error);
+                return `❌ No se pudo enviar el correo: ${result.error || 'error desconocido'}.`;
+            }
+            return confirmMsg;
+
+        } catch (e) {
+            console.error('[WhatsApp] _handleEmailRequest error:', e.message || e);
+            return '❌ Ocurrió un error al enviar el correo. Inténtalo de nuevo.';
+        }
     }
 
     _isInstitutionLookupIntent(text) {

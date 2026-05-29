@@ -67,6 +67,13 @@ const LONG_RUNNING_PATHS = [
     '/learning/comic/regenerate-panel',
 ];
 
+// MCP protocol paths are exempt from both dedup and unauth-throttle.
+// The MCP JSON-RPC protocol sends rapid sequential POSTs (initialize,
+// tools/list, resources/list, tools/call) without Bearer tokens — blocking
+// them breaks the MCP handshake. Each message is inherently unique
+// (different JSON-RPC id + method) so dedup adds no value here.
+const MCP_PATHS = ['/mcp/message', '/mcp/initialize', '/tools/call', '/tools/list', '/resources/list'];
+
 export function idempotencyGuard(req, res, next) {
     // Solo aplicar a métodos de escritura
     if (req.method !== 'POST') return next();
@@ -77,6 +84,10 @@ export function idempotencyGuard(req, res, next) {
     // Skip idempotency for long-running AI generation endpoints.
     // See LONG_RUNNING_PATHS comment above for rationale.
     if (LONG_RUNNING_PATHS.some(p => req.path.endsWith(p))) return next();
+
+    // Skip idempotency entirely for MCP protocol endpoints.
+    // MCP sends rapid sequential unauthenticated POSTs during handshake.
+    if (MCP_PATHS.some(p => req.path.endsWith(p) || req.path.includes('/mcp/'))) return next();
 
     // ── Throttle para requests sin token de autenticación ──
     // Agrupa TODOS los POST sin auth al mismo path+IP, sin importar el body,
