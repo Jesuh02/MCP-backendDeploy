@@ -127,10 +127,15 @@ export class MCPController {
     /** @private */
     async _handleToolCall(toolName, args) {
         switch (toolName) {
-            case 'query_database':
-            case 'get_database_schema':
+            case 'query_database': {
+                const queryResult = await this.mcpService.executeQuery(args?.query);
+                return { content: [{ type: 'text', text: JSON.stringify(queryResult.isOk() ? queryResult.getValue() : { error: queryResult.getError().message }) }], isError: !queryResult.isOk() };
+            }
+
+            case 'get_database_schema': {
                 const schemaResult = await this.mcpService.getDatabaseSchema();
-                return { content: [{ type: 'text', text: JSON.stringify(schemaResult.isOk() ? schemaResult.getValue() : { error: schemaResult.getError().message }) }] };
+                return { content: [{ type: 'text', text: JSON.stringify(schemaResult.isOk() ? schemaResult.getValue() : { error: schemaResult.getError().message }) }], isError: !schemaResult.isOk() };
+            }
 
             case 'get_user_info':
                 const userResult = await this.mcpService.getUserInfo(args);
