@@ -457,6 +457,17 @@ export class WhatsAppDomainService {
                 return;
             }
 
+            // ── Short-circuit: plain-text email requests don't need a DB query tenant ──
+            // Personal emails (no Excel/PDF attachment) don't require any DB lookups,
+            // so skip institution selection entirely and process in the session tenant.
+            const isPlainEmailRequest = this._isEmailIntent(text) && !/\b(excel|pdf)\b/i.test(text);
+            if (isPlainEmailRequest) {
+                await runInTenantContext(sessionTenantId, () =>
+                    this._processMessageWithTenant(from, text, messageBody, waMessageId, session, sessionTenantId, sessionTenantId, null),
+                );
+                return;
+            }
+
             // ── Institution (tenant) selection ─────────────────────────────────────
             // Determine which tenant the LLM should query. This is the "query tenant"
             // and may differ from the "session tenant" when the user explicitly requests
@@ -1380,6 +1391,8 @@ export class WhatsAppDomainService {
             .replace(/\bun\s+archivo\b/gi, '')
             .replace(/\benv[ií]a(?:le)?\b/gi, '')
             .replace(/\bmanda(?:le)?\b/gi, '')
+            .replace(/\bdile?\s+(?:a\s+)?/gi, '')
+            .replace(/\benv[ií]ale\s+(?:a\s+)?/gi, '')
             .replace(/^[\s,]+|[\s,]+$/g, '')
             .replace(/\s{2,}/g, ' ')
             .trim();
@@ -1518,7 +1531,12 @@ export class WhatsAppDomainService {
                 let composedBody = contentDescription || text;
                 if (this.llmService && typeof this.llmService.processPrompt === 'function') {
                     try {
-                        const prompt = `Redacta un correo electrónico profesional en español para enviar a ${recipientEmail}. Contenido solicitado: ${contentDescription || text}. El remitente es ${senderName} de la plataforma CourseV. Responde SOLO con el cuerpo del correo en HTML, sin incluir asunto, encabezado ni explicaciones adicionales. Máximo 300 palabras.`;
+                        // Pass the FULL original text so the LLM can faithfully reproduce
+                        // the user's exact request without losing context during stripping.
+                        const userRequest = (contentDescription && contentDescription.length > 15)
+                            ? contentDescription
+                            : text;
+                        const prompt = `El usuario de WhatsApp te pidió exactamente esto: "${userRequest}". Tu tarea es redactar el cuerpo de ese correo fielmente a lo que pidió, de parte de ${senderName} (plataforma CourseV), dirigido a ${recipientEmail}. Sé fiel y específico al pedido. Responde ÚNICAMENTE con el cuerpo del correo en HTML bien formateado. No incluyas el asunto, encabezados tipo "Asunto:", ni explicaciones. Máximo 300 palabras.`;
                         const llmResult = await this.llmService.processPrompt({ prompt, userId: null, fastMode: true });
                         if (llmResult?.isOk?.()) {
                             const val = llmResult.getValue();
