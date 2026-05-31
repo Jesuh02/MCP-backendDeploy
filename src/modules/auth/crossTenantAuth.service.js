@@ -331,21 +331,33 @@ export class CrossTenantAuthService {
     }
 
     async _tryLogin(entry, username, password) {
-        if (!entry.client) return null;
+        if (!entry.client) {
+            console.warn(`[CrossTenantAuth] Tenant ${entry.id} has no client — skipping probe`);
+            return null;
+        }
+        console.log(`[CrossTenantAuth] Probing tenant ${entry.id} for username=${username}`);
         try {
             const userRepo = new SupabaseUserRepository(entry.client);
             const instRepo = new SupabaseInstitucionRepository(entry.client);
 
             let user = await userRepo.findByUsername(username);
             if (!user) user = await userRepo.findByEmail(username);
-            if (!user) return null;
+            if (!user) {
+                console.warn(`[CrossTenantAuth] No user found in tenant ${entry.id} for username=${username}`);
+                return null;
+            }
 
             if (user.isActive === false) {
+                console.warn(`[CrossTenantAuth] User '${username}' (id=${user.id}) is deactivated in tenant ${entry.id}`);
                 throw new ForbiddenError('Su usuario ha sido desactivado, porfavor contactar con soporte');
             }
 
             const valid = await this._verifyPassword(userRepo, user, password);
-            if (!valid) return null;
+            if (!valid) {
+                console.warn(`[CrossTenantAuth] Password mismatch for user '${username}' (id=${user.id}) in tenant ${entry.id}`);
+                return null;
+            }
+            console.log(`[CrossTenantAuth] Password OK for user '${username}' (id=${user.id}) in tenant ${entry.id}`);
 
             // Run institution enrichment and cedula fetch in parallel (saves ~100-200ms)
             const [, cedulaHash] = await Promise.all([
@@ -405,7 +417,11 @@ export class CrossTenantAuthService {
     }
 
     async _tryGoogleLogin(entry, { email, displayName, avatarUrl, username }) {
-        if (!entry.client) return null;
+        if (!entry.client) {
+            console.warn(`[CrossTenantAuth] Tenant ${entry.id} has no client — skipping Google probe`);
+            return null;
+        }
+        console.log(`[CrossTenantAuth] Probing tenant ${entry.id} for email=${email}`);
         try {
             const userRepo = new SupabaseUserRepository(entry.client);
             const instRepo = new SupabaseInstitucionRepository(entry.client);
@@ -414,7 +430,10 @@ export class CrossTenantAuthService {
             if (!user && username?.trim()?.length >= 3) {
                 user = await userRepo.findByUsername(username.trim());
             }
-            if (!user) return null;
+            if (!user) {
+                console.warn(`[CrossTenantAuth] No user found in tenant ${entry.id} for email=${email} username=${username ?? '(none)'}`);
+                return null;
+            }
 
             if (user.isActive === false) {
                 throw new ForbiddenError('Su usuario ha sido desactivado, porfavor contactar con soporte');
@@ -478,13 +497,13 @@ export class CrossTenantAuthService {
                 if (inst) { user.institucion = inst; return; }
             } catch { /* ignore */ }
         }
-        // Fallback: if institution was not loaded via persona (missing institucion_id),
-        // load the primary institution from this tenant's database so the suspension
-        // check is never silently skipped.
-        try {
-            const allInst = await instRepo.findAllUnfiltered({ limit: 1 });
-            if (allInst.length > 0) user.institucion = allInst[0];
-        } catch { /* ignore */ }
+        // No institucion_id on persona: do NOT auto-attach an arbitrary
+        // institution from the tenant. Doing so would incorrectly mark the
+        // user as suspended whenever the tenant's "first" institution is
+        // suspended, even though the user is not a member of it.
+        // Leaving user.institucion undefined means the suspension check is
+        // safely skipped — this is correct because we can't reliably know
+        // which institution (if any) the user belongs to.
     }
 
     /**

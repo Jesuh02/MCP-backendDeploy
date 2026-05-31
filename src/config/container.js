@@ -8,7 +8,7 @@ import { CachedCourseReadRepository } from '../shared/database/CachedCourseReadR
 import { withCircuitBreaker } from '../shared/infrastructure/CircuitBreaker.js';
 import { SupabaseOutboxRepository } from '../shared/outbox/SupabaseOutboxRepository.js';
 import { OutboxProcessor } from '../shared/outbox/OutboxProcessor.js';
-import { initializeTenantRegistry, createTenantAwareProxy } from './tenantRegistry.js';
+import { initializeTenantRegistry, createTenantAwareProxy, getTenantClient } from './tenantRegistry.js';
 
 import { R2StorageAdapter } from '../modules/storage/infrastructure/r2.storage.adapter.js';
 import { FCMAdapter } from '../modules/notification/infrastructure/fcm.adapter.js';
@@ -109,6 +109,9 @@ import { StorageController } from '../modules/storage/storage.controller.js';
 import { ReinforcementDomainService } from '../modules/reinforcement/reinforcement.service.js';
 import { SupabaseReinforcementRepository } from '../modules/reinforcement/infrastructure/supabase.reinforcement.repository.js';
 import { ReinforcementController } from '../modules/reinforcement/reinforcement.controller.js';
+
+import { LearningDomainService } from '../modules/learning/learning.service.js';
+import { LearningController } from '../modules/learning/learning.controller.js';
 
 import { ReinforcementResultService } from '../modules/reinforcement-result/reinforcement-result.service.js';
 import { SupabaseReinforcementResultRepository } from '../modules/reinforcement-result/infrastructure/supabase.reinforcement-result.repository.js';
@@ -454,6 +457,7 @@ export function createContainer() {
         mcpDomainService: mcpServiceLegacy,
         excelService,
         pdfService,
+        emailService: emailAdapter,
         llmDomainService,
         submissionRepository: submissionRepo,
         progressRepository: progressRepo,
@@ -498,6 +502,10 @@ export function createContainer() {
     const rolController = new RolController({ rolService });
     const fileContextController = new FileContextController({ fileContextService });
     const reinforcementController = new ReinforcementController({ reinforcementService, learningContextService });
+
+    // Learning (AI comic + video) — depends on learningContextService for materials and on llmAdapter for chat
+    const learningService = new LearningDomainService({ learningContextService, llmAdapter, fileStoragePort: storageAdapter });
+    const learningController = new LearningController({ learningService });
     const reinforcementResultController = new ReinforcementResultController({ reinforcementResultService });
     const chatMessageController = new ChatMessageController({ chatMessageService });
 
@@ -517,7 +525,19 @@ export function createContainer() {
     const institucionController = new InstitucionController({ institucionService, userRepository: userRepo });
 
     // ICFES (Saber 11 – adaptive exam)
-    const icfesRepository = client ? new SupabaseIcfesRepository(client) : null;
+    // El banco de preguntas vive en el tenant QA (vxuksizvwrkctrvpciyp).
+    // ICFES_QUESTIONS_TENANT_ID controla qué tenant es la fuente de preguntas;
+    // por defecto 'qa-develop'. Las sesiones y métricas del estudiante se
+    // siguen guardando en el tenant activo de la petición (this.client).
+    const icfesQuestionsClient = (() => {
+        const qTenantId = process.env.ICFES_QUESTIONS_TENANT_ID || 'qa-develop';
+        const qClient = getTenantClient(qTenantId);
+        if (qClient && qClient !== client) {
+            console.log(`[ICFES] Banco de preguntas → tenant "${qTenantId}"`);
+        }
+        return qClient || client;
+    })();
+    const icfesRepository = client ? new SupabaseIcfesRepository(client, icfesQuestionsClient) : null;
     const icfesService = icfesRepository ? new IcfesDomainService({ icfesRepository }) : null;
     const icfesController = icfesService ? new IcfesController({ icfesService }) : null;
 
@@ -564,6 +584,7 @@ export function createContainer() {
         reinforcementController,
         reinforcementResultController,
         chatMessageController,
+        learningController,
 
         ttsController,
         llmController,

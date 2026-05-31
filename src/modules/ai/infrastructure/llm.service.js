@@ -58,9 +58,11 @@ export class LLMService {
         this.model = null;
         this.primaryModel = null;
         this.fallbackModel = null;
+        this.tertiaryModel = null;
         this.provider = 'none';
         this.primaryProvider = 'none';
         this.fallbackProvider = 'none';
+        this.tertiaryProvider = 'none';
         this._initialized = false;
         this._initPromise = null;
         LLMService.instance = this;
@@ -125,6 +127,28 @@ export class LLMService {
             });
         }
 
+        // ── TERTIARY MODEL: OpenRouter with a cheaper/free model ─────────────
+        // Used when BOTH primary (Qwen3.6+) and fallback (DeepSeek) fail.
+        // Configure with OPENROUTER_FALLBACK_MODEL (default: meta-llama/llama-3.3-70b-instruct).
+        if (openRouterApiKey && ChatOpenAI) {
+            const tertiaryModelName = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+            // Only create tertiary if it differs from the primary to avoid redundant calls
+            if (tertiaryModelName !== (process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus')) {
+                console.log(`🧠 Initializing TERTIARY model: ${tertiaryModelName} via OpenRouter (emergency fallback) ...`);
+                this.tertiaryProvider = 'openrouter-fallback';
+                this.tertiaryModel = new ChatOpenAI({
+                    openAIApiKey: openRouterApiKey,
+                    configuration: {
+                        baseURL: 'https://openrouter.ai/api/v1',
+                    },
+                    modelName: tertiaryModelName,
+                    temperature: 0.3,
+                    timeout: 120000,
+                    maxRetries: 1,
+                });
+            }
+        }
+
         // ── Set active model: primary preferred, fallback otherwise ───────────
         if (this.primaryModel) {
             this.model = this.primaryModel;
@@ -157,12 +181,15 @@ export class LLMService {
             await Promise.race([this.model.invoke("Hello"), timeoutPromise]);
             const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
             const fallbackModelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+            const tertiaryModelName = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct';
             return {
                 status: 'connected',
                 provider: this.provider,
                 model: this.provider === 'openrouter' ? primaryModelName : (this.provider === 'deepseek' ? fallbackModelName : 'llama3:8b'),
                 hasFallback: !!this.fallbackModel,
                 fallbackProvider: this.fallbackProvider,
+                hasTertiary: !!this.tertiaryModel,
+                tertiaryModel: this.tertiaryModel ? tertiaryModelName : null,
             };
         } catch (error) {
             console.error("LLM Connection failed:", error);
@@ -186,6 +213,7 @@ export class LLMService {
             : DEFAULT_PRIMARY_TIMEOUT_MS;
         const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
         const fallbackModelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+        const tertiaryModelName = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct';
 
         if (this.primaryModel && this.fallbackModel) {
             try {
@@ -199,12 +227,49 @@ export class LLMService {
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
                 console.log(`✅ RESPONDIÓ: Qwen3.6 Plus (${primaryModelName}) vía OpenRouter en ${elapsed}s`);
                 return result;
-            } catch (err) {
-                console.warn(`⚠️ Qwen3.6 Plus (${primaryModelName}) FALLÓ: ${err.message}. Cambiando a DeepSeek (${fallbackModelName})...`);
+            } catch (primaryErr) {
+                console.warn(`⚠️ Qwen3.6 Plus (${primaryModelName}) FALLÓ: ${primaryErr.message}. Cambiando a DeepSeek (${fallbackModelName})...`);
+                try {
+                    const startTime = Date.now();
+                    const result = await invokeFn(this.fallbackModel);
+                    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                    console.log(`✅ RESPONDIÓ: DeepSeek (${fallbackModelName}) vía DeepSeek API en ${elapsed}s (fallback)`);
+                    return result;
+                } catch (fallbackErr) {
+                    // DeepSeek also failed (e.g. 402 Insufficient Balance, 5xx, timeout)
+                    console.warn(`⚠️ DeepSeek (${fallbackModelName}) FALLÓ: ${fallbackErr.message}.`);
+                    if (this.tertiaryModel) {
+                        console.warn(`⚠️ Intentando modelo terciario OpenRouter (${tertiaryModelName})...`);
+                        const startTime = Date.now();
+                        const result = await invokeFn(this.tertiaryModel);
+                        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                        console.log(`✅ RESPONDIÓ: OpenRouter fallback (${tertiaryModelName}) en ${elapsed}s (tertiary)`);
+                        return result;
+                    }
+                    throw fallbackErr;
+                }
+            }
+        }
+
+        // Primary only (no DeepSeek configured), but tertiary is available as backup
+        if (this.primaryModel && this.tertiaryModel && !this.fallbackModel) {
+            try {
                 const startTime = Date.now();
-                const result = await invokeFn(this.fallbackModel);
+                const result = await Promise.race([
+                    invokeFn(this.primaryModel),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error(`Primary model timeout (${Math.round(PRIMARY_TIMEOUT_MS / 1000)}s)`)), PRIMARY_TIMEOUT_MS)
+                    ),
+                ]);
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                console.log(`✅ RESPONDIÓ: DeepSeek (${fallbackModelName}) vía DeepSeek API en ${elapsed}s (fallback)`);
+                console.log(`✅ RESPONDIÓ: ${primaryModelName} vía OpenRouter en ${elapsed}s`);
+                return result;
+            } catch (err) {
+                console.warn(`⚠️ ${primaryModelName} FALLÓ: ${err.message}. Intentando modelo terciario (${tertiaryModelName})...`);
+                const startTime = Date.now();
+                const result = await invokeFn(this.tertiaryModel);
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                console.log(`✅ RESPONDIÓ: OpenRouter fallback (${tertiaryModelName}) en ${elapsed}s (tertiary)`);
                 return result;
             }
         }

@@ -173,7 +173,10 @@ export class MCPHttpCompatController {
         const isSQLQuery = /^\s*(select|insert|update|delete|with)\s/i.test(args.query);
 
         if (isSQLQuery) {
-            return this.mcpServiceLegacy.processQuery(args.query, { includeSchema: true });
+            // includeSchema=false: el cliente MCP ya dispone de get_database_schema.
+            // Adjuntar el esquema completo (~10KB) en cada respuesta hacía que el
+            // LLM percibiera sólo el schema y no los datos de la consulta.
+            return this.mcpServiceLegacy.processQuery(args.query, { includeSchema: false });
         }
 
         try {

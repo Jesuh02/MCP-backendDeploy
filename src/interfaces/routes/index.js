@@ -40,7 +40,7 @@ import { createCourseActiveGuard } from '../../shared/middleware/courseActiveGua
 import { createTenantMiddleware } from '../../shared/middleware/TenantMiddleware.js';
 import { publicRegisterRoutes } from '../../modules/auth/public-register.routes.js';
 import { icfesRoutes } from '../../modules/icfes/icfes.routes.js';
-import { signLanguageRoutes } from '../../modules/sign-language/sign-language.routes.js';
+import { learningRoutes } from '../../modules/learning/learning.routes.js';
 
 export function createRouter(deps) {
     const router = Router();
@@ -77,6 +77,9 @@ export function createRouter(deps) {
     // Registered BEFORE authMiddleware so a token expiry mid-poll doesn't return 401.
     if (deps.reinforcementController) {
         router.get('/reinforcement/poll-generation/:jobId', deps.reinforcementController.pollGeneration);
+    }
+    if (deps.learningController) {
+        router.get('/learning/video/status/:jobId', deps.learningController.getVideoStatus);
     }
 
     router.use(authMiddleware);
@@ -129,7 +132,10 @@ export function createRouter(deps) {
         router.use('/icfes', icfesRoutes(deps));
     }
 
+    if (deps.learningController) {
+        router.use('/learning', learningRoutes(deps));
+    }
+
     return router;
 }
 export default createRouter;
-

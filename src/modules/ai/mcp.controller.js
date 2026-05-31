@@ -25,6 +25,8 @@ export class MCPController {
             'Connection': 'keep-alive',
             'X-Accel-Buffering': 'no',
         });
+        // Flush headers immediately so the proxy doesn't buffer until the first write.
+        res.flushHeaders();
 
         // Store connection
         this.sseConnections.set(sessionId, { res, connectedAt: Date.now() });
@@ -39,8 +41,12 @@ export class MCPController {
             : (req.headers['x-forwarded-host']?.split(',')[0].trim() || req.get('host'));
         const baseUrl = process.env.MCP_PUBLIC_URL || `${proto}://${host}`;
         res.write(`event: endpoint\ndata: ${baseUrl}/api/v1/mcp/message?sessionId=${sessionId}\n\n`);
-        // Heartbeat
-        const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 30000);
+        // Heartbeat every 15s — well below Railway's proxy idle timeout (60s).
+        // Use a real SSE event (not just a comment) so intermediate proxies that
+        // skip SSE comment frames still reset their idle-connection timer.
+        const heartbeat = setInterval(() => {
+            if (!res.writableEnded) res.write('event: ping\ndata: {}\n\n');
+        }, 15000);
         req.on('close', () => {
             clearInterval(heartbeat);
             this.sseConnections.delete(sessionId);
@@ -121,10 +127,15 @@ export class MCPController {
     /** @private */
     async _handleToolCall(toolName, args) {
         switch (toolName) {
-            case 'query_database':
-            case 'get_database_schema':
+            case 'query_database': {
+                const queryResult = await this.mcpService.executeQuery(args?.query);
+                return { content: [{ type: 'text', text: JSON.stringify(queryResult.isOk() ? queryResult.getValue() : { error: queryResult.getError().message }) }], isError: !queryResult.isOk() };
+            }
+
+            case 'get_database_schema': {
                 const schemaResult = await this.mcpService.getDatabaseSchema();
-                return { content: [{ type: 'text', text: JSON.stringify(schemaResult.isOk() ? schemaResult.getValue() : { error: schemaResult.getError().message }) }] };
+                return { content: [{ type: 'text', text: JSON.stringify(schemaResult.isOk() ? schemaResult.getValue() : { error: schemaResult.getError().message }) }], isError: !schemaResult.isOk() };
+            }
 
             case 'get_user_info':
                 const userResult = await this.mcpService.getUserInfo(args);

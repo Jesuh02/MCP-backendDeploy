@@ -68,30 +68,48 @@ export class EmailAdapter {
         }
     }
 
-    async sendEmail({ to, subject, html, text }) {
+    /**
+     * Envía un email con soporte de adjuntos.
+     * @param {object} options
+     * @param {string} options.to
+     * @param {string} options.subject
+     * @param {string} options.html
+     * @param {string} [options.text]
+     * @param {{ filename: string, content: Buffer|string, contentType: string }[]} [options.attachments]
+     */
+    async sendEmail({ to, subject, html, text, attachments = [] }) {
         switch (this.provider) {
             case 'resend':
-                return this._sendViaResend({ to, subject, html, text });
+                return this._sendViaResend({ to, subject, html, text, attachments });
             case 'brevo':
-                return this._sendViaBrevo({ to, subject, html, text });
+                return this._sendViaBrevo({ to, subject, html, text, attachments });
             default:
                 console.warn('EmailAdapter: No provider — email not sent');
                 return { success: false, error: 'No email provider configured' };
         }
     }
 
-    async _sendViaResend({ to, subject, html, text }) {
+    async _sendViaResend({ to, subject, html, text, attachments = [] }) {
         // Ceder a Brevo si se supera la cuota del plan free
         if (this._resendOverQuota()) {
             console.warn(`⚠️  Resend cuota alcanzada (día=${this._quota.day}, mes=${this._quota.month}) → Brevo fallback`);
-            return this._sendViaBrevo({ to, subject, html, text });
+            return this._sendViaBrevo({ to, subject, html, text, attachments });
         }
         try {
             const { default: axios } = await import('axios');
             const from = process.env.EMAIL_FROM || 'CourseV@yisuscompany.com';
+            // Resend expects attachments as [{ filename, content: base64string }]
+            const resendAttachments = attachments.map(a => ({
+                filename: a.filename,
+                content: Buffer.isBuffer(a.content)
+                    ? a.content.toString('base64')
+                    : a.content,
+            }));
+            const payload = { from, to: Array.isArray(to) ? to : [to], subject, html, text };
+            if (resendAttachments.length > 0) payload.attachments = resendAttachments;
             const response = await axios.post(
                 'https://api.resend.com/emails',
-                { from, to: Array.isArray(to) ? to : [to], subject, html, text },
+                payload,
                 { headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' } },
             );
             this._tickResend();
@@ -102,9 +120,9 @@ export class EmailAdapter {
             // 429 = cuota agotada en Resend → Brevo fallback
             if (status === 429 || err.response?.data?.statusCode === 429) {
                 console.warn('⚠️  Resend HTTP 429 → Brevo fallback');
-                return this._sendViaBrevo({ to, subject, html, text });
+                return this._sendViaBrevo({ to, subject, html, text, attachments });
             }
-            if (this._brevoTransporter) return this._sendViaBrevo({ to, subject, html, text });
+            if (this._brevoTransporter) return this._sendViaBrevo({ to, subject, html, text, attachments });
             return { success: false, error: err.message };
         }
     }
@@ -113,19 +131,27 @@ export class EmailAdapter {
      * Brevo SMTP — fallback automático de cuota/error de Resend.
      * Límites Brevo free: 300 emails/día.
      */
-    async _sendViaBrevo({ to, subject, html, text }) {
+    async _sendViaBrevo({ to, subject, html, text, attachments = [] }) {
         try {
             const from = process.env.EMAIL_FROM || 'CourseV@yisuscompany.com';
             if (!this._brevoTransporter) {
                 return { success: false, error: 'Brevo not configured (missing BREVO_SMTP_USER / BREVO_SMTP_PASSWORD)' };
             }
-            const info = await this._brevoTransporter.sendMail({
+            // nodemailer attachments: [{ filename, content: Buffer, contentType }]
+            const nodemailerAttachments = attachments.map(a => ({
+                filename: a.filename,
+                content: a.content,
+                contentType: a.contentType || 'application/octet-stream',
+            }));
+            const mailOptions = {
                 from: `"CourseV" <${from}>`,
                 to: Array.isArray(to) ? to.join(', ') : to,
                 subject,
                 html,
                 text,
-            });
+            };
+            if (nodemailerAttachments.length > 0) mailOptions.attachments = nodemailerAttachments;
+            const info = await this._brevoTransporter.sendMail(mailOptions);
             return { success: true, messageId: info.messageId };
         } catch (err) {
             console.error('EmailAdapter Brevo error:', err.message);
