@@ -405,7 +405,11 @@ export class CrossTenantAuthService {
     }
 
     async _tryGoogleLogin(entry, { email, displayName, avatarUrl, username }) {
-        if (!entry.client) return null;
+        if (!entry.client) {
+            console.warn(`[CrossTenantAuth] Tenant ${entry.id} has no client — skipping Google probe`);
+            return null;
+        }
+        console.log(`[CrossTenantAuth] Probing tenant ${entry.id} for email=${email}`);
         try {
             const userRepo = new SupabaseUserRepository(entry.client);
             const instRepo = new SupabaseInstitucionRepository(entry.client);
@@ -414,7 +418,10 @@ export class CrossTenantAuthService {
             if (!user && username?.trim()?.length >= 3) {
                 user = await userRepo.findByUsername(username.trim());
             }
-            if (!user) return null;
+            if (!user) {
+                console.warn(`[CrossTenantAuth] No user found in tenant ${entry.id} for email=${email} username=${username ?? '(none)'}`);
+                return null;
+            }
 
             if (user.isActive === false) {
                 throw new ForbiddenError('Su usuario ha sido desactivado, porfavor contactar con soporte');
