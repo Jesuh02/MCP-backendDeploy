@@ -11,7 +11,7 @@
  */
 
 import { Router } from 'express';
-import { aiRateLimiter } from '../../shared/middleware/GranularRateLimiters.js';
+import { signLanguageRateLimiter } from '../../shared/middleware/GranularRateLimiters.js';
 
 const ROBOFLOW_BASE = 'https://serverless.roboflow.com';
 const DEFAULT_MODEL = 'lsc-oowco/2';
@@ -19,7 +19,7 @@ const DEFAULT_MODEL = 'lsc-oowco/2';
 export function signLanguageRoutes() {
     const router = Router();
 
-    router.post('/infer', aiRateLimiter, async (req, res) => {
+    router.post('/infer', signLanguageRateLimiter, async (req, res) => {
         const apiKey = process.env.ROBOFLOW_API_KEY;
         const model = process.env.ROBOFLOW_MODEL || DEFAULT_MODEL;
 
@@ -63,6 +63,20 @@ export function signLanguageRoutes() {
             if (!rfRes.ok) {
                 const errBody = await rfRes.text().catch(() => '');
                 console.warn(`[SignLanguage] Roboflow ${rfRes.status}: ${errBody.slice(0, 200)}`);
+
+                // 404 means the model slug is wrong or the project doesn't exist.
+                // Return 503 so the client can show a config-level error.
+                if (rfRes.status === 404) {
+                    return res.status(503).json({
+                        success: false,
+                        error: {
+                            code: 'ROBOFLOW_MODEL_NOT_FOUND',
+                            message: `El modelo "${model}" no existe en Roboflow. Verifica la variable de entorno ROBOFLOW_MODEL.`,
+                            statusCode: 503,
+                        },
+                    });
+                }
+
                 return res.status(502).json({
                     success: false,
                     error: {
