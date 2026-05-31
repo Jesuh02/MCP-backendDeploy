@@ -106,10 +106,13 @@ export class AuthController {
         try {
             const { error, value } = loginSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
-            const result = await this.authService.login(value);
+            // Search all tenant databases in parallel so users in any institution can log in
+            const result = await this.crossTenantAuthService.login(value);
             if (result.isFail()) return next(result.getError());
             const data = result.getValue();
-            _setAuthCookies(res, data.accessToken, data.refreshToken);
+            if (!data.multipleMatches && data.accessToken) {
+                _setAuthCookies(res, data.accessToken, data.refreshToken);
+            }
             res.json({ success: true, data });
         } catch (err) { next(err); }
     };
@@ -141,10 +144,13 @@ export class AuthController {
             const { error, value } = googleLoginSchema.validate(req.body);
             if (error) return next(ValidationError.fromJoi(error));
             const normalized = await normalizeGoogleLoginPayload(value);
-            const result = await this.authService.loginWithGoogle(normalized);
+            // Search all tenant databases in parallel so users in any institution can log in
+            const result = await this.crossTenantAuthService.googleLogin(normalized);
             if (result.isFail()) return next(result.getError());
             const data = result.getValue();
-            _setAuthCookies(res, data.accessToken, data.refreshToken);
+            if (!data.multipleMatches && data.accessToken) {
+                _setAuthCookies(res, data.accessToken, data.refreshToken);
+            }
             res.json({ success: true, data });
         } catch (err) { next(err); }
     };
