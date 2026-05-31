@@ -126,6 +126,7 @@ export function createRouter(deps) {
     router.use('/streaming', videoStreamingRoutes(deps));
     router.use('/rag', ragRoutes(deps));
     router.use('/excel', excelRoutes(deps));
+    router.use('/sign-language', signLanguageRoutes());
 
     if (deps.icfesController) {
         router.use('/icfes', icfesRoutes(deps));
@@ -138,4 +139,3 @@ export function createRouter(deps) {
     return router;
 }
 export default createRouter;
-
