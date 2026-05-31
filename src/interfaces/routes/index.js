@@ -40,6 +40,7 @@ import { createCourseActiveGuard } from '../../shared/middleware/courseActiveGua
 import { createTenantMiddleware } from '../../shared/middleware/TenantMiddleware.js';
 import { publicRegisterRoutes } from '../../modules/auth/public-register.routes.js';
 import { icfesRoutes } from '../../modules/icfes/icfes.routes.js';
+import { signLanguageRoutes } from '../../modules/sign-language/sign-language.routes.js';
 import { learningRoutes } from '../../modules/learning/learning.routes.js';
 
 export function createRouter(deps) {
