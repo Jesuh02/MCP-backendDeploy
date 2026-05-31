@@ -40,6 +40,7 @@ import { createCourseActiveGuard } from '../../shared/middleware/courseActiveGua
 import { createTenantMiddleware } from '../../shared/middleware/TenantMiddleware.js';
 import { publicRegisterRoutes } from '../../modules/auth/public-register.routes.js';
 import { icfesRoutes } from '../../modules/icfes/icfes.routes.js';
+import { signLanguageRoutes } from '../../modules/sign-language/sign-language.routes.js';
 
 export function createRouter(deps) {
     const router = Router();
@@ -122,6 +123,7 @@ export function createRouter(deps) {
     router.use('/streaming', videoStreamingRoutes(deps));
     router.use('/rag', ragRoutes(deps));
     router.use('/excel', excelRoutes(deps));
+    router.use('/sign-language', signLanguageRoutes());
 
     if (deps.icfesController) {
         router.use('/icfes', icfesRoutes(deps));
