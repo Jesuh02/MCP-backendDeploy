@@ -98,17 +98,17 @@ export const paymentRateLimiter = rateLimit({
 });
 
 /**
- * Sign-language inference — 60 req/min por usuario
- * Usado en bucle de cámara en tiempo real; necesita límite más alto
- * que los endpoints LLM/AI que son costosos por petición.
+ * Sign-language inference — 200 req/min por usuario
+ * El frontend captura a ~350ms/frame (≈171 req/min); se deja margen para
+ * picos y para que dos usuarios en el mismo dispositivo no se bloqueen.
  */
 export const signLanguageRateLimiter = rateLimit({
     windowMs: 60000,
-    max: 60,
+    max: 200,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: userKeyGenerator('sign-lang'),
-    handler: createHandler('SignLanguage', 60000, 60),
+    handler: createHandler('SignLanguage', 60000, 200),
 });
 
 export default {
