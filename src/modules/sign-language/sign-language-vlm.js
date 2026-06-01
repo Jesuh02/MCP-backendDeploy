@@ -194,7 +194,7 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
                 { role: 'system', content: SYSTEM_PROMPT },
                 { role: 'user', content: userParts },
             ],
-            max_tokens: 256,
+            max_tokens: 450,
             temperature: 0.1,
             response_format: { type: 'json_object' },
         },
