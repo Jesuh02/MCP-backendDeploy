@@ -16,12 +16,14 @@ Uso (una sola vez, requiere Python 3.10+):
     python -m venv .venv
     .\.venv\Scripts\Activate.ps1
     pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.4.1+cpu
-    pip install "transformers>=4.44" onnx
+    pip install "transformers>=4.44" onnx pillow
     python scripts/convert_sign_language_to_onnx.py
 
-NOTA: se usa torch.onnx.export directamente (no optimum-cli) porque optimum
-no admite image-classification para arquitecturas siglip. Se usa AutoProcessor
-(no AutoFeatureExtractor) porque SigLIP no tiene feature_extractor_type.
+NOTAS:
+- Se usa torch.onnx.export directamente (no optimum-cli) porque optimum no
+  admite image-classification para arquitecturas siglip.
+- Se carga AutoImageProcessor (no AutoProcessor) para evitar arrastrar el
+  tokenizer SentencePiece de SigLIP que no necesitamos para clasificacion.
 """
 
 from __future__ import annotations
@@ -34,13 +36,13 @@ OUT_DIR = Path(__file__).resolve().parent.parent / "models" / "sign-language"
 
 def main() -> None:
     import torch
-    from transformers import AutoProcessor, AutoModelForImageClassification
+    from transformers import AutoImageProcessor, AutoModelForImageClassification
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # -- 1. Descargar modelo --------------------------------------------------
     print(f"[1/3] Descargando modelo: {MODEL_ID} ...", flush=True)
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
+    image_processor = AutoImageProcessor.from_pretrained(MODEL_ID)
     model = AutoModelForImageClassification.from_pretrained(
         MODEL_ID,
         torch_dtype=torch.float32,
@@ -49,9 +51,8 @@ def main() -> None:
     )
     model.eval()
 
-    # Detectar tamano de imagen del preprocesador (SiglipImageProcessor)
-    img_proc = getattr(processor, "image_processor", processor)
-    img_size = getattr(img_proc, "size", None)
+    # Detectar tamano de imagen (SiglipImageProcessor)
+    img_size = getattr(image_processor, "size", None)
     if isinstance(img_size, dict):
         h = img_size.get("height", img_size.get("shortest_edge", 224))
         w = img_size.get("width", img_size.get("shortest_edge", 224))
@@ -96,7 +97,7 @@ def main() -> None:
     # -- 3. Guardar config y preprocesador ------------------------------------
     print("[3/3] Guardando config.json y preprocessor_config.json ...", flush=True)
     model.config.save_pretrained(str(OUT_DIR))
-    processor.save_pretrained(str(OUT_DIR))
+    image_processor.save_pretrained(str(OUT_DIR))
 
     print(f"\nListo. Modelo exportado a: {OUT_DIR}")
     for p in sorted(OUT_DIR.rglob("*")):
