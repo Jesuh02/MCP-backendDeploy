@@ -139,7 +139,11 @@ export function signLanguageRoutes() {
                     model: HF_MODEL_ID,
                     capabilities: {
                         letterClassification: true,
-                        phraseComposition: true,                        clipRecognition: Boolean(process.env.OPENROUTER_API_KEY),                    },
+                        phraseComposition: true,
+                        clipRecognition: Boolean(process.env.OPENROUTER_API_KEY),
+                        twoHandedGestures: Boolean(process.env.OPENROUTER_API_KEY),
+                        motionIntent: Boolean(process.env.OPENROUTER_API_KEY),
+                    },
                 },
             });
         } catch (err) {
