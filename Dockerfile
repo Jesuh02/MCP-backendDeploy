@@ -21,7 +21,8 @@ RUN pip install --no-cache-dir \
         "torch==2.4.1+cpu" \
     && pip install --no-cache-dir \
         "transformers>=4.44,<5" \
-        "onnx>=1.16"
+        "onnx>=1.16" \
+        "pillow>=10"
 
 # Sólo copiamos el script de conversión para maximizar el cache: este stage
 # sólo se reconstruye si cambia el script.
