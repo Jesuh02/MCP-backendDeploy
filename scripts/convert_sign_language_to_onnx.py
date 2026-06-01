@@ -1,80 +1,106 @@
-"""
+﻿"""
 convert_sign_language_to_onnx.py
 ================================
 
 Exporta el modelo `prithivMLmods/Alphabet-Sign-Language-Detection` (SigLIP
-fine-tuned, sólo distribuido en safetensors) a ONNX en el layout que
-`@huggingface/transformers` (Transformers.js v3) espera:
+fine-tuned) a ONNX en el layout que `@huggingface/transformers` v3 espera:
 
     models/sign-language/
         config.json
         preprocessor_config.json
         onnx/
             model.onnx
-            model_quantized.onnx   (opcional, generado por --quantize)
 
 Uso (una sola vez, requiere Python 3.10+):
 
     python -m venv .venv
-    .\\.venv\\Scripts\\Activate.ps1
-    pip install -U "optimum[exporters]>=1.21" transformers torch onnx onnxruntime
+    .\.venv\Scripts\Activate.ps1
+    pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.4.1+cpu
+    pip install "transformers>=4.44" onnx
     python scripts/convert_sign_language_to_onnx.py
 
-Salida: models/sign-language/  (commit a R2 o al repo; ~95 MB)
+NOTA: se usa torch.onnx.export directamente (no optimum-cli) porque optimum
+no admite image-classification para arquitecturas siglip.
 """
 
 from __future__ import annotations
 
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 MODEL_ID = "prithivMLmods/Alphabet-Sign-Language-Detection"
 OUT_DIR = Path(__file__).resolve().parent.parent / "models" / "sign-language"
 
 
-def run(cmd: list[str]) -> None:
-    print(f"\n>>> {' '.join(cmd)}\n", flush=True)
-    subprocess.check_call(cmd)
-
-
 def main() -> None:
+    import torch
+    from transformers import AutoFeatureExtractor, AutoModelForImageClassification
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 1) Exportar el modelo con optimum-cli (genera config.json,
-    #    preprocessor_config.json y model.onnx en OUT_DIR).
-    run([
-        sys.executable, "-m", "optimum.exporters.onnx",
-        "--model", MODEL_ID,
-        "--task", "image-classification",
-        str(OUT_DIR),
-    ])
+    # -- 1. Descargar modelo ---------------------------------------------------
+    print(f"[1/3] Descargando modelo: {MODEL_ID} ...", flush=True)
+    feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_ID)
+    model = AutoModelForImageClassification.from_pretrained(
+        MODEL_ID,
+        torch_dtype=torch.float32,
+        # "eager" desactiva SDPA/flash-attn que no es trazable con torch.onnx
+        attn_implementation="eager",
+    )
+    model.eval()
 
-    # 2) Transformers.js espera el ONNX en subcarpeta `onnx/`.
+    # Detectar tamano de imagen del preprocesador
+    img_size = getattr(feature_extractor, "size", None)
+    if isinstance(img_size, dict):
+        h = img_size.get("height", img_size.get("shortest_edge", 224))
+        w = img_size.get("width", img_size.get("shortest_edge", 224))
+    elif isinstance(img_size, int):
+        h = w = img_size
+    else:
+        h = w = 224
+    print(f"    Tamano de imagen: {h}x{w}", flush=True)
+
+    # -- 2. Exportar a ONNX ---------------------------------------------------
+    # Wrapper que devuelve logits (Tensor plano), no ModelOutput, para que
+    # torch.onnx.export pueda trazar la salida correctamente.
+    class _Wrapper(torch.nn.Module):
+        def __init__(self, m):
+            super().__init__()
+            self.m = m
+
+        def forward(self, pixel_values):
+            return self.m(pixel_values=pixel_values).logits
+
     onnx_subdir = OUT_DIR / "onnx"
     onnx_subdir.mkdir(exist_ok=True)
-    src = OUT_DIR / "model.onnx"
-    if src.exists():
-        dst = onnx_subdir / "model.onnx"
-        if dst.exists():
-            dst.unlink()
-        shutil.move(str(src), str(dst))
-        print(f"Movido: {src.name} -> onnx/{dst.name}")
+    onnx_path = onnx_subdir / "model.onnx"
 
-    # También mover model.onnx_data (pesos externos si el modelo es >2GB,
-    # poco probable aquí, pero por consistencia).
-    data_src = OUT_DIR / "model.onnx_data"
-    if data_src.exists():
-        shutil.move(str(data_src), str(onnx_subdir / "model.onnx_data"))
+    dummy = torch.zeros(1, 3, h, w)
+    print(f"[2/3] Exportando a ONNX (opset 17) -> {onnx_path} ...", flush=True)
+    with torch.no_grad():
+        torch.onnx.export(
+            _Wrapper(model),
+            (dummy,),
+            str(onnx_path),
+            input_names=["pixel_values"],
+            output_names=["logits"],
+            dynamic_axes={
+                "pixel_values": {0: "batch_size"},
+                "logits": {0: "batch_size"},
+            },
+            opset_version=17,
+            do_constant_folding=True,
+        )
+
+    # -- 3. Guardar config y preprocesador ------------------------------------
+    print("[3/3] Guardando config.json y preprocessor_config.json ...", flush=True)
+    model.config.save_pretrained(str(OUT_DIR))
+    feature_extractor.save_pretrained(str(OUT_DIR))
 
     print(f"\nListo. Modelo exportado a: {OUT_DIR}")
-    print("Estructura esperada por Transformers.js:")
     for p in sorted(OUT_DIR.rglob("*")):
         if p.is_file():
             size_mb = p.stat().st_size / (1024 * 1024)
-            rel = p.relative_to(OUT_DIR)
-            print(f"  {rel}  ({size_mb:.1f} MB)")
+            print(f"  {p.relative_to(OUT_DIR)}  ({size_mb:.1f} MB)")
 
 
 if __name__ == "__main__":
