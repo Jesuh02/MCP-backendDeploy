@@ -2,20 +2,23 @@
  * sign-language.routes.js — Inferencia local con Transformers.js (ONNX).
  *
  * Modelo: prithivMLmods/Alphabet-Sign-Language-Detection (SigLIP fine-tuned).
- * Como ese modelo NO está desplegado en ningún HuggingFace Inference Provider
- * (el endpoint api-inference.huggingface.co fue retirado y el router devuelve
- * 410 Gone), lo servimos in-process con `@huggingface/transformers` sobre
- * onnxruntime-node.
+ * Como ese modelo NO está desplegado en ningún HuggingFace Inference Provider,
+ * lo servimos in-process con `@huggingface/transformers` sobre onnxruntime-node.
  *
- * Preparación (una sola vez):
+ * Carga de pesos (dos modos, en orden de prioridad):
+ *   1. Local: SIGN_LANGUAGE_MODEL_DIR (o <repo>/models/sign-language) con
+ *      {config.json, preprocessor_config.json, onnx/model.onnx}.
+ *   2. Remoto: SIGN_LANGUAGE_HF_REPO = "tu_usuario/Alphabet-Sign-Language-ONNX"
+ *      Transformers.js descarga del Hub y cachea en SIGN_LANGUAGE_CACHE_DIR
+ *      (default /tmp/transformers-cache). Si el repo es privado se usa
+ *      HF_API_TOKEN.
+ *
+ * Generar los artefactos:
  *   python scripts/convert_sign_language_to_onnx.py
- * Esto genera models/sign-language/{config.json, preprocessor_config.json,
- * onnx/model.onnx}.
+ *   python scripts/upload_sign_language_to_hf.py    # opcional, sube al Hub
  *
- * Variables de entorno opcionales:
- *   SIGN_LANGUAGE_MODEL_DIR  — ruta absoluta al directorio del modelo
- *                              (default: <repo>/models/sign-language)
- *   SIGN_LANGUAGE_DISABLED   — "true" para devolver 503 sin intentar cargar
+ * Otras variables:
+ *   SIGN_LANGUAGE_DISABLED  "true" para devolver 503 sin intentar cargar
  */
 
 import { Router } from 'express';
@@ -30,6 +33,8 @@ const __dirname = path.dirname(__filename);
 const HF_MODEL_ID = 'prithivMLmods/Alphabet-Sign-Language-Detection';
 const DEFAULT_MODEL_DIR = path.resolve(__dirname, '../../../models/sign-language');
 const MODEL_DIR = process.env.SIGN_LANGUAGE_MODEL_DIR || DEFAULT_MODEL_DIR;
+const HF_REPO = (process.env.SIGN_LANGUAGE_HF_REPO || '').trim();
+const CACHE_DIR = process.env.SIGN_LANGUAGE_CACHE_DIR || '/tmp/transformers-cache';
 
 // Singleton del pipeline: se carga una vez y se reutiliza.
 let classifierPromise = null;
@@ -40,29 +45,50 @@ async function getClassifier() {
     if (classifierPromise) return classifierPromise;
 
     classifierPromise = (async () => {
-        const required = ['config.json', 'preprocessor_config.json', 'onnx/model.onnx'];
-        for (const rel of required) {
-            const p = path.join(MODEL_DIR, rel);
-            if (!fs.existsSync(p)) {
-                throw new Error(
-                    `Falta ${rel} en ${MODEL_DIR}. Ejecuta: python scripts/convert_sign_language_to_onnx.py`,
-                );
-            }
+        const hasLocal = ['config.json', 'preprocessor_config.json', 'onnx/model.onnx']
+            .every((rel) => fs.existsSync(path.join(MODEL_DIR, rel)));
+
+        if (!hasLocal && !HF_REPO) {
+            throw new Error(
+                `Falta config.json en ${MODEL_DIR} y SIGN_LANGUAGE_HF_REPO no está definido. ` +
+                `Sube el ONNX a un repo HuggingFace tuyo y exporta ` +
+                `SIGN_LANGUAGE_HF_REPO=tu_usuario/Alphabet-Sign-Language-ONNX, o bien ` +
+                `bundlea los pesos en ${MODEL_DIR}.`,
+            );
         }
 
         const { pipeline, env } = await import('@huggingface/transformers');
 
-        // Forzar uso de archivos locales (sin descargas al hub).
-        env.allowRemoteModels = false;
-        env.allowLocalModels = true;
-        env.localModelPath = path.dirname(MODEL_DIR);
+        if (hasLocal) {
+            env.allowRemoteModels = false;
+            env.allowLocalModels = true;
+            env.localModelPath = path.dirname(MODEL_DIR);
+            const modelName = path.basename(MODEL_DIR); // "sign-language"
+            console.log(`[SignLanguage] Cargando pipeline LOCAL desde ${MODEL_DIR} ...`);
+            const t0 = Date.now();
+            const pipe = await pipeline('image-classification', modelName, { dtype: 'fp32' });
+            console.log(`[SignLanguage] Pipeline listo en ${Date.now() - t0} ms`);
+            return pipe;
+        }
 
-        const modelName = path.basename(MODEL_DIR); // "sign-language"
-        console.log(`[SignLanguage] Cargando pipeline desde ${MODEL_DIR} ...`);
+        // --- Modo remoto: descargar desde el Hub ---
+        try {
+            fs.mkdirSync(CACHE_DIR, { recursive: true });
+        } catch { /* ignore */ }
+
+        env.allowRemoteModels = true;
+        env.allowLocalModels = false;
+        env.cacheDir = CACHE_DIR;
+        env.useFSCache = true;
+
+        // Transformers.js lee process.env.HF_TOKEN para repos privados.
+        if (process.env.HF_API_TOKEN && !process.env.HF_TOKEN) {
+            process.env.HF_TOKEN = process.env.HF_API_TOKEN;
+        }
+
+        console.log(`[SignLanguage] Cargando pipeline REMOTO desde ${HF_REPO} (cache: ${CACHE_DIR}) ...`);
         const t0 = Date.now();
-        const pipe = await pipeline('image-classification', modelName, {
-            dtype: 'fp32',
-        });
+        const pipe = await pipeline('image-classification', HF_REPO, { dtype: 'fp32' });
         console.log(`[SignLanguage] Pipeline listo en ${Date.now() - t0} ms`);
         return pipe;
     })().catch((err) => {
@@ -173,7 +199,7 @@ export function signLanguageRoutes() {
 
             // Si los artefactos no están, devolver el mismo código que usaba la
             // versión antigua para que el frontend active modo simulación.
-            if (/Falta .*\.(json|onnx)/.test(msg)) {
+            if (/Falta .*\.(json|onnx)|SIGN_LANGUAGE_HF_REPO/.test(msg)) {
                 return res.status(503).json({
                     success: false,
                     error: {
