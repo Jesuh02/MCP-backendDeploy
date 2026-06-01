@@ -38,30 +38,67 @@ const MAX_FRAMES = 8;
 const MIN_FRAMES = 1;
 
 const SYSTEM_PROMPT = [
-    'Eres un experto en LENGUAJE DE SEÑAS COLOMBIANO (LSC) y Lengua de Señas',
-    'Española (LSE). Recibirás una SECUENCIA de imágenes (frames) capturadas en',
-    'orden cronológico que muestran a una persona ejecutando UNA seña (palabra)',
-    'o una frase corta. Tu tarea es identificar QUÉ SE ESTÁ SEÑANDO.',
+    'Eres un experto LINGÜISTA en LENGUAJE DE SEÑAS COLOMBIANO (LSC) y Lengua',
+    'de Señas Española (LSE). Recibes una SECUENCIA ORDENADA de frames de video',
+    '(t0, t1, ..., tN) que muestran a una persona ejecutando UNA seña o frase',
+    'corta. Las señas son INHERENTEMENTE MULTIMODALES: dependen de la',
+    'configuración manual, ORIENTACIÓN, LOCACIÓN, MOVIMIENTO (trayectoria,',
+    'velocidad, dirección, repetición) y RASGOS NO MANUALES (expresión facial,',
+    'mirada, postura). Una imagen estática NO basta: tu razonamiento DEBE',
+    'integrar la evolución temporal entre frames.',
+    '',
+    'Procedimiento OBLIGATORIO antes de responder:',
+    '  1. Detecta cuántas manos participan (left, right, both) y si entran en',
+    '     contacto entre sí o tocan la cara/cuerpo.',
+    '  2. Describe internamente la TRAYECTORIA del movimiento (arriba, abajo,',
+    '     circular, hacia adelante, alternado, simétrico, etc.).',
+    '  3. Observa la EXPRESIÓN FACIAL y la CEJA: pregunta si las cejas suben',
+    '     (interrogativa abierta tipo "¿cómo?"), bajan ("¿sí/no?"), o si los',
+    '     labios marcan negación o intensidad.',
+    '  4. Solo entonces decide qué palabra/frase está siendo señada.',
     '',
     'Reglas estrictas de salida:',
-    '  1. Devuelves UN ÚNICO objeto JSON, sin texto adicional, sin ```json```',
-    '     fences, sin explicaciones.',
-    '  2. Esquema EXACTO:',
+    '  1. Devuelves UN ÚNICO objeto JSON, sin texto adicional, sin fences',
+    '     ```json```, sin explicaciones fuera del JSON.',
+    '  2. Esquema EXACTO (todos los campos obligatorios; usa null/[] cuando',
+    '     no aplique pero NUNCA omitas la clave):',
     '     {',
-    '       "text": string,           // palabra/frase reconocida en español natural',
+    '       "text": string,                 // palabra/frase reconocida en español natural',
     '       "kind": "word"|"phrase"|"letter"|"unknown",',
-    '       "confidence": number,     // 0.0 a 1.0',
-    '       "alternatives": string[]  // hasta 2 alternativas plausibles',
+    '       "confidence": number,           // 0.0 a 1.0',
+    '       "alternatives": string[],       // hasta 2 alternativas plausibles',
+    '       "handedness": "left"|"right"|"both"|"none",',
+    '       "motion": {                     // descripción del gesto observado',
+    '         "trajectory": string,         // ej "circular", "lineal-arriba", "alternado"',
+    '         "direction": string|null,     // "up"|"down"|"left"|"right"|"forward"|"none"|null',
+    '         "repeated": boolean,          // ¿se repite la seña dentro del clip?',
+    '         "contact": "none"|"hand-hand"|"hand-face"|"hand-body"',
+    '       },',
+    '       "nonManual": {                  // rasgos no manuales relevantes',
+    '         "facial": string|null,        // ej "cejas-arriba", "labios-fruncidos", "neutra"',
+    '         "intent": "statement"|"question"|"exclamation"|"negation"|"affirmation"|"unknown"',
+    '       },',
+    '       "reasoning": string             // 1 frase corta justificando la decisión',
     '     }',
-    '  3. Si la seña es solo deletreo del alfabeto (una sola letra estática),',
-    '     usa kind="letter" y text con la letra en mayúscula.',
-    '  4. Si es un saludo o frase común (hola, gracias, buenos días, ¿cómo',
-    '     estás?, adiós, por favor, sí, no), úsalos con tildes y signos.',
-    '  5. Si NO puedes identificar la seña con razonable certeza, devuelve',
-    '     kind="unknown", text="", confidence < 0.3.',
-    '  6. NO inventes señas que no sean visibles. Prefiere "unknown" antes que',
-    '     adivinar.',
-    '  7. Idioma de salida: español (es-CO).',
+    '  3. INTERPRETA LA INTENCIÓN del movimiento, no solo la forma:',
+    '     - Si la trayectoria + expresión sugieren pregunta, usa nonManual.intent="question"',
+    '       y aplica signos "¿…?" en text.',
+    '     - Si es exclamación/saludo enfático, usa "exclamation" y "¡…!".',
+    '     - Si es negación (sacudir la mano/cabeza), usa "negation".',
+    '  4. AMBAS MANOS son ciudadanas de primera clase. Muchas señas (CASA,',
+    '     LIBRO, GRACIAS, BUENOS-DÍAS, AYUDAR) requieren las dos. Si solo una',
+    '     mano se mueve mientras la otra hace de base pasiva, eso TAMBIÉN cuenta',
+    '     como handedness="both". No descartes la segunda mano por estar quieta.',
+    '  5. Si la seña es solo deletreo del alfabeto (una sola letra estática,',
+    '     sin desplazamiento significativo), usa kind="letter" y text=letra en',
+    '     mayúscula.',
+    '  6. Saludos/frases comunes deben salir CORRECTAMENTE PUNTUADOS:',
+    '     "Hola", "Gracias", "Buenos días", "¿Cómo estás?", "Adiós", "Por',
+    '     favor", "Sí", "No", "Te amo".',
+    '  7. Si NO puedes identificar la seña con razonable certeza (confidence',
+    '     < 0.3), usa kind="unknown" y text="". NUNCA inventes señas que no se',
+    '     vean. Es preferible "unknown" a una adivinanza.',
+    '  8. Idioma de salida: español (es-CO). Usa ¿? y ¡! cuando aplique.',
 ].join('\n');
 
 /**
@@ -74,6 +111,18 @@ const SYSTEM_PROMPT = [
  *   kind: 'word'|'phrase'|'letter'|'unknown',
  *   confidence: number,
  *   alternatives: string[],
+ *   handedness: 'left'|'right'|'both'|'none',
+ *   motion: {
+ *     trajectory: string,
+ *     direction: 'up'|'down'|'left'|'right'|'forward'|'backward'|'none'|null,
+ *     repeated: boolean,
+ *     contact: 'none'|'hand-hand'|'hand-face'|'hand-body',
+ *   },
+ *   nonManual: {
+ *     facial: string|null,
+ *     intent: 'statement'|'question'|'exclamation'|'negation'|'affirmation'|'unknown',
+ *   },
+ *   reasoning: string,
  *   model: string,
  * }>}
  */
@@ -101,9 +150,17 @@ export async function recognizeSignClip(frames, opts = {}) {
     const userParts = [
         {
             type: 'text',
-            text: opts.context
-                ? `Contexto del usuario: """${opts.context.slice(0, 300)}"""\n\nSe muestran ${sampled.length} frames en orden cronológico. Identifica la seña.`
-                : `Se muestran ${sampled.length} frames en orden cronológico. Identifica la seña ejecutada.`,
+            text: [
+                opts.context
+                    ? `Contexto previo del usuario: """${opts.context.slice(0, 300)}"""`
+                    : null,
+                `Recibes ${sampled.length} frames en orden cronológico (t0 → t${sampled.length - 1}).`,
+                'Analiza la SECUENCIA como un clip de video corto: identifica AMBAS manos,',
+                'la trayectoria del movimiento entre frames, contacto entre manos o con la',
+                'cara, expresión facial y, a partir de todo eso, la INTENCIÓN comunicativa',
+                '(afirmación, pregunta, exclamación, negación, saludo, agradecimiento, etc.).',
+                'Responde con el JSON exacto definido en las reglas del sistema.',
+            ].filter(Boolean).join('\n'),
         },
         ...imageParts,
     ];
@@ -166,7 +223,33 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
         ? parsed.alternatives.filter((x) => typeof x === 'string').slice(0, 3)
         : [];
 
-    return { text, kind, confidence, alternatives, model };
+    const handednessRaw = String(parsed.handedness ?? 'none').toLowerCase();
+    const handedness = ['left', 'right', 'both', 'none'].includes(handednessRaw) ? handednessRaw : 'none';
+
+    const motionRaw = (parsed && typeof parsed.motion === 'object' && parsed.motion) || {};
+    const contactRaw = String(motionRaw.contact ?? 'none').toLowerCase();
+    const directionRaw = motionRaw.direction == null ? null : String(motionRaw.direction).toLowerCase();
+    const motion = {
+        trajectory: typeof motionRaw.trajectory === 'string' ? motionRaw.trajectory.slice(0, 80) : '',
+        direction: ['up', 'down', 'left', 'right', 'forward', 'backward', 'none', null].includes(directionRaw)
+            ? directionRaw
+            : null,
+        repeated: Boolean(motionRaw.repeated),
+        contact: ['none', 'hand-hand', 'hand-face', 'hand-body'].includes(contactRaw) ? contactRaw : 'none',
+    };
+
+    const nonManualRaw = (parsed && typeof parsed.nonManual === 'object' && parsed.nonManual) || {};
+    const intentRaw = String(nonManualRaw.intent ?? 'unknown').toLowerCase();
+    const nonManual = {
+        facial: typeof nonManualRaw.facial === 'string' ? nonManualRaw.facial.slice(0, 60) : null,
+        intent: ['statement', 'question', 'exclamation', 'negation', 'affirmation', 'unknown'].includes(intentRaw)
+            ? intentRaw
+            : 'unknown',
+    };
+
+    const reasoning = typeof parsed.reasoning === 'string' ? parsed.reasoning.slice(0, 240) : '';
+
+    return { text, kind, confidence, alternatives, handedness, motion, nonManual, reasoning, model };
 }
 
 /**
