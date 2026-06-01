@@ -33,11 +33,16 @@ RUN python scripts/convert_sign_language_to_onnx.py \
 
 # =============================================================================
 # Stage 2 — Imagen final de producción (Node 20 + FFmpeg).
+# Usamos node:20-slim (Debian) en lugar de node:20-alpine porque
+# `onnxruntime-node` distribuye binarios enlazados contra glibc; en Alpine
+# (musl) falla con "Error loading shared library ld-linux-x86-64.so.2".
 # =============================================================================
-FROM node:20-alpine
+FROM node:20-slim
 
 # Install FFmpeg for video processing
-RUN apk add --no-cache ffmpeg
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
