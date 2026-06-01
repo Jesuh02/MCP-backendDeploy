@@ -13,16 +13,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar sólo lo necesario para `optimum.exporters.onnx`. Se fija torch CPU
-# para evitar bajar wheels de CUDA (mucho más pesados).
+# Instalar sólo lo necesario para torch.onnx.export. Se fija torch CPU para
+# evitar bajar wheels de CUDA (~1 GB extra innecesario en build).
+# optimum/onnxruntime NO son necesarios: usamos la API nativa de PyTorch.
 RUN pip install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         "torch==2.4.1+cpu" \
     && pip install --no-cache-dir \
-        "optimum[exporters]>=1.21,<2" \
         "transformers>=4.44,<5" \
-        "onnx>=1.16" \
-        "onnxruntime>=1.18"
+        "onnx>=1.16"
 
 # Sólo copiamos el script de conversión para maximizar el cache: este stage
 # sólo se reconstruye si cambia el script.
