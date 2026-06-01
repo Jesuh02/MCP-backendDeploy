@@ -1,9 +1,23 @@
 /**
- * sign-language.routes.js — Inferencia local con Transformers.js (ONNX).
+ * sign-language.routes.js — Dos pipelines complementarias de señas.
  *
- * Modelo: prithivMLmods/Alphabet-Sign-Language-Detection (SigLIP fine-tuned).
- * Como ese modelo NO está desplegado en ningún HuggingFace Inference Provider,
- * lo servimos in-process con `@huggingface/transformers` sobre onnxruntime-node.
+ *   A) ALFABETO (estático, frame-a-frame): clasificación local con
+ *      Transformers.js sobre ONNX usando prithivMLmods/Alphabet-Sign-
+ *      Language-Detection. Útil para deletreo (nombres propios) o cuando
+ *      el usuario hace una sola letra. Endpoints: /infer y
+ *      /session/:id/frame.
+ *
+ *   B) PALABRAS Y FRASES (dinámico, clip multi-frame): reconocimiento
+ *      con un Vision-Language Model (VLM) vía OpenRouter (Qwen2.5-VL /
+ *      Gemini-Flash, ver `sign-language-vlm.js`). Esta es la pieza que
+ *      permite detectar "hola", "gracias", "¿cómo estás?", etc., que un
+ *      clasificador de imagen estática NUNCA puede reconocer porque son
+ *      gestos en movimiento. Endpoints: /recognize-clip y
+ *      /session/:id/clip.
+ *
+ * La sesión (`phrase-composer.js`) acepta ambos tipos de evento y los
+ * intercala en el draft final, que luego pasa por el LLM para
+ * normalizar puntuación, tildes y mayúsculas.
  *
  * Carga de pesos (dos modos, en orden de prioridad):
  *   1. Local: SIGN_LANGUAGE_MODEL_DIR (o <repo>/models/sign-language) con
@@ -28,11 +42,13 @@ import { fileURLToPath } from 'node:url';
 import { signLanguageRateLimiter } from '../../shared/middleware/GranularRateLimiters.js';
 import {
     pushLetter,
+    pushWord,
     finalizeSession,
     deleteSession,
     getSessionDraft,
     composePhrase,
 } from './phrase-composer.js';
+import { recognizeSignClip } from './sign-language-vlm.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -123,8 +139,7 @@ export function signLanguageRoutes() {
                     model: HF_MODEL_ID,
                     capabilities: {
                         letterClassification: true,
-                        phraseComposition: true,
-                    },
+                        phraseComposition: true,                        clipRecognition: Boolean(process.env.OPENROUTER_API_KEY),                    },
                 },
             });
         } catch (err) {
@@ -236,6 +251,91 @@ export function signLanguageRoutes() {
     router.delete('/session/:id', (req, res) => {
         deleteSession(req.params.id);
         return res.json({ success: true, data: { cleared: true } });
+    });
+
+    /**
+     * Reconocimiento de señas DINÁMICAS (palabras/frases) a partir de un
+     * clip de frames. Sin estado: útil para inferencia puntual.
+     * Body: {
+     *   frames: string[],        // base64 (con o sin prefijo data:) de 1-12 frames
+     *   context?: string,        // contexto previo opcional
+     *   model?: string,          // override del modelo VLM
+     * }
+     */
+    router.post('/recognize-clip', signLanguageRateLimiter, async (req, res) => {
+        const guard = guardEnabled(res);
+        if (guard) return guard;
+
+        const frames = decodeClipFrames(req.body?.frames, res);
+        if (!frames) return;
+
+        try {
+            const result = await recognizeSignClip(frames, {
+                context: typeof req.body?.context === 'string' ? req.body.context : undefined,
+                model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+            });
+            return res.json({ success: true, data: result });
+        } catch (err) {
+            return handleVlmError(err, res);
+        }
+    });
+
+    /**
+     * Empuja un clip a la sesión: el VLM lo reconoce como palabra/frase
+     * (o letra si solo hay deletreo) y se añade al draft acumulado.
+     * Body: {
+     *   frames: string[],
+     *   minConfidence?: number,   // default 0.4
+     *   context?: string,
+     *   model?: string,
+     * }
+     */
+    router.post('/session/:id/clip', signLanguageRateLimiter, async (req, res) => {
+        const guard = guardEnabled(res);
+        if (guard) return guard;
+
+        const sessionId = String(req.params.id || '').trim();
+        if (!sessionId) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_SESSION', message: 'sessionId requerido.', statusCode: 400 },
+            });
+        }
+
+        const frames = decodeClipFrames(req.body?.frames, res);
+        if (!frames) return;
+
+        const minConfidence = Number.isFinite(Number(req.body?.minConfidence))
+            ? Number(req.body.minConfidence)
+            : 0.4;
+
+        try {
+            const result = await recognizeSignClip(frames, {
+                context: typeof req.body?.context === 'string' ? req.body.context : undefined,
+                model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+            });
+            let pushed = false;
+            if (result && result.text && result.kind !== 'unknown' && result.confidence >= minConfidence) {
+                if (result.kind === 'letter') {
+                    pushLetter(sessionId, { label: result.text, confidence: result.confidence });
+                } else {
+                    pushWord(sessionId, { text: result.text, confidence: result.confidence });
+                }
+                pushed = true;
+            }
+            const { draft, eventCount } = getSessionDraft(sessionId);
+            return res.json({
+                success: true,
+                data: {
+                    recognition: result,
+                    pushed,
+                    draft,
+                    eventCount,
+                },
+            });
+        } catch (err) {
+            return handleVlmError(err, res);
+        }
     });
 
     /**
@@ -371,6 +471,84 @@ function handleClassifierError(err, res) {
             code: 'SIGN_LANGUAGE_FAILED',
             message: 'Falló la inferencia local del modelo.',
             statusCode: 500,
+        },
+    });
+}
+
+/**
+ * Valida y decodifica un arreglo de frames base64 para el VLM. Responde
+ * 400 y devuelve null si la entrada es inválida.
+ * @returns {Buffer[]|null}
+ */
+function decodeClipFrames(frames, res) {
+    if (!Array.isArray(frames) || frames.length === 0) {
+        res.status(400).json({
+            success: false,
+            error: {
+                code: 'INVALID_CLIP',
+                message: 'Se requiere "frames" como arreglo de imágenes base64.',
+                statusCode: 400,
+            },
+        });
+        return null;
+    }
+    if (frames.length > 12) {
+        res.status(400).json({
+            success: false,
+            error: {
+                code: 'CLIP_TOO_LONG',
+                message: 'Máximo 12 frames por clip.',
+                statusCode: 400,
+            },
+        });
+        return null;
+    }
+    const decoded = [];
+    for (const raw of frames) {
+        if (typeof raw !== 'string' || raw.length < 100) {
+            res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_CLIP',
+                    message: 'Cada frame debe ser una imagen base64 válida.',
+                    statusCode: 400,
+                },
+            });
+            return null;
+        }
+        const clean = raw.includes(',') ? raw.split(',', 2)[1] : raw;
+        try {
+            const buf = Buffer.from(clean, 'base64');
+            if (buf.length < 100) throw new Error('payload muy corto');
+            decoded.push(buf);
+        } catch {
+            res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_CLIP',
+                    message: 'Un frame del clip no es base64 válido.',
+                    statusCode: 400,
+                },
+            });
+            return null;
+        }
+    }
+    return decoded;
+}
+
+function handleVlmError(err, res) {
+    const msg = err?.message || String(err);
+    console.error('[SignLanguage][VLM] Error:', msg);
+    const status = Number.isFinite(err?.statusCode) ? err.statusCode : 502;
+    const code = err?.code || 'VLM_FAILED';
+    return res.status(status).json({
+        success: false,
+        error: {
+            code,
+            message: status === 503
+                ? msg
+                : 'No se pudo reconocer la seña con el modelo de visión.',
+            statusCode: status,
         },
     });
 }

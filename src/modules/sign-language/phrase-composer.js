@@ -27,12 +27,19 @@ const WORD_GAP_MS = 1800;             // gap entre letras → espacio implícito
 const MAX_SEQUENCE_LEN = 240;          // límite duro por sesión
 const LLM_PRIMARY_TIMEOUT_MS = 8000;   // si el LLM tarda más, abortamos
 
-/** @typedef {{ label: string, confidence: number, at: number }} LetterEvent */
+/**
+ * Eventos en la sesión.
+ *   kind="letter" → label es una sola letra (alfabeto, pipeline ONNX).
+ *   kind="word"   → label es una palabra/frase reconocida por el VLM
+ *                   (puede contener espacios o signos de puntuación).
+ *
+ * @typedef {{ kind: 'letter'|'word', label: string, confidence: number, at: number }} ComposerEvent
+ */
 
 /**
  * @typedef {Object} ComposerSession
  * @property {string} id
- * @property {LetterEvent[]} events
+ * @property {ComposerEvent[]} events
  * @property {number} createdAt
  * @property {number} lastTouchedAt
  */
@@ -92,6 +99,36 @@ export function pushLetter(id, detection) {
     }
 
     s.events.push({
+        kind: 'letter',
+        label,
+        confidence: Number(detection?.confidence) || 0,
+        at: now,
+    });
+    s.lastTouchedAt = now;
+    return { draft: buildDraft(s.events), events: s.events };
+}
+
+/**
+ * Registra una palabra/frase completa reconocida por el VLM. Se trata
+ * como un "token" indivisible: siempre va con espacio antes y después
+ * en el draft (no se colapsa con letras adyacentes).
+ *
+ * @param {string} id
+ * @param {{ text: string, confidence?: number }} detection
+ * @returns {{ draft: string, events: ComposerEvent[] }}
+ */
+export function pushWord(id, detection) {
+    const s = getOrCreateSession(id);
+    const now = Date.now();
+    const label = String(detection?.text ?? '').trim();
+    if (!label) return { draft: buildDraft(s.events), events: s.events };
+
+    if (s.events.length >= MAX_SEQUENCE_LEN) {
+        s.events.splice(0, s.events.length - MAX_SEQUENCE_LEN + 1);
+    }
+
+    s.events.push({
+        kind: 'word',
         label,
         confidence: Number(detection?.confidence) || 0,
         at: now,
@@ -113,9 +150,14 @@ function buildDraft(events) {
     for (let i = 0; i < events.length; i++) {
         const e = events[i];
         const prev = events[i - 1];
+        const isWord = e.kind === 'word';
+        const prevWasWord = prev && prev.kind === 'word';
         if (prev) {
             const gap = e.at - prev.at;
-            if (gap > WORD_GAP_MS) {
+            if (isWord || prevWasWord) {
+                // Palabras del VLM siempre separadas con un espacio.
+                if (out && !out.endsWith(' ')) out += ' ';
+            } else if (gap > WORD_GAP_MS) {
                 out += ' ';
             } else if (e.label === prev.label && gap < 700) {
                 // misma letra muy seguida → ignorar duplicado
