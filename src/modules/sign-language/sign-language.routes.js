@@ -26,6 +26,13 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { signLanguageRateLimiter } from '../../shared/middleware/GranularRateLimiters.js';
+import {
+    pushLetter,
+    finalizeSession,
+    deleteSession,
+    getSessionDraft,
+    composePhrase,
+} from './phrase-composer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -109,7 +116,17 @@ export function signLanguageRoutes() {
         }
         try {
             await getClassifier();
-            res.json({ success: true, data: { ready: true, model: HF_MODEL_ID } });
+            res.json({
+                success: true,
+                data: {
+                    ready: true,
+                    model: HF_MODEL_ID,
+                    capabilities: {
+                        letterClassification: true,
+                        phraseComposition: true,
+                    },
+                },
+            });
         } catch (err) {
             res.json({
                 success: true,
@@ -119,109 +136,243 @@ export function signLanguageRoutes() {
     });
 
     router.post('/infer', signLanguageRateLimiter, async (req, res) => {
-        if (process.env.SIGN_LANGUAGE_DISABLED === 'true') {
-            return res.status(503).json({
-                success: false,
-                error: {
-                    code: 'SIGN_LANGUAGE_DISABLED',
-                    message: 'El servicio de detección de señas está deshabilitado.',
-                    statusCode: 503,
-                },
-            });
-        }
+        const guard = guardEnabled(res);
+        if (guard) return guard;
 
-        const imageBase64 = req.body?.imageBase64;
-        if (typeof imageBase64 !== 'string' || imageBase64.length < 100) {
-            return res.status(400).json({
-                success: false,
-                error: {
-                    code: 'INVALID_IMAGE',
-                    message: 'Se requiere "imageBase64" (JPEG/PNG codificado en base64).',
-                    statusCode: 400,
-                },
-            });
-        }
-
-        const cleanBase64 = imageBase64.includes(',')
-            ? imageBase64.split(',', 2)[1]
-            : imageBase64;
-
-        let imageBuffer;
-        try {
-            imageBuffer = Buffer.from(cleanBase64, 'base64');
-            if (imageBuffer.length < 100) throw new Error('payload muy corto');
-        } catch {
-            return res.status(400).json({
-                success: false,
-                error: {
-                    code: 'INVALID_IMAGE',
-                    message: 'imageBase64 no es un buffer válido.',
-                    statusCode: 400,
-                },
-            });
-        }
+        const decoded = decodeBase64Image(req.body?.imageBase64, res);
+        if (!decoded) return;
 
         try {
-            const classifier = await getClassifier();
-            const { RawImage } = await import('@huggingface/transformers');
+            const result = await classifyImage(decoded);
+            if (!result) return res.json({ success: true, data: { detection: null, model: HF_MODEL_ID } });
+            return res.json({ success: true, data: { ...result, model: HF_MODEL_ID } });
+        } catch (err) {
+            return handleClassifierError(err, res);
+        }
+    });
 
-            const mime = detectMime(imageBuffer);
-            const blob = new Blob([imageBuffer], { type: mime });
-            const image = await RawImage.fromBlob(blob);
+    /**
+     * Empuja un frame a una sesión de composición. Devuelve la detección
+     * cruda + el draft acumulado (letras con espacios implícitos por gaps).
+     * Body: { imageBase64, sessionId, minConfidence? }
+     */
+    router.post('/session/:id/frame', signLanguageRateLimiter, async (req, res) => {
+        const guard = guardEnabled(res);
+        if (guard) return guard;
 
-            const preds = await classifier(image, { top_k: 3 });
+        const sessionId = String(req.params.id || '').trim();
+        if (!sessionId) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_SESSION', message: 'sessionId requerido.', statusCode: 400 },
+            });
+        }
 
-            if (!Array.isArray(preds) || preds.length === 0) {
-                return res.json({
-                    success: true,
-                    data: { detection: null, model: HF_MODEL_ID },
-                });
+        const decoded = decodeBase64Image(req.body?.imageBase64, res);
+        if (!decoded) return;
+
+        const minConfidence = Number.isFinite(Number(req.body?.minConfidence))
+            ? Number(req.body.minConfidence)
+            : 0.5;
+
+        try {
+            const result = await classifyImage(decoded);
+            const top = result?.detection ?? null;
+            let pushed = false;
+            if (top && top.confidence >= minConfidence) {
+                pushLetter(sessionId, top);
+                pushed = true;
             }
-
-            const top = preds[0];
+            const { draft, eventCount } = getSessionDraft(sessionId);
             return res.json({
                 success: true,
                 data: {
-                    detection: {
-                        label: String(top.label ?? '').toUpperCase(),
-                        confidence: Number(top.score) || 0,
-                    },
-                    alternatives: preds.slice(1).map((p) => ({
-                        label: String(p.label ?? '').toUpperCase(),
-                        confidence: Number(p.score) || 0,
-                    })),
+                    detection: top,
+                    alternatives: result?.alternatives ?? [],
+                    draft,
+                    eventCount,
+                    pushed,
                     model: HF_MODEL_ID,
                 },
             });
         } catch (err) {
-            const msg = err?.message || String(err);
-            console.error('[SignLanguage] Error en inferencia local:', msg);
+            return handleClassifierError(err, res);
+        }
+    });
 
-            // Si los artefactos no están, devolver el mismo código que usaba la
-            // versión antigua para que el frontend active modo simulación.
-            if (/Falta .*\.(json|onnx)|SIGN_LANGUAGE_HF_REPO/.test(msg)) {
-                return res.status(503).json({
-                    success: false,
-                    error: {
-                        code: 'HF_NOT_CONFIGURED',
-                        message: msg,
-                        statusCode: 503,
-                    },
-                });
-            }
+    /**
+     * Cierra la sesión y devuelve la frase compuesta (LLM cuando esté
+     * disponible, fallback heurístico si no).
+     * Body opcional: { useLLM?: boolean, context?: string, keep?: boolean }
+     */
+    router.post('/session/:id/finalize', signLanguageRateLimiter, async (req, res) => {
+        const guard = guardEnabled(res);
+        if (guard) return guard;
 
+        const sessionId = String(req.params.id || '').trim();
+        if (!sessionId) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_SESSION', message: 'sessionId requerido.', statusCode: 400 },
+            });
+        }
+
+        try {
+            const composed = await finalizeSession(sessionId, {
+                useLLM: req.body?.useLLM !== false,
+                context: typeof req.body?.context === 'string' ? req.body.context.slice(0, 500) : undefined,
+                keep: Boolean(req.body?.keep),
+            });
+            return res.json({ success: true, data: composed });
+        } catch (err) {
+            console.error('[SignLanguage] finalize falló:', err?.message || err);
             return res.status(500).json({
                 success: false,
-                error: {
-                    code: 'SIGN_LANGUAGE_FAILED',
-                    message: 'Falló la inferencia local del modelo.',
-                    statusCode: 500,
-                },
+                error: { code: 'COMPOSE_FAILED', message: 'No se pudo componer la frase.', statusCode: 500 },
+            });
+        }
+    });
+
+    router.delete('/session/:id', (req, res) => {
+        deleteSession(req.params.id);
+        return res.json({ success: true, data: { cleared: true } });
+    });
+
+    /**
+     * Endpoint sin estado: recibe una secuencia cruda de letras (lo que el
+     * frontend acumuló) y devuelve la frase compuesta.
+     * Body: { rawSequence: string, context?: string, useLLM?: boolean }
+     */
+    router.post('/compose', signLanguageRateLimiter, async (req, res) => {
+        const guard = guardEnabled(res);
+        if (guard) return guard;
+
+        const rawSequence = String(req.body?.rawSequence ?? '').slice(0, 1000);
+        if (!rawSequence.trim()) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'EMPTY_SEQUENCE', message: 'rawSequence requerido.', statusCode: 400 },
+            });
+        }
+
+        try {
+            const composed = await composePhrase(rawSequence, {
+                useLLM: req.body?.useLLM !== false,
+                context: typeof req.body?.context === 'string' ? req.body.context.slice(0, 500) : undefined,
+            });
+            return res.json({ success: true, data: composed });
+        } catch (err) {
+            console.error('[SignLanguage] compose falló:', err?.message || err);
+            return res.status(500).json({
+                success: false,
+                error: { code: 'COMPOSE_FAILED', message: 'No se pudo componer la frase.', statusCode: 500 },
             });
         }
     });
 
     return router;
+}
+
+/**
+ * Verifica el flag global de deshabilitado. Si está activo, responde 503
+ * y devuelve la respuesta para que el caller corte (`if (guard) return guard;`).
+ */
+function guardEnabled(res) {
+    if (process.env.SIGN_LANGUAGE_DISABLED === 'true') {
+        return res.status(503).json({
+            success: false,
+            error: {
+                code: 'SIGN_LANGUAGE_DISABLED',
+                message: 'El servicio de detección de señas está deshabilitado.',
+                statusCode: 503,
+            },
+        });
+    }
+    return null;
+}
+
+/**
+ * Decodifica y valida un buffer de imagen base64. Si falla, responde 400
+ * y devuelve null para que el caller corte.
+ * @returns {Buffer|null}
+ */
+function decodeBase64Image(imageBase64, res) {
+    if (typeof imageBase64 !== 'string' || imageBase64.length < 100) {
+        res.status(400).json({
+            success: false,
+            error: {
+                code: 'INVALID_IMAGE',
+                message: 'Se requiere "imageBase64" (JPEG/PNG codificado en base64).',
+                statusCode: 400,
+            },
+        });
+        return null;
+    }
+    const cleanBase64 = imageBase64.includes(',')
+        ? imageBase64.split(',', 2)[1]
+        : imageBase64;
+    try {
+        const buf = Buffer.from(cleanBase64, 'base64');
+        if (buf.length < 100) throw new Error('payload muy corto');
+        return buf;
+    } catch {
+        res.status(400).json({
+            success: false,
+            error: {
+                code: 'INVALID_IMAGE',
+                message: 'imageBase64 no es un buffer válido.',
+                statusCode: 400,
+            },
+        });
+        return null;
+    }
+}
+
+/**
+ * Clasifica un buffer de imagen. Devuelve `null` si el modelo no produce
+ * predicciones, o `{ detection, alternatives }` con top-3.
+ */
+async function classifyImage(imageBuffer) {
+    const classifier = await getClassifier();
+    const { RawImage } = await import('@huggingface/transformers');
+
+    const mime = detectMime(imageBuffer);
+    const blob = new Blob([imageBuffer], { type: mime });
+    const image = await RawImage.fromBlob(blob);
+
+    const preds = await classifier(image, { top_k: 3 });
+    if (!Array.isArray(preds) || preds.length === 0) return null;
+
+    const top = preds[0];
+    return {
+        detection: {
+            label: String(top.label ?? '').toUpperCase(),
+            confidence: Number(top.score) || 0,
+        },
+        alternatives: preds.slice(1).map((p) => ({
+            label: String(p.label ?? '').toUpperCase(),
+            confidence: Number(p.score) || 0,
+        })),
+    };
+}
+
+function handleClassifierError(err, res) {
+    const msg = err?.message || String(err);
+    console.error('[SignLanguage] Error en inferencia local:', msg);
+    if (/Falta .*\.(json|onnx)|SIGN_LANGUAGE_HF_REPO/.test(msg)) {
+        return res.status(503).json({
+            success: false,
+            error: { code: 'HF_NOT_CONFIGURED', message: msg, statusCode: 503 },
+        });
+    }
+    return res.status(500).json({
+        success: false,
+        error: {
+            code: 'SIGN_LANGUAGE_FAILED',
+            message: 'Falló la inferencia local del modelo.',
+            statusCode: 500,
+        },
+    });
 }
 
 /**

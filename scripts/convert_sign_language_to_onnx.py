@@ -16,6 +16,26 @@ IMPORTANTE: Transformers.js v3.x NO registra siglip en el pipeline
 nuestra exportacion ONNX es un grafo plano (pixel_values -> logits) y la
 clasificacion es estructuralmente identica a un ViT, reetiquetamos el
 config como `vit` despues de exportar.
+
+ALCANCE DEL MODELO (LEER ANTES DE TOCAR ESTE SCRIPT)
+----------------------------------------------------
+Este modelo es un clasificador de IMAGEN ESTATICA del alfabeto (A-Z). Por
+diseno NO puede reconocer signos dinamicos (palabras como "hola", que es
+un gesto en movimiento). La comprension de frases completas se resuelve
+en la capa de aplicacion:
+
+    src/modules/sign-language/phrase-composer.js
+        - Acumula letras detectadas frame por frame en una sesion.
+        - Detecta limites de palabra por gaps temporales.
+        - Llama al LLM (Qwen vía OpenRouter / DeepSeek fallback) para
+          convertir secuencias ruidosas (HHOLLA KOMO ESTAS) en espanol
+          natural (Hola, ¿como estas?).
+
+Si en el futuro se quiere reconocimiento word-level real (clasificacion
+de video, no de imagen), reemplazar este script por uno que exporte un
+modelo de video (ej. MViT/VideoMAE finetuned en WLASL) y anadir un
+segundo endpoint `/sign-language/infer-clip` que reciba un buffer de
+frames en lugar de uno solo.
 """
 
 from __future__ import annotations
