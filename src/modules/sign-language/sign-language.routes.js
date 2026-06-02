@@ -320,7 +320,9 @@ export function signLanguageRoutes() {
             });
             let pushed = false;
             if (result && result.text && result.kind !== 'unknown' && result.confidence >= minConfidence) {
-                if (result.kind === 'letter') {
+                if (result.kind === 'letter' || result.kind === 'number') {
+                    // Letras (A-Z) y números (0-9) se empujan como deletreo:
+                    // se concatenan carácter a carácter al draft.
                     pushLetter(sessionId, { label: result.text, confidence: result.confidence });
                 } else {
                     pushWord(sessionId, { text: result.text, confidence: result.confidence });

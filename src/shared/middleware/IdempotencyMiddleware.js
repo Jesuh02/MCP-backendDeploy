@@ -51,6 +51,14 @@ function buildUnauthKey(req) {
 // (e.g. toggle endpoints). They must NOT be deduplicated.
 const EXCLUDED_PATHS = ['/likes/toggle'];
 
+// High-frequency streaming endpoints where identical request bodies are
+// expected and intentional (e.g. sign-language frame capture: consecutive
+// frames of a still hand are byte-for-byte identical by design, yet each
+// POST must reach the classifier so letters and vowels are detected).
+// Deduplication here is catastrophic: it silently blocks all but the first
+// frame for 10 seconds, preventing any letter/vowel detection.
+const STREAMING_PATHS = ['/sign-language/session/'];
+
 // Long-running endpoints (AI generation) whose duration far exceeds the default
 // 10s dedup window. Excluded because:
 //   1. The frontend already serializes calls with its own in-flight flag.
@@ -80,6 +88,11 @@ export function idempotencyGuard(req, res, next) {
 
     // Skip idempotency for intentional toggle endpoints
     if (EXCLUDED_PATHS.some(p => req.path.endsWith(p))) return next();
+
+    // Skip idempotency for high-frequency sign-language streaming endpoints.
+    // Consecutive frames of a still hand are intentionally identical; dedup
+    // would block letter/vowel detection for 10 s at a time.
+    if (STREAMING_PATHS.some(p => req.path.includes(p))) return next();
 
     // Skip idempotency for long-running AI generation endpoints.
     // See LONG_RUNNING_PATHS comment above for rationale.
