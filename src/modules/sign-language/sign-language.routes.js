@@ -48,7 +48,7 @@ import {
     getSessionDraft,
     composePhrase,
 } from './phrase-composer.js';
-import { recognizeSignClip } from './sign-language-vlm.js';
+import { recognizeSignClip, recognizeSignStream } from './sign-language-vlm.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -314,8 +314,15 @@ export function signLanguageRoutes() {
             : 0.4;
 
         try {
+            // Continuidad conversacional: si el cliente no pasa contexto,
+            // usamos el draft acumulado de la sesión como `previousText`
+            // para que el VLM desambigüe mejor en una conversación larga.
+            const sessionDraft = getSessionDraft(sessionId)?.draft || '';
             const result = await recognizeSignClip(frames, {
                 context: typeof req.body?.context === 'string' ? req.body.context : undefined,
+                previousText: typeof req.body?.previousText === 'string'
+                    ? req.body.previousText
+                    : (sessionDraft || undefined),
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
             });
             let pushed = false;
@@ -344,6 +351,84 @@ export function signLanguageRoutes() {
                     pushed,
                     draft,
                     eventCount,
+                },
+            });
+        } catch (err) {
+            return handleVlmError(err, res);
+        }
+    });
+
+    /**
+     * Reconocimiento CONVERSACIONAL: recibe una ráfaga larga de frames
+     * (hasta 240) que cubren varios segundos de conversación y los
+     * segmenta en clips para reconocer cada seña/palabra/frase/oración.
+     *
+     * El cliente puede:
+     *   • Mandar `segments: [{start,end}, ...]` calculados con su propio
+     *     detector de pausas (MediaPipe / motion energy en el navegador).
+     *   • O dejar que el servidor use ventana deslizante con `windowSize`
+     *     y `stride` (defaults: 6 / 3).
+     *
+     * Body: {
+     *   frames: string[],           // base64, hasta 240 frames
+     *   segments?: {start,end}[],
+     *   windowSize?: number,        // 2..8 (default 6)
+     *   stride?: number,            // 1..windowSize (default windowSize/2)
+     *   concurrency?: number,       // 1..4 (default 2)
+     *   minConfidence?: number,     // default 0.4
+     *   context?: string,
+     *   sessionId?: string,         // si viene, los tokens se empujan a la sesión
+     *   model?: string,
+     * }
+     */
+    router.post('/recognize-stream', signLanguageRateLimiter, async (req, res) => {
+        const guard = guardEnabled(res);
+        if (guard) return guard;
+
+        const frames = decodeClipFrames(req.body?.frames, res, /*maxFrames*/ 240);
+        if (!frames) return;
+
+        const segments = Array.isArray(req.body?.segments)
+            ? req.body.segments.filter((s) => s && Number.isFinite(s.start) && Number.isFinite(s.end))
+            : undefined;
+
+        try {
+            const stream = await recognizeSignStream(frames, {
+                segments,
+                windowSize: req.body?.windowSize,
+                stride: req.body?.stride,
+                concurrency: req.body?.concurrency,
+                minConfidence: req.body?.minConfidence,
+                context: typeof req.body?.context === 'string' ? req.body.context : undefined,
+                model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+            });
+
+            // Si el cliente vincula un sessionId, empujamos cada
+            // reconocimiento como token al composer (letter sueltos van
+            // como letter, el resto como word) para que /finalize cierre
+            // la conversación con LLM.
+            const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim() : '';
+            if (sessionId) {
+                for (const seg of stream.segments) {
+                    const rec = seg?.recognition;
+                    if (!rec || rec.kind === 'unknown' || !rec.text) continue;
+                    if (rec.confidence < (Number(req.body?.minConfidence) || 0.4)) continue;
+                    const text = String(rec.text).trim();
+                    const isSingleChar = rec.kind === 'letter' && Array.from(text).length === 1;
+                    if (isSingleChar) {
+                        pushLetter(sessionId, { label: text, confidence: rec.confidence });
+                    } else {
+                        pushWord(sessionId, { text, confidence: rec.confidence });
+                    }
+                }
+            }
+
+            return res.json({
+                success: true,
+                data: {
+                    transcript: stream.transcript,
+                    segments: stream.segments,
+                    sessionDraft: sessionId ? getSessionDraft(sessionId).draft : null,
                 },
             });
         } catch (err) {
@@ -493,7 +578,7 @@ function handleClassifierError(err, res) {
  * 400 y devuelve null si la entrada es inválida.
  * @returns {Buffer[]|null}
  */
-function decodeClipFrames(frames, res) {
+function decodeClipFrames(frames, res, maxFrames = 12) {
     if (!Array.isArray(frames) || frames.length === 0) {
         res.status(400).json({
             success: false,
@@ -505,12 +590,12 @@ function decodeClipFrames(frames, res) {
         });
         return null;
     }
-    if (frames.length > 12) {
+    if (frames.length > maxFrames) {
         res.status(400).json({
             success: false,
             error: {
                 code: 'CLIP_TOO_LONG',
-                message: 'Máximo 12 frames por clip.',
+                message: `Máximo ${maxFrames} frames por petición.`,
                 statusCode: 400,
             },
         });

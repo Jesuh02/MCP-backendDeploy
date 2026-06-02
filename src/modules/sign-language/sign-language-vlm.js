@@ -57,6 +57,38 @@ const SYSTEM_PROMPT = [
     '     labios marcan negación o intensidad.',
     '  4. Solo entonces decide qué palabra/frase está siendo señada.',
     '',
+    'CRITERIOS CUANTITATIVOS PARA "kind" (aplícalos en este orden y SIN ambigüedad).',
+    'Esta clasificación es la fuente de mayor error en evaluaciones previas',
+    '(letter↔number, word↔phrase, phrase↔sentence): respeta estas reglas al pie',
+    'de la letra antes de decidir.',
+    '  • "letter"   ⇢ text es UN SOLO carácter del alfabeto (A-Z, Ñ, vocales con',
+    '                 tilde). La mano permanece estática o con micro-oscilación;',
+    '                 NO hay trayectoria semántica. Si dudas entre letter y',
+    '                 number, recuerda: las letras suelen apoyarse en la',
+    '                 configuración del dactilológico (una sola mano, sin que los',
+    '                 dedos cuenten una cantidad).',
+    '  • "number"   ⇢ text son SOLO dígitos arábigos ("0"…"9", "10", "23",',
+    '                 "100", "1000"). Los números se identifican por dedos',
+    '                 extendidos contables (1-5 una mano, 6-9 configuraciones',
+    '                 específicas, 10+ pueden usar dos manos o repetición).',
+    '                 NUNCA escribas el número con palabras ("cinco") en este',
+    '                 modo: usa la cifra.',
+    '  • "word"     ⇢ text es UNA sola palabra léxica (sin espacios). Ej:',
+    '                 "Hola", "Gracias", "Casa", "Agua", "Adiós". Si tu',
+    '                 transcripción tiene espacios, NO es word.',
+    '  • "phrase"   ⇢ text tiene 2-4 palabras y NO forma oración con sujeto+verbo',
+    '                 conjugado. Ej: "Buenos días", "Por favor", "Muchas',
+    '                 gracias", "Buenas noches". Saludos compuestos van aquí.',
+    '  • "sentence" ⇢ text es una oración completa: incluye verbo conjugado, o',
+    '                 cierra con punto/signo de interrogación/exclamación, o',
+    '                 tiene 5+ palabras. Ej: "¿Cómo estás?", "Te amo mucho.",',
+    '                 "Necesito ayuda por favor.", "Yo voy a la casa".',
+    '  • "unknown"  ⇢ úsalo si confidence<0.3 o no hay señas claras. text="".',
+    'Si tu candidato a kind no satisface su definición, REESCRIBE text o cambia',
+    'kind para que sean COHERENTES. Por ejemplo: si vas a emitir kind="phrase"',
+    'pero text es una sola palabra, baja a "word". Si vas a emitir kind="word"',
+    'pero text contiene un verbo conjugado o un signo "¿?", sube a "sentence".',
+    '',
     'Reglas estrictas de salida:',
     '  1. Devuelves UN ÚNICO objeto JSON, sin texto adicional, sin fences',
     '     ```json```, sin explicaciones fuera del JSON.',
@@ -160,11 +192,16 @@ export async function recognizeSignClip(frames, opts = {}) {
                 opts.context
                     ? `Contexto previo del usuario: """${opts.context.slice(0, 300)}"""`
                     : null,
+                opts.previousText
+                    ? `Señas reconocidas inmediatamente antes en esta conversación: """${opts.previousText.slice(0, 300)}""". Úsalas SOLO como contexto para desambiguar, NO las repitas en tu respuesta.`
+                    : null,
                 `Recibes ${sampled.length} frames en orden cronológico (t0 → t${sampled.length - 1}).`,
                 'Analiza la SECUENCIA como un clip de video corto: identifica AMBAS manos,',
                 'la trayectoria del movimiento entre frames, contacto entre manos o con la',
                 'cara, expresión facial y, a partir de todo eso, la INTENCIÓN comunicativa',
                 '(afirmación, pregunta, exclamación, negación, saludo, agradecimiento, etc.).',
+                'Aplica de forma estricta los CRITERIOS CUANTITATIVOS de "kind" definidos',
+                'en las reglas del sistema: text y kind deben ser COHERENTES entre sí.',
                 'Responde con el JSON exacto definido en las reglas del sistema.',
             ].filter(Boolean).join('\n'),
         },
@@ -255,7 +292,196 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
 
     const reasoning = typeof parsed.reasoning === 'string' ? parsed.reasoning.slice(0, 240) : '';
 
-    return { text, kind, confidence, alternatives, handedness, motion, nonManual, reasoning, model };
+    // Reconcilia kind con la forma del texto: corrige el sesgo del VLM en
+    // los límites letter↔number / word↔phrase / phrase↔sentence que la
+    // matriz de confusión mostró como principales fuentes de error.
+    const reconciled = reconcileKind(text, kind);
+
+    return {
+        text: reconciled.text,
+        kind: reconciled.kind,
+        kindRaw: kind,
+        confidence,
+        alternatives,
+        handedness,
+        motion,
+        nonManual,
+        reasoning,
+        model,
+    };
+}
+
+/**
+ * Reglas determinísticas (puramente textuales) que reasignan `kind` a
+ * partir de la forma de `text`. El VLM acierta el texto la mayoría de
+ * veces, pero confunde la categoría — esta función arregla eso sin
+ * llamadas adicionales.
+ *
+ * Orden de evaluación importa: va de lo más específico a lo más
+ * general. Devuelve el texto normalizado (recortado) y el kind final.
+ *
+ * @param {string} rawText
+ * @param {string} rawKind
+ * @returns {{ text: string, kind: 'letter'|'number'|'word'|'phrase'|'sentence'|'unknown' }}
+ */
+export function reconcileKind(rawText, rawKind) {
+    const text = String(rawText ?? '').trim();
+    if (!text) return { text: '', kind: 'unknown' };
+
+    // 1) Número puro (solo dígitos, opcionalmente con separador de miles).
+    if (/^-?\d{1,3}(?:[.,]?\d{3})*$/.test(text) || /^-?\d+$/.test(text)) {
+        return { text, kind: 'number' };
+    }
+
+    // 2) Letra única (alfabeto latino + Ñ + vocales con tilde + Ü).
+    const chars = Array.from(text);
+    if (chars.length === 1 && /^[A-ZÑÜÁÉÍÓÚ]$/i.test(chars[0])) {
+        return { text: chars[0].toLocaleUpperCase('es'), kind: 'letter' };
+    }
+
+    // Cuenta de palabras léxicas (separadas por whitespace, ignorando
+    // signos de puntuación sueltos).
+    const tokens = text
+        .replace(/[¡¿!?.,;:]+/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+    const wordCount = tokens.length;
+
+    // Heurística de oración: tiene puntuación final, signo de
+    // interrogación/exclamación, o un verbo conjugado típico en español.
+    const hasSentencePunct = /[.!?¡¿]/.test(text);
+    const verbHint = /\b(es|son|soy|eres|está|estoy|estás|estamos|están|hay|tengo|tienes|tiene|tenemos|tienen|quiero|quieres|quiere|necesito|necesitas|necesita|voy|vas|va|vamos|van|hago|haces|hace|hacemos|hacen|puedo|puedes|puede|amo|amas|ama|sé|sabes|sabe|gusta|gustan|llamo|llamas|llama|vivo|vives|vive)\b/i;
+
+    // 3) Oración: 5+ palabras, o puntuación de cierre, o verbo conjugado.
+    if (wordCount >= 5 || hasSentencePunct || verbHint.test(text)) {
+        return { text, kind: 'sentence' };
+    }
+
+    // 4) Palabra única (sin espacios reales).
+    if (wordCount <= 1) {
+        return { text, kind: 'word' };
+    }
+
+    // 5) Resto (2-4 palabras, sin verbo, sin puntuación final): phrase.
+    return { text, kind: 'phrase' };
+}
+
+/**
+ * Reconoce una conversación larga segmentando un stream de frames en
+ * clips independientes y llamando al VLM por cada uno. La segmentación
+ * puede venir explícita (segments=[{start,end}]) o se hace por ventana
+ * deslizante (windowSize, stride).
+ *
+ * Llamadas concurrentes acotadas por `concurrency` para no saturar el
+ * proveedor. Las recogniciones consecutivas idénticas se colapsan.
+ *
+ * @param {Array<Buffer|string>} frames
+ * @param {{
+ *   segments?: Array<{ start: number, end: number }>,
+ *   windowSize?: number,
+ *   stride?: number,
+ *   concurrency?: number,
+ *   minConfidence?: number,
+ *   context?: string,
+ *   model?: string,
+ *   timeoutMs?: number,
+ * }} [opts]
+ * @returns {Promise<{
+ *   segments: Array<{ start: number, end: number, recognition: object|null }>,
+ *   transcript: string,
+ * }>}
+ */
+export async function recognizeSignStream(frames, opts = {}) {
+    if (!Array.isArray(frames) || frames.length === 0) {
+        throw Object.assign(new Error('Se requiere al menos un frame.'), {
+            code: 'EMPTY_STREAM', statusCode: 400,
+        });
+    }
+    const windowSize = clampInt(opts.windowSize, 2, MAX_FRAMES, 6);
+    const stride = clampInt(opts.stride, 1, windowSize, Math.max(1, Math.floor(windowSize / 2)));
+    const concurrency = clampInt(opts.concurrency, 1, 4, 2);
+    const minConfidence = Number.isFinite(opts.minConfidence) ? opts.minConfidence : 0.4;
+
+    const segments = Array.isArray(opts.segments) && opts.segments.length
+        ? opts.segments
+            .map((s) => ({
+                start: Math.max(0, Math.min(frames.length, Math.floor(s.start ?? 0))),
+                end:   Math.max(0, Math.min(frames.length, Math.floor(s.end ?? 0))),
+            }))
+            .filter((s) => s.end - s.start >= MIN_FRAMES)
+        : slidingWindows(frames.length, windowSize, stride);
+
+    if (!segments.length) {
+        return { segments: [], transcript: '' };
+    }
+
+    const results = new Array(segments.length).fill(null);
+    let cursor = 0;
+    let previousText = '';
+
+    async function worker() {
+        while (true) {
+            const i = cursor++;
+            if (i >= segments.length) return;
+            const { start, end } = segments[i];
+            const clip = frames.slice(start, end);
+            if (clip.length < MIN_FRAMES) continue;
+            try {
+                const rec = await recognizeSignClip(clip, {
+                    context: opts.context,
+                    previousText,
+                    model: opts.model,
+                    timeoutMs: opts.timeoutMs,
+                });
+                results[i] = { start, end, recognition: rec };
+                if (rec && rec.text && rec.kind !== 'unknown' && rec.confidence >= minConfidence) {
+                    previousText = `${previousText} ${rec.text}`.trim().slice(-300);
+                }
+            } catch (err) {
+                results[i] = { start, end, recognition: null, error: err?.message || String(err) };
+            }
+        }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, segments.length) }, worker));
+
+    // Colapsa recogniciones consecutivas idénticas y compone transcript.
+    const transcriptParts = [];
+    let lastText = '';
+    for (const seg of results) {
+        const rec = seg?.recognition;
+        if (!rec || rec.kind === 'unknown' || !rec.text) continue;
+        if (rec.confidence < minConfidence) continue;
+        const t = rec.text.trim();
+        if (!t || t === lastText) continue;
+        transcriptParts.push(t);
+        lastText = t;
+    }
+
+    return {
+        segments: results,
+        transcript: transcriptParts.join(' ').replace(/\s+([.,!?])/g, '$1').trim(),
+    };
+}
+
+function slidingWindows(total, size, stride) {
+    const out = [];
+    if (total <= size) {
+        out.push({ start: 0, end: total });
+        return out;
+    }
+    for (let start = 0; start + Math.min(size, MIN_FRAMES) <= total; start += stride) {
+        const end = Math.min(total, start + size);
+        out.push({ start, end });
+        if (end === total) break;
+    }
+    return out;
+}
+
+function clampInt(v, min, max, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
 /**
@@ -311,4 +537,4 @@ function safeParseJson(raw) {
     }
 }
 
-export default { recognizeSignClip };
+export default { recognizeSignClip, recognizeSignStream, reconcileKind };
