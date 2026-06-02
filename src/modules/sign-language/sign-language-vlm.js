@@ -31,23 +31,24 @@
 
 import axios from 'axios';
 
-// Modelo primario: Gemini 2.5 Flash es r\u00e1pido (~2-4 s para 6-8 frames),
-// multimodal nativo y muy s\u00f3lido razonando sobre secuencias temporales.
-// Qwen2.5-VL-72B es excelente pero tarda 8-15 s, lo que rompe la UX de
-// detecci\u00f3n en vivo. Lo dejamos como fallback de calidad.
-const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.5-flash';
-const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'qwen/qwen2.5-vl-32b-instruct';
-const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'google/gemini-2.0-flash-001';
-const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 25000;
-// MAX_FRAMES = 12 → más evidencia temporal para distinguir señas similares
+// Fix: orden de modelos por VELOCIDAD primero.
+// gemini-2.0-flash-001 ~2-3 s con visión (logs mostraban 6-10 s con 2.5-flash).
+// gemini-2.5-flash como fallback de calidad cuando el primario no responde.
+// qwen2.5-vl-32b es muy bueno pero lento (8-15 s) → último recurso.
+const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.0-flash-001';
+const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'google/gemini-2.5-flash';
+const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'qwen/qwen2.5-vl-32b-instruct';
+const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 15000;
+// MAX_FRAMES = 14 → más evidencia temporal para distinguir señas similares
 // (hola vs maravilloso vs ocupado dependen de la microdinámica del movimiento;
 // con 6-8 frames se perdía y el VLM colapsaba al saludo más común).
-const MAX_FRAMES = 12;
+const MAX_FRAMES = 14;
 const MIN_FRAMES = 1;
 
 const SYSTEM_PROMPT = [
-    'Eres un LINGÜISTA experto en LENGUAJE DE SEÑAS COLOMBIANO (LSC) y Lengua',
-    'de Señas Española (LSE). Recibes una SECUENCIA ORDENADA de frames de video',
+    'Eres un LINGÜISTA experto en LENGUAJE DE SEÑAS COLOMBIANO (LSC), Lengua',
+    'de Señas Española (LSE) y American Sign Language (ASL). Recibes una',
+    'SECUENCIA ORDENADA de frames de video',
     '(t0, t1, ..., tN) que muestran a una persona ejecutando UNA seña o frase',
     'corta. Las señas son INHERENTEMENTE MULTIMODALES: dependen de la',
     'CONFIGURACIÓN manual exacta (qué dedos extendidos, qué dedos plegados),',
@@ -72,22 +73,60 @@ const SYSTEM_PROMPT = [
     'ANTI-SESGO — REGLAS CRÍTICAS para evitar confusión entre señas:',
     '  • NO existe un "vocabulario por defecto" privilegiado. Saludos como',
     '    "hola", "gracias", "adiós", "¿cómo estás?", "buenos días" NO son más',
-    '    probables que cualquier otra palabra (maravilloso, ocupado, trabajar,',
-    '    comer, casa, perro, feliz, triste, ayudar, etc.). Considera el universo',
-    '    completo del léxico de señas.',
+    '    probables que cualquier otra palabra (maravilloso, ocupado/busy, fine,',
+    '    trabajar, comer, casa, perro, feliz, triste, ayudar, sí, no, ok,',
+    '    más o menos, qué pasa, no mucho, mi nombre es, parar, etc.). Considera',
+    '    el universo COMPLETO del léxico de señas.',
     '  • Si la CONFIGURACIÓN MANUAL no coincide exactamente con una seña',
     '    canónica que conozcas, NO la fuerces a un saludo común. Es mejor',
     '    devolver kind="unknown" que adivinar "hola" o "¿cómo estás?".',
-    '  • Diferencias SUTILES importan: "hola" (mano abierta, saludo lateral)',
-    '    es MUY distinto de "maravilloso" (manos abiertas con vibración/énfasis)',
-    '    y de "ocupado/busy" (manos cruzadas o movimiento rápido alternado).',
-    '    Si ves vibración, énfasis, o configuración de dos manos en alternancia,',
-    '    NO digas "hola".',
+    '',
+    '  PARES CONFUNDIBLES — léelos con MUCHA atención y NO los mezcles:',
+    '    - "hola" = UNA mano abierta (B/5), palma hacia afuera, saludo lateral',
+    '      suave cerca de la sien/frente. UNA sola mano. Sin vibración. Corto.',
+    '    - "fine/bien" (ASL) = pulgar extendido tocando el pecho con los otros',
+    '      dedos extendidos hacia arriba (configuración "5" con pulgar al',
+    '      pecho). CONTACTO con el pecho. NO se parece a hola.',
+    '    - "maravilloso/wonderful" = AMBAS manos abiertas (5/5), palmas hacia',
+    '      afuera, sacudidas hacia adelante con énfasis. Si ves DOS manos',
+    '      sacudiéndose hacia el frente, es maravilloso, NUNCA hola.',
+    '    - "ocupado/busy" = mano en "B" o "5" oscilando rápido contra el pulgar',
+    '      de la otra mano, movimiento CORTO y REPETIDO. NO es "parar".',
+    '    - "parar/stop" = UNA palma vertical frontal golpeando o cayendo sobre',
+    '      la otra palma horizontal. Movimiento ÚNICO descendente. NO oscila.',
+    '    - "¿cómo estás?" = mano(s) en "5" con palmas hacia arriba, movimiento',
+    '      de barrido lateral + CEJAS LEVANTADAS. Requiere cejas levantadas.',
+    '    - "qué pasa / what\\u2019s up" = mano(s) en "5" palmas arriba con',
+    '      encogimiento de hombros y cejas levnumber"|"antadas, movimiento corto. NO es',
+    '      "¿cómo estás?".',
+    '    - "gracias" = mano plana tocando el mentón/labios y avanzando hacia',
+    '      afuera. UN solo movimiento de salida desde la cara.',
+    '    - "sí" = puño cerrado (S/A) asintiendo (movimiento vertical de la',
+    '      muñeca, como cabeceo). MUY corto, pocos frames.',
+    '    - "no" = índice+medio extendidos cerrándose contra el pulgar una o',
+    '      dos veces. Corto.',
+    '    - "ok" = pulgar e índice formando círculo, otros dedos extendidos.',
+    '      Casi ESTÁTICO o leve giro de muñeca.',
+    '    - "más o menos / so so" = mano abierta palma abajo balanceándose',
+    '      lateralmente (oscilación de muñeca). NO es saludo.',
+    '    - "no mucho" = manos en "flat-O" rozándose suavemente delante del',
+    '      cuerpo, movimiento mínimo.',
+    '    - "mi nombre es" = índice+medio (configuración H) tocando el dorso de',
+    '      los mismos dedos de la otra mano (seña NAME). Suele preceder a',
+    '      deletreo manual.',
+    '',
+    '  • Si ves vibración, énfasis, dos manos en alternancia o configuraciones',
+    '    que no coinciden con "hola", NO digas "hola".',
     '  • NO inventes una "intención de pregunta" solo porque haya movimiento;',
     '    requiere cejas levantadas + trayectoria interrogativa real.',
     '  • Si la mayoría de frames son casi idénticos (sin desplazamiento real),',
-    '    probablemente es una seña ESTÁTICA o deletreo — NO la confundas con',
-    '    un saludo dinámico.',
+    '    probablemente es una seña ESTÁTICA: deletreo de LETRA (A-Z) o NÚMERO',
+    '    (0-9). NO la confundas con un saludo dinámico. Usa kind="letter" o',
+    '    kind="number" según corresponda.',
+    '  • NÚMEROS (0-9) tienen configuraciones canónicas (1=índice, 2=índice+',
+    '    medio, 3=pulgar+índice+medio, 5=mano abierta, etc.). Si la mano está',
+    '    estática en una configuración numérica, devuelve kind="number" y',
+    '    text="0"..."9".',
     '',
     'Reglas estrictas de salida:',
     '  1. Devuelves UN ÚNICO objeto JSON, sin texto adicional, sin fences',
@@ -125,7 +164,8 @@ const SYSTEM_PROMPT = [
     '  5. AMBAS MANOS son ciudadanas de primera clase. Si una mano hace de base',
     '     pasiva mientras la otra se mueve, eso es handedness="both".',
     '  6. Si es deletreo (una letra estática sin desplazamiento), kind="letter",',
-    '     text=letra mayúscula.',
+    '     text=letra mayúscula (A-Z). Si es un dígito (0-9 estático),',
+    '     kind="number", text=dígito ("0".."9").',
     '  7. Idioma: español (es-CO). Usa ¿? y ¡! solo cuando la intención lo',
     '     justifique realmente.',
     '  8. PROHIBIDO: devolver "Hola", "¿Cómo estás?", "Adiós" o "Gracias" como',
@@ -139,7 +179,7 @@ const SYSTEM_PROMPT = [
  * @param {{ context?: string, model?: string, timeoutMs?: number }} [opts]
  * @returns {Promise<null | {
  *   text: string,
- *   kind: 'word'|'phrase'|'letter'|'unknown',
+ *   kind: 'word'|'phrase'|'letter'|'number'|'unknown',
  *   confidence: number,
  *   alternatives: string[],
  *   handedness: 'left'|'right'|'both'|'none',
@@ -190,10 +230,13 @@ export async function recognizeSignClip(frames, opts = {}) {
                 'OBLIGATORIO del sistema: primero describe configuración manual, orientación,',
                 'locación, movimiento y rasgos no manuales; SOLO entonces decide la seña.',
                 'RECORDATORIO ANTI-SESGO: el vocabulario es ENORME (ocupado, maravilloso,',
-                'trabajar, comer, casa, feliz, ayudar, libro, agua, familia, etc.). NO',
-                'asumas saludos comunes ("hola", "¿cómo estás?", "adiós", "gracias") por',
-                'defecto. Si la configuración manual exacta no coincide con una seña',
-                'canónica que conozcas con certeza, devuelve kind="unknown".',
+                'fine, parar, trabajar, comer, casa, feliz, ayudar, libro, agua,',
+                'familia, sí, no, ok, más o menos, qué pasa, no mucho, mi nombre es,',
+                'etc.). NO asumas saludos comunes ("hola", "¿cómo estás?", "adiós",',
+                '"gracias") por defecto. Si la configuración manual exacta no coincide',
+                'con una seña canónica que conozcas con certeza, devuelve kind="unknown".',
+                'Si la mano está estática en una letra (A-Z) o número (0-9),',
+                'usa kind="letter" o kind="number" — NO inventes una palabra.',
                 'Sé HONESTO con la confianza: < 0.55 → "unknown".',
                 'Responde con el JSON exacto definido en las reglas del sistema.',
             ].filter(Boolean).join('\n'),
@@ -252,7 +295,7 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
 
     const text = String(parsed.text ?? '').trim();
     const kindRaw = String(parsed.kind ?? 'unknown').toLowerCase();
-    const kind = ['word', 'phrase', 'letter', 'unknown'].includes(kindRaw) ? kindRaw : 'unknown';
+    const kind = ['word', 'phrase', 'letter', 'number', 'unknown'].includes(kindRaw) ? kindRaw : 'unknown';
     const confidence = clamp01(Number(parsed.confidence));
     const alternatives = Array.isArray(parsed.alternatives)
         ? parsed.alternatives.filter((x) => typeof x === 'string').slice(0, 3)
