@@ -31,79 +31,38 @@
 
 import axios from 'axios';
 
-// Modelo primario: Gemini 2.5 Flash es r\u00e1pido (~2-4 s para 6-8 frames),
-// multimodal nativo y muy s\u00f3lido razonando sobre secuencias temporales.
-// Qwen2.5-VL-72B es excelente pero tarda 8-15 s, lo que rompe la UX de
-// detecci\u00f3n en vivo. Lo dejamos como fallback de calidad.
-const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.5-flash';
-const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'qwen/qwen2.5-vl-32b-instruct';
-const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'google/gemini-2.0-flash-001';
-const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 20000;
-const MAX_FRAMES = 8;
+// Modelo primario: Gemini 2.0 Flash es el más rápido del catálogo
+// multimodal de OpenRouter (~700-1500 ms para 4-5 frames pequeños). El
+// 2.5 Flash es más preciso pero suma 1-2 s extra; lo dejamos como
+// fallback. Qwen2.5-VL queda como red de seguridad de calidad.
+const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.0-flash-001';
+const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'google/gemini-2.5-flash';
+const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'qwen/qwen2.5-vl-32b-instruct';
+const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 15000;
+const MAX_FRAMES = 5;
 const MIN_FRAMES = 1;
 
 const SYSTEM_PROMPT = [
-    'Eres un experto LINGÜISTA en LENGUAJE DE SEÑAS COLOMBIANO (LSC) y Lengua',
-    'de Señas Española (LSE). Recibes una SECUENCIA ORDENADA de frames de video',
-    '(t0, t1, ..., tN) que muestran a una persona ejecutando UNA seña o frase',
-    'corta. Las señas son INHERENTEMENTE MULTIMODALES: dependen de la',
-    'configuración manual, ORIENTACIÓN, LOCACIÓN, MOVIMIENTO (trayectoria,',
-    'velocidad, dirección, repetición) y RASGOS NO MANUALES (expresión facial,',
-    'mirada, postura). Una imagen estática NO basta: tu razonamiento DEBE',
-    'integrar la evolución temporal entre frames.',
+    'Eres experto en Lengua de Señas Colombiana (LSC) y Española (LSE).',
+    'Recibes una secuencia de frames (t0..tN) de UNA seña o frase corta.',
+    'Considera AMBAS manos, trayectoria, contacto y expresión facial.',
     '',
-    'Procedimiento OBLIGATORIO antes de responder:',
-    '  1. Detecta cuántas manos participan (left, right, both) y si entran en',
-    '     contacto entre sí o tocan la cara/cuerpo.',
-    '  2. Describe internamente la TRAYECTORIA del movimiento (arriba, abajo,',
-    '     circular, hacia adelante, alternado, simétrico, etc.).',
-    '  3. Observa la EXPRESIÓN FACIAL y la CEJA: pregunta si las cejas suben',
-    '     (interrogativa abierta tipo "¿cómo?"), bajan ("¿sí/no?"), o si los',
-    '     labios marcan negación o intensidad.',
-    '  4. Solo entonces decide qué palabra/frase está siendo señada.',
+    'Devuelve UN SOLO objeto JSON válido, sin texto extra ni fences. Esquema:',
+    '{',
+    '  "text": string,                  // palabra/frase en español natural',
+    '  "kind": "word"|"phrase"|"letter"|"unknown",',
+    '  "confidence": number,            // 0..1',
+    '  "alternatives": string[],        // hasta 2',
+    '  "handedness": "left"|"right"|"both"|"none",',
+    '  "motion": { "trajectory": string, "direction": string|null, "repeated": boolean, "contact": "none"|"hand-hand"|"hand-face"|"hand-body" },',
+    '  "nonManual": { "facial": string|null, "intent": "statement"|"question"|"exclamation"|"negation"|"affirmation"|"unknown" },',
+    '  "reasoning": string              // máx 1 frase muy corta',
+    '}',
     '',
-    'Reglas estrictas de salida:',
-    '  1. Devuelves UN ÚNICO objeto JSON, sin texto adicional, sin fences',
-    '     ```json```, sin explicaciones fuera del JSON.',
-    '  2. Esquema EXACTO (todos los campos obligatorios; usa null/[] cuando',
-    '     no aplique pero NUNCA omitas la clave):',
-    '     {',
-    '       "text": string,                 // palabra/frase reconocida en español natural',
-    '       "kind": "word"|"phrase"|"letter"|"unknown",',
-    '       "confidence": number,           // 0.0 a 1.0',
-    '       "alternatives": string[],       // hasta 2 alternativas plausibles',
-    '       "handedness": "left"|"right"|"both"|"none",',
-    '       "motion": {                     // descripción del gesto observado',
-    '         "trajectory": string,         // ej "circular", "lineal-arriba", "alternado"',
-    '         "direction": string|null,     // "up"|"down"|"left"|"right"|"forward"|"none"|null',
-    '         "repeated": boolean,          // ¿se repite la seña dentro del clip?',
-    '         "contact": "none"|"hand-hand"|"hand-face"|"hand-body"',
-    '       },',
-    '       "nonManual": {                  // rasgos no manuales relevantes',
-    '         "facial": string|null,        // ej "cejas-arriba", "labios-fruncidos", "neutra"',
-    '         "intent": "statement"|"question"|"exclamation"|"negation"|"affirmation"|"unknown"',
-    '       },',
-    '       "reasoning": string             // 1 frase corta justificando la decisión',
-    '     }',
-    '  3. INTERPRETA LA INTENCIÓN del movimiento, no solo la forma:',
-    '     - Si la trayectoria + expresión sugieren pregunta, usa nonManual.intent="question"',
-    '       y aplica signos "¿…?" en text.',
-    '     - Si es exclamación/saludo enfático, usa "exclamation" y "¡…!".',
-    '     - Si es negación (sacudir la mano/cabeza), usa "negation".',
-    '  4. AMBAS MANOS son ciudadanas de primera clase. Muchas señas (CASA,',
-    '     LIBRO, GRACIAS, BUENOS-DÍAS, AYUDAR) requieren las dos. Si solo una',
-    '     mano se mueve mientras la otra hace de base pasiva, eso TAMBIÉN cuenta',
-    '     como handedness="both". No descartes la segunda mano por estar quieta.',
-    '  5. Si la seña es solo deletreo del alfabeto (una sola letra estática,',
-    '     sin desplazamiento significativo), usa kind="letter" y text=letra en',
-    '     mayúscula.',
-    '  6. Saludos/frases comunes deben salir CORRECTAMENTE PUNTUADOS:',
-    '     "Hola", "Gracias", "Buenos días", "¿Cómo estás?", "Adiós", "Por',
-    '     favor", "Sí", "No", "Te amo".',
-    '  7. Si NO puedes identificar la seña con razonable certeza (confidence',
-    '     < 0.3), usa kind="unknown" y text="". NUNCA inventes señas que no se',
-    '     vean. Es preferible "unknown" a una adivinanza.',
-    '  8. Idioma de salida: español (es-CO). Usa ¿? y ¡! cuando aplique.',
+    'Reglas: usa ?/! y tildes cuando aplique (Hola, Gracias, Buenos días,',
+    '¿Cómo estás?, Adiós, Por favor, Sí, No, Te amo). Si solo hay una letra',
+    'estática, kind="letter" y text en mayúsculas. Si no estás seguro',
+    '(confidence<0.3) usa kind="unknown" y text="". Responde rápido.',
 ].join('\n');
 
 /**
@@ -157,14 +116,9 @@ export async function recognizeSignClip(frames, opts = {}) {
             type: 'text',
             text: [
                 opts.context
-                    ? `Contexto previo del usuario: """${opts.context.slice(0, 300)}"""`
+                    ? `Contexto previo: """${opts.context.slice(0, 200)}"""`
                     : null,
-                `Recibes ${sampled.length} frames en orden cronológico (t0 → t${sampled.length - 1}).`,
-                'Analiza la SECUENCIA como un clip de video corto: identifica AMBAS manos,',
-                'la trayectoria del movimiento entre frames, contacto entre manos o con la',
-                'cara, expresión facial y, a partir de todo eso, la INTENCIÓN comunicativa',
-                '(afirmación, pregunta, exclamación, negación, saludo, agradecimiento, etc.).',
-                'Responde con el JSON exacto definido en las reglas del sistema.',
+                `Clip de ${sampled.length} frames en orden cronológico (t0→t${sampled.length - 1}). Identifica la seña y responde sólo el JSON.`,
             ].filter(Boolean).join('\n'),
         },
         ...imageParts,
@@ -197,7 +151,7 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
                 { role: 'system', content: SYSTEM_PROMPT },
                 { role: 'user', content: userParts },
             ],
-            max_tokens: 450,
+            max_tokens: 220,
             temperature: 0.1,
             response_format: { type: 'json_object' },
         },
