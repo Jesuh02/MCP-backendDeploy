@@ -277,6 +277,7 @@ export function signLanguageRoutes() {
             const result = await recognizeSignClip(frames, {
                 context: typeof req.body?.context === 'string' ? req.body.context : undefined,
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+                landmarks: (req.body && typeof req.body.landmarks === 'object') ? req.body.landmarks : undefined,
             });
             return res.json({ success: true, data: result });
         } catch (err) {
@@ -292,6 +293,7 @@ export function signLanguageRoutes() {
      *   minConfidence?: number,   // default 0.4
      *   context?: string,
      *   model?: string,
+     *   landmarks?: object,       // resumen MediaPipe (handedness, trayectoria, contacto)
      * }
      */
     router.post('/session/:id/clip', signLanguageRateLimiter, async (req, res) => {
@@ -317,6 +319,7 @@ export function signLanguageRoutes() {
             const result = await recognizeSignClip(frames, {
                 context: typeof req.body?.context === 'string' ? req.body.context : undefined,
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+                landmarks: (req.body && typeof req.body.landmarks === 'object') ? req.body.landmarks : undefined,
             });
             let pushed = false;
             if (result && result.text && result.kind !== 'unknown' && result.confidence >= minConfidence) {
