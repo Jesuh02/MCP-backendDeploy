@@ -31,8 +31,13 @@
 
 import axios from 'axios';
 
-const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'qwen/qwen2.5-vl-72b-instruct';
-const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'google/gemini-flash-1.5';
+// Modelo primario: Gemini 2.5 Flash es r\u00e1pido (~2-4 s para 6-8 frames),
+// multimodal nativo y muy s\u00f3lido razonando sobre secuencias temporales.
+// Qwen2.5-VL-72B es excelente pero tarda 8-15 s, lo que rompe la UX de
+// detecci\u00f3n en vivo. Lo dejamos como fallback de calidad.
+const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.5-flash';
+const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'qwen/qwen2.5-vl-32b-instruct';
+const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'google/gemini-2.0-flash-001';
 const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 20000;
 const MAX_FRAMES = 8;
 const MIN_FRAMES = 1;
@@ -168,21 +173,19 @@ export async function recognizeSignClip(frames, opts = {}) {
     const primaryModel = opts.model || DEFAULT_MODEL;
     const timeoutMs = Number(opts.timeoutMs) || REQUEST_TIMEOUT_MS;
 
-    try {
-        return await callOpenRouterVLM(primaryModel, userParts, timeoutMs);
-    } catch (err) {
-        // Intentar con el modelo de respaldo si el primario explota (404, 5xx, timeout).
-        if (FALLBACK_MODEL && FALLBACK_MODEL !== primaryModel) {
-            console.warn(`[SignLanguage][VLM] ${primaryModel} falló (${err?.message || err}). Probando fallback ${FALLBACK_MODEL}.`);
-            try {
-                return await callOpenRouterVLM(FALLBACK_MODEL, userParts, timeoutMs);
-            } catch (err2) {
-                console.error('[SignLanguage][VLM] fallback también falló:', err2?.message || err2);
-                throw err2;
-            }
+    const chain = [primaryModel, FALLBACK_MODEL, SECONDARY_FALLBACK_MODEL]
+        .filter((m, i, arr) => m && arr.indexOf(m) === i);
+
+    let lastErr = null;
+    for (const m of chain) {
+        try {
+            return await callOpenRouterVLM(m, userParts, timeoutMs);
+        } catch (err) {
+            lastErr = err;
+            console.warn(`[SignLanguage][VLM] ${m} fall\u00f3 (${err?.message || err}). Probando siguiente...`);
         }
-        throw err;
     }
+    throw lastErr || new Error('Todos los modelos VLM fallaron.');
 }
 
 async function callOpenRouterVLM(model, userParts, timeoutMs) {
