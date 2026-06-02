@@ -38,8 +38,11 @@ import axios from 'axios';
 const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.5-flash';
 const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'qwen/qwen2.5-vl-32b-instruct';
 const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'google/gemini-2.0-flash-001';
-const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 20000;
-const MAX_FRAMES = 8;
+const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 25000;
+// MAX_FRAMES = 12 → más evidencia temporal para distinguir señas similares
+// (hola vs maravilloso vs ocupado dependen de la microdinámica del movimiento;
+// con 6-8 frames se perdía y el VLM colapsaba al saludo más común).
+const MAX_FRAMES = 12;
 const MIN_FRAMES = 1;
 
 const SYSTEM_PROMPT = [
