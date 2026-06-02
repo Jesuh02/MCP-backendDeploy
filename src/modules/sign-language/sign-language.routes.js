@@ -311,7 +311,7 @@ export function signLanguageRoutes() {
 
         const minConfidence = Number.isFinite(Number(req.body?.minConfidence))
             ? Number(req.body.minConfidence)
-            : 0.4;
+            : 0.6;
 
         try {
             const result = await recognizeSignClip(frames, {
