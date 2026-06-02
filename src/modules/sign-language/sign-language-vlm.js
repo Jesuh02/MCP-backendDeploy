@@ -63,8 +63,8 @@ const SYSTEM_PROMPT = [
     '  2. Esquema EXACTO (todos los campos obligatorios; usa null/[] cuando',
     '     no aplique pero NUNCA omitas la clave):',
     '     {',
-    '       "text": string,                 // palabra/frase reconocida en español natural',
-    '       "kind": "word"|"phrase"|"letter"|"unknown",',
+    '       "text": string,                 // palabra/frase/número reconocido en español natural',
+    '       "kind": "word"|"phrase"|"letter"|"number"|"sentence"|"unknown",',
     '       "confidence": number,           // 0.0 a 1.0',
     '       "alternatives": string[],       // hasta 2 alternativas plausibles',
     '       "handedness": "left"|"right"|"both"|"none",',
@@ -91,7 +91,13 @@ const SYSTEM_PROMPT = [
     '     como handedness="both". No descartes la segunda mano por estar quieta.',
     '  5. Si la seña es solo deletreo del alfabeto (una sola letra estática,',
     '     sin desplazamiento significativo), usa kind="letter" y text=letra en',
-    '     mayúscula.',
+    '     mayúscula. Esto incluye vocales (A, E, I, O, U) y consonantes.',
+    '  5b. Si la seña representa un NÚMERO (0-9, decenas, centenas, miles), usa',
+    '     kind="number" y text con el dígito o cifra en formato arábigo ("5",',
+    '     "23", "1000"). Reconoce números formados con una o dos manos.',
+    '  5c. Si la seña representa una ORACIÓN COMPLETA (sujeto + verbo, o varias',
+    '     palabras encadenadas en un mismo flujo), usa kind="sentence" y text con',
+    '     la oración completa correctamente puntuada en español.',
     '  6. Saludos/frases comunes deben salir CORRECTAMENTE PUNTUADOS:',
     '     "Hola", "Gracias", "Buenos días", "¿Cómo estás?", "Adiós", "Por',
     '     favor", "Sí", "No", "Te amo".',
@@ -108,7 +114,7 @@ const SYSTEM_PROMPT = [
  * @param {{ context?: string, model?: string, timeoutMs?: number }} [opts]
  * @returns {Promise<null | {
  *   text: string,
- *   kind: 'word'|'phrase'|'letter'|'unknown',
+ *   kind: 'word'|'phrase'|'letter'|'number'|'sentence'|'unknown',
  *   confidence: number,
  *   alternatives: string[],
  *   handedness: 'left'|'right'|'both'|'none',
@@ -217,7 +223,7 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
 
     const text = String(parsed.text ?? '').trim();
     const kindRaw = String(parsed.kind ?? 'unknown').toLowerCase();
-    const kind = ['word', 'phrase', 'letter', 'unknown'].includes(kindRaw) ? kindRaw : 'unknown';
+    const kind = ['word', 'phrase', 'letter', 'number', 'sentence', 'unknown'].includes(kindRaw) ? kindRaw : 'unknown';
     const confidence = clamp01(Number(parsed.confidence));
     const alternatives = Array.isArray(parsed.alternatives)
         ? parsed.alternatives.filter((x) => typeof x === 'string').slice(0, 3)

@@ -320,10 +320,19 @@ export function signLanguageRoutes() {
             });
             let pushed = false;
             if (result && result.text && result.kind !== 'unknown' && result.confidence >= minConfidence) {
-                if (result.kind === 'letter') {
-                    pushLetter(sessionId, { label: result.text, confidence: result.confidence });
+                // `letter` → carácter único del alfabeto (incluye vocales con tilde
+                //   y Ñ si el VLM los devuelve). Va al stream de letras para que
+                //   el composer pueda colapsar repeticiones e insertar espacios.
+                // `number` (5, 23, 1000) → token indivisible: NO puede colapsarse
+                //   con letras adyacentes ni concatenarse cifra a cifra.
+                // `word` / `phrase` / `sentence` → siempre tokens indivisibles
+                //   con espacio antes/después en el draft.
+                const text = String(result.text).trim();
+                const isSingleChar = result.kind === 'letter' && Array.from(text).length === 1;
+                if (isSingleChar) {
+                    pushLetter(sessionId, { label: text, confidence: result.confidence });
                 } else {
-                    pushWord(sessionId, { text: result.text, confidence: result.confidence });
+                    pushWord(sessionId, { text, confidence: result.confidence });
                 }
                 pushed = true;
             }
