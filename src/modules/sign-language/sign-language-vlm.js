@@ -110,7 +110,7 @@ const SYSTEM_PROMPT = [
  * Reconoce la seña ejecutada en un clip de frames.
  *
  * @param {Array<Buffer|string>} frames - Buffers de imagen o data URLs.
- * @param {{ context?: string, model?: string, timeoutMs?: number }} [opts]
+ * @param {{ context?: string, model?: string, timeoutMs?: number, landmarks?: object }} [opts]
  * @returns {Promise<null | {
  *   text: string,
  *   kind: 'word'|'phrase'|'letter'|'unknown',
@@ -160,10 +160,15 @@ export async function recognizeSignClip(frames, opts = {}) {
                     ? `Contexto previo del usuario: """${opts.context.slice(0, 300)}"""`
                     : null,
                 `Recibes ${sampled.length} frames en orden cronológico (t0 → t${sampled.length - 1}).`,
+                buildLandmarkHint(opts.landmarks),
                 'Analiza la SECUENCIA como un clip de video corto: identifica AMBAS manos,',
                 'la trayectoria del movimiento entre frames, contacto entre manos o con la',
                 'cara, expresión facial y, a partir de todo eso, la INTENCIÓN comunicativa',
                 '(afirmación, pregunta, exclamación, negación, saludo, agradecimiento, etc.).',
+                'IMPORTANTE: si recibes "Pistas de landmarks MediaPipe" arriba, son medidas',
+                'REALES de los 21 keypoints de cada mano calculadas en el cliente. ÚSALAS',
+                'como verdad de referencia para desambiguar señas visualmente parecidas',
+                '(hola vs gracias vs yo-entiendo vs adiós) antes de mirar la imagen.',
                 'Responde con el JSON exacto definido en las reglas del sistema.',
             ].filter(Boolean).join('\n'),
         },
@@ -287,6 +292,65 @@ function sampleEvenly(arr, k) {
     const step = (arr.length - 1) / (k - 1);
     for (let i = 0; i < k; i++) out.push(arr[Math.round(i * step)]);
     return out;
+}
+
+/**
+ * Convierte el resumen de landmarks que viene del cliente (MediaPipe Hands)
+ * en un bloque de texto compacto y explícito que el VLM puede usar como
+ * grounding numérico. Esto es lo que permite distinguir señas visualmente
+ * parecidas (hola ≠ gracias ≠ yo-entiendo ≠ adiós) más allá de la silueta.
+ *
+ * Estructura esperada del objeto `lm` (ver buildLandmarkSummary en el front):
+ *   {
+ *     numHandsMax: number,
+ *     handedness: 'left'|'right'|'both'|'none',
+ *     hands: [{ hand, startWrist:{x,y}, endWrist:{x,y}, amplitude, direction,
+ *               shape, extendedFingers: string[] }],
+ *     contact: { handToHand, handToFace, handToBody },
+ *     motion: { repeated, amplitude }
+ *   }
+ *
+ * @returns {string|null} texto a inyectar o null si no hay landmarks.
+ */
+function buildLandmarkHint(lm) {
+    if (!lm || typeof lm !== 'object') return null;
+    if (!Number.isFinite(Number(lm.numHandsMax)) || Number(lm.numHandsMax) <= 0) {
+        return 'Pistas de landmarks MediaPipe: NO se detectaron manos en el clip. Si crees ver una seña, considéralo bajo confidence.';
+    }
+    const lines = ['Pistas de landmarks MediaPipe (verdad de referencia del cliente):'];
+    lines.push(`- Manos detectadas (máx en clip): ${lm.numHandsMax}`);
+    lines.push(`- Handedness REAL del usuario: ${lm.handedness}`);
+    if (lm.motion) {
+        lines.push(`- Movimiento global: amplitud=${lm.motion.amplitude ?? '?'}, repetido=${lm.motion.repeated ? 'sí' : 'no'}`);
+    }
+    if (lm.contact) {
+        const flags = [];
+        if (lm.contact.handToHand) flags.push('contacto mano-mano');
+        if (lm.contact.handToFace) flags.push('mano cerca de la cara');
+        if (lm.contact.handToBody) flags.push('mano sobre el cuerpo');
+        lines.push(`- Contactos observados: ${flags.length ? flags.join(', ') : 'ninguno'}`);
+    }
+    if (Array.isArray(lm.hands)) {
+        for (const h of lm.hands) {
+            const start = h.startWrist || {};
+            const end = h.endWrist || {};
+            const fingers = Array.isArray(h.extendedFingers) ? h.extendedFingers.join('+') || 'puño-cerrado' : '?';
+            lines.push(
+                `  • Mano ${h.hand}: wrist (${start.x}, ${start.y}) → (${end.x}, ${end.y}); ` +
+                `amplitud=${h.amplitude}, dirección=${h.direction}, forma=${h.shape}; ` +
+                `dedos extendidos=${fingers}.`,
+            );
+        }
+    }
+    lines.push('Reglas de desambiguación rápida con estas pistas:');
+    lines.push('  · HOLA: 1 mano cerca de la cara, dedos extendidos, oscila lateral (left↔right).');
+    lines.push('  · GRACIAS: 1 mano que parte de mentón/boca y se mueve hacia adelante (forward/down).');
+    lines.push('  · ¿CÓMO ESTÁS?: ambas manos, palmas arriba, leve oscilación, intent="question".');
+    lines.push('  · BUENOS DÍAS: ambas manos, una parte cerca de la cara y baja.');
+    lines.push('  · YO ENTIENDO: 1 mano que primero apunta al pecho y luego sube cerca de la frente.');
+    lines.push('  · ADIÓS: 1 mano alta sin contacto facial, oscilación lateral amplia.');
+    lines.push('Si las pistas contradicen tu primera impresión visual, CONFÍA en las pistas.');
+    return lines.join('\n');
 }
 
 function clamp01(n) {
