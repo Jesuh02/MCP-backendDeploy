@@ -31,31 +31,106 @@
 
 import axios from 'axios';
 
-const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'qwen/qwen2.5-vl-72b-instruct';
-const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'google/gemini-flash-1.5';
-const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 20000;
-const MAX_FRAMES = 8;
+// Fix: orden de modelos por VELOCIDAD primero.
+// gemini-2.0-flash-001 ~2-3 s con visión (logs mostraban 6-10 s con 2.5-flash).
+// gemini-2.5-flash como fallback de calidad cuando el primario no responde.
+// qwen2.5-vl-32b es muy bueno pero lento (8-15 s) → último recurso.
+const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.0-flash-001';
+const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'google/gemini-2.5-flash';
+const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'qwen/qwen2.5-vl-32b-instruct';
+const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 15000;
+// MAX_FRAMES = 10 → suficiente evidencia temporal sin inflar el payload.
+// 14 frames causaba 5-10 s de latencia en Gemini/Qwen. Con 10 frames bien
+// espaciados se obtiene cobertura temporal equivalente con ~30% menos coste.
+const MAX_FRAMES = 10;
 const MIN_FRAMES = 1;
 
 const SYSTEM_PROMPT = [
-    'Eres un experto LINGÜISTA en LENGUAJE DE SEÑAS COLOMBIANO (LSC) y Lengua',
-    'de Señas Española (LSE). Recibes una SECUENCIA ORDENADA de frames de video',
+    'Eres un LINGÜISTA experto en LENGUAJE DE SEÑAS COLOMBIANO (LSC), Lengua',
+    'de Señas Española (LSE) y American Sign Language (ASL). Recibes una',
+    'SECUENCIA ORDENADA de frames de video',
     '(t0, t1, ..., tN) que muestran a una persona ejecutando UNA seña o frase',
     'corta. Las señas son INHERENTEMENTE MULTIMODALES: dependen de la',
-    'configuración manual, ORIENTACIÓN, LOCACIÓN, MOVIMIENTO (trayectoria,',
-    'velocidad, dirección, repetición) y RASGOS NO MANUALES (expresión facial,',
-    'mirada, postura). Una imagen estática NO basta: tu razonamiento DEBE',
-    'integrar la evolución temporal entre frames.',
+    'CONFIGURACIÓN manual exacta (qué dedos extendidos, qué dedos plegados),',
+    'ORIENTACIÓN de la palma, LOCACIÓN respecto al cuerpo, MOVIMIENTO',
+    '(trayectoria, velocidad, dirección, repetición) y RASGOS NO MANUALES',
+    '(expresión facial, mirada, postura). Una imagen estática NO basta: tu',
+    'razonamiento DEBE integrar la evolución temporal entre frames.',
     '',
-    'Procedimiento OBLIGATORIO antes de responder:',
-    '  1. Detecta cuántas manos participan (left, right, both) y si entran en',
-    '     contacto entre sí o tocan la cara/cuerpo.',
-    '  2. Describe internamente la TRAYECTORIA del movimiento (arriba, abajo,',
-    '     circular, hacia adelante, alternado, simétrico, etc.).',
-    '  3. Observa la EXPRESIÓN FACIAL y la CEJA: pregunta si las cejas suben',
-    '     (interrogativa abierta tipo "¿cómo?"), bajan ("¿sí/no?"), o si los',
-    '     labios marcan negación o intensidad.',
-    '  4. Solo entonces decide qué palabra/frase está siendo señada.',
+    'Procedimiento OBLIGATORIO antes de responder (hazlo internamente):',
+    '  1. CONFIGURACIÓN: describe la forma EXACTA de cada mano (puño cerrado,',
+    '     mano abierta, índice extendido, pulgar+meñique, etc.). NO simplifiques.',
+    '  2. ORIENTACIÓN: ¿palma hacia el cuerpo, hacia afuera, hacia arriba?',
+    '  3. LOCACIÓN: ¿dónde se ejecuta? (frente a la cara, al pecho, lateral,',
+    '     en el espacio neutro).',
+    '  4. MOVIMIENTO: trayectoria (arriba, abajo, circular, alternado,',
+    '     simétrico, hacia adelante), si hay CONTACTO con la cara/pecho/otra mano,',
+    '     y si se REPITE.',
+    '  5. RASGOS NO MANUALES: cejas, boca, mirada.',
+    '  6. SOLO ENTONCES decide qué seña es, comparando con TODO tu conocimiento',
+    '     de LSC/LSE. NO te limites a un vocabulario pequeño.',
+    '',
+    'ANTI-SESGO — REGLAS CRÍTICAS para evitar confusión entre señas:',
+    '  • NO existe un "vocabulario por defecto" privilegiado. Saludos como',
+    '    "hola", "gracias", "adiós", "¿cómo estás?", "buenos días" NO son más',
+    '    probables que cualquier otra palabra (maravilloso, ocupado/busy, fine,',
+    '    trabajar, comer, casa, perro, feliz, triste, ayudar, sí, no, ok,',
+    '    más o menos, qué pasa, no mucho, mi nombre es, parar, etc.). Considera',
+    '    el universo COMPLETO del léxico de señas.',
+    '  • Si la CONFIGURACIÓN MANUAL no coincide exactamente con una seña',
+    '    canónica que conozcas, NO la fuerces a un saludo común. Es mejor',
+    '    devolver kind="unknown" que adivinar "hola" o "¿cómo estás?".',
+    '',
+    '  PARES CONFUNDIBLES — léelos con MUCHA atención y NO los mezcles:',
+    '    - "hola" = UNA mano abierta (B/5), palma hacia afuera, saludo lateral',
+    '      suave cerca de la sien/frente. UNA sola mano. Sin vibración. Corto.',
+    '    - "fine/bien" (ASL) = pulgar extendido tocando el pecho con los otros',
+    '      dedos extendidos hacia arriba (configuración "5" con pulgar al',
+    '      pecho). CONTACTO con el pecho. NO se parece a hola.',
+    '    - "maravilloso/wonderful" = AMBAS manos abiertas (5/5), palmas hacia',
+    '      afuera, sacudidas hacia adelante con énfasis. Si ves DOS manos',
+    '      sacudiéndose hacia el frente, es maravilloso, NUNCA hola.',
+    '    - "ocupado/busy" = mano en "B" o "5" oscilando rápido contra el pulgar',
+    '      de la otra mano, movimiento CORTO y REPETIDO. NO es "parar".',
+    '    - "parar/stop" = UNA palma vertical frontal golpeando o cayendo sobre',
+    '      la otra palma horizontal. Movimiento ÚNICO descendente. NO oscila.',
+    '    - "¿cómo estás?" = mano(s) en "5" con palmas hacia arriba, movimiento',
+    '      de barrido lateral + CEJAS LEVANTADAS. Requiere cejas levantadas.',
+    '    - "qué pasa / what\\u2019s up" = mano(s) en "5" palmas arriba con',
+    '      encogimiento de hombros y cejas levantadas, movimiento corto. NO es',
+    '      "¿cómo estás?".',
+    '    - "mal/bad" = (a) mano plana en la boca girada 180° hacia abajo',
+    '      (opuesto de "bueno"); o (b) pulgar hacia abajo. Si ves movimiento',
+    '      hacia abajo o palma invertida NO lo confundas con "gracias" (que',
+    '      mueve la mano HACIA AFUERA desde el mentón, sin inversión).',
+    '    - "gracias" = mano plana tocando el mentón/labios y avanzando hacia',
+    '      afuera. UN solo movimiento de salida desde la cara.',
+    '    - "sí" = puño cerrado (S/A) asintiendo (movimiento vertical de la',
+    '      muñeca, como cabeceo). MUY corto, pocos frames.',
+    '    - "no" = índice+medio extendidos cerrándose contra el pulgar una o',
+    '      dos veces. Corto.',
+    '    - "ok" = pulgar e índice formando círculo, otros dedos extendidos.',
+    '      Casi ESTÁTICO o leve giro de muñeca.',
+    '    - "más o menos / so so" = mano abierta palma abajo balanceándose',
+    '      lateralmente (oscilación de muñeca). NO es saludo.',
+    '    - "no mucho" = manos en "flat-O" rozándose suavemente delante del',
+    '      cuerpo, movimiento mínimo.',
+    '    - "mi nombre es" = índice+medio (configuración H) tocando el dorso de',
+    '      los mismos dedos de la otra mano (seña NAME). Suele preceder a',
+    '      deletreo manual.',
+    '',
+    '  • Si ves vibración, énfasis, dos manos en alternancia o configuraciones',
+    '    que no coinciden con "hola", NO digas "hola".',
+    '  • NO inventes una "intención de pregunta" solo porque haya movimiento;',
+    '    requiere cejas levantadas + trayectoria interrogativa real.',
+    '  • Si la mayoría de frames son casi idénticos (sin desplazamiento real),',
+    '    probablemente es una seña ESTÁTICA: deletreo de LETRA (A-Z) o NÚMERO',
+    '    (0-9). NO la confundas con un saludo dinámico. Usa kind="letter" o',
+    '    kind="number" según corresponda.',
+    '  • NÚMEROS (0-9) tienen configuraciones canónicas (1=índice, 2=índice+',
+    '    medio, 3=pulgar+índice+medio, 5=mano abierta, etc.). Si la mano está',
+    '    estática en una configuración numérica, devuelve kind="number" y',
+    '    text="0"..."9".',
     '',
     'CRITERIOS CUANTITATIVOS PARA "kind" (aplícalos en este orden y SIN ambigüedad).',
     'Esta clasificación es la fuente de mayor error en evaluaciones previas',
@@ -100,17 +175,17 @@ const SYSTEM_PROMPT = [
     '       "confidence": number,           // 0.0 a 1.0',
     '       "alternatives": string[],       // hasta 2 alternativas plausibles',
     '       "handedness": "left"|"right"|"both"|"none",',
-    '       "motion": {                     // descripción del gesto observado',
-    '         "trajectory": string,         // ej "circular", "lineal-arriba", "alternado"',
-    '         "direction": string|null,     // "up"|"down"|"left"|"right"|"forward"|"none"|null',
-    '         "repeated": boolean,          // ¿se repite la seña dentro del clip?',
+    '       "motion": {',
+    '         "trajectory": string,',
+    '         "direction": string|null,',
+    '         "repeated": boolean,',
     '         "contact": "none"|"hand-hand"|"hand-face"|"hand-body"',
     '       },',
-    '       "nonManual": {                  // rasgos no manuales relevantes',
-    '         "facial": string|null,        // ej "cejas-arriba", "labios-fruncidos", "neutra"',
+    '       "nonManual": {',
+    '         "facial": string|null,',
     '         "intent": "statement"|"question"|"exclamation"|"negation"|"affirmation"|"unknown"',
     '       },',
-    '       "reasoning": string             // 1 frase corta justificando la decisión',
+    '       "reasoning": string             // 1 frase corta describiendo configuración + movimiento observados',
     '     }',
     '  3. INTERPRETA LA INTENCIÓN del movimiento, no solo la forma:',
     '     - Si la trayectoria + expresión sugieren pregunta, usa nonManual.intent="question"',
@@ -211,21 +286,19 @@ export async function recognizeSignClip(frames, opts = {}) {
     const primaryModel = opts.model || DEFAULT_MODEL;
     const timeoutMs = Number(opts.timeoutMs) || REQUEST_TIMEOUT_MS;
 
-    try {
-        return await callOpenRouterVLM(primaryModel, userParts, timeoutMs);
-    } catch (err) {
-        // Intentar con el modelo de respaldo si el primario explota (404, 5xx, timeout).
-        if (FALLBACK_MODEL && FALLBACK_MODEL !== primaryModel) {
-            console.warn(`[SignLanguage][VLM] ${primaryModel} falló (${err?.message || err}). Probando fallback ${FALLBACK_MODEL}.`);
-            try {
-                return await callOpenRouterVLM(FALLBACK_MODEL, userParts, timeoutMs);
-            } catch (err2) {
-                console.error('[SignLanguage][VLM] fallback también falló:', err2?.message || err2);
-                throw err2;
-            }
+    const chain = [primaryModel, FALLBACK_MODEL, SECONDARY_FALLBACK_MODEL]
+        .filter((m, i, arr) => m && arr.indexOf(m) === i);
+
+    let lastErr = null;
+    for (const m of chain) {
+        try {
+            return await callOpenRouterVLM(m, userParts, timeoutMs);
+        } catch (err) {
+            lastErr = err;
+            console.warn(`[SignLanguage][VLM] ${m} fall\u00f3 (${err?.message || err}). Probando siguiente...`);
         }
-        throw err;
     }
+    throw lastErr || new Error('Todos los modelos VLM fallaron.');
 }
 
 async function callOpenRouterVLM(model, userParts, timeoutMs) {
@@ -237,8 +310,9 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
                 { role: 'system', content: SYSTEM_PROMPT },
                 { role: 'user', content: userParts },
             ],
-            max_tokens: 450,
-            temperature: 0.1,
+            max_tokens: 600,
+            temperature: 0,
+            top_p: 0.9,
             response_format: { type: 'json_object' },
         },
         {
