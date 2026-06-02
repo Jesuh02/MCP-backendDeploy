@@ -39,10 +39,10 @@ const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.0-
 const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'google/gemini-2.5-flash';
 const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'qwen/qwen2.5-vl-32b-instruct';
 const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 15000;
-// MAX_FRAMES = 14 → más evidencia temporal para distinguir señas similares
-// (hola vs maravilloso vs ocupado dependen de la microdinámica del movimiento;
-// con 6-8 frames se perdía y el VLM colapsaba al saludo más común).
-const MAX_FRAMES = 14;
+// MAX_FRAMES = 10 → suficiente evidencia temporal sin inflar el payload.
+// 14 frames causaba 5-10 s de latencia en Gemini/Qwen. Con 10 frames bien
+// espaciados se obtiene cobertura temporal equivalente con ~30% menos coste.
+const MAX_FRAMES = 10;
 const MIN_FRAMES = 1;
 
 const SYSTEM_PROMPT = [
@@ -97,8 +97,12 @@ const SYSTEM_PROMPT = [
     '    - "¿cómo estás?" = mano(s) en "5" con palmas hacia arriba, movimiento',
     '      de barrido lateral + CEJAS LEVANTADAS. Requiere cejas levantadas.',
     '    - "qué pasa / what\\u2019s up" = mano(s) en "5" palmas arriba con',
-    '      encogimiento de hombros y cejas levnumber"|"antadas, movimiento corto. NO es',
+    '      encogimiento de hombros y cejas levantadas, movimiento corto. NO es',
     '      "¿cómo estás?".',
+    '    - "mal/bad" = (a) mano plana en la boca girada 180° hacia abajo',
+    '      (opuesto de "bueno"); o (b) pulgar hacia abajo. Si ves movimiento',
+    '      hacia abajo o palma invertida NO lo confundas con "gracias" (que',
+    '      mueve la mano HACIA AFUERA desde el mentón, sin inversión).',
     '    - "gracias" = mano plana tocando el mentón/labios y avanzando hacia',
     '      afuera. UN solo movimiento de salida desde la cara.',
     '    - "sí" = puño cerrado (S/A) asintiendo (movimiento vertical de la',
@@ -135,7 +139,7 @@ const SYSTEM_PROMPT = [
     '     no aplique pero NUNCA omitas la clave):',
     '     {',
     '       "text": string,                 // palabra/frase reconocida en español natural',
-    '       "kind": "word"|"phrase"|"letter"|"unknown",',
+    '       "kind": "word"|"phrase"|"letter"|"number"|"unknown",  // number = d\u00edgito 0-9 est\u00e1tico',
     '       "confidence": number,           // 0.0 a 1.0 — sé HONESTO, baja si dudas',
     '       "alternatives": string[],       // hasta 2 alternativas plausibles distintas',
     '       "handedness": "left"|"right"|"both"|"none",',
@@ -154,10 +158,10 @@ const SYSTEM_PROMPT = [
     '  3. CALIBRACIÓN DE CONFIANZA (estricta, anti-alucinación):',
     '     - confidence ≥ 0.85 → la seña coincide en CONFIGURACIÓN, MOVIMIENTO y',
     '       LOCACIÓN con una forma canónica que conoces bien.',
-    '     - 0.55–0.85 → coincide en lo esencial pero hay ambigüedad menor.',
-    '     - 0.30–0.55 → solo parcialmente compatible; pon alternativas reales.',
-    '     - < 0.55 → SIEMPRE devuelve kind="unknown" y text="". Es preferible',
-    '       "unknown" a equivocarse.',
+    '     - 0.65–0.85 → coincide en lo esencial pero hay ambigüedad menor.',
+    '     - 0.40–0.65 → solo parcialmente compatible; pon alternativas reales.',
+    '     - < 0.65 → SIEMPRE devuelve kind="unknown" y text="". Es preferible',
+    '       "unknown" a equivocarse. NUNCA adivines un saludo con confianza baja.',
     '  4. INTENCIÓN: solo marca "question" si hay cejas levantadas + trayectoria',
     '     interrogativa clara. Solo "exclamation" si hay énfasis facial real.',
     '     En duda → "statement".',
@@ -168,8 +172,10 @@ const SYSTEM_PROMPT = [
     '     kind="number", text=dígito ("0".."9").',
     '  7. Idioma: español (es-CO). Usa ¿? y ¡! solo cuando la intención lo',
     '     justifique realmente.',
-    '  8. PROHIBIDO: devolver "Hola", "¿Cómo estás?", "Adiós" o "Gracias" como',
-    '     respuesta por defecto cuando no estás seguro. Si dudas → "unknown".',
+    '  8. PROHIBIDO: devolver "Hola", "¿Cómo estás?", "Adiós", "Gracias" o',
+    '     "Buenos días" como respuesta por defecto cuando no estás seguro.',
+    '     Si dudas incluso levemente → kind="unknown", text="".',
+    '     Un false-positive de saludo ROMPE el sistema. Sé conservador.',
 ].join('\n');
 
 /**
@@ -229,15 +235,15 @@ export async function recognizeSignClip(frames, opts = {}) {
                 'Analiza la SECUENCIA como un clip de video corto siguiendo el procedimiento',
                 'OBLIGATORIO del sistema: primero describe configuración manual, orientación,',
                 'locación, movimiento y rasgos no manuales; SOLO entonces decide la seña.',
-                'RECORDATORIO ANTI-SESGO: el vocabulario es ENORME (ocupado, maravilloso,',
-                'fine, parar, trabajar, comer, casa, feliz, ayudar, libro, agua,',
-                'familia, sí, no, ok, más o menos, qué pasa, no mucho, mi nombre es,',
-                'etc.). NO asumas saludos comunes ("hola", "¿cómo estás?", "adiós",',
-                '"gracias") por defecto. Si la configuración manual exacta no coincide',
-                'con una seña canónica que conozcas con certeza, devuelve kind="unknown".',
-                'Si la mano está estática en una letra (A-Z) o número (0-9),',
-                'usa kind="letter" o kind="number" — NO inventes una palabra.',
-                'Sé HONESTO con la confianza: < 0.55 → "unknown".',
+                'RECORDATORIO ANTI-SESGO CRÍTICO: NO existe un vocabulario privilegiado.',
+                'Saludos (hola, ¿cómo estás?, adiós, gracias, buenos días) son tan',
+                'probables como: ocupado/busy, maravilloso/wonderful, fine/bien,',
+                'mal/bad, parar/stop, sí, no, ok, más o menos/so-so, qué pasa,',
+                'no mucho, mi nombre es, trabajar, comer, casa, feliz, agua, etc.',
+                'Si la configuración manual exacta NO coincide con una seña que',
+                'conozcas con CERTEZA → devuelve kind="unknown".',
+                'Letra estática A-Z → kind="letter". Dígito estático 0-9 → kind="number".',
+                'UMBRAL: confianza < 0.65 → kind="unknown", text="". Sin excepciones.',
                 'Responde con el JSON exacto definido en las reglas del sistema.',
             ].filter(Boolean).join('\n'),
         },
@@ -271,7 +277,7 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
                 { role: 'system', content: SYSTEM_PROMPT },
                 { role: 'user', content: userParts },
             ],
-            max_tokens: 450,
+            max_tokens: 600,
             temperature: 0,
             top_p: 0.9,
             response_format: { type: 'json_object' },
