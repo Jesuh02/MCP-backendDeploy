@@ -496,12 +496,12 @@ function decodeClipFrames(frames, res) {
         });
         return null;
     }
-    if (frames.length > 12) {
+    if (frames.length > 16) {
         res.status(400).json({
             success: false,
             error: {
                 code: 'CLIP_TOO_LONG',
-                message: 'Máximo 12 frames por clip.',
+                message: 'Máximo 16 frames por clip.',
                 statusCode: 400,
             },
         });
