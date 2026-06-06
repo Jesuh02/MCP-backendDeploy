@@ -8,6 +8,7 @@ export function llmRoutes({ llmController }) {
     router.post('/analyze', aiRateLimiter, llmController.analyzeSubmission);
     router.post('/feedback', aiRateLimiter, llmController.feedbackSubmission);
     router.post('/generate-course-content', aiRateLimiter, llmController.generateCourseContent);
+    router.post('/confirm-course', aiRateLimiter, llmController.confirmCoursePlan);
 
     return router;
 }
