@@ -254,18 +254,32 @@ export function signLanguageRoutes() {
             : 0.6;
 
         try {
+            // Continuidad conversacional: si el cliente no pasa contexto,
+            // usamos el draft acumulado de la sesión como `previousText`
+            // para que el VLM desambigüe mejor en una conversación larga.
+            const sessionDraft = getSessionDraft(sessionId)?.draft || '';
             const result = await recognizeSignClip(frames, {
                 context: typeof req.body?.context === 'string' ? req.body.context : undefined,
+                previousText: typeof req.body?.previousText === 'string'
+                    ? req.body.previousText
+                    : (sessionDraft || undefined),
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
             });
             let pushed = false;
             if (result && result.text && result.kind !== 'unknown' && result.confidence >= minConfidence) {
-                if (result.kind === 'letter' || result.kind === 'number') {
-                    // Letras (A-Z) y números (0-9) se empujan como deletreo:
-                    // se concatenan carácter a carácter al draft.
-                    pushLetter(sessionId, { label: result.text, confidence: result.confidence });
+                // `letter` → carácter único del alfabeto (incluye vocales con tilde
+                //   y Ñ si el VLM los devuelve). Va al stream de letras para que
+                //   el composer pueda colapsar repeticiones e insertar espacios.
+                // `number` (5, 23, 1000) → token indivisible: NO puede colapsarse
+                //   con letras adyacentes ni concatenarse cifra a cifra.
+                // `word` / `phrase` / `sentence` → siempre tokens indivisibles
+                //   con espacio antes/después en el draft.
+                const text = String(result.text).trim();
+                const isSingleChar = result.kind === 'letter' && Array.from(text).length === 1;
+                if (isSingleChar) {
+                    pushLetter(sessionId, { label: text, confidence: result.confidence });
                 } else {
-                    pushWord(sessionId, { text: result.text, confidence: result.confidence });
+                    pushWord(sessionId, { text, confidence: result.confidence });
                 }
                 pushed = true;
             }
@@ -492,7 +506,7 @@ function handleClassifierError(err, res) {
  * 400 y devuelve null si la entrada es inválida.
  * @returns {Buffer[]|null}
  */
-function decodeClipFrames(frames, res) {
+function decodeClipFrames(frames, res, maxFrames = 12) {
     if (!Array.isArray(frames) || frames.length === 0) {
         res.status(400).json({
             success: false,
@@ -504,12 +518,12 @@ function decodeClipFrames(frames, res) {
         });
         return null;
     }
-    if (frames.length > 16) {
+    if (frames.length > maxFrames) {
         res.status(400).json({
             success: false,
             error: {
                 code: 'CLIP_TOO_LONG',
-                message: 'Máximo 16 frames por clip.',
+                message: `Máximo ${maxFrames} frames por petición.`,
                 statusCode: 400,
             },
         });

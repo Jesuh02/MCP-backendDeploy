@@ -90,7 +90,11 @@ export function deleteSession(id) {
 export function pushLetter(id, detection) {
     const s = getOrCreateSession(id);
     const now = Date.now();
-    const label = String(detection?.label ?? '').trim().toUpperCase();
+    // Conservamos tildes/Ñ/Ü tal cual: el VLM puede devolver "Á", "É", "Ñ"
+    // como `kind: 'letter'`. `toLocaleUpperCase('es')` mantiene los
+    // diacríticos correctamente (a diferencia de `toUpperCase` por defecto
+    // que en algunos entornos altera la composición Unicode).
+    const label = String(detection?.label ?? '').trim().toLocaleUpperCase('es');
     if (!label) return { draft: buildDraft(s.events), events: s.events };
 
     if (s.events.length >= MAX_SEQUENCE_LEN) {

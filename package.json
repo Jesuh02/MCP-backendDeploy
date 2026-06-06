@@ -22,7 +22,10 @@
     "icfes:seed:naturales-2024-2025:dry": "node scripts/icfes_seed/seed-naturales-2024-2025.mjs --dry-run",
     "icfes:seed:lectura-critica-2022": "node scripts/run-sql.mjs scripts/seed_icfes_lectura_critica_2022.sql",
     "icfes:fill-explanations": "node scripts/icfes_fill_explanations.mjs",
-    "icfes:fill-explanations:dry": "node scripts/icfes_fill_explanations.mjs --dry-run --limit=5"
+    "icfes:fill-explanations:dry": "node scripts/icfes_fill_explanations.mjs --dry-run --limit=5",
+    "sign:cm": "node scripts/sign_language_confusion_matrix.mjs",
+    "sign:cm:headless": "node scripts/sign_language_confusion_matrix.mjs --no-open",
+    "sign:cm:real": "node scripts/sign_language_confusion_matrix.mjs --samples ./eval_samples"
   },
   "keywords": [
     "mcp",
