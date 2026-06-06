@@ -5,7 +5,7 @@
  * y devuelve respuestas estandarizadas.
  */
 
-import { processPromptSchema, analyzeSubmissionSchema, feedbackSchema, generateCourseContentSchema } from './llm.schemas.js';
+import { processPromptSchema, analyzeSubmissionSchema, feedbackSchema, confirmCoursePlanSchema, generateCourseContentSchema } from './llm.schemas.js';
 import { ValidationError } from '../../shared/errors/index.js';
 import { TENANT_CONFIGS, getCurrentTenantId, getAllTenantEntries } from '../../config/tenantRegistry.js';
 import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
@@ -272,6 +272,26 @@ export class LLMController {
                 ...value,
                 userId,
                 username,
+            });
+            if (result.isFail()) return next(result.getError());
+
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    confirmCoursePlan = async (req, res, next) => {
+        try {
+            const { error, value } = confirmCoursePlanSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+
+            const userId = req.user?.userId || req.user?.id || value.userId || null;
+            const username = req.user?.username || value.username || null;
+
+            const result = await this.llmService.confirmCoursePlan({
+                plan: value.plan,
+                userId,
+                username,
+                model: value.model,
             });
             if (result.isFail()) return next(result.getError());
 

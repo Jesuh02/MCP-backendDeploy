@@ -46,6 +46,34 @@ export const feedbackSchema = Joi.object({
     question: Joi.string().min(1).required(),
 });
 
+export const confirmCoursePlanSchema = Joi.object({
+    plan: Joi.object({
+        title: Joi.string().min(1).max(300).required(),
+        description: Joi.string().allow('', null).optional(),
+        category: Joi.string().allow('', null).optional(),
+        level: Joi.string().allow('', null).optional(),
+        durationWeeks: Joi.number().integer().optional(),
+        subjects: Joi.array().items(Joi.object({
+            name: Joi.string().min(1).required(),
+            description: Joi.string().allow('', null).optional(),
+            topics: Joi.array().items(Joi.object({
+                title: Joi.string().min(1).required(),
+                description: Joi.string().allow('', null).optional(),
+                contentDescription: Joi.string().allow('', null).optional(),
+                tasks: Joi.array().items(Joi.object({
+                    title: Joi.string().min(1).required(),
+                    description: Joi.string().allow('', null).optional(),
+                    dueWeek: Joi.number().integer().optional(),
+                    contentDescription: Joi.string().allow('', null).optional(),
+                })).optional(),
+            })).optional(),
+        })).min(1).required(),
+    }).required(),
+    model: Joi.string().allow('', null).optional(),
+    userId: Joi.number().integer().optional(),
+    username: Joi.string().allow('', null).optional(),
+}).options({ allowUnknown: true });
+
 export const generateCourseContentSchema = Joi.object({
     courseId: Joi.number().integer().positive().required(),
     courseTitle: Joi.string().min(1).max(300).required(),
@@ -59,5 +87,5 @@ export const generateCourseContentSchema = Joi.object({
     model: Joi.string().allow('', null).optional(),
 });
 
-export default { processPromptSchema, analyzeSubmissionSchema, feedbackSchema, generateCourseContentSchema };
+export default { processPromptSchema, analyzeSubmissionSchema, feedbackSchema, confirmCoursePlanSchema, generateCourseContentSchema };
 

@@ -2038,5 +2038,231 @@ Responde de forma clara y constructiva.`;
             });
         return runs.length > 0 ? runs : [new TextRun({ text })];
     }
+
+    /**
+     * Confirms a course plan by persisting the full structure (course → subjects → topics → tasks)
+     * into the institution's database via MCP, then generating Word documents for each topic
+     * (study material) and each task (guide + rubric).
+     *
+     * @param {{ plan: Object, userId: number, username?: string, model?: string }} params
+     * @returns {Promise<Result<{ courseId: number, topicsCreated: number, tasksCreated: number, topicDocs: number, taskDocs: number }>>}
+     */
+    async confirmCoursePlan({ plan, userId, username, model }) {
+        if (!plan || !plan.title || !Array.isArray(plan.subjects) || plan.subjects.length === 0) {
+            return Result.fail(new ValidationError('plan es requerido con title y al menos un subject'));
+        }
+        if (!userId) {
+            return Result.fail(new ValidationError('userId es requerido para crear el curso'));
+        }
+
+        try {
+            const { MCPService } = await import('./mcp-legacy.service.js');
+            const mcp = new MCPService();
+
+            // Escape single-quoted string values for safe SQL embedding
+            const esc = (s) => String(s == null ? '' : s).replace(/'/g, "''");
+
+            // Execute an INSERT and return the first row (must include RETURNING id)
+            const execInsert = async (sql) => {
+                const toolResult = await mcp.executeMCPTool('query_database', { query: sql });
+                if (!toolResult?.success) {
+                    throw new Error(toolResult?.error || `INSERT falló: ${sql.substring(0, 80)}`);
+                }
+                return Array.isArray(toolResult.results) ? toolResult.results[0] : null;
+            };
+
+            // 1. Create the course
+            const courseRow = await execInsert(
+                `INSERT INTO courses (title, description, category, price, is_premium, is_active, creator_user_id)
+                 VALUES ('${esc(plan.title)}', '${esc(plan.description)}', '${esc(plan.category || 'General')}', 0, false, true, ${userId})
+                 RETURNING id`,
+            );
+            const courseId = courseRow?.id;
+            if (!courseId) throw new Error('No se obtuvo el id del curso recién creado');
+
+            const topicsForContent = [];
+            const tasksForContent = [];
+            let topicsCreated = 0;
+            let tasksCreated = 0;
+
+            // 2. Create subjects → topics → tasks
+            for (const subject of plan.subjects) {
+                const subjectRow = await execInsert(
+                    `INSERT INTO subjects (name, description, course_id, created_by)
+                     VALUES ('${esc(subject.name)}', '${esc(subject.description)}', ${courseId}, ${userId})
+                     RETURNING id`,
+                );
+                const subjectId = subjectRow?.id;
+                if (!subjectId) continue;
+
+                for (const topic of (subject.topics || [])) {
+                    const topicRow = await execInsert(
+                        `INSERT INTO topics (name, description, materia_id, created_by)
+                         VALUES ('${esc(topic.title)}', '${esc(topic.description)}', ${subjectId}, ${userId})
+                         RETURNING id`,
+                    );
+                    const topicId = topicRow?.id;
+                    if (!topicId) continue;
+                    topicsCreated++;
+
+                    topicsForContent.push({
+                        id: topicId,
+                        title: topic.title,
+                        description: topic.description || '',
+                        contentDescription: topic.contentDescription || '',
+                        subjectName: subject.name,
+                    });
+
+                    for (const task of (topic.tasks || [])) {
+                        const dueExpr = task.dueWeek && Number.isInteger(task.dueWeek) && task.dueWeek > 0
+                            ? `NOW() + INTERVAL '${task.dueWeek} weeks'`
+                            : 'NULL';
+                        const taskRow = await execInsert(
+                            `INSERT INTO tasks (title, description, topic_id, due_date, created_by)
+                             VALUES ('${esc(task.title)}', '${esc(task.description)}', ${topicId}, ${dueExpr}, ${userId})
+                             RETURNING id`,
+                        );
+                        const taskId = taskRow?.id;
+                        if (!taskId) continue;
+                        tasksCreated++;
+
+                        tasksForContent.push({
+                            id: taskId,
+                            title: task.title,
+                            description: task.description || '',
+                            contentDescription: task.contentDescription || '',
+                            topicName: topic.title,
+                            subjectName: subject.name,
+                            courseTitle: plan.title,
+                        });
+                    }
+                }
+            }
+
+            // 3. Generate Word documents — non-blocking: errors are logged but don't abort
+            let topicDocs = 0;
+            let taskDocs = 0;
+
+            if (this.storage && this.storage.isAvailable() && this.contentItemRepo) {
+                // 3a. Topic study-material documents
+                for (const topic of topicsForContent) {
+                    try {
+                        const content = await this._generateTopicContent({ courseTitle: plan.title, topic, model });
+                        const docBuffer = await this._buildWordDocument(topic, content);
+                        const safeName = (topic.title || 'tema')
+                            .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
+                        const key = `courses/${courseId}/topics/${topic.id}/${Date.now()}_${safeName}.docx`;
+                        const publicUrl = await this.storage.uploadFile(
+                            docBuffer, key,
+                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            docBuffer.length,
+                        );
+                        await this.contentItemRepo.create({
+                            topicId: topic.id,
+                            title: topic.title,
+                            body: publicUrl,
+                            contentType: 'file',
+                            fileUri: publicUrl,
+                            fileName: `${safeName}.docx`,
+                            orderIndex: 0,
+                            creatorUsuarioId: userId || null,
+                            creatorUsername: username || null,
+                        });
+                        topicDocs++;
+                    } catch (err) {
+                        console.error(`[LLMDomainService] Topic doc failed topic=${topic.id}: ${err.message}`);
+                    }
+                }
+
+                // 3b. Task guide + rubric documents
+                for (const task of tasksForContent) {
+                    try {
+                        const content = await this._generateTaskContent({ task, model });
+                        const docBuffer = await this._buildWordDocument(
+                            { title: task.title, subjectName: task.subjectName },
+                            content,
+                        );
+                        const safeName = (task.title || 'tarea')
+                            .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
+                        const key = `courses/${courseId}/tasks/${task.id}/${Date.now()}_${safeName}.docx`;
+                        const publicUrl = await this.storage.uploadFile(
+                            docBuffer, key,
+                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            docBuffer.length,
+                        );
+                        await this.contentItemRepo.create({
+                            taskId: task.id,
+                            title: task.title,
+                            body: publicUrl,
+                            contentType: 'file',
+                            fileUri: publicUrl,
+                            fileName: `${safeName}.docx`,
+                            orderIndex: 0,
+                            creatorUsuarioId: userId || null,
+                            creatorUsername: username || null,
+                        });
+                        taskDocs++;
+                    } catch (err) {
+                        console.error(`[LLMDomainService] Task doc failed task=${task.id}: ${err.message}`);
+                    }
+                }
+            }
+
+            console.log(`[LLMDomainService] confirmCoursePlan done: courseId=${courseId}, topics=${topicsCreated}, tasks=${tasksCreated}, topicDocs=${topicDocs}, taskDocs=${taskDocs}`);
+            return Result.ok({ courseId, topicsCreated, tasksCreated, topicDocs, taskDocs });
+        } catch (err) {
+            return Result.fail(new ValidationError(`confirmCoursePlan falló: ${err.message}`));
+        }
+    }
+
+    /**
+     * Ask the LLM to generate a task guide with step-by-step instructions and a rubric.
+     * @private
+     */
+    async _generateTaskContent({ task, model }) {
+        const systemPrompt = [
+            'Eres un experto pedagógico. Genera una guía completa para el desarrollo de una tarea académica.',
+            'Responde ÚNICAMENTE con el contenido en formato Markdown.',
+            'El documento debe ser claro, práctico y orientar al estudiante paso a paso.',
+        ].join('\n');
+
+        const userPrompt = [
+            `Genera una guía de tarea completa para: "${task.title}"`,
+            `Tema: "${task.topicName}"`,
+            `Materia: "${task.subjectName}"`,
+            `Curso: "${task.courseTitle}"`,
+            task.description ? `Descripción de la tarea: ${task.description}` : '',
+            task.contentDescription ? `El documento debe cubrir específicamente: ${task.contentDescription}` : '',
+            '',
+            'El documento debe incluir las siguientes secciones:',
+            '# 1. Introducción a la Tarea',
+            'Describe el propósito y la relevancia de esta tarea (2-3 párrafos).',
+            '',
+            '# 2. Objetivos de la Tarea',
+            'Lista 3-4 objetivos específicos que el estudiante debe cumplir.',
+            '',
+            '# 3. Instrucciones Paso a Paso',
+            'Guía detallada numerada de cómo desarrollar y entregar la tarea.',
+            '',
+            '# 4. Recursos y Referencias',
+            'Bibliografía sugerida, herramientas y materiales de apoyo.',
+            '',
+            '# 5. Criterios de Evaluación (Rúbrica)',
+            'Tabla Markdown con criterios de evaluación, niveles de desempeño y puntajes.',
+            '',
+            '# 6. Ejemplo o Modelo de Entrega',
+            'Muestra un ejemplo concreto de cómo debe verse el producto final.',
+            '',
+            '# 7. Preguntas Frecuentes',
+            'Anticipa y responde 3-5 dudas comunes que puedan tener los estudiantes.',
+        ].filter(Boolean).join('\n');
+
+        const response = await this.llm.chat(systemPrompt, userPrompt, {
+            model,
+            tools: [],
+            toolChoice: 'none',
+        });
+        return response?.content || '';
+    }
 }
 export default LLMDomainService;
