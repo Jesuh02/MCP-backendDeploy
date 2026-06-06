@@ -1,5 +1,5 @@
 /**
- * sign-language.routes.js — Dos pipelines complementarias de señas.
+ * sign-language.routes.js — Tres pipelines complementarias de señas.
  *
  *   A) ALFABETO (estático, frame-a-frame): clasificación local con
  *      Transformers.js sobre ONNX usando prithivMLmods/Alphabet-Sign-
@@ -14,6 +14,14 @@
  *      clasificador de imagen estática NUNCA puede reconocer porque son
  *      gestos en movimiento. Endpoints: /recognize-clip y
  *      /session/:id/clip.
+ *
+ *   C) SMART AUTO-FRAME (recomendado): el frontend envía cada frame de
+ *      la cámara y el servidor decide automáticamente, basándose en el
+ *      MOVIMIENTO entre frames, si debe clasificar una letra/número
+ *      (cuando la mano lleva ~1 s quieta) o reconocer una palabra/frase
+ *      (cuando hubo movimiento sostenido). Endpoint:
+ *      /session/:id/auto-frame. Internamente combina (A) + (B) y mantiene
+ *      el state machine en `smart-recognizer.js`.
  *
  * La sesión (`phrase-composer.js`) acepta ambos tipos de evento y los
  * intercala en el draft final, que luego pasa por el LLM para
@@ -36,9 +44,6 @@
  */
 
 import { Router } from 'express';
-import path from 'node:path';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { signLanguageRateLimiter } from '../../shared/middleware/GranularRateLimiters.js';
 import {
     pushLetter,
@@ -49,79 +54,12 @@ import {
     composePhrase,
 } from './phrase-composer.js';
 import { recognizeSignClip } from './sign-language-vlm.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const HF_MODEL_ID = 'prithivMLmods/Alphabet-Sign-Language-Detection';
-const DEFAULT_MODEL_DIR = path.resolve(__dirname, '../../../models/sign-language');
-const MODEL_DIR = process.env.SIGN_LANGUAGE_MODEL_DIR || DEFAULT_MODEL_DIR;
-const HF_REPO = (process.env.SIGN_LANGUAGE_HF_REPO || '').trim();
-const CACHE_DIR = process.env.SIGN_LANGUAGE_CACHE_DIR || '/tmp/transformers-cache';
-
-// Singleton del pipeline: se carga una vez y se reutiliza.
-let classifierPromise = null;
-let loadError = null;
-
-async function getClassifier() {
-    if (loadError) throw loadError;
-    if (classifierPromise) return classifierPromise;
-
-    classifierPromise = (async () => {
-        const hasLocal = ['config.json', 'preprocessor_config.json', 'onnx/model.onnx']
-            .every((rel) => fs.existsSync(path.join(MODEL_DIR, rel)));
-
-        if (!hasLocal && !HF_REPO) {
-            throw new Error(
-                `Falta config.json en ${MODEL_DIR} y SIGN_LANGUAGE_HF_REPO no está definido. ` +
-                `Sube el ONNX a un repo HuggingFace tuyo y exporta ` +
-                `SIGN_LANGUAGE_HF_REPO=tu_usuario/Alphabet-Sign-Language-ONNX, o bien ` +
-                `bundlea los pesos en ${MODEL_DIR}.`,
-            );
-        }
-
-        const { pipeline, env } = await import('@huggingface/transformers');
-
-        if (hasLocal) {
-            env.allowRemoteModels = false;
-            env.allowLocalModels = true;
-            env.localModelPath = path.dirname(MODEL_DIR);
-            const modelName = path.basename(MODEL_DIR); // "sign-language"
-            console.log(`[SignLanguage] Cargando pipeline LOCAL desde ${MODEL_DIR} ...`);
-            const t0 = Date.now();
-            const pipe = await pipeline('image-classification', modelName, { dtype: 'fp32' });
-            console.log(`[SignLanguage] Pipeline listo en ${Date.now() - t0} ms`);
-            return pipe;
-        }
-
-        // --- Modo remoto: descargar desde el Hub ---
-        try {
-            fs.mkdirSync(CACHE_DIR, { recursive: true });
-        } catch { /* ignore */ }
-
-        env.allowRemoteModels = true;
-        env.allowLocalModels = false;
-        env.cacheDir = CACHE_DIR;
-        env.useFSCache = true;
-
-        // Transformers.js lee process.env.HF_TOKEN para repos privados.
-        if (process.env.HF_API_TOKEN && !process.env.HF_TOKEN) {
-            process.env.HF_TOKEN = process.env.HF_API_TOKEN;
-        }
-
-        console.log(`[SignLanguage] Cargando pipeline REMOTO desde ${HF_REPO} (cache: ${CACHE_DIR}) ...`);
-        const t0 = Date.now();
-        const pipe = await pipeline('image-classification', HF_REPO, { dtype: 'fp32' });
-        console.log(`[SignLanguage] Pipeline listo en ${Date.now() - t0} ms`);
-        return pipe;
-    })().catch((err) => {
-        loadError = err;
-        classifierPromise = null;
-        throw err;
-    });
-
-    return classifierPromise;
-}
+import {
+    HF_MODEL_ID,
+    getLetterClassifier,
+    classifyLetter,
+} from './letter-classifier.js';
+import { ingestFrame as smartIngestFrame, resetRecognizerState } from './smart-recognizer.js';
 
 export function signLanguageRoutes() {
     const router = Router();
@@ -131,7 +69,7 @@ export function signLanguageRoutes() {
             return res.json({ success: true, data: { ready: false, reason: 'disabled' } });
         }
         try {
-            await getClassifier();
+            await getLetterClassifier();
             res.json({
                 success: true,
                 data: {
@@ -143,6 +81,7 @@ export function signLanguageRoutes() {
                         clipRecognition: Boolean(process.env.OPENROUTER_API_KEY),
                         twoHandedGestures: Boolean(process.env.OPENROUTER_API_KEY),
                         motionIntent: Boolean(process.env.OPENROUTER_API_KEY),
+                        smartAutoFrame: Boolean(process.env.OPENROUTER_API_KEY),
                     },
                 },
             });
@@ -162,7 +101,7 @@ export function signLanguageRoutes() {
         if (!decoded) return;
 
         try {
-            const result = await classifyImage(decoded);
+            const result = await classifyLetter(decoded);
             if (!result) return res.json({ success: true, data: { detection: null, model: HF_MODEL_ID } });
             return res.json({ success: true, data: { ...result, model: HF_MODEL_ID } });
         } catch (err) {
@@ -195,7 +134,7 @@ export function signLanguageRoutes() {
             : 0.5;
 
         try {
-            const result = await classifyImage(decoded);
+            const result = await classifyLetter(decoded);
             const top = result?.detection ?? null;
             let pushed = false;
             if (top && top.confidence >= minConfidence) {
@@ -254,6 +193,7 @@ export function signLanguageRoutes() {
 
     router.delete('/session/:id', (req, res) => {
         deleteSession(req.params.id);
+        resetRecognizerState(req.params.id);
         return res.json({ success: true, data: { cleared: true } });
     });
 
@@ -341,6 +281,94 @@ export function signLanguageRoutes() {
             });
         } catch (err) {
             return handleVlmError(err, res);
+        }
+    });
+
+    /**
+     * SMART AUTO-FRAME — el endpoint recomendado para uso en producción.
+     *
+     * Recibe UN frame a la vez (la cámara del frontend a 3-5 fps) y deja
+     * que el servidor decida qué hacer según el movimiento del usuario:
+     *   - mano quieta ≈ 1 segundo  →  detecta LETRA o NÚMERO (ONNX → VLM).
+     *   - manos en movimiento sostenido seguido de pausa  →  detecta
+     *     PALABRA o FRASE con el VLM sobre el clip acumulado.
+     *
+     * El servidor mantiene el buffer de frames y la máquina de estados por
+     * sesión: el frontend NO tiene que decidir cuándo cambiar de modo ni
+     * cuántos frames enviar a un clip — solo "stream all frames".
+     *
+     * Body: {
+     *   imageBase64: string,
+     *   minLetterConfidence?: number,   // default 0.55 (ONNX)
+     *   minPhraseConfidence?: number,   // default 0.6  (VLM)
+     *   stillDurationMs?: number,       // default 900
+     *   allowVlmLetterFallback?: boolean, // default true (números / letras raras)
+     *   context?: string,
+     *   model?: string,
+     *   debug?: boolean,
+     * }
+     *
+     * Response: {
+     *   event: null | { source, kind, text, confidence, alternatives, reasoning? },
+     *   pushed: boolean,
+     *   motion: number,    // [0,1] motion score del frame actual
+     *   state: 'idle'|'moving'|'settling'|'still',
+     *   draft: string,     // borrador acumulado de la sesión
+     *   eventCount: number,
+     *   debug?: {...},
+     * }
+     */
+    router.post('/session/:id/auto-frame', signLanguageRateLimiter, async (req, res) => {
+        const guard = guardEnabled(res);
+        if (guard) return guard;
+
+        const sessionId = String(req.params.id || '').trim();
+        if (!sessionId) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_SESSION', message: 'sessionId requerido.', statusCode: 400 },
+            });
+        }
+
+        const decoded = decodeBase64Image(req.body?.imageBase64, res);
+        if (!decoded) return;
+
+        try {
+            const result = await smartIngestFrame(sessionId, decoded, {
+                context: typeof req.body?.context === 'string' ? req.body.context.slice(0, 300) : undefined,
+                model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+                minLetterConfidence: Number(req.body?.minLetterConfidence),
+                minPhraseConfidence: Number(req.body?.minPhraseConfidence),
+                stillDurationMs: Number(req.body?.stillDurationMs),
+                allowVlmLetterFallback: req.body?.allowVlmLetterFallback !== false,
+                debug: Boolean(req.body?.debug),
+            });
+            return res.json({ success: true, data: result });
+        } catch (err) {
+            const msg = err?.message || String(err);
+            console.error('[SignLanguage] auto-frame falló:', msg);
+            // Errores del classifier ONNX (HF no configurado) o del VLM
+            // bajan al frontend con códigos consistentes.
+            if (/Falta .*\.(json|onnx)|SIGN_LANGUAGE_HF_REPO/.test(msg)) {
+                return res.status(503).json({
+                    success: false,
+                    error: { code: 'HF_NOT_CONFIGURED', message: msg, statusCode: 503 },
+                });
+            }
+            if (err?.code === 'VLM_NOT_CONFIGURED') {
+                return res.status(503).json({
+                    success: false,
+                    error: { code: 'VLM_NOT_CONFIGURED', message: msg, statusCode: 503 },
+                });
+            }
+            return res.status(500).json({
+                success: false,
+                error: {
+                    code: 'AUTO_FRAME_FAILED',
+                    message: 'Falló el procesamiento inteligente del frame.',
+                    statusCode: 500,
+                },
+            });
         }
     });
 
@@ -438,29 +466,7 @@ function decodeBase64Image(imageBase64, res) {
  * Clasifica un buffer de imagen. Devuelve `null` si el modelo no produce
  * predicciones, o `{ detection, alternatives }` con top-3.
  */
-async function classifyImage(imageBuffer) {
-    const classifier = await getClassifier();
-    const { RawImage } = await import('@huggingface/transformers');
-
-    const mime = detectMime(imageBuffer);
-    const blob = new Blob([imageBuffer], { type: mime });
-    const image = await RawImage.fromBlob(blob);
-
-    const preds = await classifier(image, { top_k: 3 });
-    if (!Array.isArray(preds) || preds.length === 0) return null;
-
-    const top = preds[0];
-    return {
-        detection: {
-            label: String(top.label ?? '').toUpperCase(),
-            confidence: Number(top.score) || 0,
-        },
-        alternatives: preds.slice(1).map((p) => ({
-            label: String(p.label ?? '').toUpperCase(),
-            confidence: Number(p.score) || 0,
-        })),
-    };
-}
+// classifyImage extraída a letter-classifier.js (`classifyLetter`).
 
 function handleClassifierError(err, res) {
     const msg = err?.message || String(err);
@@ -559,27 +565,7 @@ function handleVlmError(err, res) {
     });
 }
 
-/**
- * Detecta el mime-type a partir de los magic bytes (JPEG / PNG / WebP).
- */
-function detectMime(buf) {
-    if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
-        return 'image/jpeg';
-    }
-    if (
-        buf.length >= 8 &&
-        buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
-    ) {
-        return 'image/png';
-    }
-    if (
-        buf.length >= 12 &&
-        buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-        buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
-    ) {
-        return 'image/webp';
-    }
-    return 'image/jpeg';
-}
+// detectMime() vive ahora en letter-classifier.js (no se usa directamente
+// en este módulo: classifyLetter() y los helpers de motion lo encapsulan).
 
 export default signLanguageRoutes;

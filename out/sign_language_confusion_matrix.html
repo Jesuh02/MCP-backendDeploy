@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Matriz de Confusión — Sign Language</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:#0d0d10; color:#e8e8ec; margin:0; padding:32px; }
+  h1 { font-weight:600; font-size:22px; margin:0 0 4px; }
+  p.sub { color:#9aa0aa; margin:0 0 24px; font-size:13px; }
+  .wrap { max-width:1100px; margin:0 auto; }
+  .grid { display:grid; grid-template-columns: 1fr 320px; gap:24px; align-items:start; }
+  canvas#cm { background:#15151b; border:1px solid #23232b; border-radius:14px; padding:12px; }
+  .card { background:#15151b; border:1px solid #23232b; border-radius:14px; padding:18px; }
+  .acc { font-size:34px; font-weight:700; color:#00D4FF; }
+  table { width:100%; border-collapse:collapse; margin-top:12px; font-size:13px; }
+  th,td { padding:6px 8px; text-align:right; border-bottom:1px solid #23232b; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:#9aa0aa; font-weight:500; }
+  .legend { font-size:12px; color:#9aa0aa; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Matriz de Confusión — Lengua de Señas</h1>
+  <p class="sub">Pipeline: camera · Clases: letter · number · word · phrase · sentence · unknown · 200 muestras</p>
+  <div class="grid">
+    <div>
+      <canvas id="cm" width="700" height="600"></canvas>
+      <div class="legend">Intensidad = proporción por fila (true). Número = conteo absoluto.</div>
+    </div>
+    <div class="card">
+      <div style="font-size:12px;color:#9aa0aa;">Accuracy global</div>
+      <div class="acc">78.00 %</div>
+      <table>
+        <thead><tr><th>Clase</th><th>n</th><th>P</th><th>R</th><th>F1</th></tr></thead>
+        <tbody>
+          
+            <tr>
+              <td>letter</td>
+              <td>40</td>
+              <td>93.9</td>
+              <td>77.5</td>
+              <td>84.9</td>
+            </tr>
+            <tr>
+              <td>number</td>
+              <td>40</td>
+              <td>81.8</td>
+              <td>90.0</td>
+              <td>85.7</td>
+            </tr>
+            <tr>
+              <td>word</td>
+              <td>40</td>
+              <td>79.1</td>
+              <td>85.0</td>
+              <td>81.9</td>
+            </tr>
+            <tr>
+              <td>phrase</td>
+              <td>40</td>
+              <td>65.2</td>
+              <td>75.0</td>
+              <td>69.8</td>
+            </tr>
+            <tr>
+              <td>sentence</td>
+              <td>40</td>
+              <td>78.1</td>
+              <td>62.5</td>
+              <td>69.4</td>
+            </tr>
+            <tr>
+              <td>unknown</td>
+              <td>0</td>
+              <td>0.0</td>
+              <td>0.0</td>
+              <td>0.0</td>
+            </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
+<script>
+  const labels = ["letter","number","word","phrase","sentence","unknown"];
+  const data = [{"x":"letter","y":"letter","v":31,"n":0.775},{"x":"number","y":"letter","v":5,"n":0.125},{"x":"word","y":"letter","v":3,"n":0.075},{"x":"phrase","y":"letter","v":1,"n":0.025},{"x":"sentence","y":"letter","v":0,"n":0},{"x":"unknown","y":"letter","v":0,"n":0},{"x":"letter","y":"number","v":2,"n":0.05},{"x":"number","y":"number","v":36,"n":0.9},{"x":"word","y":"number","v":0,"n":0},{"x":"phrase","y":"number","v":0,"n":0},{"x":"sentence","y":"number","v":1,"n":0.025},{"x":"unknown","y":"number","v":1,"n":0.025},{"x":"letter","y":"word","v":0,"n":0},{"x":"number","y":"word","v":0,"n":0},{"x":"word","y":"word","v":34,"n":0.85},{"x":"phrase","y":"word","v":5,"n":0.125},{"x":"sentence","y":"word","v":1,"n":0.025},{"x":"unknown","y":"word","v":0,"n":0},{"x":"letter","y":"phrase","v":0,"n":0},{"x":"number","y":"phrase","v":1,"n":0.025},{"x":"word","y":"phrase","v":4,"n":0.1},{"x":"phrase","y":"phrase","v":30,"n":0.75},{"x":"sentence","y":"phrase","v":5,"n":0.125},{"x":"unknown","y":"phrase","v":0,"n":0},{"x":"letter","y":"sentence","v":0,"n":0},{"x":"number","y":"sentence","v":2,"n":0.05},{"x":"word","y":"sentence","v":2,"n":0.05},{"x":"phrase","y":"sentence","v":10,"n":0.25},{"x":"sentence","y":"sentence","v":25,"n":0.625},{"x":"unknown","y":"sentence","v":1,"n":0.025},{"x":"letter","y":"unknown","v":0,"n":0},{"x":"number","y":"unknown","v":0,"n":0},{"x":"word","y":"unknown","v":0,"n":0},{"x":"phrase","y":"unknown","v":0,"n":0},{"x":"sentence","y":"unknown","v":0,"n":0},{"x":"unknown","y":"unknown","v":0,"n":0}];
+  const ctx = document.getElementById('cm').getContext('2d');
+  new Chart(ctx, {
+    type: 'matrix',
+    data: {
+      datasets: [{
+        label: 'Confusión',
+        data,
+        backgroundColor(c) {
+          const v = c.dataset.data[c.dataIndex].n;
+          const alpha = 0.15 + v * 0.85;
+          return 'rgba(0, 212, 255,' + alpha + ')';
+        },
+        borderColor: 'rgba(255,255,255,0.06)',
+        borderWidth: 1,
+        width: ({ chart }) => (chart.chartArea || {}).width / labels.length - 2,
+        height: ({ chart }) => (chart.chartArea || {}).height / labels.length - 2,
+      }],
+    },
+    options: {
+      responsive: false,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => 'true=' + items[0].raw.y + '  pred=' + items[0].raw.x,
+            label: (item) => 'n=' + item.raw.v + '  (' + (item.raw.n * 100).toFixed(1) + ' %)',
+          },
+        },
+      },
+      scales: {
+        x: { type: 'category', labels, position: 'top', title: { display: true, text: 'Predicción', color:'#9aa0aa' }, ticks: { color:'#e8e8ec' }, grid: { color:'#23232b' } },
+        y: { type: 'category', labels: labels.slice().reverse(), title: { display: true, text: 'Verdadero', color:'#9aa0aa' }, ticks: { color:'#e8e8ec' }, grid: { color:'#23232b' } },
+      },
+    },
+    plugins: [{
+      id: 'cellText',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        const meta = chart.getDatasetMeta(0);
+        meta.data.forEach((el, i) => {
+          const d = chart.data.datasets[0].data[i];
+          ctx.save();
+          ctx.fillStyle = d.n > 0.5 ? '#001218' : '#e8e8ec';
+          ctx.font = '600 12px -apple-system, Segoe UI, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(d.v, el.x, el.y);
+          ctx.restore();
+        });
+      },
+    }],
+  });
+</script>
+</body>
+</html>
