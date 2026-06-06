@@ -46,5 +46,17 @@ export const feedbackSchema = Joi.object({
     question: Joi.string().min(1).required(),
 });
 
-export default { processPromptSchema, analyzeSubmissionSchema, feedbackSchema };
+export const generateCourseContentSchema = Joi.object({
+    courseId: Joi.number().integer().positive().required(),
+    courseTitle: Joi.string().min(1).max(300).required(),
+    topics: Joi.array().items(Joi.object({
+        id: Joi.number().integer().positive().required(),
+        title: Joi.string().min(1).required(),
+        description: Joi.string().allow('', null).optional(),
+        subjectName: Joi.string().min(1).required(),
+    })).min(1).required(),
+    model: Joi.string().allow('', null).optional(),
+});
+
+export default { processPromptSchema, analyzeSubmissionSchema, feedbackSchema, generateCourseContentSchema };
 

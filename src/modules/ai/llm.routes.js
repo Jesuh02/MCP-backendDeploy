@@ -7,6 +7,7 @@ export function llmRoutes({ llmController }) {
     router.post('/process', aiRateLimiter, llmController.processPrompt);
     router.post('/analyze', aiRateLimiter, llmController.analyzeSubmission);
     router.post('/feedback', aiRateLimiter, llmController.feedbackSubmission);
+    router.post('/generate-course-content', aiRateLimiter, llmController.generateCourseContent);
 
     return router;
 }
