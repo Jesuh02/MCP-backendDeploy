@@ -2139,77 +2139,85 @@ Responde de forma clara y constructiva.`;
                 }
             }
 
-            // 3. Generate Word documents — non-blocking: errors are logged but don't abort
-            let topicDocs = 0;
-            let taskDocs = 0;
+            console.log(`[LLMDomainService] confirmCoursePlan DB done: courseId=${courseId}, topics=${topicsCreated}, tasks=${tasksCreated} — doc generation starting in background`);
 
+            // 3. Generate Word documents ASYNCHRONOUSLY — fire-and-forget so the HTTP
+            // response is returned immediately after DB inserts complete (fast path).
+            // Document generation runs in the background and does not block the client.
             if (this.storage && this.storage.isAvailable() && this.contentItemRepo) {
-                // 3a. Topic study-material documents
-                for (const topic of topicsForContent) {
-                    try {
-                        const content = await this._generateTopicContent({ courseTitle: plan.title, topic, model });
-                        const docBuffer = await this._buildWordDocument(topic, content);
-                        const safeName = (topic.title || 'tema')
-                            .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
-                        const key = `courses/${courseId}/topics/${topic.id}/${Date.now()}_${safeName}.docx`;
-                        const publicUrl = await this.storage.uploadFile(
-                            docBuffer, key,
-                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            docBuffer.length,
-                        );
-                        await this.contentItemRepo.create({
-                            topicId: topic.id,
-                            title: topic.title,
-                            body: publicUrl,
-                            contentType: 'file',
-                            fileUri: publicUrl,
-                            fileName: `${safeName}.docx`,
-                            orderIndex: 0,
-                            creatorUsuarioId: userId || null,
-                            creatorUsername: username || null,
-                        });
-                        topicDocs++;
-                    } catch (err) {
-                        console.error(`[LLMDomainService] Topic doc failed topic=${topic.id}: ${err.message}`);
+                const storage = this.storage;
+                const contentItemRepo = this.contentItemRepo;
+                const self = this;
+                setImmediate(async () => {
+                    let topicDocs = 0;
+                    let taskDocs = 0;
+                    // 3a. Topic study-material documents
+                    for (const topic of topicsForContent) {
+                        try {
+                            const content = await self._generateTopicContent({ courseTitle: plan.title, topic, model });
+                            const docBuffer = await self._buildWordDocument(topic, content);
+                            const safeName = (topic.title || 'tema')
+                                .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
+                            const key = `courses/${courseId}/topics/${topic.id}/${Date.now()}_${safeName}.docx`;
+                            const publicUrl = await storage.uploadFile(
+                                docBuffer, key,
+                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                docBuffer.length,
+                            );
+                            await contentItemRepo.create({
+                                topicId: topic.id,
+                                title: topic.title,
+                                body: publicUrl,
+                                contentType: 'file',
+                                fileUri: publicUrl,
+                                fileName: `${safeName}.docx`,
+                                orderIndex: 0,
+                                creatorUsuarioId: userId || null,
+                                creatorUsername: username || null,
+                            });
+                            topicDocs++;
+                        } catch (err) {
+                            console.error(`[LLMDomainService] Topic doc failed topic=${topic.id}: ${err.message}`);
+                        }
                     }
-                }
-
-                // 3b. Task guide + rubric documents
-                for (const task of tasksForContent) {
-                    try {
-                        const content = await this._generateTaskContent({ task, model });
-                        const docBuffer = await this._buildWordDocument(
-                            { title: task.title, subjectName: task.subjectName },
-                            content,
-                        );
-                        const safeName = (task.title || 'tarea')
-                            .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
-                        const key = `courses/${courseId}/tasks/${task.id}/${Date.now()}_${safeName}.docx`;
-                        const publicUrl = await this.storage.uploadFile(
-                            docBuffer, key,
-                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            docBuffer.length,
-                        );
-                        await this.contentItemRepo.create({
-                            taskId: task.id,
-                            title: task.title,
-                            body: publicUrl,
-                            contentType: 'file',
-                            fileUri: publicUrl,
-                            fileName: `${safeName}.docx`,
-                            orderIndex: 0,
-                            creatorUsuarioId: userId || null,
-                            creatorUsername: username || null,
-                        });
-                        taskDocs++;
-                    } catch (err) {
-                        console.error(`[LLMDomainService] Task doc failed task=${task.id}: ${err.message}`);
+                    // 3b. Task guide + rubric documents
+                    for (const task of tasksForContent) {
+                        try {
+                            const content = await self._generateTaskContent({ task, model });
+                            const docBuffer = await self._buildWordDocument(
+                                { title: task.title, subjectName: task.subjectName },
+                                content,
+                            );
+                            const safeName = (task.title || 'tarea')
+                                .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
+                            const key = `courses/${courseId}/tasks/${task.id}/${Date.now()}_${safeName}.docx`;
+                            const publicUrl = await storage.uploadFile(
+                                docBuffer, key,
+                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                docBuffer.length,
+                            );
+                            await contentItemRepo.create({
+                                taskId: task.id,
+                                title: task.title,
+                                body: publicUrl,
+                                contentType: 'file',
+                                fileUri: publicUrl,
+                                fileName: `${safeName}.docx`,
+                                orderIndex: 0,
+                                creatorUsuarioId: userId || null,
+                                creatorUsername: username || null,
+                            });
+                            taskDocs++;
+                        } catch (err) {
+                            console.error(`[LLMDomainService] Task doc failed task=${task.id}: ${err.message}`);
+                        }
                     }
-                }
+                    console.log(`[LLMDomainService] Background docs done: courseId=${courseId}, topicDocs=${topicDocs}, taskDocs=${taskDocs}`);
+                });
             }
 
-            console.log(`[LLMDomainService] confirmCoursePlan done: courseId=${courseId}, topics=${topicsCreated}, tasks=${tasksCreated}, topicDocs=${topicDocs}, taskDocs=${taskDocs}`);
-            return Result.ok({ courseId, topicsCreated, tasksCreated, topicDocs, taskDocs });
+            // Return immediately — docs are being generated in the background
+            return Result.ok({ courseId, topicsCreated, tasksCreated, docsInProgress: true });
         } catch (err) {
             return Result.fail(new ValidationError(`confirmCoursePlan falló: ${err.message}`));
         }
