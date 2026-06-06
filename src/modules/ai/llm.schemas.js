@@ -53,6 +53,7 @@ export const generateCourseContentSchema = Joi.object({
         id: Joi.number().integer().positive().required(),
         title: Joi.string().min(1).required(),
         description: Joi.string().allow('', null).optional(),
+        contentDescription: Joi.string().allow('', null).optional(),
         subjectName: Joi.string().min(1).required(),
     })).min(1).required(),
     model: Joi.string().allow('', null).optional(),
