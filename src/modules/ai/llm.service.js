@@ -39,6 +39,7 @@ export class LLMDomainService {
         submissionRepository,
         fileContextRepository,
         reinforcementRepository,
+        contentItemRepository = null,
     }) {
         this.llm = llmPort;
         this.rag = ragPort;
@@ -48,6 +49,7 @@ export class LLMDomainService {
         this.submissionRepo = submissionRepository;
         this.fileContextRepo = fileContextRepository;
         this.reinforcementRepo = reinforcementRepository;
+        this.contentItemRepo = contentItemRepository;
     }
 
     /**
@@ -1862,6 +1864,167 @@ Responde de forma clara y constructiva.`;
             finalResponse._rawQueryData = toolResult.results;
         }
         return finalResponse;
+    }
+
+    /**
+     * Generates educational Word documents for each topic in a course and stores
+     * them in R2 as ContentItem records.
+     * @param {{ courseId: number, courseTitle: string, topics: Array<{id: number, title: string, description?: string, subjectName: string}>, userId?: number, username?: string, model?: string }} params
+     * @returns {Promise<Result>}
+     */
+    async generateCourseContent({ courseId, courseTitle, topics, userId, username, model }) {
+        if (!courseId || !topics || topics.length === 0) {
+            return Result.fail(new ValidationError('courseId y topics son requeridos'));
+        }
+        if (!this.storage || !this.storage.isAvailable()) {
+            return Result.fail(new ValidationError('Almacenamiento R2 no disponible'));
+        }
+        if (!this.contentItemRepo) {
+            return Result.fail(new ValidationError('Repositorio de contenido no disponible'));
+        }
+
+        const generated = [];
+        const errors = [];
+
+        for (const topic of topics) {
+            try {
+                const content = await this._generateTopicContent({ courseTitle, topic, model });
+                const docBuffer = await this._buildWordDocument(topic, content);
+
+                const safeName = (topic.title || 'tema')
+                    .toLowerCase()
+                    .replace(/[^a-z0-9\s-]/g, '')
+                    .replace(/\s+/g, '_')
+                    .slice(0, 60);
+                const fileName = `${safeName}.docx`;
+                const key = `courses/${courseId}/topics/${topic.id}/${Date.now()}_${fileName}`;
+
+                const publicUrl = await this.storage.uploadFile(
+                    docBuffer, key,
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    docBuffer.length,
+                );
+
+                const item = await this.contentItemRepo.create({
+                    topicId: topic.id,
+                    title: topic.title,
+                    body: publicUrl,
+                    contentType: 'file',
+                    fileUri: publicUrl,
+                    fileName,
+                    orderIndex: 0,
+                    creatorUsuarioId: userId || null,
+                    creatorUsername: username || null,
+                });
+
+                generated.push({ topicId: topic.id, title: topic.title, fileUrl: publicUrl, contentItemId: item?.id });
+                console.log(`[LLMDomainService] Content generated for topic ${topic.id}: ${fileName}`);
+            } catch (err) {
+                console.error(`[LLMDomainService] Failed to generate content for topic ${topic.id} (${topic.title}):`, err.message);
+                errors.push({ topicId: topic.id, title: topic.title, error: err.message });
+            }
+        }
+
+        return Result.ok({ generated, errors, total: topics.length });
+    }
+
+    /** @private — Ask LLM to generate educational Markdown content for a topic. */
+    async _generateTopicContent({ courseTitle, topic, model }) {
+        const systemPrompt = [
+            'Eres un experto pedagógico. Genera contenido educativo completo y bien estructurado en español.',
+            'Responde ÚNICAMENTE con el contenido académico solicitado en formato Markdown.',
+            'El contenido debe ser claro, riguroso y apropiado para educación superior.',
+        ].join('\n');
+
+        const userPrompt = [
+            `Genera contenido educativo completo para el tema: "${topic.title}"`,
+            `Módulo: "${topic.subjectName}"`,
+            `Curso: "${courseTitle}"`,
+            topic.description ? `Descripción: ${topic.description}` : '',
+            '',
+            'El documento debe incluir las siguientes secciones:',
+            '# 1. Introducción',
+            'Contextualiza el tema en 2-3 párrafos.',
+            '',
+            '# 2. Objetivos de Aprendizaje',
+            'Lista 4-5 objetivos concretos y medibles.',
+            '',
+            '# 3. Conceptos Clave',
+            'Define y explica 5-7 conceptos fundamentales.',
+            '',
+            '# 4. Desarrollo del Contenido',
+            'Explica el tema en profundidad con subtítulos y ejemplos.',
+            '',
+            '# 5. Ejemplos Prácticos',
+            'Presenta 2-3 casos o ejemplos concretos aplicados.',
+            '',
+            '# 6. Resumen',
+            'Sintetiza los puntos más importantes.',
+            '',
+            '# 7. Actividades de Refuerzo',
+            'Propón 3 actividades para consolidar el aprendizaje.',
+        ].filter(Boolean).join('\n');
+
+        const response = await this.llm.chat(systemPrompt, userPrompt, {
+            model,
+            tools: [],
+            toolChoice: 'none',
+        });
+        return response?.content || '';
+    }
+
+    /** @private — Convert Markdown content into a Word (.docx) Buffer. */
+    async _buildWordDocument(topic, markdownContent) {
+        const { Document, Paragraph, TextRun, HeadingLevel, Packer, AlignmentType } = await import('docx');
+
+        const children = [];
+
+        children.push(new Paragraph({
+            text: topic.title,
+            heading: HeadingLevel.TITLE,
+            alignment: AlignmentType.CENTER,
+        }));
+
+        children.push(new Paragraph({
+            children: [new TextRun({ text: `Módulo: ${topic.subjectName}`, italics: true, size: 24 })],
+            alignment: AlignmentType.CENTER,
+        }));
+
+        children.push(new Paragraph({ text: '' }));
+
+        for (const line of markdownContent.split('\n')) {
+            if (line.startsWith('# ')) {
+                children.push(new Paragraph({ text: line.slice(2).trim(), heading: HeadingLevel.HEADING_1 }));
+            } else if (line.startsWith('## ')) {
+                children.push(new Paragraph({ text: line.slice(3).trim(), heading: HeadingLevel.HEADING_2 }));
+            } else if (line.startsWith('### ')) {
+                children.push(new Paragraph({ text: line.slice(4).trim(), heading: HeadingLevel.HEADING_3 }));
+            } else if (line.startsWith('- ') || line.startsWith('* ')) {
+                children.push(new Paragraph({ text: line.slice(2).trim(), bullet: { level: 0 } }));
+            } else if (/^\d+\.\s/.test(line)) {
+                children.push(new Paragraph({ text: line.replace(/^\d+\.\s/, '').trim(), bullet: { level: 0 } }));
+            } else if (line.trim() === '') {
+                children.push(new Paragraph({ text: '' }));
+            } else {
+                children.push(new Paragraph({ children: this._parseMarkdownInline(line, TextRun) }));
+            }
+        }
+
+        const doc = new Document({ sections: [{ properties: {}, children }] });
+        return Packer.toBuffer(doc);
+    }
+
+    /** @private — Parse bold/italic inline Markdown into TextRun array. */
+    _parseMarkdownInline(text, TextRun) {
+        const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/);
+        const runs = parts
+            .filter(p => p)
+            .map(part => {
+                if (part.startsWith('**') && part.endsWith('**')) return new TextRun({ text: part.slice(2, -2), bold: true });
+                if (part.startsWith('*') && part.endsWith('*')) return new TextRun({ text: part.slice(1, -1), italics: true });
+                return new TextRun({ text: part });
+            });
+        return runs.length > 0 ? runs : [new TextRun({ text })];
     }
 }
 export default LLMDomainService;

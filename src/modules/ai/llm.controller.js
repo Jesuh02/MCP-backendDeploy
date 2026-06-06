@@ -5,7 +5,7 @@
  * y devuelve respuestas estandarizadas.
  */
 
-import { processPromptSchema, analyzeSubmissionSchema, feedbackSchema } from './llm.schemas.js';
+import { processPromptSchema, analyzeSubmissionSchema, feedbackSchema, generateCourseContentSchema } from './llm.schemas.js';
 import { ValidationError } from '../../shared/errors/index.js';
 import { TENANT_CONFIGS, getCurrentTenantId, getAllTenantEntries } from '../../config/tenantRegistry.js';
 import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
@@ -254,6 +254,25 @@ export class LLMController {
             if (error) return next(ValidationError.fromJoi(error));
 
             const result = await this.llmService.feedbackSubmission(value);
+            if (result.isFail()) return next(result.getError());
+
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    generateCourseContent = async (req, res, next) => {
+        try {
+            const { error, value } = generateCourseContentSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+
+            const userId = req.user?.id || req.user?.userId || null;
+            const username = req.user?.username || null;
+
+            const result = await this.llmService.generateCourseContent({
+                ...value,
+                userId,
+                username,
+            });
             if (result.isFail()) return next(result.getError());
 
             res.json({ success: true, data: result.getValue() });

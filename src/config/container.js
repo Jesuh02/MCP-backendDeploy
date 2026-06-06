@@ -415,6 +415,7 @@ export function createContainer() {
         submissionRepository: submissionRepo,
         fileContextRepository: fileContextRepo,
         reinforcementRepository: reinforcementRepo,
+        contentItemRepository: contentItemRepo,
     });
     const ragDomainService = new RAGDomainService({ ragPort: ragAdapter, llmPort: llmAdapter });
     const mcpDomainService = new MCPDomainService({
