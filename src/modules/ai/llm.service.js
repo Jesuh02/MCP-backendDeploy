@@ -592,7 +592,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 // Broad detection: table names (Spanish & English), counting, records,
                 // general data queries, student progress patterns, and explicit tool requests.
                 const DB_TABLE_NAMES = /\b(usuarios|courses|cursos|videos|subjects|materias|topics|temas|tasks|tareas|task_submissions|entregas|submissions|subscriptions|suscripciones|transactions|transacciones|notifications|notificaciones|progreso_curso|progreso_materia|progreso|collaborators|colaboradores|personas|reinforcement_results|refuerzo|pr[aá]ctica)\b/i;
-                const DB_QUERY_PATTERNS = /query[_ ]database|consulta de business inteli?gencia|usa ['"]?query_database['"]?|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n|cu[aá]nto|cu[aá]ntas|cu[aá]ntos|registros|total de|contar|conteo|cantidad|estad[ií]stica|reporte|datos de|d[ií]me|mu[eé]stra|lista|consulta|base de datos|tabla|schema|esquema|dashboard|m[eé]trica|ingresos|pagos|ventas|suscri|crear reporte|generar reporte|exportar|nota.*estudiante|estudiante.*nota|practican|pr[aá]ctica.*refuerzo/i;
+                const DB_QUERY_PATTERNS = /query[_ ]database|consulta de business inteli?gencia|usa ['"]?query_database['"]?|progreso.*estudiante|estudiante.*progreso|mis estudiantes|avance.*curso|rendimiento.*estudiante|entregas.*estudiante|estudiante.*entrega|calificaci[oó]n.*estudiante|estudiante.*calificaci[oó]n|cu[aá]nto|cu[aá]ntas|cu[aá]ntos|registros|total de|contar|conteo|cantidad|estad[ií]stica|reporte|datos de|d[ií]me|mu[eé]stra|lista|consulta|base de datos|tabla|schema|esquema|dashboard|m[eé]trica|ingresos|pagos|ventas|suscri|crear reporte|generar reporte|exportar|nota.*estudiante|estudiante.*nota|practican|pr[aá]ctica.*refuerzo|crea(r|me)?\s+(un\s+)?curso|nuevo\s+curso|dise[nñ]a(r|me)?\s+(un\s+)?curso|arma(r|me)?\s+(un\s+)?curso|planifica(r|me)?\s+(un\s+)?curso|quiero\s+(un\s+)?curso|necesito\s+(un\s+)?curso|genera(r|me)?\s+(un\s+)?curso|elabora(r|me)?\s+(un\s+)?curso/i;
                 // Detect if the prompt matches DB patterns explicitly
                 const promptMatchesDB = DB_TABLE_NAMES.test(promptLc) || DB_QUERY_PATTERNS.test(promptLc);
                 // When forceMCPTools is on but the prompt doesn't match DB patterns,
@@ -624,15 +624,24 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                         `- Si el usuario menciona un nombre de tabla en español (ej: "transacciones", "suscripciones", "tareas"), busca la tabla equivalente en inglés (transactions, subscriptions, tasks) o viceversa.\n` +
                         `- Si no estás seguro del nombre exacto de una tabla o columna, usa PRIMERO \`get_database_schema\` para ver todas las tablas disponibles.\n` +
                         `- Solo después de consultar la base de datos y confirmar que no hay resultados puedes informar al usuario.\n\n` +
-                        `REGLA #2 — FLUJO OBLIGATORIO:\n` +
+                        `REGLA #2 — FLUJO OBLIGATORIO PARA CONSULTAS:\n` +
                         `1. Si tienes duda sobre el esquema → llama \`get_database_schema\`\n` +
                         `2. Construye tu SQL con los nombres reales de las tablas/columnas\n` +
                         `3. Ejecuta con \`query_database\`\n` +
                         `4. Formula tu respuesta en Markdown con los datos reales\n\n` +
+                        `REGLA #2b — FLUJO OBLIGATORIO PARA CREAR CURSOS:\n` +
+                        `1. Diseña la estructura del curso (materias, temas, tareas) según lo que pide el usuario\n` +
+                        `2. Llama \`create_course_structure\` con el plan completo y el userId del usuario actual (${userId || 'usa el userId disponible en el contexto'})\n` +
+                        `3. Confirma al usuario el resultado con el courseId obtenido\n` +
+                        `- NUNCA digas que no puedes crear cursos. Siempre diseña la estructura y ejecuta la herramienta.\n\n` +
                         `REGLA #3 — CÓMO USAR LAS HERRAMIENTAS:\n` +
                         `Emite exactamente un bloque JSON como el siguiente:\n\n` +
                         "```json\n" +
                         "{\"tool\": \"query_database\", \"arguments\": {\"query\": \"<tu SQL aquí>\"}}\n" +
+                        "```\n" +
+                        `O para crear un curso:\n` +
+                        "```json\n" +
+                        `{"tool": "create_course_structure", "arguments": {"plan": {"title": "...", "description": "...", "category": "...", "subjects": [{"name": "...", "description": "...", "topics": [{"title": "...", "description": "...", "tasks": [{"title": "...", "description": "...", "dueWeek": 1}]}]}]}, "userId": ${userId || 0}}}\n` +
                         "```\n" +
                         `O para ver el esquema:\n` +
                         "```json\n" +
@@ -859,8 +868,9 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             }
 
             const tools = needsMCPTools ? [
-                { name: 'query_database', description: 'Execute queries on Supabase database', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
-                { name: 'get_database_schema', description: 'Get complete database schema', parameters: { type: 'object', properties: {} } },
+                { name: 'query_database', description: 'Execute SQL queries (SELECT, INSERT, UPDATE, DELETE) on the Supabase database. Use for reading or writing data.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'SQL statement to execute' } }, required: ['query'] } },
+                { name: 'get_database_schema', description: 'Get complete database schema (table names and columns)', parameters: { type: 'object', properties: {} } },
+                { name: 'create_course_structure', description: 'Creates a complete course with its subjects/modules, topics, and tasks in the database. Use this whenever the user wants to create a new course. Returns courseId and counts of created records.', parameters: { type: 'object', properties: { plan: { type: 'object', description: 'Course plan: { title, description, category, level, durationWeeks, subjects: [{ name, description, topics: [{ title, description, tasks: [{ title, description, dueWeek }] }] }] }' }, userId: { type: 'number', description: 'ID of the user creating the course' } }, required: ['plan', 'userId'] } },
             ] : [];
 
             // ── CONTEXT BUDGET: Ensure total tokens stay under model limit ──────
@@ -963,8 +973,8 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                             if (toolResultStr.length > 12000) {
                                 toolResultStr = toolResultStr.substring(0, 12000) + '\n... (resultados truncados por longitud)';
                             }
-                            // If query_database returned data successfully, don't pass tools so the LLM formulates a text response
-                            const gotData = toolName === 'query_database' && toolResult && (toolResult.success || toolResult.results);
+                            // If query_database or create_course_structure succeeded, stop tool loop so the LLM formulates a text response
+                            const gotData = (toolName === 'query_database' || toolName === 'create_course_structure') && toolResult && (toolResult.success || toolResult.results);
                             const nextTools = gotData ? [] : tools;
                             response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools: nextTools, ...fastTimeout });
                         } catch (execErr) {
