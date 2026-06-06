@@ -2137,8 +2137,99 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                     };
                 }
 
+            case 'create_course_structure': {
+                if (!args.plan || typeof args.plan !== 'object') {
+                    return { success: false, error: "El parámetro 'plan' (objeto) es requerido para create_course_structure" };
+                }
+                const creatorId = args.userId || context.scopedUserId;
+                if (!creatorId) {
+                    return { success: false, error: 'userId es requerido para crear el curso' };
+                }
+                return await this._createCourseStructure(args.plan, creatorId);
+            }
+
             default:
                 throw new Error(`Herramienta desconocida: ${toolName}`);
+        }
+    }
+
+    /**
+     * Creates a complete course structure (course → subjects → topics → tasks) in the DB.
+     * Called by executeMCPTool('create_course_structure', { plan, userId }).
+     * @private
+     */
+    async _createCourseStructure(plan, userId) {
+        if (!plan || !plan.title || !Array.isArray(plan.subjects) || plan.subjects.length === 0) {
+            return { success: false, error: 'plan inválido: se requiere title y al menos un subject' };
+        }
+
+        const esc = (s) => String(s == null ? '' : s).replace(/'/g, "''");
+        const execInsert = async (sql) => {
+            const result = await this._executeRawSQL(sql);
+            return Array.isArray(result) ? result[0] : null;
+        };
+
+        try {
+            // 1. Create the course
+            const courseRow = await execInsert(
+                `INSERT INTO courses (title, description, category, price, is_premium, is_active, creator_user_id)
+                 VALUES ('${esc(plan.title)}', '${esc(plan.description || '')}', '${esc(plan.category || 'General')}', 0, false, true, ${userId})
+                 RETURNING id`,
+            );
+            const courseId = courseRow?.id;
+            if (!courseId) throw new Error('No se obtuvo el id del curso recién creado');
+
+            let subjectsCreated = 0;
+            let topicsCreated = 0;
+            let tasksCreated = 0;
+
+            // 2. Create subjects → topics → tasks
+            for (const subject of plan.subjects) {
+                const subjectRow = await execInsert(
+                    `INSERT INTO subjects (name, description, course_id, created_by)
+                     VALUES ('${esc(subject.name)}', '${esc(subject.description || '')}', ${courseId}, ${userId})
+                     RETURNING id`,
+                );
+                const subjectId = subjectRow?.id;
+                if (!subjectId) continue;
+                subjectsCreated++;
+
+                for (const topic of (subject.topics || [])) {
+                    const topicRow = await execInsert(
+                        `INSERT INTO topics (name, description, materia_id, created_by)
+                         VALUES ('${esc(topic.title || topic.name)}', '${esc(topic.description || '')}', ${subjectId}, ${userId})
+                         RETURNING id`,
+                    );
+                    const topicId = topicRow?.id;
+                    if (!topicId) continue;
+                    topicsCreated++;
+
+                    for (const task of (topic.tasks || [])) {
+                        const dueExpr = task.dueWeek && Number.isInteger(task.dueWeek) && task.dueWeek > 0
+                            ? `NOW() + INTERVAL '${task.dueWeek} weeks'`
+                            : 'NULL';
+                        const taskRow = await execInsert(
+                            `INSERT INTO tasks (title, description, topic_id, due_date, created_by)
+                             VALUES ('${esc(task.title)}', '${esc(task.description || '')}', ${topicId}, ${dueExpr}, ${userId})
+                             RETURNING id`,
+                        );
+                        if (taskRow?.id) tasksCreated++;
+                    }
+                }
+            }
+
+            logger.info(`[MCPService] _createCourseStructure done: courseId=${courseId}, subjects=${subjectsCreated}, topics=${topicsCreated}, tasks=${tasksCreated}`);
+            return {
+                success: true,
+                courseId,
+                subjectsCreated,
+                topicsCreated,
+                tasksCreated,
+                message: `Curso "${plan.title}" creado exitosamente con ID ${courseId}. Se crearon ${subjectsCreated} materias, ${topicsCreated} temas y ${tasksCreated} tareas.`,
+            };
+        } catch (err) {
+            logger.error(`[MCPService] _createCourseStructure error: ${err.message}`);
+            return { success: false, error: err.message };
         }
     }
 
