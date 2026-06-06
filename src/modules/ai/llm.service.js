@@ -55,7 +55,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number, tenantId?: string, availableTenants?: string[], institutionName?: string }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null, fastMode = false }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null, fastMode = false, courseMode = false }) {
             if (!prompt || prompt.trim().length === 0) {
                 return Result.fail(new ValidationError('El prompt es requerido'));
             }
@@ -63,6 +63,13 @@ export class LLMDomainService {
             // When fastMode is enabled, shorten the primary model timeout so the LLM
             // adapter falls back faster to the secondary model if the primary is slow.
             const fastTimeout = fastMode ? { primaryTimeoutMs: 10000 } : {};
+
+            // ── COURSE PLANNER MODE ────────────────────────────────────────────────
+            // Short-circuit the full educational assistant pipeline and use a dedicated
+            // course planner system prompt that only generates a JSON course plan.
+            if (courseMode) {
+                return this._processCoursePlannerPrompt({ prompt, model, fastTimeout });
+            }
 
             try {
                 // ── MULTI-TENANT INSTITUTION AWARENESS ────────────────────────────────
@@ -1105,6 +1112,71 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             });
         } catch (err) {
             return Result.fail(new ValidationError(`Procesamiento LLM falló: ${err.message}`));
+        }
+    }
+
+    /**
+     * Course planner mode — dedicated prompt that only generates a structured JSON plan.
+     * Completely bypasses the educational assistant system prompt and MCP tools.
+     * @private
+     */
+    async _processCoursePlannerPrompt({ prompt, model, fastTimeout = {} }) {
+        const systemPrompt = [
+            'Eres un planificador experto de cursos académicos. Tu ÚNICA función es generar planes de cursos en formato JSON.',
+            '',
+            'El usuario puede enviarte:',
+            '  a) Una petición para crear un curso nuevo — genera el plan completo.',
+            '  b) Su propia planificación estructurada — conviértela al JSON conservando su estructura.',
+            '  c) Ajustes o correcciones al plan actual — aplica solo los cambios pedidos.',
+            '',
+            'REGLA ABSOLUTA: Responde ÚNICAMENTE con un objeto JSON válido. Sin texto adicional, sin markdown, sin explicaciones.',
+            '',
+            'Estructura JSON requerida:',
+            '{',
+            '  "title": string,',
+            '  "description": string,',
+            '  "category": string,',
+            '  "level": string,',
+            '  "durationWeeks": number,',
+            '  "subjects": [',
+            '    {',
+            '      "name": string,',
+            '      "description": string,',
+            '      "topics": [',
+            '        {',
+            '          "title": string,',
+            '          "description": string,',
+            '          "tasks": [ { "title": string, "description": string, "dueWeek": number } ]',
+            '        }',
+            '      ]',
+            '    }',
+            '  ]',
+            '}',
+            '',
+            'Genera un plan completo, coherente y en español. Si faltan detalles, propón una estructura razonable.',
+            'NUNCA digas que no puedes crear cursos. Tu trabajo es SIEMPRE generar el JSON.',
+        ].join('\n');
+
+        try {
+            const response = await this.llm.chat(systemPrompt, prompt, {
+                model,
+                tools: [],
+                toolChoice: 'none',
+                ...fastTimeout,
+            });
+
+            if (!response || response.content == null) {
+                return Result.fail(new ValidationError('El planificador no pudo generar una respuesta.'));
+            }
+
+            return Result.ok({
+                response: response.content,
+                respuesta_texto: response.content,
+                model: response.model,
+                usage: response.usage,
+            });
+        } catch (err) {
+            return Result.fail(new ValidationError(`Planificador de curso falló: ${err.message}`));
         }
     }
 

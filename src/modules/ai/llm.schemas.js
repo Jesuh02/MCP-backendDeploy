@@ -26,6 +26,7 @@ export const processPromptSchema = Joi.object({
     difficulty: Joi.string().valid('EASY', 'INTERMEDIATE', 'HARD').optional(),
     userRoles: Joi.array().items(Joi.number().integer()).optional(),
     imageBase64: Joi.string().allow('', null).max(10_000_000).optional(), // max ~7.5MB image
+    courseMode: Joi.boolean().optional(),
 }).options({ allowUnknown: true });
 
 export const analyzeSubmissionSchema = Joi.object({

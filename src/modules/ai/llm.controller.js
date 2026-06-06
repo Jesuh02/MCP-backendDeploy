@@ -114,6 +114,9 @@ export class LLMController {
                 // DatabaseQuery view, WhatsApp) fail over to DeepSeek faster instead of
                 // waiting up to 5 min for Qwen.
                 fastMode: value.fastMode === true,
+                // Course planner mode: bypasses the educational assistant system prompt
+                // and uses a dedicated course planner system prompt instead.
+                courseMode: value.courseMode === true,
             };
 
             // ── INSTITUTION LOOKUP SHORT-CIRCUIT ──────────────────────────────────
