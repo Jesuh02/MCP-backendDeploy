@@ -122,6 +122,79 @@ export class MCPDomainService {
     }
 
     /**
+     * Crea la estructura completa de un curso (course → subjects → topics → tasks) en la BD.
+     * @param {{ plan: Object, userId: number }} params
+     * @returns {Promise<Result>}
+     */
+    async createCourseStructure({ plan, userId }) {
+        if (!plan || !plan.title || !Array.isArray(plan.subjects) || plan.subjects.length === 0) {
+            return Result.fail(new ValidationError('plan es requerido con title y al menos un subject'));
+        }
+        if (!userId) {
+            return Result.fail(new ValidationError('userId es requerido para crear el curso'));
+        }
+        if (!this.supabase || typeof this.supabase.executeRawSQL !== 'function') {
+            return Result.fail(new ValidationError('supabaseService no disponible para crear el curso'));
+        }
+
+        const esc = (s) => String(s == null ? '' : s).replace(/'/g, "''");
+        const execInsert = async (sql) => {
+            const data = await this.supabase.executeRawSQL(sql);
+            return Array.isArray(data) ? data[0] : null;
+        };
+
+        try {
+            const courseRow = await execInsert(
+                `INSERT INTO courses (title, description, category, price, is_premium, is_active, creator_user_id)
+                 VALUES ('${esc(plan.title)}', '${esc(plan.description)}', '${esc(plan.category || 'General')}', 0, false, true, ${userId})
+                 RETURNING id`,
+            );
+            const courseId = courseRow?.id;
+            if (!courseId) throw new Error('No se obtuvo el id del curso recién creado');
+
+            let topicsCreated = 0;
+            let tasksCreated = 0;
+
+            for (const subject of plan.subjects) {
+                const subjectRow = await execInsert(
+                    `INSERT INTO subjects (name, description, course_id, created_by)
+                     VALUES ('${esc(subject.name)}', '${esc(subject.description)}', ${courseId}, ${userId})
+                     RETURNING id`,
+                );
+                const subjectId = subjectRow?.id;
+                if (!subjectId) continue;
+
+                for (const topic of (subject.topics || [])) {
+                    const topicRow = await execInsert(
+                        `INSERT INTO topics (name, description, materia_id, created_by)
+                         VALUES ('${esc(topic.title)}', '${esc(topic.description)}', ${subjectId}, ${userId})
+                         RETURNING id`,
+                    );
+                    const topicId = topicRow?.id;
+                    if (!topicId) continue;
+                    topicsCreated++;
+
+                    for (const task of (topic.tasks || [])) {
+                        const dueExpr = task.dueWeek && Number.isInteger(task.dueWeek) && task.dueWeek > 0
+                            ? `NOW() + INTERVAL '${task.dueWeek} weeks'`
+                            : 'NULL';
+                        const taskRow = await execInsert(
+                            `INSERT INTO tasks (title, description, topic_id, due_date, created_by)
+                             VALUES ('${esc(task.title)}', '${esc(task.description)}', ${topicId}, ${dueExpr}, ${userId})
+                             RETURNING id`,
+                        );
+                        if (taskRow?.id) tasksCreated++;
+                    }
+                }
+            }
+
+            return Result.ok({ courseId, topicsCreated, tasksCreated });
+        } catch (err) {
+            return Result.fail(new ValidationError(`createCourseStructure falló: ${err.message}`));
+        }
+    }
+
+    /**
      * Envía notificación vía MCP.
      * @param {{ userId: number, title: string, message: string, type?: string }} params
      * @returns {Promise<Result>}
