@@ -1259,34 +1259,130 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     }
 
     /**
-     * Extracts a minimal valid course plan from badly broken JSON using regex.
-     * Used as last resort when full repair fails — at minimum returns title + subject names.
+     * Reconstructs a course plan from badly broken JSON that full repair could not fix.
+     *
+     * Fallback models (e.g. llama-3.3-70b) frequently emit the *right tokens* but with the
+     * object/array nesting jumbled and braces mismatched (keys floating between unrelated
+     * objects, empty `{}` placeholders, etc.). A purely structural repair can't reassemble
+     * that, but the individual `"key": value` pairs are still intact and ordered.
+     *
+     * This walks those tokens in document order and rebuilds the subject → topic → task
+     * hierarchy positionally, so the user gets a full plan (with topics and tasks) instead
+     * of just the title + subject names.
      * @private
      */
     _extractPlanPartial(raw) {
         if (!raw) return null;
-        const titleM = raw.match(/"title"\s*:\s*"([^"]+)"/);
+        const titleM = raw.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/);
         if (!titleM) return null;
-        const descM  = raw.match(/"description"\s*:\s*"([^"]*)"/);
-        const catM   = raw.match(/"category"\s*:\s*"([^"]*)"/);
-        const levelM = raw.match(/"level"\s*:\s*"([^"]*)"/);
-        const weekM  = raw.match(/"durationWeeks"\s*:\s*(\d+)/);
+
+        const firstField = (key) => {
+            const m = raw.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+            return m ? m[1] : '';
+        };
+        const courseTitle = titleM[1];
+        const description = firstField('description');
+        const category = firstField('category');
+        const level = firstField('level');
+        const weekM = raw.match(/"durationWeeks"\s*:\s*(\d+)/);
+
+        // Tokenize every relevant key/value pair in document order.
+        const tokens = [];
+        const re = /"(name|title|description|contentDescription|dueWeek)"\s*:\s*(?:"((?:[^"\\]|\\.)*)"|(-?\d+))/g;
+        let m;
+        while ((m = re.exec(raw)) !== null) {
+            tokens.push({
+                type: m[1],
+                value: m[2] !== undefined ? m[2] : (m[3] !== undefined ? Number(m[3]) : ''),
+            });
+        }
+
+        // Drop the course-header tokens that precede the first subject so they don't
+        // pollute the first subject/topic.
+        const firstNameIdx = tokens.findIndex(t => t.type === 'name');
+        if (firstNameIdx === -1) return null;
+        const body = tokens.slice(firstNameIdx);
+
+        // A "title" is a TASK title iff a dueWeek appears before the next title/name token
+        // (tasks carry dueWeek; topics don't). Otherwise it's a TOPIC title.
+        const isTaskTitle = (i) => {
+            for (let j = i + 1; j < body.length; j++) {
+                const t = body[j];
+                if (t.type === 'title' || t.type === 'name') return false;
+                if (t.type === 'dueWeek') return true;
+            }
+            return false;
+        };
 
         const subjects = [];
-        const nameRe = /"name"\s*:\s*"([^"]+)"/g;
-        let m;
-        while ((m = nameRe.exec(raw)) !== null) {
-            subjects.push({ name: m[1], description: '', topics: [] });
+        let curSubject = null, curTopic = null, curTask = null, lastOpened = null;
+        const ensureSubject = () => {
+            if (!curSubject) { curSubject = { name: '', description: '', topics: [] }; subjects.push(curSubject); }
+            return curSubject;
+        };
+        const ensureTopic = () => {
+            ensureSubject();
+            if (!curTopic) { curTopic = { title: '', description: '', contentDescription: '', tasks: [] }; curSubject.topics.push(curTopic); }
+            return curTopic;
+        };
+
+        for (let i = 0; i < body.length; i++) {
+            const tok = body[i];
+            if (tok.type === 'name') {
+                curSubject = { name: tok.value, description: '', topics: [] };
+                subjects.push(curSubject);
+                curTopic = null; curTask = null; lastOpened = curSubject;
+            } else if (tok.type === 'title') {
+                if (isTaskTitle(i)) {
+                    ensureTopic();
+                    curTask = { title: tok.value, description: '', dueWeek: null, contentDescription: '' };
+                    curTopic.tasks.push(curTask);
+                    lastOpened = curTask;
+                } else {
+                    ensureSubject();
+                    curTopic = { title: tok.value, description: '', contentDescription: '', tasks: [] };
+                    curSubject.topics.push(curTopic);
+                    curTask = null; lastOpened = curTopic;
+                }
+            } else if (tok.type === 'description') {
+                if (lastOpened && !lastOpened.description) lastOpened.description = tok.value;
+            } else if (tok.type === 'contentDescription') {
+                const target = curTask || curTopic;
+                if (target && !target.contentDescription) target.contentDescription = tok.value;
+            } else if (tok.type === 'dueWeek') {
+                if (curTask && curTask.dueWeek == null) curTask.dueWeek = tok.value;
+            }
         }
-        if (!subjects.length) return null;
+
+        // Drop empty shells and give unnamed-but-populated topics a sensible fallback title.
+        const cleanSubjects = subjects
+            .filter(s => s.name || s.topics.length)
+            .map((s, si) => ({
+                name: s.name || `Módulo ${si + 1}`,
+                description: s.description,
+                topics: s.topics
+                    .filter(t => t.title || t.tasks.length)
+                    .map((t, ti) => ({
+                        title: t.title || `Tema ${ti + 1}`,
+                        description: t.description,
+                        ...(t.contentDescription ? { contentDescription: t.contentDescription } : {}),
+                        tasks: t.tasks.map(k => ({
+                            title: k.title,
+                            description: k.description,
+                            ...(k.dueWeek != null ? { dueWeek: k.dueWeek } : {}),
+                            ...(k.contentDescription ? { contentDescription: k.contentDescription } : {}),
+                        })),
+                    })),
+            }));
+        if (!cleanSubjects.length) return null;
 
         return JSON.stringify({
-            title: titleM[1],
-            description: descM?.[1] ?? '',
-            category: catM?.[1] ?? '',
-            level: levelM?.[1] ?? '',
+            title: courseTitle,
+            description,
+            category,
+            level,
             ...(weekM ? { durationWeeks: parseInt(weekM[1], 10) } : {}),
-            subjects,
+            subjects: cleanSubjects,
         });
     }
 
