@@ -57,8 +57,27 @@ export class MCPService {
 
         const { data, error } = await client.rpc('execute_sql', { query: trimmedSql });
         if (error) {
+            const notFound = error.code === 'PGRST202' || error.message?.includes('not found') || error.message?.includes('schema cache');
+            const isDML = /^\s*(INSERT|UPDATE|DELETE)\b/i.test(trimmedSql);
+
+            // When execute_sql exists but returns a SQL error on a DML statement, the
+            // function is the old version that wraps everything in FROM (%s) t, which is
+            // invalid for DML. Force-upgrade by clearing the provision-once guard so
+            // _autoProvisionExecuteSql re-runs CREATE OR REPLACE.
+            if (!notFound && isDML) {
+                logger.warn(`[MCPService] execute_sql on tenant '${tenantId}' rejected DML — likely old version. Attempting upgrade...`);
+                if (this._provisionAttempts) this._provisionAttempts.delete(tenantId);
+                const upgraded = await this._autoProvisionExecuteSql(tenantId);
+                if (upgraded) {
+                    const retry = await client.rpc('execute_sql', { query: trimmedSql });
+                    if (!retry.error) return retry.data;
+                    throw new Error(`SQL Error after execute_sql upgrade: ${retry.error.message}`);
+                }
+                throw new Error(`SQL Error: ${error.message} — La función execute_sql no soporta DML. Ejecuta scripts/migration_execute_sql_dml.sql en el Editor SQL de Supabase para este tenant, o configura TENANT_${tenantId.toUpperCase().replace(/-/g, '_')}_DATABASE_URL para actualización automática.`);
+            }
+
             // Surface SQL errors directly so the LLM can self-correct
-            if (error.code !== 'PGRST202' && !error.message?.includes('not found') && !error.message?.includes('schema cache')) {
+            if (!notFound) {
                 throw new Error(`SQL Error: ${error.message}`);
             }
 
@@ -71,7 +90,7 @@ export class MCPService {
                 if (!retry.error) return retry.data;
                 throw new Error(`SQL Error after auto-provision: ${retry.error.message}`);
             }
-            throw new Error(`RPC execute_sql unavailable on tenant '${tenantId}': ${error.message}. Run scripts/migration_execute_sql_function.sql on this tenant's Supabase SQL Editor, or set TENANT_${tenantId.toUpperCase()}_DATABASE_URL for auto-provisioning.`);
+            throw new Error(`RPC execute_sql unavailable on tenant '${tenantId}': ${error.message}. Run scripts/migration_execute_sql_dml.sql on this tenant's Supabase SQL Editor, or set TENANT_${tenantId.toUpperCase().replace(/-/g, '_')}_DATABASE_URL for auto-provisioning.`);
         }
         return data;
     }
