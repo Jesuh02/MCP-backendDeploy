@@ -392,6 +392,33 @@ export class LLMService {
             console.log("------------------------------------------------------------\n");
             // ------------------------------
 
+            // When toolChoice is 'required' but the primary model returned no tool_calls
+            // (e.g. emitted an empty JSON block), retry immediately with the fallback model.
+            if (
+                toolChoice === 'required' &&
+                this.fallbackModel &&
+                (!response.tool_calls || response.tool_calls.length === 0)
+            ) {
+                console.warn('[LLMService] Primary returned no tool_calls with toolChoice=required — retrying with fallback model (DeepSeek)');
+                try {
+                    const retryResponse = await this.fallbackModel
+                        .bind({ tools: formattedTools, tool_choice: 'required' })
+                        .invoke(sanitizedMessages);
+                    console.log('\n📤 [LLM RESPONSE (TOOL RETRY WITH FALLBACK)] ----------------');
+                    console.log('OUTPUT CONTENT:', retryResponse.content);
+                    if (retryResponse.tool_calls && retryResponse.tool_calls.length > 0) {
+                        console.log('TOOL CALLS:', JSON.stringify(retryResponse.tool_calls, null, 2));
+                    } else {
+                        console.log('⚠️ NO TOOL CALLS on fallback retry either — proceeding with original response');
+                        return response;
+                    }
+                    console.log('------------------------------------------------------------\n');
+                    return retryResponse;
+                } catch (retryErr) {
+                    console.warn('[LLMService] Fallback retry with tools failed:', retryErr.message, '— returning original response');
+                }
+            }
+
             return response;
         } catch (error) {
             console.error("Error generating LLM response:", error);
