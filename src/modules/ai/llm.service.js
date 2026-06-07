@@ -2430,6 +2430,7 @@ Responde de forma clara y constructiva.`;
 
             const topicsForContent = [];
             const tasksForContent = [];
+            const subjectsForThumbnails = [];
             let topicsCreated = 0;
             let tasksCreated = 0;
 
@@ -2443,6 +2444,7 @@ Responde de forma clara y constructiva.`;
                 });
                 const subjectId = subjectRow?.id;
                 if (!subjectId) continue;
+                subjectsForThumbnails.push({ subjectId, name: subject.name, description: subject.description || '' });
 
                 for (const topic of (subject.topics || [])) {
                     const topicRow = await dbInsert('topics', {
@@ -2503,68 +2505,138 @@ Responde de forma clara y constructiva.`;
                 setImmediate(async () => {
                     let topicDocs = 0;
                     let taskDocs = 0;
-                    // 3a. Topic study-material documents
+
+                    // 3-thumb. Generate course thumbnail via OpenRouter image model
+                    try {
+                        const thumbBuf = await self._generateThumbnailImage(
+                            `${plan.title}, ${plan.category || 'educación'}, ${plan.description || 'curso educativo'}`,
+                        );
+                        const thumbKey = `courses/${courseId}/thumbnail_${Date.now()}.webp`;
+                        const thumbUrl = await storage.uploadFile(thumbBuf, thumbKey, 'image/webp', thumbBuf.length);
+                        await db.from('courses').update({ thumbnail_uri: thumbUrl }).eq('id', courseId);
+                        console.log(`[LLMDomainService] Course thumbnail uploaded: ${thumbUrl}`);
+                    } catch (err) {
+                        console.error(`[LLMDomainService] Course thumbnail failed: ${err.message}`);
+                    }
+
+                    // 3-thumb. Generate subject thumbnails
+                    for (const { subjectId, name, description } of subjectsForThumbnails) {
+                        try {
+                            const thumbBuf = await self._generateThumbnailImage(
+                                `${name}, ${plan.title}, ${description || 'módulo académico educativo'}`,
+                            );
+                            const thumbKey = `courses/${courseId}/subjects/${subjectId}/thumbnail_${Date.now()}.webp`;
+                            const thumbUrl = await storage.uploadFile(thumbBuf, thumbKey, 'image/webp', thumbBuf.length);
+                            await db.from('subjects').update({ thumbnail_url: thumbUrl }).eq('id', subjectId);
+                            console.log(`[LLMDomainService] Subject thumbnail uploaded: subjectId=${subjectId}`);
+                        } catch (err) {
+                            console.error(`[LLMDomainService] Subject thumbnail failed id=${subjectId}: ${err.message}`);
+                        }
+                    }
+
+                    // 3a. Topic study-material documents (Word + PDF)
                     for (const topic of topicsForContent) {
                         try {
                             const content = await self._generateTopicContent({ courseTitle: plan.title, topic, model });
-                            const docBuffer = await self._buildWordDocument(topic, content);
                             const safeName = (topic.title || 'tema')
                                 .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
-                            const key = `courses/${courseId}/topics/${topic.id}/${Date.now()}_${safeName}.docx`;
-                            const publicUrl = await storage.uploadFile(
-                                docBuffer, key,
+
+                            // Word (.docx)
+                            const docBuffer = await self._buildWordDocument(topic, content);
+                            const docKey = `courses/${courseId}/topics/${topic.id}/${Date.now()}_${safeName}.docx`;
+                            const docUrl = await storage.uploadFile(
+                                docBuffer, docKey,
                                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                                 docBuffer.length,
                             );
                             await contentItemRepo.create({
                                 topicId: topic.id,
                                 title: topic.title,
-                                body: publicUrl,
+                                body: docUrl,
                                 contentType: 'file',
-                                fileUri: publicUrl,
+                                fileUri: docUrl,
                                 fileName: `${safeName}.docx`,
                                 orderIndex: 0,
                                 creatorUsuarioId: userId || null,
                                 creatorUsername: username || null,
                             });
                             topicDocs++;
+
+                            // PDF
+                            const pdfBuffer = await self._buildEducationalPdf(
+                                topic.title, `Módulo: ${topic.subjectName}`, content,
+                            );
+                            const pdfKey = `courses/${courseId}/topics/${topic.id}/${Date.now()}_${safeName}.pdf`;
+                            const pdfUrl = await storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
+                            await contentItemRepo.create({
+                                topicId: topic.id,
+                                title: `${topic.title} (PDF)`,
+                                body: pdfUrl,
+                                contentType: 'file',
+                                fileUri: pdfUrl,
+                                fileName: `${safeName}.pdf`,
+                                orderIndex: 1,
+                                creatorUsuarioId: userId || null,
+                                creatorUsername: username || null,
+                            });
                         } catch (err) {
                             console.error(`[LLMDomainService] Topic doc failed topic=${topic.id}: ${err.message}`);
                         }
                     }
-                    // 3b. Task guide + rubric documents
+
+                    // 3b. Task guide + rubric documents (Word + PDF)
                     for (const task of tasksForContent) {
                         try {
                             const content = await self._generateTaskContent({ task, model });
+                            const safeName = (task.title || 'tarea')
+                                .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
+
+                            // Word (.docx)
                             const docBuffer = await self._buildWordDocument(
                                 { title: task.title, subjectName: task.subjectName },
                                 content,
                             );
-                            const safeName = (task.title || 'tarea')
-                                .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
-                            const key = `courses/${courseId}/tasks/${task.id}/${Date.now()}_${safeName}.docx`;
-                            const publicUrl = await storage.uploadFile(
-                                docBuffer, key,
+                            const docKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_${safeName}.docx`;
+                            const docUrl = await storage.uploadFile(
+                                docBuffer, docKey,
                                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                                 docBuffer.length,
                             );
                             await contentItemRepo.create({
                                 taskId: task.id,
                                 title: task.title,
-                                body: publicUrl,
+                                body: docUrl,
                                 contentType: 'file',
-                                fileUri: publicUrl,
+                                fileUri: docUrl,
                                 fileName: `${safeName}.docx`,
                                 orderIndex: 0,
                                 creatorUsuarioId: userId || null,
                                 creatorUsername: username || null,
                             });
                             taskDocs++;
+
+                            // PDF
+                            const pdfBuffer = await self._buildEducationalPdf(
+                                task.title, `${task.topicName} · ${task.subjectName}`, content,
+                            );
+                            const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_${safeName}.pdf`;
+                            const pdfUrl = await storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
+                            await contentItemRepo.create({
+                                taskId: task.id,
+                                title: `${task.title} (PDF)`,
+                                body: pdfUrl,
+                                contentType: 'file',
+                                fileUri: pdfUrl,
+                                fileName: `${safeName}.pdf`,
+                                orderIndex: 1,
+                                creatorUsuarioId: userId || null,
+                                creatorUsername: username || null,
+                            });
                         } catch (err) {
                             console.error(`[LLMDomainService] Task doc failed task=${task.id}: ${err.message}`);
                         }
                     }
-                    console.log(`[LLMDomainService] Background docs done: courseId=${courseId}, topicDocs=${topicDocs}, taskDocs=${taskDocs}`);
+                    console.log(`[LLMDomainService] Background done: courseId=${courseId}, topicDocs=${topicDocs}, taskDocs=${taskDocs}`);
                 });
             }
 
@@ -2623,6 +2695,134 @@ Responde de forma clara y constructiva.`;
             toolChoice: 'none',
         });
         return response?.content || '';
+    }
+
+    /**
+     * Generate a realistic thumbnail image using OpenRouter image generation models.
+     * Downloads the result and returns the image buffer (webp/png).
+     * Uses FLUX Schnell by default; override with OPENROUTER_IMAGE_MODEL env var.
+     * @private
+     * @param {string} description - Subject description for the image prompt
+     * @returns {Promise<Buffer>}
+     */
+    async _generateThumbnailImage(description) {
+        const apiKey = process.env.OPENROUTER_API_KEY;
+        if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured for image generation');
+
+        const imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'black-forest-labs/flux-schnell';
+        const prompt = [
+            `Professional educational course thumbnail: ${String(description || '').slice(0, 220)}.`,
+            'Photorealistic, high quality, modern academic setting, vibrant and clean composition,',
+            'sharp focus, professional photography, 4K resolution, no text overlays, no watermarks.',
+        ].join(' ');
+
+        const resp = await fetch('https://openrouter.ai/api/v1/images/generations', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': process.env.SITE_URL || 'https://coursev.app',
+                'X-Title': 'CourseV',
+            },
+            body: JSON.stringify({ model: imageModel, prompt, n: 1, size: '1024x1024' }),
+            signal: AbortSignal.timeout(90_000),
+        });
+        if (!resp.ok) {
+            const msg = await resp.text().catch(() => '');
+            throw new Error(`OpenRouter image API ${resp.status}: ${msg.slice(0, 300)}`);
+        }
+        const json = await resp.json();
+        const entry = json?.data?.[0];
+        if (!entry) throw new Error('OpenRouter image generation returned no data');
+
+        // b64_json inline response — decode directly
+        if (entry.b64_json) return Buffer.from(entry.b64_json, 'base64');
+
+        // URL response — download the image
+        const imageUrl = entry.url;
+        if (!imageUrl) throw new Error('OpenRouter image generation returned no URL or b64_json');
+        const imgResp = await fetch(imageUrl, { signal: AbortSignal.timeout(30_000) });
+        if (!imgResp.ok) throw new Error(`Image download failed: ${imgResp.status}`);
+        return Buffer.from(await imgResp.arrayBuffer());
+    }
+
+    /**
+     * Build a styled educational PDF from Markdown content using pdfkit.
+     * Renders a branded header, section headings, bullet lists, and a footer.
+     * @private
+     * @param {string} title - Document title (shown in header)
+     * @param {string} subtitle - Subtitle line, e.g. module or subject name
+     * @param {string} markdownContent - Markdown body produced by the LLM
+     * @returns {Promise<Buffer>}
+     */
+    async _buildEducationalPdf(title, subtitle, markdownContent) {
+        const { default: PDFDocument } = await import('pdfkit');
+        return new Promise((resolve, reject) => {
+            const doc = new PDFDocument({ size: 'A4', margin: 50, autoFirstPage: true });
+            const chunks = [];
+            doc.on('data', c => chunks.push(c));
+            doc.on('end', () => resolve(Buffer.concat(chunks)));
+            doc.on('error', reject);
+
+            const W = doc.page.width;
+
+            // ── Branded header bar ──────────────────────────────────────────────
+            doc.rect(0, 0, W, 72).fill('#1e3a5f');
+            doc.fontSize(19).fillColor('#ffffff').font('Helvetica-Bold')
+                .text(String(title || '').slice(0, 90), 50, 14, { width: W - 100, ellipsis: true });
+            if (subtitle) {
+                doc.fontSize(11).fillColor('#93c5fd').font('Helvetica')
+                    .text(String(subtitle).slice(0, 120), 50, 44, { width: W - 100 });
+            }
+
+            // ── Body content ────────────────────────────────────────────────────
+            doc.y = 90;
+            for (const rawLine of (markdownContent || '').split('\n')) {
+                if (doc.y > doc.page.height - 70) { doc.addPage(); doc.y = 50; }
+                if (rawLine.startsWith('# ')) {
+                    doc.moveDown(0.4);
+                    doc.fontSize(15).font('Helvetica-Bold').fillColor('#1e3a5f')
+                        .text(rawLine.slice(2).trim(), 50, doc.y, { width: W - 100 });
+                    doc.moveDown(0.2);
+                } else if (rawLine.startsWith('## ')) {
+                    doc.moveDown(0.3);
+                    doc.fontSize(13).font('Helvetica-Bold').fillColor('#2c5282')
+                        .text(rawLine.slice(3).trim(), 50, doc.y, { width: W - 100 });
+                    doc.moveDown(0.15);
+                } else if (rawLine.startsWith('### ')) {
+                    doc.moveDown(0.2);
+                    doc.fontSize(11).font('Helvetica-Bold').fillColor('#2d3748')
+                        .text(rawLine.slice(4).trim(), 50, doc.y, { width: W - 100 });
+                    doc.moveDown(0.1);
+                } else if (rawLine.startsWith('- ') || rawLine.startsWith('* ')) {
+                    doc.fontSize(10.5).font('Helvetica').fillColor('#374151')
+                        .text(`• ${rawLine.slice(2).trim()}`, 62, doc.y, { width: W - 112 });
+                } else if (/^\d+\.\s/.test(rawLine)) {
+                    doc.fontSize(10.5).font('Helvetica').fillColor('#374151')
+                        .text(rawLine.trim(), 62, doc.y, { width: W - 112 });
+                } else if (rawLine.trim() === '') {
+                    doc.moveDown(0.35);
+                } else {
+                    const clean = rawLine
+                        .replace(/\*\*([^*]+)\*\*/g, '$1')
+                        .replace(/\*([^*]+)\*/g, '$1')
+                        .replace(/`([^`]+)`/g, '$1');
+                    doc.fontSize(10.5).font('Helvetica').fillColor('#374151')
+                        .text(clean.trim(), 50, doc.y, { width: W - 100 });
+                }
+            }
+
+            // ── Footer bar ───────────────────────────────────────────────────────
+            const footerY = doc.page.height - 38;
+            doc.rect(0, footerY, W, 38).fill('#dbeafe');
+            doc.fontSize(8).fillColor('#4b5563').font('Helvetica')
+                .text(
+                    `Generado por CourseV · ${new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+                    50, footerY + 13, { width: W - 100, align: 'center' },
+                );
+
+            doc.end();
+        });
     }
 }
 export default LLMDomainService;
