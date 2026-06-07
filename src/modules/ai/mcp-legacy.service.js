@@ -48,18 +48,14 @@ export class MCPService {
         const tenantId = getCurrentTenantId() || 'default';
         logger.info('🔍 [MCPService._executeRawSQL] Executing on tenant:', tenantId);
 
-        // execute_sql wraps queries as `SELECT ... FROM (%s) t`, which is invalid PostgreSQL
-        // for DML statements (INSERT/UPDATE/DELETE). Wrap DML+RETURNING queries in a CTE so
-        // execute_sql receives a plain SELECT that yields the returned rows.
+        // Pass SQL directly to execute_sql. The function detects DML (INSERT/UPDATE/DELETE)
+        // and handles RETURNING by wrapping in a CTE internally at the top level.
+        // Do NOT pre-wrap here — nesting a data-modifying CTE inside FROM (...) t is
+        // invalid PostgreSQL and causes "WITH clause containing a data-modifying statement
+        // must be at the top level".
         const trimmedSql = sqlQuery.trim();
-        const isDMLWithReturning =
-            /^\s*(INSERT|UPDATE|DELETE)\b/i.test(trimmedSql) &&
-            /\bRETURNING\b/i.test(trimmedSql);
-        const rpcQuery = isDMLWithReturning
-            ? `WITH __r AS (${trimmedSql}) SELECT * FROM __r`
-            : trimmedSql;
 
-        const { data, error } = await client.rpc('execute_sql', { query: rpcQuery });
+        const { data, error } = await client.rpc('execute_sql', { query: trimmedSql });
         if (error) {
             // Surface SQL errors directly so the LLM can self-correct
             if (error.code !== 'PGRST202' && !error.message?.includes('not found') && !error.message?.includes('schema cache')) {
@@ -71,7 +67,7 @@ export class MCPService {
             const provisioned = await this._autoProvisionExecuteSql(tenantId);
             if (provisioned) {
                 // Retry after provisioning
-                const retry = await client.rpc('execute_sql', { query: rpcQuery });
+                const retry = await client.rpc('execute_sql', { query: trimmedSql });
                 if (!retry.error) return retry.data;
                 throw new Error(`SQL Error after auto-provision: ${retry.error.message}`);
             }

@@ -1,9 +1,18 @@
 -- Migration: upgrade execute_sql to support INSERT/UPDATE/DELETE with RETURNING
 --
--- The original execute_sql function used `FROM (%s) t` which is invalid PostgreSQL
--- syntax for DML statements (INSERT/UPDATE/DELETE cannot appear in a FROM subquery).
--- This caused confirmCoursePlan to silently return an empty array instead of the
--- inserted row's id, resulting in "No se obtuvo el id del curso recién creado".
+-- Two bugs were causing confirmCoursePlan to fail:
+--
+-- 1. The original execute_sql used `FROM (%s) t` which is invalid PostgreSQL syntax
+--    for DML statements (INSERT/UPDATE/DELETE cannot appear in a FROM subquery).
+--
+-- 2. As a workaround, _executeRawSQL in mcp-legacy.service.js pre-wrapped DML+RETURNING
+--    queries as `WITH __r AS (...) SELECT * FROM __r` before calling execute_sql. But
+--    execute_sql still wrapped that in `FROM (...) t`, causing:
+--    "WITH clause containing a data-modifying statement must be at the top level".
+--
+-- Fix: this migration makes execute_sql handle raw DML natively (no pre-wrapping needed).
+--      The pre-wrapping workaround in _executeRawSQL has been removed so raw DML is passed
+--      directly and execute_sql wraps it in a CTE internally at the EXECUTE top level.
 --
 -- Run this in the Supabase SQL Editor for each tenant that has the old function.
 
