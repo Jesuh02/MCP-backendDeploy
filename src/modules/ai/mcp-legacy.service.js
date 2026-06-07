@@ -47,7 +47,19 @@ export class MCPService {
         if (sqlQuery.trim().endsWith(';')) sqlQuery = sqlQuery.trim().slice(0, -1);
         const tenantId = getCurrentTenantId() || 'default';
         logger.info('🔍 [MCPService._executeRawSQL] Executing on tenant:', tenantId);
-        const { data, error } = await client.rpc('execute_sql', { query: sqlQuery });
+
+        // execute_sql wraps queries as `SELECT ... FROM (%s) t`, which is invalid PostgreSQL
+        // for DML statements (INSERT/UPDATE/DELETE). Wrap DML+RETURNING queries in a CTE so
+        // execute_sql receives a plain SELECT that yields the returned rows.
+        const trimmedSql = sqlQuery.trim();
+        const isDMLWithReturning =
+            /^\s*(INSERT|UPDATE|DELETE)\b/i.test(trimmedSql) &&
+            /\bRETURNING\b/i.test(trimmedSql);
+        const rpcQuery = isDMLWithReturning
+            ? `WITH __r AS (${trimmedSql}) SELECT * FROM __r`
+            : trimmedSql;
+
+        const { data, error } = await client.rpc('execute_sql', { query: rpcQuery });
         if (error) {
             // Surface SQL errors directly so the LLM can self-correct
             if (error.code !== 'PGRST202' && !error.message?.includes('not found') && !error.message?.includes('schema cache')) {
@@ -59,7 +71,7 @@ export class MCPService {
             const provisioned = await this._autoProvisionExecuteSql(tenantId);
             if (provisioned) {
                 // Retry after provisioning
-                const retry = await client.rpc('execute_sql', { query: sqlQuery });
+                const retry = await client.rpc('execute_sql', { query: rpcQuery });
                 if (!retry.error) return retry.data;
                 throw new Error(`SQL Error after auto-provision: ${retry.error.message}`);
             }
@@ -100,9 +112,21 @@ export class MCPService {
             await pgClient.query(`
                 CREATE OR REPLACE FUNCTION public.execute_sql(query text)
                 RETURNS json LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-                DECLARE result json;
+                DECLARE
+                    result json;
+                    is_dml boolean;
                 BEGIN
-                    EXECUTE format('SELECT COALESCE(json_agg(t), ''[]''::json) FROM (%s) t', query) INTO result;
+                    is_dml := query ~* '^\\s*(INSERT|UPDATE|DELETE)\\b';
+                    IF is_dml AND query ~* '\\bRETURNING\\b' THEN
+                        -- DML with RETURNING: use CTE so the result rows are selectable
+                        EXECUTE format('WITH __r AS (%s) SELECT COALESCE(json_agg(t), ''[]''::json) FROM __r t', query) INTO result;
+                    ELSIF is_dml THEN
+                        -- DML without RETURNING: execute and return empty array
+                        EXECUTE query;
+                        result := '[]'::json;
+                    ELSE
+                        EXECUTE format('SELECT COALESCE(json_agg(t), ''[]''::json) FROM (%s) t', query) INTO result;
+                    END IF;
                     RETURN COALESCE(result, '[]'::json);
                 END; $$;
             `);
