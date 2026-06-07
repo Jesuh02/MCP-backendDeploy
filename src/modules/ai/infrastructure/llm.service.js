@@ -40,6 +40,22 @@ async function ensureLangChainLoaded() {
     _langchainLoaded = true;
 }
 
+/**
+ * Returns true when an LLM message has no meaningful content — empty string,
+ * whitespace, or just an empty Markdown code fence (e.g. ```json\n``` ). Used to
+ * detect degenerate primary responses so we can fail over to the fallback model.
+ * @param {unknown} content
+ * @returns {boolean}
+ */
+function isBlankModelContent(content) {
+    if (content == null) return true;
+    const text = (typeof content === 'string' ? content : String(content))
+        .replace(/```[a-zA-Z0-9]*\s*```/g, '') // strip empty fenced blocks
+        .replace(/```/g, '')
+        .trim();
+    return text.length === 0;
+}
+
 export class LLMService {
     static instance = null;
 
@@ -392,28 +408,38 @@ export class LLMService {
             console.log("------------------------------------------------------------\n");
             // ------------------------------
 
-            // When toolChoice is 'required' but the primary model returned no tool_calls
-            // (e.g. emitted an empty JSON block), retry immediately with the fallback model.
+            // Detect a degenerate primary response: no tool_calls AND blank/empty content
+            // (Qwen via OpenRouter occasionally emits just an empty ```json``` fence, which
+            // would otherwise reach the user as an empty answer).
+            const primaryNoToolCalls = !response.tool_calls || response.tool_calls.length === 0;
+            const primaryContentBlank = isBlankModelContent(response.content);
+
+            // Retry with the fallback model (DeepSeek) when either:
+            //   • toolChoice was 'required' but the model returned no tool_calls, or
+            //   • the model returned no tool_calls AND empty content.
             if (
-                toolChoice === 'required' &&
                 this.fallbackModel &&
-                (!response.tool_calls || response.tool_calls.length === 0)
+                primaryNoToolCalls &&
+                (toolChoice === 'required' || primaryContentBlank)
             ) {
-                console.warn('[LLMService] Primary returned no tool_calls with toolChoice=required — retrying with fallback model (DeepSeek)');
+                const retryToolChoice = toolChoice === 'required' ? 'required' : 'auto';
+                console.warn(`[LLMService] Primary returned no tool_calls${primaryContentBlank ? ' and blank content' : ''} — retrying with fallback model (DeepSeek), tool_choice=${retryToolChoice}`);
                 try {
                     const retryResponse = await this.fallbackModel
-                        .bind({ tools: formattedTools, tool_choice: 'required' })
+                        .bind({ tools: formattedTools, tool_choice: retryToolChoice })
                         .invoke(sanitizedMessages);
                     console.log('\n📤 [LLM RESPONSE (TOOL RETRY WITH FALLBACK)] ----------------');
                     console.log('OUTPUT CONTENT:', retryResponse.content);
-                    if (retryResponse.tool_calls && retryResponse.tool_calls.length > 0) {
+                    const retryHasToolCalls = retryResponse.tool_calls && retryResponse.tool_calls.length > 0;
+                    if (retryHasToolCalls) {
                         console.log('TOOL CALLS:', JSON.stringify(retryResponse.tool_calls, null, 2));
-                    } else {
-                        console.log('⚠️ NO TOOL CALLS on fallback retry either — proceeding with original response');
-                        return response;
                     }
                     console.log('------------------------------------------------------------\n');
-                    return retryResponse;
+                    // Accept the retry when it produced tool calls or real (non-blank) content.
+                    if (retryHasToolCalls || !isBlankModelContent(retryResponse.content)) {
+                        return retryResponse;
+                    }
+                    console.log('⚠️ Fallback retry also empty — proceeding with original response');
                 } catch (retryErr) {
                     console.warn('[LLMService] Fallback retry with tools failed:', retryErr.message, '— returning original response');
                 }
