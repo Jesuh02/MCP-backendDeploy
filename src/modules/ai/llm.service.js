@@ -2404,24 +2404,27 @@ Responde de forma clara y constructiva.`;
             const { MCPService } = await import('./mcp-legacy.service.js');
             const mcp = new MCPService();
 
-            // Escape single-quoted string values for safe SQL embedding
-            const esc = (s) => String(s == null ? '' : s).replace(/'/g, "''");
+            // Use the Supabase client's native PostgREST API for all inserts.
+            // This bypasses execute_sql entirely, so the version of that RPC function
+            // on the tenant DB is irrelevant. PostgREST handles RETURNING natively.
+            const db = mcp._tenantClient;
 
-            // Execute an INSERT and return the first row (must include RETURNING id)
-            const execInsert = async (sql) => {
-                const toolResult = await mcp.executeMCPTool('query_database', { query: sql });
-                if (!toolResult?.success) {
-                    throw new Error(toolResult?.error || `INSERT falló: ${sql.substring(0, 80)}`);
-                }
-                return Array.isArray(toolResult.results) ? toolResult.results[0] : null;
+            const dbInsert = async (table, data) => {
+                const { data: rows, error } = await db.from(table).insert(data).select('id');
+                if (error) throw new Error(`INSERT ${table} falló: ${error.message}`);
+                return rows?.[0] ?? null;
             };
 
             // 1. Create the course
-            const courseRow = await execInsert(
-                `INSERT INTO courses (title, description, category, price, is_premium, is_active, creator_user_id)
-                 VALUES ('${esc(plan.title)}', '${esc(plan.description)}', '${esc(plan.category || 'General')}', 0, false, true, ${userId})
-                 RETURNING id`,
-            );
+            const courseRow = await dbInsert('courses', {
+                title: plan.title,
+                description: plan.description ?? null,
+                category: plan.category || 'General',
+                price: 0,
+                is_premium: false,
+                is_active: true,
+                creator_user_id: userId,
+            });
             const courseId = courseRow?.id;
             if (!courseId) throw new Error('No se obtuvo el id del curso recién creado');
 
@@ -2432,20 +2435,22 @@ Responde de forma clara y constructiva.`;
 
             // 2. Create subjects → topics → tasks
             for (const subject of plan.subjects) {
-                const subjectRow = await execInsert(
-                    `INSERT INTO subjects (name, description, course_id, created_by)
-                     VALUES ('${esc(subject.name)}', '${esc(subject.description)}', ${courseId}, ${userId})
-                     RETURNING id`,
-                );
+                const subjectRow = await dbInsert('subjects', {
+                    name: subject.name,
+                    description: subject.description ?? null,
+                    course_id: courseId,
+                    created_by: userId,
+                });
                 const subjectId = subjectRow?.id;
                 if (!subjectId) continue;
 
                 for (const topic of (subject.topics || [])) {
-                    const topicRow = await execInsert(
-                        `INSERT INTO topics (name, description, materia_id, created_by)
-                         VALUES ('${esc(topic.title)}', '${esc(topic.description)}', ${subjectId}, ${userId})
-                         RETURNING id`,
-                    );
+                    const topicRow = await dbInsert('topics', {
+                        name: topic.title,
+                        description: topic.description ?? null,
+                        materia_id: subjectId,
+                        created_by: userId,
+                    });
                     const topicId = topicRow?.id;
                     if (!topicId) continue;
                     topicsCreated++;
@@ -2459,14 +2464,16 @@ Responde de forma clara y constructiva.`;
                     });
 
                     for (const task of (topic.tasks || [])) {
-                        const dueExpr = task.dueWeek && Number.isInteger(task.dueWeek) && task.dueWeek > 0
-                            ? `NOW() + INTERVAL '${task.dueWeek} weeks'`
-                            : 'NULL';
-                        const taskRow = await execInsert(
-                            `INSERT INTO tasks (title, description, topic_id, due_date, created_by)
-                             VALUES ('${esc(task.title)}', '${esc(task.description)}', ${topicId}, ${dueExpr}, ${userId})
-                             RETURNING id`,
-                        );
+                        const dueDate = task.dueWeek && Number.isInteger(task.dueWeek) && task.dueWeek > 0
+                            ? new Date(Date.now() + task.dueWeek * 7 * 24 * 60 * 60 * 1000).toISOString()
+                            : null;
+                        const taskRow = await dbInsert('tasks', {
+                            title: task.title,
+                            description: task.description ?? null,
+                            topic_id: topicId,
+                            due_date: dueDate,
+                            created_by: userId,
+                        });
                         const taskId = taskRow?.id;
                         if (!taskId) continue;
                         tasksCreated++;
