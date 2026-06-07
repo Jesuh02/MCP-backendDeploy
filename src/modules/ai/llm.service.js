@@ -20,7 +20,7 @@ import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
 import { QuizMathValidator } from '../../shared/math/QuizMathValidator.js';
 import { OrderingQuestionValidator } from '../../shared/math/OrderingQuestionValidator.js';
 import { ValidationPipeline } from '../../shared/math/ValidationPipeline.js';
-import { TENANT_CONFIGS, runInTenantContext } from '../../config/tenantRegistry.js';
+import { TENANT_CONFIGS, runInTenantContext, getCurrentTenantId, hasTenantClient } from '../../config/tenantRegistry.js';
 
 /**
  * In-memory cache: tracks the last time a multi-tenant user was asked
@@ -2502,7 +2502,15 @@ Responde de forma clara y constructiva.`;
                 const storage = this.storage;
                 const contentItemRepo = this.contentItemRepo;
                 const self = this;
-                setImmediate(async () => {
+                // Capture the active tenant id NOW, while still inside the request's
+                // AsyncLocalStorage context. The setImmediate callback runs AFTER the HTTP
+                // response, where the tenant context no longer exists — so contentItemRepo
+                // (a tenant-aware proxy) would otherwise write content_items to the DEFAULT
+                // database instead of this institution's tenant DB, leaving topics/tasks
+                // with no visible documents. Re-establishing the context inside the
+                // background job guarantees every insert lands in the correct tenant DB.
+                const bgTenantId = getCurrentTenantId();
+                const runBackground = async () => {
                     let topicDocs = 0;
                     let taskDocs = 0;
 
@@ -2637,6 +2645,16 @@ Responde de forma clara y constructiva.`;
                         }
                     }
                     console.log(`[LLMDomainService] Background done: courseId=${courseId}, topicDocs=${topicDocs}, taskDocs=${taskDocs}`);
+                };
+                setImmediate(() => {
+                    // Run inside the captured tenant context so the tenant-aware repositories
+                    // (contentItemRepo) route to the institution's DB. Fall back to a plain
+                    // run only when no dedicated tenant client exists for this id.
+                    const job = (bgTenantId && hasTenantClient(bgTenantId))
+                        ? runInTenantContext(bgTenantId, runBackground)
+                        : runBackground();
+                    Promise.resolve(job).catch(err =>
+                        console.error(`[LLMDomainService] Background generation failed: ${err?.message || err}`));
                 });
             }
 
