@@ -1192,9 +1192,23 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 return Result.fail(new ValidationError('El planificador no pudo generar una respuesta.'));
             }
 
+            // Guard: some models emit an inline tool-call JSON ({"tool": "create_course_structure", "arguments": {"plan": {...}}})
+            // even when tools: [] and toolChoice: 'none' are set. Unwrap the plan from the arguments.
+            let planContent = String(response.content).trim();
+            try {
+                const start = planContent.indexOf('{');
+                const end = planContent.lastIndexOf('}');
+                if (start !== -1 && end !== -1 && start < end) {
+                    const parsed = JSON.parse(planContent.slice(start, end + 1));
+                    if (parsed?.tool === 'create_course_structure' && parsed?.arguments?.plan) {
+                        planContent = JSON.stringify(parsed.arguments.plan);
+                    }
+                }
+            } catch (_) { /* not a tool call JSON — use content as-is */ }
+
             return Result.ok({
-                response: response.content,
-                respuesta_texto: response.content,
+                response: planContent,
+                respuesta_texto: planContent,
                 model: response.model,
                 usage: response.usage,
             });
