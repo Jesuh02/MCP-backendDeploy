@@ -1189,6 +1189,108 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     }
 
     /**
+     * Attempts to repair a broken JSON course plan string produced by certain LLMs.
+     * Applies iterative regex-based repairs to handle common failure patterns
+     * (stray key-value pairs in arrays, double braces, unbalanced brackets, etc.).
+     * Returns a valid compact JSON string, or null if repair is not possible.
+     * @private
+     */
+    _repairPlanJson(raw) {
+        if (!raw) return null;
+        let s = raw.trim();
+        // Strip optional markdown fences
+        const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fenced) s = fenced[1].trim();
+        const start = s.indexOf('{');
+        const end = s.lastIndexOf('}');
+        if (start === -1 || end === -1 || start >= end) return null;
+        s = s.slice(start, end + 1);
+        // Already valid?
+        try { return JSON.stringify(JSON.parse(s)); } catch (_) {}
+
+        // Iterative repairs
+        for (let round = 0; round < 10; round++) {
+            const before = s;
+
+            // 1. Remove trailing commas before } or ]
+            s = s.replace(/,(\s*[}\]])/g, '$1');
+
+            // 2. Remove stray "key": value pairs that appear after } and before ] or }
+            //    E.g.  }  "title": "Funciones",  ]  →  }  ]
+            s = s.replace(/}(\s*)"[^"]*"\s*:\s*(?:"(?:[^"\\]|\\.)*"|[^,\[\]{}"']+?),?(\s*[}\]])/g, '}$2');
+
+            // 3. Remove stray "key": value pairs at the START of arrays (before first {)
+            //    E.g.  [  "description": "...",  {  →  [  {
+            s = s.replace(/\[(\s*)"[^"]*"\s*:\s*(?:"(?:[^"\\]|\\.)*"|[^,\[\]{}"']+?),?(\s*\{)/g, '[$1$2');
+
+            // 4. Merge orphaned empty objects into the next object
+            //    E.g.  {}  "tasks": [  →  {"tasks": [
+            s = s.replace(/\{\s*\}(\s*)"([^"]+)"(\s*):/g, '{"$2"$3:');
+
+            // 5. Collapse double open braces  {{  →  {
+            s = s.replace(/\{\s*\{/g, '{');
+
+            // 6. Add missing commas between adjacent objects  } {  →  }, {
+            s = s.replace(/}(\s*)\{/g, '},$1{');
+
+            // 7. Remove isolated empty objects inside arrays
+            s = s.replace(/,(\s*)\{\s*\}(\s*),/g, ',');
+            s = s.replace(/\[(\s*)\{\s*\}(\s*),/g, '[$1');
+            s = s.replace(/,(\s*)\{\s*\}(\s*)\]/g, '$1]');
+
+            if (s === before) break;
+        }
+
+        // Balance unclosed braces/brackets (string-aware)
+        let curly = 0, square = 0, inStr = false, esc = false;
+        for (const ch of s) {
+            if (esc) { esc = false; continue; }
+            if (ch === '\\' && inStr) { esc = true; continue; }
+            if (ch === '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
+            if (ch === '{') curly++;
+            else if (ch === '}') { if (curly > 0) curly--; }
+            else if (ch === '[') square++;
+            else if (ch === ']') { if (square > 0) square--; }
+        }
+        s += '}'.repeat(Math.max(0, curly)) + ']'.repeat(Math.max(0, square));
+
+        try { return JSON.stringify(JSON.parse(s)); } catch (_) { return null; }
+    }
+
+    /**
+     * Extracts a minimal valid course plan from badly broken JSON using regex.
+     * Used as last resort when full repair fails — at minimum returns title + subject names.
+     * @private
+     */
+    _extractPlanPartial(raw) {
+        if (!raw) return null;
+        const titleM = raw.match(/"title"\s*:\s*"([^"]+)"/);
+        if (!titleM) return null;
+        const descM  = raw.match(/"description"\s*:\s*"([^"]*)"/);
+        const catM   = raw.match(/"category"\s*:\s*"([^"]*)"/);
+        const levelM = raw.match(/"level"\s*:\s*"([^"]*)"/);
+        const weekM  = raw.match(/"durationWeeks"\s*:\s*(\d+)/);
+
+        const subjects = [];
+        const nameRe = /"name"\s*:\s*"([^"]+)"/g;
+        let m;
+        while ((m = nameRe.exec(raw)) !== null) {
+            subjects.push({ name: m[1], description: '', topics: [] });
+        }
+        if (!subjects.length) return null;
+
+        return JSON.stringify({
+            title: titleM[1],
+            description: descM?.[1] ?? '',
+            category: catM?.[1] ?? '',
+            level: levelM?.[1] ?? '',
+            ...(weekM ? { durationWeeks: parseInt(weekM[1], 10) } : {}),
+            subjects,
+        });
+    }
+
+    /**
      * Course planner mode — dedicated prompt that only generates a structured JSON plan.
      * Completely bypasses the educational assistant system prompt and MCP tools.
      * @private
@@ -1266,6 +1368,19 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                     }
                 }
             } catch (_) { /* not a tool call JSON — use content as-is */ }
+
+            // Ensure we always send valid JSON to the frontend.
+            // Some fallback models (e.g. llama-3.3-70b) emit structurally broken JSON
+            // that the frontend extractPlan cannot parse. Repair it here; if repair fails,
+            // extract a minimal valid plan so the user always sees the plan card.
+            const repaired = this._repairPlanJson(planContent);
+            if (repaired) {
+                planContent = repaired;
+            } else {
+                const partial = this._extractPlanPartial(planContent);
+                if (partial) planContent = partial;
+                // else: send original — frontend will show the friendly error fallback
+            }
 
             return Result.ok({
                 response: planContent,
