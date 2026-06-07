@@ -968,6 +968,24 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                             toolArgs = { raw: tc.arguments };
                         }
 
+                        // Intercept course-creation tool calls: NEVER auto-insert into the DB here.
+                        // Course creation must go through the planner → accept/reject card → confirm flow
+                        // (POST /llm/confirm-course). Convert the proposed plan into a structured course
+                        // plan so the client renders the CoursePlanCard instead of silently creating it.
+                        if (toolName === 'create_course_structure') {
+                            const proposedPlan = toolArgs?.plan || null;
+                            if (proposedPlan && typeof proposedPlan.title === 'string' && Array.isArray(proposedPlan.subjects)) {
+                                const planJson = JSON.stringify(proposedPlan);
+                                return Result.ok({
+                                    response: planJson,
+                                    respuesta_texto: planJson,
+                                    isCoursePlan: true,
+                                    model: response.model,
+                                    usage: response.usage,
+                                });
+                            }
+                        }
+
                         try {
                             const { MCPService } = await import('./mcp-legacy.service.js');
                             const mcp = new MCPService();
@@ -1009,6 +1027,21 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 // DeepSeek and some models emit {"tool":...,"arguments":...} as markdown instead of tool_calls.
                 const inlineCall = this._extractInlineToolCall(textContent);
                 if (inlineCall) {
+                    // Intercept inline course-creation calls too: convert to a plan card
+                    // instead of inserting into the DB, preserving the accept/reject flow.
+                    if (inlineCall.tool === 'create_course_structure') {
+                        const proposedPlan = inlineCall.arguments?.plan || null;
+                        if (proposedPlan && typeof proposedPlan.title === 'string' && Array.isArray(proposedPlan.subjects)) {
+                            const planJson = JSON.stringify(proposedPlan);
+                            return Result.ok({
+                                response: planJson,
+                                respuesta_texto: planJson,
+                                isCoursePlan: true,
+                                model: response.model,
+                                usage: response.usage,
+                            });
+                        }
+                    }
                     let inlineSucceeded = false;
                     try {
                         const { MCPService } = await import('./mcp-legacy.service.js');
@@ -1066,8 +1099,21 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 } else if (/"tool"\s*:\s*"create_course_structure"/.test(finalContent)) {
                     // A course-creation tool call leaked into the text body. Course creation
                     // must go through the planner → confirm flow, never a raw insert dumped
-                    // to the user. Replace with a friendly hint to retry in course mode.
-                    console.warn('[LLMDomainService] Response contains raw create_course_structure JSON — suppressing.');
+                    // to the user. Instead of discarding it, unwrap the plan and return it as a
+                    // structured course plan so the client renders the accept/reject CoursePlanCard.
+                    console.warn('[LLMDomainService] Response contains raw create_course_structure JSON — converting to course plan.');
+                    const inline = this._extractInlineToolCall(finalContent);
+                    const leakedPlan = inline?.arguments?.plan || null;
+                    if (leakedPlan && typeof leakedPlan.title === 'string' && Array.isArray(leakedPlan.subjects)) {
+                        const planJson = JSON.stringify(leakedPlan);
+                        return Result.ok({
+                            response: planJson,
+                            respuesta_texto: planJson,
+                            isCoursePlan: true,
+                            model: response.model,
+                            usage: response.usage,
+                        });
+                    }
                     response = { ...response, content: 'Para crear un curso, vuelve a describir la temática y te mostraré un plan que podrás revisar y confirmar.' };
                 } else {
                     // Strip SQL code blocks that leaked through (user must never see raw SQL)
