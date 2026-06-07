@@ -2508,11 +2508,11 @@ Responde de forma clara y constructiva.`;
 
                     // 3-thumb. Generate course thumbnail via OpenRouter image model
                     try {
-                        const thumbBuf = await self._generateThumbnailImage(
+                        const { buffer: thumbBuf, contentType, ext } = await self._generateThumbnailImage(
                             `${plan.title}, ${plan.category || 'educación'}, ${plan.description || 'curso educativo'}`,
                         );
-                        const thumbKey = `courses/${courseId}/thumbnail_${Date.now()}.webp`;
-                        const thumbUrl = await storage.uploadFile(thumbBuf, thumbKey, 'image/webp', thumbBuf.length);
+                        const thumbKey = `courses/${courseId}/thumbnail_${Date.now()}.${ext}`;
+                        const thumbUrl = await storage.uploadFile(thumbBuf, thumbKey, contentType, thumbBuf.length);
                         await db.from('courses').update({ thumbnail_uri: thumbUrl }).eq('id', courseId);
                         console.log(`[LLMDomainService] Course thumbnail uploaded: ${thumbUrl}`);
                     } catch (err) {
@@ -2522,11 +2522,11 @@ Responde de forma clara y constructiva.`;
                     // 3-thumb. Generate subject thumbnails
                     for (const { subjectId, name, description } of subjectsForThumbnails) {
                         try {
-                            const thumbBuf = await self._generateThumbnailImage(
+                            const { buffer: thumbBuf, contentType, ext } = await self._generateThumbnailImage(
                                 `${name}, ${plan.title}, ${description || 'módulo académico educativo'}`,
                             );
-                            const thumbKey = `courses/${courseId}/subjects/${subjectId}/thumbnail_${Date.now()}.webp`;
-                            const thumbUrl = await storage.uploadFile(thumbBuf, thumbKey, 'image/webp', thumbBuf.length);
+                            const thumbKey = `courses/${courseId}/subjects/${subjectId}/thumbnail_${Date.now()}.${ext}`;
+                            const thumbUrl = await storage.uploadFile(thumbBuf, thumbKey, contentType, thumbBuf.length);
                             await db.from('subjects').update({ thumbnail_url: thumbUrl }).eq('id', subjectId);
                             console.log(`[LLMDomainService] Subject thumbnail uploaded: subjectId=${subjectId}`);
                         } catch (err) {
@@ -2698,33 +2698,41 @@ Responde de forma clara y constructiva.`;
     }
 
     /**
-     * Generate a realistic thumbnail image using OpenRouter image generation models.
-     * Downloads the result and returns the image buffer (webp/png).
-     * Uses FLUX Schnell by default; override with OPENROUTER_IMAGE_MODEL env var.
+     * Generate a realistic thumbnail image using the SAME OpenRouter image-capable
+     * model as the learning service (google/gemini-2.5-flash-image by default).
+     * Uses the /chat/completions endpoint with modalities: ['image','text'] so the
+     * model and parsing match LearningDomainService._renderImage exactly.
+     * Override the model with the OPENROUTER_IMAGE_MODEL env var.
      * @private
      * @param {string} description - Subject description for the image prompt
-     * @returns {Promise<Buffer>}
+     * @returns {Promise<{ buffer: Buffer, contentType: string, ext: string }>}
      */
     async _generateThumbnailImage(description) {
         const apiKey = process.env.OPENROUTER_API_KEY;
         if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured for image generation');
 
-        const imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'black-forest-labs/flux-schnell';
+        // Same image model used by LearningDomainService (learning.service.js).
+        const imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
         const prompt = [
-            `Professional educational course thumbnail: ${String(description || '').slice(0, 220)}.`,
-            'Photorealistic, high quality, modern academic setting, vibrant and clean composition,',
-            'sharp focus, professional photography, 4K resolution, no text overlays, no watermarks.',
+            `Professional, photorealistic educational thumbnail: ${String(description || '').slice(0, 220)}.`,
+            'Ultra-realistic photography that looks completely real, lifelike, natural lighting,',
+            'real-world academic setting, high detail, sharp focus, 4K resolution,',
+            'cinematic 16:9 composition, no text overlays, no watermarks.',
         ].join(' ');
 
-        const resp = await fetch('https://openrouter.ai/api/v1/images/generations', {
+        const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
-                'HTTP-Referer': process.env.SITE_URL || 'https://coursev.app',
+                'HTTP-Referer': process.env.OPENROUTER_REFERER || process.env.SITE_URL || 'https://coursev.app',
                 'X-Title': 'CourseV',
             },
-            body: JSON.stringify({ model: imageModel, prompt, n: 1, size: '1024x1024' }),
+            body: JSON.stringify({
+                model: imageModel,
+                modalities: ['image', 'text'],
+                messages: [{ role: 'user', content: prompt }],
+            }),
             signal: AbortSignal.timeout(90_000),
         });
         if (!resp.ok) {
@@ -2732,18 +2740,77 @@ Responde de forma clara y constructiva.`;
             throw new Error(`OpenRouter image API ${resp.status}: ${msg.slice(0, 300)}`);
         }
         const json = await resp.json();
-        const entry = json?.data?.[0];
-        if (!entry) throw new Error('OpenRouter image generation returned no data');
+        const message = json?.choices?.[0]?.message;
 
-        // b64_json inline response — decode directly
-        if (entry.b64_json) return Buffer.from(entry.b64_json, 'base64');
+        const imageRef = this._extractImageRef(message);
+        if (!imageRef) throw new Error(`OpenRouter image generation returned no image for model ${imageModel}`);
 
-        // URL response — download the image
-        const imageUrl = entry.url;
-        if (!imageUrl) throw new Error('OpenRouter image generation returned no URL or b64_json');
-        const imgResp = await fetch(imageUrl, { signal: AbortSignal.timeout(30_000) });
+        return this._imageRefToBuffer(imageRef);
+    }
+
+    /**
+     * Extracts an image reference (base64 data URL or external URL) from an
+     * OpenRouter chat message. Mirrors LearningDomainService._renderImage parsing
+     * to support Gemini/Anthropic/OpenRouter image response shapes.
+     * @private
+     * @returns {string} data URL, http URL, or '' when no image is present
+     */
+    _extractImageRef(message) {
+        if (!message) return '';
+
+        // 1. OpenRouter images[] array
+        const fromImages = message?.images?.[0]?.image_url?.url;
+        if (fromImages) return fromImages;
+
+        // 2. Content is an array of blocks
+        if (Array.isArray(message?.content)) {
+            for (const block of message.content) {
+                if ((block?.type === 'image_url' || block?.type === 'output_image') && block.image_url?.url) {
+                    return block.image_url.url;
+                }
+                if (block?.type === 'image' && block.source?.type === 'base64' && block.source?.data) {
+                    return `data:${block.source.media_type || 'image/png'};base64,${block.source.data}`;
+                }
+                if (block?.type === 'image' && block.source?.url) return block.source.url;
+                if (block?.inlineData?.data) {
+                    return `data:${block.inlineData.mimeType || 'image/png'};base64,${block.inlineData.data}`;
+                }
+                if (block?.data && block?.mimeType) return `data:${block.mimeType};base64,${block.data}`;
+            }
+        }
+
+        // 3. Content is a string — embedded markdown image or raw data URI
+        if (typeof message?.content === 'string') {
+            const mdImg = message.content.match(/!\[.*?\]\((data:image\/[^)]+)\)/);
+            if (mdImg) return mdImg[1];
+            const dataUri = message.content.match(/(data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{20,})/);
+            if (dataUri) return dataUri[1];
+        }
+
+        return '';
+    }
+
+    /**
+     * Converts an image reference (base64 data URL or external URL) into a Buffer
+     * plus its content type and file extension, ready for R2 upload.
+     * @private
+     * @param {string} ref
+     * @returns {Promise<{ buffer: Buffer, contentType: string, ext: string }>}
+     */
+    async _imageRefToBuffer(ref) {
+        const dataMatch = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(ref);
+        if (dataMatch) {
+            const contentType = dataMatch[1].toLowerCase();
+            const ext = (contentType.split('/')[1] || 'png').replace('jpeg', 'jpg');
+            return { buffer: Buffer.from(dataMatch[2], 'base64'), contentType, ext };
+        }
+
+        // External URL — download the bytes
+        const imgResp = await fetch(ref, { signal: AbortSignal.timeout(30_000) });
         if (!imgResp.ok) throw new Error(`Image download failed: ${imgResp.status}`);
-        return Buffer.from(await imgResp.arrayBuffer());
+        const contentType = (imgResp.headers.get('content-type') || 'image/png').split(';')[0].toLowerCase();
+        const ext = (contentType.split('/')[1] || 'png').replace('jpeg', 'jpg');
+        return { buffer: Buffer.from(await imgResp.arrayBuffer()), contentType, ext };
     }
 
     /**
