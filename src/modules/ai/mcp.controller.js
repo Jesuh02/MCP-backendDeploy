@@ -137,6 +137,11 @@ export class MCPController {
                 return { content: [{ type: 'text', text: JSON.stringify(schemaResult.isOk() ? schemaResult.getValue() : { error: schemaResult.getError().message }) }], isError: !schemaResult.isOk() };
             }
 
+            case 'create_course_structure': {
+                const courseStructResult = await this.mcpService.createCourseStructure({ plan: args?.plan, userId: args?.userId });
+                return { content: [{ type: 'text', text: JSON.stringify(courseStructResult.isOk() ? courseStructResult.getValue() : { error: courseStructResult.getError().message }) }], isError: !courseStructResult.isOk() };
+            }
+
             case 'get_user_info':
                 const userResult = await this.mcpService.getUserInfo(args);
                 return { content: [{ type: 'text', text: JSON.stringify(userResult.isOk() ? userResult.getValue() : { error: userResult.getError().message }) }] };

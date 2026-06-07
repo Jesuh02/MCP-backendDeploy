@@ -69,7 +69,16 @@ export class LLMDomainService {
             // ── COURSE PLANNER MODE ────────────────────────────────────────────────
             // Short-circuit the full educational assistant pipeline and use a dedicated
             // course planner system prompt that only generates a JSON course plan.
-            if (courseMode) {
+            //
+            // We enter planner mode when:
+            //   a) the client explicitly requested it (courseMode flag), OR
+            //   b) the message is clearly a course-creation request (auto-detected).
+            // Routing auto-detected requests here guarantees the user always receives a
+            // structured plan for the accept/reject card instead of the model trying to
+            // call `create_course_structure` directly (which used to leak raw JSON and
+            // skipped both the confirmation step and the study-material/task documents).
+            // WhatsApp keeps the legacy agentic flow (no card UI on that channel).
+            if (courseMode || (!fromWhatsApp && this._isCourseCreationRequest(prompt))) {
                 return this._processCoursePlannerPrompt({ prompt, model, fastTimeout });
             }
 
@@ -1054,6 +1063,12 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 if (/"tool"\s*:\s*"query_database"/.test(finalContent) || /"arguments"\s*:\s*\{[\s\S]*?"query"\s*:/.test(finalContent)) {
                     console.warn('[LLMDomainService] Response contains raw tool call JSON — suppressing.');
                     response = { ...response, content: 'Lo siento, no pude obtener los datos en este momento. Por favor intenta de nuevo.' };
+                } else if (/"tool"\s*:\s*"create_course_structure"/.test(finalContent)) {
+                    // A course-creation tool call leaked into the text body. Course creation
+                    // must go through the planner → confirm flow, never a raw insert dumped
+                    // to the user. Replace with a friendly hint to retry in course mode.
+                    console.warn('[LLMDomainService] Response contains raw create_course_structure JSON — suppressing.');
+                    response = { ...response, content: 'Para crear un curso, vuelve a describir la temática y te mostraré un plan que podrás revisar y confirmar.' };
                 } else {
                     // Strip SQL code blocks that leaked through (user must never see raw SQL)
                     let cleaned = finalContent;
@@ -1209,6 +1224,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             return Result.ok({
                 response: planContent,
                 respuesta_texto: planContent,
+                // Marks this response as a structured course plan so clients can render
+                // the accept/reject CoursePlanCard even when courseMode was auto-detected
+                // server-side (i.e. the request came through the regular chat path).
+                isCoursePlan: true,
                 model: response.model,
                 usage: response.usage,
             });
@@ -1749,6 +1768,26 @@ Responde de forma clara y constructiva.`;
         return false;
     }
 
+    /**
+     * Detects whether a prompt is an explicit request to CREATE a new course.
+     * Mirrors the client-side detection in ChatBotView so course-creation requests
+     * are routed to the planner (returning a structured plan for the accept/reject
+     * card) instead of the generic agentic pipeline.
+     * Intentionally strict: requires a creation/desire verb near "curso" to avoid
+     * false positives on course lookups (e.g. "información del curso de matemáticas").
+     * @private
+     */
+    _isCourseCreationRequest(prompt) {
+        const n = this._normalizeIntentText(prompt);
+        if (!n) return false;
+        return [
+            // Imperative: "créame un curso de X", "diseña un curso sobre X"
+            /\b(crea(me)?|creame|haz(me)?|disena(me)?|planifica(me)?|genera(me)?|elabora(me)?|prepara(me)?|construye(me)?|desarrolla(me)?|arma(me)?|monta(me)?)\b.{0,50}\bcurso\b/,
+            // Desire: "quiero/necesito/quisiera (un) curso de X"
+            /\b(quiero|necesito|deseo|quisiera|me\s+gustaria)\b.{0,40}\b(un\s+)?curso\b/,
+        ].some(p => p.test(n));
+    }
+
     /** @private */
     _isGitHubRepo(fileName) {
         return fileName && /^github_/i.test(fileName);
@@ -1821,24 +1860,49 @@ Responde de forma clara y constructiva.`;
      */
     _extractInlineToolCall(text) {
         if (!text) return null;
-        // Match ```json { "tool": ..., "arguments": ... } ```
-        const codeBlock = text.match(/```json\s*(\{[\s\S]*?\})\s*```/i);
+
+        // Scans `source` for the first balanced `{...}` block that JSON-parses into an
+        // object exposing both `tool` and `arguments`. Brace-aware (string/escape safe)
+        // so it correctly captures DEEPLY nested payloads such as create_course_structure
+        // — the old single-level regex failed on those and let the raw JSON leak.
+        const scanBalanced = (source) => {
+            for (let i = 0; i < source.length; i++) {
+                if (source[i] !== '{') continue;
+                let depth = 0;
+                let inString = false;
+                let escaped = false;
+                for (let j = i; j < source.length; j++) {
+                    const ch = source[j];
+                    if (escaped) { escaped = false; continue; }
+                    if (ch === '\\') { escaped = true; continue; }
+                    if (ch === '"') { inString = !inString; continue; }
+                    if (inString) continue;
+                    if (ch === '{') depth++;
+                    else if (ch === '}') {
+                        depth--;
+                        if (depth === 0) {
+                            const candidate = source.slice(i, j + 1);
+                            try {
+                                const parsed = JSON.parse(candidate);
+                                if (parsed && parsed.tool && parsed.arguments) return parsed;
+                            } catch { /* not valid JSON — keep scanning */ }
+                            break; // advance outer loop past this opening brace
+                        }
+                    }
+                }
+            }
+            return null;
+        };
+
+        // 1. Prefer a fenced ```json { ... } ``` block when present.
+        const codeBlock = text.match(/```json\s*([\s\S]*?)```/i);
         if (codeBlock) {
-            try {
-                const parsed = JSON.parse(codeBlock[1]);
-                if (parsed.tool && parsed.arguments) return parsed;
-            } catch { /* not valid JSON */ }
+            const fromFence = scanBalanced(codeBlock[1]);
+            if (fromFence) return fromFence;
         }
-        // Match bare JSON objects containing "tool" and "arguments" keys
-        // Support one level of nested braces for the arguments object
-        const bare = text.match(/\{[^{}]*"tool"\s*:[^{}]*"arguments"\s*:\s*\{[^{}]*\}[^{}]*\}/s);
-        if (bare) {
-            try {
-                const parsed = JSON.parse(bare[0]);
-                if (parsed.tool && parsed.arguments) return parsed;
-            } catch { /* not valid JSON */ }
-        }
-        return null;
+
+        // 2. Fall back to scanning the raw text for a bare tool-call object.
+        return scanBalanced(text);
     }
 
     /**
