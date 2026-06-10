@@ -297,6 +297,7 @@ export class LLMController {
                 userId,
                 username,
                 model: value.model,
+                sessionId: value.sessionId || value.session_id || null,
             });
             if (result.isFail()) return next(result.getError());
 

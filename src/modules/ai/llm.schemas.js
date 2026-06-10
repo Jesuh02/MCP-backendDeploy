@@ -89,6 +89,8 @@ export const confirmCoursePlanSchema = Joi.object({
     model: Joi.string().allow('', null).optional(),
     userId: Joi.number().integer().optional(),
     username: Joi.string().allow('', null).optional(),
+    sessionId: Joi.string().allow('', null).optional(),
+    session_id: Joi.string().allow('', null).optional(),
 }).options({ allowUnknown: true });
 
 export const generateCourseContentSchema = Joi.object({
