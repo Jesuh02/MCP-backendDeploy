@@ -1393,14 +1393,15 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
      */
     async _processCoursePlannerPrompt({ prompt, model, fastTimeout = {}, courseDraft = null, conversationHistory = [] }) {
         const currentDraft = this._sanitizeCourseDraft(courseDraft);
+        const deterministicDraft = this._mergeCourseDraftDeterministic(prompt, currentDraft);
         const mergedDraftRaw = await this._mergeCourseDraftWithLLM({
             prompt,
-            currentDraft,
+            currentDraft: deterministicDraft,
             conversationHistory,
             model,
             fastTimeout,
         });
-        const mergedDraft = this._dropRedundantAutoObjective(prompt, currentDraft, mergedDraftRaw);
+        const mergedDraft = this._dropRedundantAutoObjective(prompt, deterministicDraft, mergedDraftRaw);
         const missingFields = this._getMissingCourseDraftFields(mergedDraft);
 
         if (missingFields.length > 0) {
@@ -1620,8 +1621,20 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     _mergeCourseDraftValues(currentDraft, incomingDraft) {
         const merged = { ...currentDraft };
         const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
+        const shouldReplaceText = (currentValue, incomingValue) => {
+            if (!hasText(incomingValue)) return false;
+            if (!hasText(currentValue)) return true;
+            const current = this._normalizeIntentText(currentValue);
+            const incoming = this._normalizeIntentText(incomingValue);
+            if (!incoming) return false;
+            if (!current) return true;
+            if (current === incoming) return false;
+            if (current.includes(incoming) && incoming.length < current.length) return false;
+            if (current.split(' ').length > incoming.split(' ').length && incoming.length < current.length) return false;
+            return true;
+        };
         for (const key of ['topic', 'area', 'objective', 'level', 'studentProfile', 'lastAskedField']) {
-            if (hasText(incomingDraft?.[key])) merged[key] = incomingDraft[key].trim();
+            if (shouldReplaceText(merged[key], incomingDraft?.[key])) merged[key] = incomingDraft[key].trim();
         }
         for (const key of ['durationWeeks', 'hoursPerWeek']) {
             const value = incomingDraft?.[key];
@@ -1654,7 +1667,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
 
     _mergeCourseDraftDeterministic(prompt, currentDraft) {
         const draft = { ...currentDraft };
-        const text = String(prompt || '').trim();
+        const text = this._unwrapPlannerUserText(prompt);
         const n = this._normalizeIntentText(text);
 
         if (!draft.topic) {
@@ -1662,7 +1675,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             if (topicMatch) draft.topic = topicMatch[1].trim();
         }
 
-        const areaMatch = n.match(/\b(?:area|especialidad|enfoque)\s+(?:de|en|sobre)\s+(.+?)(?:,|\.|$)/);
+        const areaMatch = n.match(/\b(?:area|especialidad|enfoque)\s+(?:de|en|sobre)\s+(.+?)(?=,|\.|$|\s+(?:objetivo|duracion|nivel)\b)/);
         if (areaMatch) draft.area = areaMatch[1].trim();
         if (!draft.topic && draft.area) draft.topic = draft.area;
 
@@ -1692,6 +1705,13 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         }
 
         return this._sanitizeCourseDraft(draft);
+    }
+
+    _unwrapPlannerUserText(prompt) {
+        const text = String(prompt || '').trim();
+        const quoted = text.match(/^Petici[oó]n:\s*"([\s\S]*)"$/i);
+        if (quoted) return quoted[1].trim();
+        return text;
     }
 
     _getMissingCourseDraftFields(draft) {
@@ -1731,7 +1751,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         if (!n) return '';
         if (/\b(principiante|basico|basic|beginner|inicial)\b/.test(n)) return 'beginner';
         if (/\b(intermedio|intermediate|medio)\b/.test(n)) return 'intermediate';
-        if (/\b(avanzado|advanced|experto)\b/.test(n)) return 'advanced';
+        if (/\b(avanzado|advanced|experto|profundo|profunda|profundidad|complejo|complejos)\b|buenas practicas/.test(n)) return 'advanced';
         return '';
     }
 
