@@ -1609,8 +1609,13 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 toolChoice: 'none',
                 ...fastTimeout,
             });
-            const parsed = this._parseFirstJsonObject(String(response?.content || ''));
-            const merged = this._mergeCourseDraftValues(currentDraft, parsed || {});
+            const parsed = this._parseFirstJsonObject(String(response?.content || '')) || {};
+            const incoming = { ...parsed };
+            const isAnsweringKnownField = currentDraft.lastAskedField && currentDraft.lastAskedField !== 'topic';
+            const hasExplicitArea = /\b(area|especialidad|enfoque)\s+(de|en|sobre)\b/i.test(this._normalizeIntentText(prompt));
+            if (isAnsweringKnownField && currentDraft.topic) delete incoming.topic;
+            if (isAnsweringKnownField && !hasExplicitArea) delete incoming.area;
+            const merged = this._mergeCourseDraftValues(currentDraft, incoming);
             return { ...merged, lastAskedField: currentDraft.lastAskedField };
         } catch (err) {
             console.warn('[LLMDomainService] Course draft merge failed, using deterministic fallback:', err.message);
@@ -1709,6 +1714,8 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
 
     _unwrapPlannerUserText(prompt) {
         const text = String(prompt || '').trim();
+        const wrapped = text.match(/^Petici\S*n:\s*"([\s\S]*?)"(?:\s*\n\nPLAN ACTUAL[\s\S]*)?$/i);
+        if (wrapped) return wrapped[1].trim();
         const quoted = text.match(/^Petici[oó]n:\s*"([\s\S]*)"$/i);
         if (quoted) return quoted[1].trim();
         return text;
