@@ -86,6 +86,7 @@ export class LLMController {
             const params = {
                 prompt: value.prompt,
                 model: value.model,
+                sessionId: value.sessionId || value.session_id || null,
                 courseId: value.courseId,
                 taskDescription: value.taskDescription,
                 fileContent: value.fileContent,
