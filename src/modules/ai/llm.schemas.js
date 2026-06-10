@@ -15,6 +15,8 @@ export const processPromptSchema = Joi.object({
     studentId: Joi.number().integer().optional(),
     student_id: Joi.number().integer().optional(),
     userId: Joi.number().integer().optional(),
+    sessionId: Joi.string().allow('', null).optional(),
+    session_id: Joi.string().allow('', null).optional(),
     ollamaUrl: Joi.string().allow('', null).optional(),
     jsonContent: Joi.any().optional(),
     submissionId: Joi.number().integer().optional(),

@@ -28,6 +28,8 @@ import { TENANT_CONFIGS, runInTenantContext, getCurrentTenantId, hasTenantClient
  * Cleared when the process restarts (acceptable — 24h window is advisory).
  */
 const _tenantAskCache = new Map();
+const _courseDraftSessionCache = new Map();
+const COURSE_DRAFT_SESSION_TTL_MS = 60 * 60 * 1000;
 
 export class LLMDomainService {
     constructor({
@@ -57,7 +59,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number, tenantId?: string, availableTenants?: string[], institutionName?: string }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null, fastMode = false, courseMode = false, courseDraft = null, conversationHistory = [] }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null, fastMode = false, courseMode = false, courseDraft = null, conversationHistory = [], sessionId = null }) {
             if (!prompt || prompt.trim().length === 0) {
                 return Result.fail(new ValidationError('El prompt es requerido'));
             }
@@ -79,7 +81,7 @@ export class LLMDomainService {
             // skipped both the confirmation step and the study-material/task documents).
             // WhatsApp keeps the legacy agentic flow (no card UI on that channel).
             if (courseMode || (!fromWhatsApp && this._isCourseCreationRequest(prompt))) {
-                return this._processCoursePlannerPrompt({ prompt, model, fastTimeout, courseDraft, conversationHistory });
+                return this._processCoursePlannerPrompt({ prompt, model, fastTimeout, courseDraft, conversationHistory, sessionId, userId });
             }
 
             try {
@@ -1391,8 +1393,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
      * Completely bypasses the educational assistant system prompt and MCP tools.
      * @private
      */
-    async _processCoursePlannerPrompt({ prompt, model, fastTimeout = {}, courseDraft = null, conversationHistory = [] }) {
-        const currentDraft = this._sanitizeCourseDraft(courseDraft);
+    async _processCoursePlannerPrompt({ prompt, model, fastTimeout = {}, courseDraft = null, conversationHistory = [], sessionId = null, userId = null }) {
+        const sessionKey = this._getCourseDraftSessionKey({ sessionId, userId });
+        const rememberedDraft = this._getRememberedCourseDraft(sessionKey);
+        const currentDraft = this._mergeCourseDraftValues(rememberedDraft, this._sanitizeCourseDraft(courseDraft));
         const deterministicDraft = this._mergeCourseDraftDeterministic(prompt, currentDraft);
         const mergedDraftRaw = await this._mergeCourseDraftWithLLM({
             prompt,
@@ -1410,6 +1414,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             const nextField = missingFields[0];
             const nextQuestion = this._buildCourseDraftQuestion(nextField, mergedDraft);
             const nextDraft = { ...mergedDraft, lastAskedField: nextField };
+            this._rememberCourseDraft(sessionKey, nextDraft);
             return Result.ok({
                 response: nextQuestion,
                 respuesta_texto: nextQuestion,
@@ -1571,6 +1576,36 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             studentProfile: cleanText(source.studentProfile),
             lastAskedField: cleanText(source.lastAskedField) || null,
         };
+    }
+
+    _getCourseDraftSessionKey({ sessionId = null, userId = null } = {}) {
+        const sid = sessionId == null ? '' : String(sessionId).trim();
+        if (!sid) return '';
+        return `${userId || 'anon'}:${sid}`;
+    }
+
+    _getRememberedCourseDraft(sessionKey) {
+        if (!sessionKey) return {};
+        const entry = _courseDraftSessionCache.get(sessionKey);
+        if (!entry) return {};
+        if (Date.now() - entry.updatedAt > COURSE_DRAFT_SESSION_TTL_MS) {
+            _courseDraftSessionCache.delete(sessionKey);
+            return {};
+        }
+        return this._sanitizeCourseDraft(entry.draft);
+    }
+
+    _rememberCourseDraft(sessionKey, draft) {
+        if (!sessionKey) return;
+        _courseDraftSessionCache.set(sessionKey, {
+            draft: this._sanitizeCourseDraft(draft),
+            updatedAt: Date.now(),
+        });
+    }
+
+    _forgetCourseDraft(sessionKey) {
+        if (!sessionKey) return;
+        _courseDraftSessionCache.delete(sessionKey);
     }
 
     async _mergeCourseDraftWithLLM({ prompt, currentDraft, conversationHistory = [], model, fastTimeout = {} }) {
@@ -2979,6 +3014,7 @@ Responde de forma clara y constructiva.`;
             }
 
             // Return immediately — docs are being generated in the background
+            this._forgetCourseDraft(sessionKey);
             return Result.ok({
                 courseId,
                 topicsCreated,
