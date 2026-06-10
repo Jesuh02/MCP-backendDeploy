@@ -2498,7 +2498,7 @@ Responde de forma clara y constructiva.`;
             // 3. Generate Word documents ASYNCHRONOUSLY — fire-and-forget so the HTTP
             // response is returned immediately after DB inserts complete (fast path).
             // Document generation runs in the background and does not block the client.
-            if (this.storage && this.storage.isAvailable() && this.contentItemRepo) {
+            if (this.storage && this.storage.isAvailable()) {
                 const storage = this.storage;
                 const contentItemRepo = this.contentItemRepo;
                 const self = this;
@@ -2542,6 +2542,9 @@ Responde de forma clara y constructiva.`;
                         }
                     }
 
+                    if (!contentItemRepo) {
+                        console.error('[LLMDomainService] Content item repository unavailable; thumbnails were attempted but Word/PDF documents cannot be registered.');
+                    } else {
                     // 3a. Topic study-material documents (Word + PDF)
                     for (const topic of topicsForContent) {
                         try {
@@ -2644,6 +2647,7 @@ Responde de forma clara y constructiva.`;
                             console.error(`[LLMDomainService] Task doc failed task=${task.id}: ${err.message}`);
                         }
                     }
+                    }
                     console.log(`[LLMDomainService] Background done: courseId=${courseId}, topicDocs=${topicDocs}, taskDocs=${taskDocs}`);
                 };
                 setImmediate(() => {
@@ -2659,7 +2663,13 @@ Responde de forma clara y constructiva.`;
             }
 
             // Return immediately — docs are being generated in the background
-            return Result.ok({ courseId, topicsCreated, tasksCreated, docsInProgress: true });
+            return Result.ok({
+                courseId,
+                topicsCreated,
+                tasksCreated,
+                thumbnailsInProgress: Boolean(this.storage && this.storage.isAvailable()),
+                docsInProgress: Boolean(this.storage && this.storage.isAvailable() && this.contentItemRepo),
+            });
         } catch (err) {
             return Result.fail(new ValidationError(`confirmCoursePlan falló: ${err.message}`));
         }

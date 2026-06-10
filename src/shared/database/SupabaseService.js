@@ -236,6 +236,8 @@ CREATE TABLE public.content_items (
   creator_username text,
   order_index integer DEFAULT 0,
   task_id bigint,
+  file_uri text,
+  file_name text,
   CONSTRAINT content_items_pkey PRIMARY KEY (id),
   CONSTRAINT fk_content_items_task FOREIGN KEY (task_id) REFERENCES public.tasks(id)
 );

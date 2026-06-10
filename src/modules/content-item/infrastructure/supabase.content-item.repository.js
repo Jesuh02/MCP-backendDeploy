@@ -102,8 +102,22 @@ export class SupabaseContentItemRepository {
         if (itemData.fileUri) payload.file_uri = itemData.fileUri;
         if (itemData.fileName || itemData.file_name) payload.file_name = itemData.fileName || itemData.file_name;
         const { data, error } = await this.client.from('content_items').insert(payload).select().single();
+        if (error && this._isMissingFileMetadataColumnError(error)) {
+            console.warn('[ContentItemRepository] content_items missing file metadata columns; retrying insert without file_uri/file_name. Run ddl.sql migration to persist these fields.');
+            const fallbackPayload = { ...payload };
+            delete fallbackPayload.file_uri;
+            delete fallbackPayload.file_name;
+            const retry = await this.client.from('content_items').insert(fallbackPayload).select().single();
+            if (retry.error) throw new Error(retry.error.message);
+            return retry.data;
+        }
         if (error) throw new Error(error.message);
         return data;
+    }
+
+    _isMissingFileMetadataColumnError(error) {
+        const msg = String(error?.message || error?.details || '').toLowerCase();
+        return msg.includes('file_uri') || msg.includes('file_name');
     }
 
     async update(id, updateData) {
