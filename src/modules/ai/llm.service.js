@@ -2740,16 +2740,17 @@ Responde de forma clara y constructiva.`;
      * into the institution's database via MCP, then generating Word documents for each topic
      * (study material) and each task (guide + rubric).
      *
-     * @param {{ plan: Object, userId: number, username?: string, model?: string }} params
+     * @param {{ plan: Object, userId: number, username?: string, model?: string, sessionId?: string }} params
      * @returns {Promise<Result<{ courseId: number, topicsCreated: number, tasksCreated: number, topicDocs: number, taskDocs: number }>>}
      */
-    async confirmCoursePlan({ plan, userId, username, model }) {
+    async confirmCoursePlan({ plan, userId, username, model, sessionId = null }) {
         if (!plan || !plan.title || !Array.isArray(plan.subjects) || plan.subjects.length === 0) {
             return Result.fail(new ValidationError('plan es requerido con title y al menos un subject'));
         }
         if (!userId) {
             return Result.fail(new ValidationError('userId es requerido para crear el curso'));
         }
+        const sessionKey = this._getCourseDraftSessionKey({ sessionId, userId });
 
         try {
             const { MCPService } = await import('./mcp-legacy.service.js');
