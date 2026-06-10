@@ -1393,13 +1393,14 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
      */
     async _processCoursePlannerPrompt({ prompt, model, fastTimeout = {}, courseDraft = null, conversationHistory = [] }) {
         const currentDraft = this._sanitizeCourseDraft(courseDraft);
-        const mergedDraft = await this._mergeCourseDraftWithLLM({
+        const mergedDraftRaw = await this._mergeCourseDraftWithLLM({
             prompt,
             currentDraft,
             conversationHistory,
             model,
             fastTimeout,
         });
+        const mergedDraft = this._dropRedundantAutoObjective(prompt, currentDraft, mergedDraftRaw);
         const missingFields = this._getMissingCourseDraftFields(mergedDraft);
 
         if (missingFields.length > 0) {
@@ -1576,6 +1577,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             'Debes asociar respuestas cortas con lastAskedField.',
             'Ejemplos: si lastAskedField es "level" y el usuario dice "intermedio", actualiza level; si es "durationWeeks" y dice "12 semanas", actualiza durationWeeks.',
             'Si el usuario menciona "area de", "en el area de" o solo especifica una especialidad cuando ya existen objetivo y duracion, actualiza area, no objective.',
+            'No inventes objective a partir del titulo del curso. "Creame un curso de X" solo define topic/area; objective se llena cuando el usuario responde el objetivo o usa marcadores como "objetivo", "para que", "necesito que" o "quiero que".',
             'Extrae tambien datos que aparezcan espontaneamente en el mensaje.',
             'Devuelve UNICAMENTE JSON valido con estas claves: topic, area, objective, level, durationWeeks, hoursPerWeek, studentProfile, lastAskedField.',
             'Normaliza level a beginner, intermediate o advanced. Si el objetivo contiene principiante/intermedio/avanzado, infiere level.',
@@ -1626,6 +1628,28 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             if (Number.isFinite(Number(value)) && Number(value) > 0) merged[key] = Number(value);
         }
         return this._sanitizeCourseDraft(merged);
+    }
+
+    _dropRedundantAutoObjective(prompt, previousDraft, mergedDraft) {
+        if (previousDraft?.objective || !mergedDraft?.objective || !mergedDraft?.topic) {
+            return mergedDraft;
+        }
+        const normalizedPrompt = this._normalizeIntentText(prompt);
+        const hasExplicitObjective = /\b(objetivo|proposito|finalidad|para que|con el fin|busco que|necesito que|quiero que|deben aprender|aprendan)\b/.test(normalizedPrompt);
+        if (hasExplicitObjective) return mergedDraft;
+
+        const normalizeCompact = (value) => this._normalizeIntentText(value).replace(/\b(aprender|ensenar|curso|de|en|con|para|a|el|la|los|las|un|una)\b/g, ' ').replace(/\s+/g, ' ').trim();
+        const topic = normalizeCompact(mergedDraft.topic);
+        const objective = normalizeCompact(mergedDraft.objective);
+        if (!topic || !objective) return mergedDraft;
+
+        const sameMeaning =
+            objective === topic ||
+            objective.includes(topic) ||
+            topic.includes(objective);
+
+        if (!sameMeaning) return mergedDraft;
+        return this._sanitizeCourseDraft({ ...mergedDraft, objective: '' });
     }
 
     _mergeCourseDraftDeterministic(prompt, currentDraft) {
