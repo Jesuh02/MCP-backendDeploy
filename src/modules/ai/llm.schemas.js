@@ -30,6 +30,7 @@ export const processPromptSchema = Joi.object({
     fastMode: Joi.boolean().optional(),
     courseDraft: Joi.object({
         topic: Joi.string().allow('', null).optional(),
+        area: Joi.string().allow('', null).optional(),
         objective: Joi.string().allow('', null).optional(),
         level: Joi.string().allow('', null).optional(),
         durationWeeks: Joi.number().integer().positive().allow(null).optional(),

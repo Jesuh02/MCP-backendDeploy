@@ -1476,14 +1476,14 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- El objetivo define las materias necesarias.',
             '- El nivel define la profundidad.',
             '- La duracion define la cantidad de materias y temas.',
-            '- La dedicacion semanal y el perfil del estudiante ajustan carga, tareas y ejemplos.',
+            '- El area o enfoque opcional ayuda a especializar materias, tareas y ejemplos.',
             '',
             'Cantidad orientativa:',
             '- 4 semanas: 2 a 4 materias, 3 a 5 temas por materia.',
             '- 12 semanas: 4 a 8 materias, 5 a 8 temas por materia.',
             '- 24 semanas: 8 a 12 materias, 6 a 10 temas por materia.',
             '',
-            'Genera el plan usando estrictamente el brief validado. Incluye en la descripcion la dedicacion semanal y el perfil del estudiante cuando aporten contexto pedagogico.',
+            'Genera el plan usando estrictamente el brief validado. Incluye en la descripcion el area/enfoque cuando aporte contexto pedagogico.',
         ].join('\n');
 
         try {
@@ -1554,10 +1554,14 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             return Number.isFinite(n) && n > 0 ? n : null;
         };
         const level = this._normalizeCourseLevel(cleanText(source.level));
+        const objective = cleanText(source.objective);
+        const area = cleanText(source.area);
+        const topic = cleanText(source.topic) || area;
         return {
-            topic: cleanText(source.topic),
-            objective: cleanText(source.objective),
-            level,
+            topic,
+            area,
+            objective,
+            level: level || this._normalizeCourseLevel(objective),
             durationWeeks: toNumber(source.durationWeeks),
             hoursPerWeek: toNumber(source.hoursPerWeek),
             studentProfile: cleanText(source.studentProfile),
@@ -1571,9 +1575,11 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             'Actualiza un borrador estructurado con el mensaje mas reciente del usuario.',
             'Debes asociar respuestas cortas con lastAskedField.',
             'Ejemplos: si lastAskedField es "level" y el usuario dice "intermedio", actualiza level; si es "durationWeeks" y dice "12 semanas", actualiza durationWeeks.',
+            'Si el usuario menciona "area de", "en el area de" o solo especifica una especialidad cuando ya existen objetivo y duracion, actualiza area, no objective.',
             'Extrae tambien datos que aparezcan espontaneamente en el mensaje.',
-            'Devuelve UNICAMENTE JSON valido con estas claves: topic, objective, level, durationWeeks, hoursPerWeek, studentProfile, lastAskedField.',
-            'Normaliza level a beginner, intermediate o advanced. Usa null para numeros desconocidos. Conserva datos previos si el usuario no los contradice.',
+            'Devuelve UNICAMENTE JSON valido con estas claves: topic, area, objective, level, durationWeeks, hoursPerWeek, studentProfile, lastAskedField.',
+            'Normaliza level a beginner, intermediate o advanced. Si el objetivo contiene principiante/intermedio/avanzado, infiere level.',
+            'Conserva datos previos si el usuario no los contradice. No devuelvas strings vacios ni null para campos que ya tienen valor.',
         ].join('\n');
 
         const safeHistory = Array.isArray(conversationHistory)
@@ -1601,12 +1607,25 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 ...fastTimeout,
             });
             const parsed = this._parseFirstJsonObject(String(response?.content || ''));
-            const merged = this._sanitizeCourseDraft({ ...currentDraft, ...(parsed || {}) });
+            const merged = this._mergeCourseDraftValues(currentDraft, parsed || {});
             return { ...merged, lastAskedField: currentDraft.lastAskedField };
         } catch (err) {
             console.warn('[LLMDomainService] Course draft merge failed, using deterministic fallback:', err.message);
             return this._mergeCourseDraftDeterministic(prompt, currentDraft);
         }
+    }
+
+    _mergeCourseDraftValues(currentDraft, incomingDraft) {
+        const merged = { ...currentDraft };
+        const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
+        for (const key of ['topic', 'area', 'objective', 'level', 'studentProfile', 'lastAskedField']) {
+            if (hasText(incomingDraft?.[key])) merged[key] = incomingDraft[key].trim();
+        }
+        for (const key of ['durationWeeks', 'hoursPerWeek']) {
+            const value = incomingDraft?.[key];
+            if (Number.isFinite(Number(value)) && Number(value) > 0) merged[key] = Number(value);
+        }
+        return this._sanitizeCourseDraft(merged);
     }
 
     _mergeCourseDraftDeterministic(prompt, currentDraft) {
@@ -1619,6 +1638,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             if (topicMatch) draft.topic = topicMatch[1].trim();
         }
 
+        const areaMatch = n.match(/\b(?:area|especialidad|enfoque)\s+(?:de|en|sobre)\s+(.+?)(?:,|\.|$)/);
+        if (areaMatch) draft.area = areaMatch[1].trim();
+        if (!draft.topic && draft.area) draft.topic = draft.area;
+
         const level = this._normalizeCourseLevel(text);
         if (level) draft.level = level;
 
@@ -1630,6 +1653,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
 
         if (draft.lastAskedField && text) {
             if (draft.lastAskedField === 'objective') draft.objective = text;
+            if (draft.lastAskedField === 'area') draft.area = text;
             if (draft.lastAskedField === 'studentProfile') draft.studentProfile = text;
             if (draft.lastAskedField === 'topic') draft.topic = text;
             if (draft.lastAskedField === 'level' && level) draft.level = level;
@@ -1639,6 +1663,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             }
         }
 
+        if (!areaMatch && !level && !duration && draft.objective && draft.durationWeeks && !draft.area && !draft.lastAskedField) {
+            draft.area = text;
+        }
+
         return this._sanitizeCourseDraft(draft);
     }
 
@@ -1646,24 +1674,32 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const missing = [];
         if (!draft.topic) missing.push('topic');
         if (!draft.objective) missing.push('objective');
-        if (!draft.level) missing.push('level');
         if (!draft.durationWeeks) missing.push('durationWeeks');
-        if (!draft.hoursPerWeek) missing.push('hoursPerWeek');
-        if (!draft.studentProfile) missing.push('studentProfile');
+        if (!draft.level) missing.push('level');
         return missing;
     }
 
     _buildCourseDraftQuestion(field, draft) {
         const topic = draft.topic ? ` de ${draft.topic}` : '';
+        const summary = this._formatCourseDraftSummary(draft);
+        const prefix = summary ? `Perfecto. Ya tengo la siguiente informacion:\n\n${summary}\n\n` : '';
         const questions = {
             topic: 'Claro. ¿Sobre que tema o area quieres crear el curso?',
-            objective: `¿Cual es el objetivo principal del curso${topic}?`,
-            level: '¿Cual es el nivel de dificultad? Principiante, intermedio o avanzado.',
-            durationWeeks: '¿Cuanto durara el curso? Puedes responder en semanas, por ejemplo: 8 semanas.',
-            hoursPerWeek: '¿Cuantas horas por semana estudiara el estudiante?',
-            studentProfile: '¿Que perfil tiene el estudiante objetivo? Por ejemplo: principiantes sin experiencia, desarrolladores junior, analistas o docentes.',
+            objective: `${prefix}¿Cual es el objetivo principal del curso${topic}?`,
+            durationWeeks: `${prefix}¿Cual sera la duracion del curso? Puedes responder en semanas, por ejemplo: 32 semanas.`,
+            level: `${prefix}Ahora necesito conocer el nivel del curso: Principiante, Intermedio o Avanzado.`,
         };
         return questions[field] || 'Necesito un dato mas para continuar. ¿Puedes precisarlo?';
+    }
+
+    _formatCourseDraftSummary(draft) {
+        const lines = [];
+        if (draft.area) lines.push(`Area: ${draft.area}`);
+        else if (draft.topic) lines.push(`Curso: ${draft.topic}`);
+        if (draft.objective) lines.push(`Objetivo: ${draft.objective}`);
+        if (draft.durationWeeks) lines.push(`Duracion: ${draft.durationWeeks} semanas`);
+        if (draft.level) lines.push(`Nivel: ${draft.level}`);
+        return lines.join('\n');
     }
 
     _normalizeCourseLevel(value) {
