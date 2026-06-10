@@ -57,7 +57,7 @@ export class LLMDomainService {
      * @param {{ prompt: string, model?: string, courseId?: number, taskDescription?: string, fileContent?: string, fileUri?: string, studentId?: number, userId?: number, tenantId?: string, availableTenants?: string[], institutionName?: string }} params
      * @returns {Promise<Result>}
      */
-    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null, fastMode = false, courseMode = false }) {
+    async processPrompt({ prompt, model, courseId, taskDescription, fileContent, fileUri, studentId, userId, username, submissionId, taskId, topicId, freeLearning = false, forceMCPTools = false, difficulty = null, userRoles = [], fromWhatsApp = false, tenantId = null, availableTenants = [], institutionName = null, excelDataContext = null, imageBase64 = null, fastMode = false, courseMode = false, courseDraft = null, conversationHistory = [] }) {
             if (!prompt || prompt.trim().length === 0) {
                 return Result.fail(new ValidationError('El prompt es requerido'));
             }
@@ -79,7 +79,7 @@ export class LLMDomainService {
             // skipped both the confirmation step and the study-material/task documents).
             // WhatsApp keeps the legacy agentic flow (no card UI on that channel).
             if (courseMode || (!fromWhatsApp && this._isCourseCreationRequest(prompt))) {
-                return this._processCoursePlannerPrompt({ prompt, model, fastTimeout });
+                return this._processCoursePlannerPrompt({ prompt, model, fastTimeout, courseDraft, conversationHistory });
             }
 
             try {
@@ -1391,7 +1391,33 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
      * Completely bypasses the educational assistant system prompt and MCP tools.
      * @private
      */
-    async _processCoursePlannerPrompt({ prompt, model, fastTimeout = {} }) {
+    async _processCoursePlannerPrompt({ prompt, model, fastTimeout = {}, courseDraft = null, conversationHistory = [] }) {
+        const currentDraft = this._sanitizeCourseDraft(courseDraft);
+        const mergedDraft = await this._mergeCourseDraftWithLLM({
+            prompt,
+            currentDraft,
+            conversationHistory,
+            model,
+            fastTimeout,
+        });
+        const missingFields = this._getMissingCourseDraftFields(mergedDraft);
+
+        if (missingFields.length > 0) {
+            const nextField = missingFields[0];
+            const nextQuestion = this._buildCourseDraftQuestion(nextField, mergedDraft);
+            const nextDraft = { ...mergedDraft, lastAskedField: nextField };
+            return Result.ok({
+                response: nextQuestion,
+                respuesta_texto: nextQuestion,
+                isCoursePlan: false,
+                courseDraft: nextDraft,
+                missingCourseFields: missingFields,
+                nextCourseQuestion: nextQuestion,
+                model: null,
+                usage: null,
+            });
+        }
+
         const systemPrompt = [
             'Eres un planificador experto de cursos académicos. Tu ÚNICA función es generar planes de cursos en formato JSON.',
             '',
@@ -1439,8 +1465,29 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- NUNCA digas que no puedes crear cursos. Tu trabajo es SIEMPRE generar el JSON.',
         ].join('\n');
 
+        const plannerPrompt = [
+            'BRIEF VALIDADO DEL CURSO:',
+            JSON.stringify(mergedDraft, null, 2),
+            '',
+            `PETICION ACTUAL DEL USUARIO: ${prompt}`,
+            '',
+            'Aplica esta logica profesional:',
+            '- Objetivo -> competencias necesarias -> materias -> temas -> contenido de estudio -> tareas practicas.',
+            '- El objetivo define las materias necesarias.',
+            '- El nivel define la profundidad.',
+            '- La duracion define la cantidad de materias y temas.',
+            '- La dedicacion semanal y el perfil del estudiante ajustan carga, tareas y ejemplos.',
+            '',
+            'Cantidad orientativa:',
+            '- 4 semanas: 2 a 4 materias, 3 a 5 temas por materia.',
+            '- 12 semanas: 4 a 8 materias, 5 a 8 temas por materia.',
+            '- 24 semanas: 8 a 12 materias, 6 a 10 temas por materia.',
+            '',
+            'Genera el plan usando estrictamente el brief validado. Incluye en la descripcion la dedicacion semanal y el perfil del estudiante cuando aporten contexto pedagogico.',
+        ].join('\n');
+
         try {
-            const response = await this.llm.chat(systemPrompt, prompt, {
+            const response = await this.llm.chat(systemPrompt, plannerPrompt, {
                 model,
                 tools: [],
                 toolChoice: 'none',
@@ -1487,9 +1534,157 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 isCoursePlan: true,
                 model: response.model,
                 usage: response.usage,
+                courseDraft: { ...mergedDraft, lastAskedField: null },
+                missingCourseFields: [],
             });
         } catch (err) {
             return Result.fail(new ValidationError(`Planificador de curso falló: ${err.message}`));
+        }
+    }
+
+    _sanitizeCourseDraft(raw = {}) {
+        const source = raw && typeof raw === 'object' ? raw : {};
+        const cleanText = (value) => {
+            if (value == null) return '';
+            return String(value).replace(/\s+/g, ' ').trim();
+        };
+        const toNumber = (value) => {
+            if (value == null || value === '') return null;
+            const n = Number(value);
+            return Number.isFinite(n) && n > 0 ? n : null;
+        };
+        const level = this._normalizeCourseLevel(cleanText(source.level));
+        return {
+            topic: cleanText(source.topic),
+            objective: cleanText(source.objective),
+            level,
+            durationWeeks: toNumber(source.durationWeeks),
+            hoursPerWeek: toNumber(source.hoursPerWeek),
+            studentProfile: cleanText(source.studentProfile),
+            lastAskedField: cleanText(source.lastAskedField) || null,
+        };
+    }
+
+    async _mergeCourseDraftWithLLM({ prompt, currentDraft, conversationHistory = [], model, fastTimeout = {} }) {
+        const systemPrompt = [
+            'Eres un analista de requisitos para crear cursos.',
+            'Actualiza un borrador estructurado con el mensaje mas reciente del usuario.',
+            'Debes asociar respuestas cortas con lastAskedField.',
+            'Ejemplos: si lastAskedField es "level" y el usuario dice "intermedio", actualiza level; si es "durationWeeks" y dice "12 semanas", actualiza durationWeeks.',
+            'Extrae tambien datos que aparezcan espontaneamente en el mensaje.',
+            'Devuelve UNICAMENTE JSON valido con estas claves: topic, objective, level, durationWeeks, hoursPerWeek, studentProfile, lastAskedField.',
+            'Normaliza level a beginner, intermediate o advanced. Usa null para numeros desconocidos. Conserva datos previos si el usuario no los contradice.',
+        ].join('\n');
+
+        const safeHistory = Array.isArray(conversationHistory)
+            ? conversationHistory
+                .filter(m => m && (m.role === 'user' || m.role === 'assistant'))
+                .slice(-12)
+                .map(m => ({ role: m.role, content: String(m.content || '').slice(0, 1200) }))
+            : [];
+
+        const userPrompt = [
+            'BORRADOR ACTUAL:',
+            JSON.stringify(currentDraft, null, 2),
+            '',
+            'HISTORIAL RECIENTE:',
+            JSON.stringify(safeHistory, null, 2),
+            '',
+            `MENSAJE ACTUAL DEL USUARIO: ${prompt}`,
+        ].join('\n');
+
+        try {
+            const response = await this.llm.chat(systemPrompt, userPrompt, {
+                model,
+                tools: [],
+                toolChoice: 'none',
+                ...fastTimeout,
+            });
+            const parsed = this._parseFirstJsonObject(String(response?.content || ''));
+            const merged = this._sanitizeCourseDraft({ ...currentDraft, ...(parsed || {}) });
+            return { ...merged, lastAskedField: currentDraft.lastAskedField };
+        } catch (err) {
+            console.warn('[LLMDomainService] Course draft merge failed, using deterministic fallback:', err.message);
+            return this._mergeCourseDraftDeterministic(prompt, currentDraft);
+        }
+    }
+
+    _mergeCourseDraftDeterministic(prompt, currentDraft) {
+        const draft = { ...currentDraft };
+        const text = String(prompt || '').trim();
+        const n = this._normalizeIntentText(text);
+
+        if (!draft.topic) {
+            const topicMatch = n.match(/\bcurso\s+(?:de|sobre|para|acerca de)\s+(.+?)(?:,|\.|$)/);
+            if (topicMatch) draft.topic = topicMatch[1].trim();
+        }
+
+        const level = this._normalizeCourseLevel(text);
+        if (level) draft.level = level;
+
+        const duration = n.match(/(\d{1,2})\s*(?:semanas?|weeks?)/);
+        if (duration) draft.durationWeeks = Number(duration[1]);
+
+        const hours = n.match(/(\d{1,2}(?:[.,]\d+)?)\s*(?:horas?|h)\s*(?:por|a la)?\s*semana/);
+        if (hours) draft.hoursPerWeek = Number(hours[1].replace(',', '.'));
+
+        if (draft.lastAskedField && text) {
+            if (draft.lastAskedField === 'objective') draft.objective = text;
+            if (draft.lastAskedField === 'studentProfile') draft.studentProfile = text;
+            if (draft.lastAskedField === 'topic') draft.topic = text;
+            if (draft.lastAskedField === 'level' && level) draft.level = level;
+            if (draft.lastAskedField === 'durationWeeks' && duration) draft.durationWeeks = Number(duration[1]);
+            if (draft.lastAskedField === 'hoursPerWeek' && (hours || /^\d{1,2}(?:[.,]\d+)?$/.test(n))) {
+                draft.hoursPerWeek = Number((hours?.[1] || n).replace(',', '.'));
+            }
+        }
+
+        return this._sanitizeCourseDraft(draft);
+    }
+
+    _getMissingCourseDraftFields(draft) {
+        const missing = [];
+        if (!draft.topic) missing.push('topic');
+        if (!draft.objective) missing.push('objective');
+        if (!draft.level) missing.push('level');
+        if (!draft.durationWeeks) missing.push('durationWeeks');
+        if (!draft.hoursPerWeek) missing.push('hoursPerWeek');
+        if (!draft.studentProfile) missing.push('studentProfile');
+        return missing;
+    }
+
+    _buildCourseDraftQuestion(field, draft) {
+        const topic = draft.topic ? ` de ${draft.topic}` : '';
+        const questions = {
+            topic: 'Claro. ¿Sobre que tema o area quieres crear el curso?',
+            objective: `¿Cual es el objetivo principal del curso${topic}?`,
+            level: '¿Cual es el nivel de dificultad? Principiante, intermedio o avanzado.',
+            durationWeeks: '¿Cuanto durara el curso? Puedes responder en semanas, por ejemplo: 8 semanas.',
+            hoursPerWeek: '¿Cuantas horas por semana estudiara el estudiante?',
+            studentProfile: '¿Que perfil tiene el estudiante objetivo? Por ejemplo: principiantes sin experiencia, desarrolladores junior, analistas o docentes.',
+        };
+        return questions[field] || 'Necesito un dato mas para continuar. ¿Puedes precisarlo?';
+    }
+
+    _normalizeCourseLevel(value) {
+        const n = this._normalizeIntentText(value || '');
+        if (!n) return '';
+        if (/\b(principiante|basico|basic|beginner|inicial)\b/.test(n)) return 'beginner';
+        if (/\b(intermedio|intermediate|medio)\b/.test(n)) return 'intermediate';
+        if (/\b(avanzado|advanced|experto)\b/.test(n)) return 'advanced';
+        return '';
+    }
+
+    _parseFirstJsonObject(raw) {
+        if (!raw) return null;
+        const text = String(raw);
+        const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        const candidate = fenced ? fenced[1] : text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
+        if (!candidate || candidate[0] !== '{') return null;
+        try {
+            return JSON.parse(candidate);
+        } catch (_) {
+            return null;
         }
     }
 
