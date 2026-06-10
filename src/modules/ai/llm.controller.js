@@ -117,6 +117,10 @@ export class LLMController {
                 // Course planner mode: bypasses the educational assistant system prompt
                 // and uses a dedicated course planner system prompt instead.
                 courseMode: value.courseMode === true,
+                // Course planner state: lets the model interpret short replies like
+                // "intermedio" as the answer to the previous question.
+                courseDraft: value.courseDraft || null,
+                conversationHistory: Array.isArray(value.conversationHistory) ? value.conversationHistory : [],
             };
 
             // ── INSTITUTION LOOKUP SHORT-CIRCUIT ──────────────────────────────────

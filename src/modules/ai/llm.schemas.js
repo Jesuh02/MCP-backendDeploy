@@ -27,6 +27,20 @@ export const processPromptSchema = Joi.object({
     userRoles: Joi.array().items(Joi.number().integer()).optional(),
     imageBase64: Joi.string().allow('', null).max(10_000_000).optional(), // max ~7.5MB image
     courseMode: Joi.boolean().optional(),
+    fastMode: Joi.boolean().optional(),
+    courseDraft: Joi.object({
+        topic: Joi.string().allow('', null).optional(),
+        objective: Joi.string().allow('', null).optional(),
+        level: Joi.string().allow('', null).optional(),
+        durationWeeks: Joi.number().integer().positive().allow(null).optional(),
+        hoursPerWeek: Joi.number().positive().allow(null).optional(),
+        studentProfile: Joi.string().allow('', null).optional(),
+        lastAskedField: Joi.string().allow('', null).optional(),
+    }).optional(),
+    conversationHistory: Joi.array().items(Joi.object({
+        role: Joi.string().valid('user', 'assistant').required(),
+        content: Joi.string().allow('').required(),
+    })).max(20).optional(),
 }).options({ allowUnknown: true });
 
 export const analyzeSubmissionSchema = Joi.object({
