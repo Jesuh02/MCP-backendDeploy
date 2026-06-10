@@ -1401,7 +1401,9 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             model,
             fastTimeout,
         });
-        const mergedDraft = this._dropRedundantAutoObjective(prompt, deterministicDraft, mergedDraftRaw);
+        const mergedDraft = this._completeCourseDraftState(
+            this._dropRedundantAutoObjective(prompt, deterministicDraft, mergedDraftRaw),
+        );
         const missingFields = this._getMissingCourseDraftFields(mergedDraft);
 
         if (missingFields.length > 0) {
@@ -1582,6 +1584,8 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             'Extrae tambien datos que aparezcan espontaneamente en el mensaje.',
             'Devuelve UNICAMENTE JSON valido con estas claves: topic, area, objective, level, durationWeeks, hoursPerWeek, studentProfile, lastAskedField.',
             'Normaliza level a beginner, intermediate o advanced. Si el objetivo contiene principiante/intermedio/avanzado, infiere level.',
+            'Nunca preguntes de nuevo un dato que ya existe en el borrador: topic, area, objective, level o durationWeeks.',
+            'Antes de proponer una pregunta, conserva los datos anteriores y actualiza solo el campo que responde el usuario.',
             'Conserva datos previos si el usuario no los contradice. No devuelvas strings vacios ni null para campos que ya tienen valor.',
         ].join('\n');
 
@@ -1648,6 +1652,28 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         return this._sanitizeCourseDraft(merged);
     }
 
+    _completeCourseDraftState(draft) {
+        const completed = this._sanitizeCourseDraft(draft);
+        if (!completed.area && (completed.objective || completed.durationWeeks || completed.level)) {
+            completed.area = this._inferCourseArea(completed) || completed.topic;
+        }
+        return this._sanitizeCourseDraft(completed);
+    }
+
+    _inferCourseArea(draft = {}) {
+        const objective = String(draft.objective || '');
+        const n = this._normalizeIntentText(objective);
+        const knownFocus = n.match(/\b(machine learning|aprendizaje automatico|deep learning|inteligencia artificial|ia|ciencia de datos|data science)(?:\s+(?:con|usando|en)\s+python)?\b/);
+        if (knownFocus) return knownFocus[0].trim();
+        const pythonFocus = n.match(/\b([a-z0-9 ]{3,60}?\s+(?:con|usando|en)\s+python)\b/);
+        if (pythonFocus) {
+            return pythonFocus[1]
+                .replace(/^(que\s+)?(mis\s+)?estudiantes\s+(tengan|aprendan|dominen)\s+(un\s+)?(conocimiento\s+)?(profundo\s+)?(de\s+)?/, '')
+                .trim();
+        }
+        return '';
+    }
+
     _dropRedundantAutoObjective(prompt, previousDraft, mergedDraft) {
         if (previousDraft?.objective || !mergedDraft?.objective || !mergedDraft?.topic) {
             return mergedDraft;
@@ -1693,6 +1719,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const hours = n.match(/(\d{1,2}(?:[.,]\d+)?)\s*(?:horas?|h)\s*(?:por|a la)?\s*semana/);
         if (hours) draft.hoursPerWeek = Number(hours[1].replace(',', '.'));
 
+        if (!draft.topic && !draft.lastAskedField && text && !duration && !level) {
+            draft.topic = text;
+        }
+
         if (draft.lastAskedField && text) {
             if (draft.lastAskedField === 'objective') draft.objective = text;
             if (draft.lastAskedField === 'area') draft.area = text;
@@ -1726,6 +1756,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         if (!draft.topic) missing.push('topic');
         if (!draft.objective) missing.push('objective');
         if (!draft.durationWeeks) missing.push('durationWeeks');
+        if (!draft.area) missing.push('area');
         if (!draft.level) missing.push('level');
         return missing;
     }
@@ -1738,6 +1769,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             topic: 'Claro. ¿Sobre que tema o area quieres crear el curso?',
             objective: `${prefix}¿Cual es el objetivo principal del curso${topic}?`,
             durationWeeks: `${prefix}¿Cual sera la duracion del curso? Puedes responder en semanas, por ejemplo: 32 semanas.`,
+            area: `${prefix}Â¿Sobre que tema o area quieres enfocar el curso?`,
             level: `${prefix}Ahora necesito conocer el nivel del curso: Principiante, Intermedio o Avanzado.`,
         };
         return questions[field] || 'Necesito un dato mas para continuar. ¿Puedes precisarlo?';
@@ -1745,8 +1777,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
 
     _formatCourseDraftSummary(draft) {
         const lines = [];
-        if (draft.area) lines.push(`Area: ${draft.area}`);
-        else if (draft.topic) lines.push(`Curso: ${draft.topic}`);
+        if (draft.topic) lines.push(`Curso: ${draft.topic}`);
+        if (draft.area && this._normalizeIntentText(draft.area) !== this._normalizeIntentText(draft.topic || '')) {
+            lines.push(`Area: ${draft.area}`);
+        }
         if (draft.objective) lines.push(`Objetivo: ${draft.objective}`);
         if (draft.durationWeeks) lines.push(`Duracion: ${draft.durationWeeks} semanas`);
         if (draft.level) lines.push(`Nivel: ${draft.level}`);
