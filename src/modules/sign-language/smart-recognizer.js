@@ -48,11 +48,12 @@ const MOTION_HIGH = 0.030;
 /** Movimiento por píxel por debajo del cual el frame es "claramente quieto". */
 const MOTION_LOW = 0.015;
 /** Tiempo en estado `still` antes de disparar reconocimiento de letra (~1 s). */
-const STILL_DURATION_MS = 900;
+const STILL_DURATION_MS = 1000;
 /** Pausa requerida tras dejar de moverse para considerar el gesto terminado. */
 const SETTLE_AFTER_MOTION_MS = 350;
 /** Duración mínima del movimiento para considerarlo una palabra/frase. */
 const MIN_MOTION_DURATION_MS = 500;
+const MAX_MOTION_DURATION_MS = 3500;
 /** Pico mínimo de motion durante el movimiento para considerarlo un gesto real
  *  (no un simple reposicionamiento de la mano entre letras). */
 const MOTION_PEAK_FOR_PHRASE = 0.060;
@@ -68,6 +69,7 @@ const FRAME_BUFFER_MAX_AGE_MS = 3500;
 const MIN_LETTER_CONFIDENCE = 0.55;
 /** Si ONNX devuelve < este valor consideramos pedir al VLM (números / letras raras). */
 const ONNX_VLM_FALLBACK_THRESHOLD = 0.45;
+const STATIC_VLM_MODE = String(process.env.SIGN_LANGUAGE_STATIC_VLM_MODE || 'numbers').toLowerCase();
 /** Confianza mínima de la salida del VLM (clip o single-frame) para aceptarla. */
 const VLM_MIN_CONFIDENCE = 0.6;
 /** TTL en memoria de cada sesión sin actividad. */
@@ -147,6 +149,58 @@ function pruneFrameBuffer(state, now) {
     ) {
         state.frames.shift();
     }
+}
+
+function isSingleLetter(text) {
+    return Array.from(String(text || '').trim()).length === 1;
+}
+
+function pushRecognizedToken(sessionId, result) {
+    const text = String(result?.text ?? '').trim();
+    const confidence = Number(result?.confidence) || 0;
+    if (!text) return false;
+    if (result.kind === 'letter' && isSingleLetter(text)) {
+        pushLetter(sessionId, { label: text, confidence });
+        return true;
+    }
+    pushWord(sessionId, { text, confidence });
+    return true;
+}
+
+function eventFromVlm(source, result) {
+    return {
+        source,
+        kind: result.kind,
+        text: result.text,
+        confidence: result.confidence,
+        alternatives: result.alternatives || [],
+        handedness: result.handedness,
+        motion: result.motion,
+        nonManual: result.nonManual,
+        reasoning: result.reasoning,
+        model: result.model,
+    };
+}
+
+function eventFromStaticCandidate(source, candidate) {
+    return {
+        source,
+        kind: candidate.kind,
+        text: candidate.text,
+        confidence: candidate.confidence,
+        alternatives: candidate.alternatives || [],
+        handedness: candidate.handedness || 'none',
+        motion: candidate.motion || { trajectory: '', direction: 'none', repeated: false, contact: 'none' },
+        nonManual: candidate.nonManual || { facial: null, intent: 'unknown' },
+        reasoning: candidate.reasoning || '',
+        model: candidate.model,
+    };
+}
+
+function shouldUseStaticVlm(confidence) {
+    if (STATIC_VLM_MODE === 'off') return false;
+    if (STATIC_VLM_MODE === 'always' || STATIC_VLM_MODE === 'numbers') return true;
+    return confidence < ONNX_VLM_FALLBACK_THRESHOLD;
 }
 
 /**
@@ -230,32 +284,54 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
     let event = null;
     let pushed = false;
 
+    const settlingReady =
+        state.state === 'settling' &&
+        state.stableSince != null &&
+        now - state.stableSince >= SETTLE_AFTER_MOTION_MS;
+    const movingWindowReady =
+        state.state === 'moving' &&
+        state.motionStartAt != null &&
+        now - state.motionStartAt >= MAX_MOTION_DURATION_MS;
+
     // 3) Trigger de PALABRA/FRASE — settling estable lo suficiente, con
     //    movimiento previo sustancial (duración + pico).
     if (
-        state.state === 'settling' &&
-        state.stableSince != null &&
-        now - state.stableSince >= SETTLE_AFTER_MOTION_MS &&
+        (settlingReady || movingWindowReady) &&
         state.motionStartAt != null &&
         now - state.lastPhraseEmitAt >= MIN_GAP_BETWEEN_PHRASES_MS &&
         !state.inflight
     ) {
-        const motionDuration = state.stableSince - state.motionStartAt;
+        const clipEndAt = settlingReady ? (state.stableSince || now) : now;
+        const motionDuration = clipEndAt - state.motionStartAt;
         const looksLikePhrase =
             motionDuration >= MIN_MOTION_DURATION_MS &&
             state.motionPeak >= MOTION_PEAK_FOR_PHRASE;
 
         if (looksLikePhrase) {
+            const clipStartAt = state.motionStartAt;
             const clipFrames = state.frames
-                .filter((f) => f.at >= state.motionStartAt - 200 && f.at <= state.stableSince + 200)
+                .filter((f) => f.at >= clipStartAt - 200 && f.at <= clipEndAt + 200)
                 .map((f) => f.buffer);
 
             if (clipFrames.length >= 2) {
                 state.inflight = true;
+                state.frames = state.frames.filter((f) => f.at >= clipEndAt - 200);
+                if (movingWindowReady) {
+                    state.state = 'moving';
+                    state.motionStartAt = now;
+                    state.motionPeak = motion;
+                    state.stableSince = null;
+                } else {
+                    state.state = 'still';
+                    state.stableSince = now;
+                    state.motionStartAt = null;
+                    state.motionPeak = 0;
+                }
                 try {
                     const result = await recognizeSignClip(clipFrames, {
                         context: typeof opts.context === 'string' ? opts.context : undefined,
                         model: typeof opts.model === 'string' ? opts.model : undefined,
+                        mode: movingWindowReady ? 'sentence' : 'dynamic',
                     });
                     if (
                         result &&
@@ -263,20 +339,8 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                         result.kind !== 'unknown' &&
                         result.confidence >= minPhraseConf
                     ) {
-                        if (result.kind === 'letter' || result.kind === 'number') {
-                            pushLetter(safeId, { label: result.text, confidence: result.confidence });
-                        } else {
-                            pushWord(safeId, { text: result.text, confidence: result.confidence });
-                        }
-                        pushed = true;
-                        event = {
-                            source: 'phrase',
-                            kind: result.kind,
-                            text: result.text,
-                            confidence: result.confidence,
-                            alternatives: result.alternatives || [],
-                            reasoning: result.reasoning,
-                        };
+                        pushed = pushRecognizedToken(safeId, result);
+                        event = eventFromVlm(movingWindowReady ? 'sentence-window' : 'phrase', result);
                         state.lastPhraseEmitAt = now;
                         state.lastLetterLabel = null; // permite re-emitir misma letra después de una frase
                     }
@@ -285,17 +349,25 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                 } finally {
                     state.inflight = false;
                 }
+            } else {
+                state.state = 'still';
+                state.stableSince = now;
+                state.motionStartAt = null;
+                state.motionPeak = 0;
+                state.frames = state.frames.slice(-2);
             }
         }
 
         // Cierra el periodo de movimiento (haya o no disparado).
-        state.state = 'still';
-        state.stableSince = now;
-        state.motionStartAt = null;
-        state.motionPeak = 0;
+        if (!looksLikePhrase) {
+            state.state = 'still';
+            state.stableSince = now;
+            state.motionStartAt = null;
+            state.motionPeak = 0;
+        }
         // Conserva solo los últimos frames (los próximos letters / phrases
         // empezarán a llenar el buffer desde aquí).
-        state.frames = state.frames.slice(-2);
+        if (!looksLikePhrase) state.frames = state.frames.slice(-2);
     }
 
     // 4) Trigger de LETRA/NÚMERO — quieto el tiempo suficiente, sin emit reciente.
@@ -310,28 +382,32 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
         state.inflight = true;
         try {
             // 4a) Camino rápido: ONNX local (solo A-Z).
-            let label = null;
-            let confidence = 0;
-            let alternatives = [];
-            let kind = 'letter';
+            let candidate = null;
+            let onnxConfidence = 0;
 
             try {
                 const onnx = await classifyLetter(frameBuffer);
                 if (onnx && onnx.detection) {
-                    label = onnx.detection.label;
-                    confidence = onnx.detection.confidence;
-                    alternatives = onnx.alternatives || [];
+                    onnxConfidence = onnx.detection.confidence;
+                    candidate = {
+                        source: 'onnx-letter',
+                        kind: 'letter',
+                        text: onnx.detection.label,
+                        confidence: onnx.detection.confidence,
+                        alternatives: onnx.alternatives || [],
+                    };
                 }
             } catch (err) {
                 console.warn('[SmartRecognizer] ONNX letter falló:', err?.message || err);
             }
 
             // 4b) Fallback VLM (números o letras de baja confianza).
-            if (allowVlmLetterFallback && confidence < ONNX_VLM_FALLBACK_THRESHOLD) {
+            if (allowVlmLetterFallback && shouldUseStaticVlm(onnxConfidence)) {
                 try {
                     const vlm = await recognizeSignClip([frameBuffer], {
                         context: typeof opts.context === 'string' ? opts.context : undefined,
                         model: typeof opts.model === 'string' ? opts.model : undefined,
+                        mode: 'static',
                     });
                     if (
                         vlm &&
@@ -339,29 +415,34 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                         (vlm.kind === 'letter' || vlm.kind === 'number') &&
                         vlm.confidence >= minPhraseConf
                     ) {
-                        label = vlm.text;
-                        confidence = vlm.confidence;
-                        alternatives = vlm.alternatives || [];
-                        kind = vlm.kind;
+                        const vlmWins =
+                            vlm.kind === 'number' ||
+                            STATIC_VLM_MODE === 'always' ||
+                            !candidate ||
+                            candidate.confidence < minLetterConf;
+                        if (vlmWins) {
+                            candidate = {
+                                ...vlm,
+                                source: vlm.kind === 'number' ? 'vlm-number' : 'vlm-letter',
+                            };
+                        }
                     }
                 } catch (err) {
                     console.warn('[SmartRecognizer] VLM letter fallback falló:', err?.message || err);
                 }
             }
 
-            if (label && confidence >= (kind === 'number' ? minPhraseConf : minLetterConf)) {
-                if (label !== state.lastLetterLabel) {
-                    pushLetter(safeId, { label, confidence });
-                    pushed = true;
-                    state.lastLetterLabel = label;
+            if (
+                candidate &&
+                candidate.text &&
+                candidate.confidence >= (candidate.kind === 'number' ? minPhraseConf : minLetterConf)
+            ) {
+                const tokenKey = `${candidate.kind}:${String(candidate.text).trim().toLocaleUpperCase('es')}`;
+                if (tokenKey !== state.lastLetterLabel) {
+                    pushed = pushRecognizedToken(safeId, candidate);
+                    state.lastLetterLabel = tokenKey;
                     state.lastLetterEmitAt = now;
-                    event = {
-                        source: kind === 'number' ? 'vlm-number' : (kind === 'letter' ? (alternatives.length ? 'onnx-letter' : 'vlm-letter') : 'letter'),
-                        kind,
-                        text: label,
-                        confidence,
-                        alternatives,
-                    };
+                    event = eventFromStaticCandidate(candidate.source || 'static', candidate);
                 } else {
                     // Misma letra sostenida: refrescamos el debounce sin re-emitir.
                     state.lastLetterEmitAt = now;

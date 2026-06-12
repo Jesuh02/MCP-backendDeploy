@@ -49,8 +49,10 @@ const SYSTEM_PROMPT = [
     'Eres un LINGÜISTA experto en LENGUAJE DE SEÑAS COLOMBIANO (LSC), Lengua',
     'de Señas Española (LSE) y American Sign Language (ASL). Recibes una',
     'SECUENCIA ORDENADA de frames de video',
-    '(t0, t1, ..., tN) que muestran a una persona ejecutando UNA seña o frase',
-    'corta. Las señas son INHERENTEMENTE MULTIMODALES: dependen de la',
+    'El clip puede ser una letra, un número, una palabra, una frase o una',
+    'oración corta con varias señas encadenadas en un mismo flujo.',
+    '(t0, t1, ..., tN) que muestran una unidad comunicativa completa.',
+    'Las señas son INHERENTEMENTE MULTIMODALES: dependen de la',
     'CONFIGURACIÓN manual exacta (qué dedos extendidos, qué dedos plegados),',
     'ORIENTACIÓN de la palma, LOCACIÓN respecto al cuerpo, MOVIMIENTO',
     '(trayectoria, velocidad, dirección, repetición) y RASGOS NO MANUALES',
@@ -218,7 +220,7 @@ const SYSTEM_PROMPT = [
  * Reconoce la seña ejecutada en un clip de frames.
  *
  * @param {Array<Buffer|string>} frames - Buffers de imagen o data URLs.
- * @param {{ context?: string, model?: string, timeoutMs?: number }} [opts]
+ * @param {{ context?: string, previousText?: string, mode?: 'static'|'dynamic'|'sentence', model?: string, timeoutMs?: number }} [opts]
  * @returns {Promise<null | {
  *   text: string,
  *   kind: 'word'|'phrase'|'letter'|'number'|'sentence'|'unknown',
@@ -270,6 +272,7 @@ export async function recognizeSignClip(frames, opts = {}) {
                 opts.previousText
                     ? `Señas reconocidas inmediatamente antes en esta conversación: """${opts.previousText.slice(0, 300)}""". Úsalas SOLO como contexto para desambiguar, NO las repitas en tu respuesta.`
                     : null,
+                buildModeInstruction(opts.mode),
                 `Recibes ${sampled.length} frames en orden cronológico (t0 → t${sampled.length - 1}).`,
                 'Analiza la SECUENCIA como un clip de video corto: identifica AMBAS manos,',
                 'la trayectoria del movimiento entre frames, contacto entre manos o con la',
@@ -556,6 +559,33 @@ function clampInt(v, min, max, fallback) {
     const n = Number(v);
     if (!Number.isFinite(n)) return fallback;
     return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function buildModeInstruction(mode) {
+    if (mode === 'static') {
+        return [
+            'Modo de captura: ESTÁTICO. El servidor envió este frame porque la mano',
+            'permaneció quieta cerca de 1 segundo. Prioriza kind="letter" o',
+            'kind="number"; solo devuelve word/phrase/sentence si hay evidencia visual',
+            'muy clara de una seña léxica estática.',
+        ].join('\n');
+    }
+    if (mode === 'sentence') {
+        return [
+            'Modo de captura: ORACIÓN EN MOVIMIENTO. El usuario siguió moviendo las',
+            'manos sin pausa clara; analiza el flujo completo y transcribe la unidad',
+            'comunicativa completa. Si contiene varias señas encadenadas, usa',
+            'kind="sentence" cuando corresponda.',
+        ].join('\n');
+    }
+    if (mode === 'dynamic') {
+        return [
+            'Modo de captura: DINÁMICO. El servidor detectó movimiento sostenido y',
+            'luego una pausa. Reconoce la palabra, frase u oración completa del clip;',
+            'no lo reduzcas a una sola letra salvo que sea claramente deletreo.',
+        ].join('\n');
+    }
+    return null;
 }
 
 /**
