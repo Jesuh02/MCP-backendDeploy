@@ -9,6 +9,20 @@
 
 import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
+import { getCurrentTenantId, hasTenantClient, runInTenantContext } from '../../config/tenantRegistry.js';
+
+const MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES = [
+    'Fundamentos aplicados',
+    'Modelos y conceptos clave',
+    'Herramientas y entorno de trabajo',
+    'Analisis y resolucion de problemas',
+    'Diseno de soluciones',
+    'Buenas practicas profesionales',
+    'Casos reales y toma de decisiones',
+    'Proyecto integrador',
+    'Optimizacion y mejora continua',
+    'Portafolio y evaluacion final',
+];
 
 export class MCPDomainService {
     constructor({
@@ -19,6 +33,8 @@ export class MCPDomainService {
             notificationService,
             llmPort,
             supabaseService,
+            subjectRepository,
+            fileStoragePort,
         }) {
             this.userRepo = userRepository;
             this.courseRepo = courseRepository;
@@ -27,6 +43,8 @@ export class MCPDomainService {
             this.notificationService = notificationService;
             this.llm = llmPort;
             this.supabase = supabaseService || null;
+            this.subjectRepo = subjectRepository || null;
+            this.storage = fileStoragePort || null;
         }
         /**
          * Obtiene el schema de la base de datos.
@@ -67,6 +85,229 @@ export class MCPDomainService {
 
     /**
      * Obtiene información de un usuario.
+     * Normalizes course plans before persistence so direct MCP tool calls create professional structures.
+     */
+    _normalizeCourseLevel(value) {
+        const n = String(value || '')
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase().replace(/\s+/g, ' ').trim();
+        if (!n) return '';
+        if (/\b(principiante|basico|basic|beginner|inicial)\b/.test(n)) return 'beginner';
+        if (/\b(intermedio|intermediate|medio)\b/.test(n)) return 'intermediate';
+        if (/\b(avanzado|advanced|experto|profundo|profunda|profundidad|complejo|complejos)\b|buenas practicas/.test(n)) return 'advanced';
+        return '';
+    }
+
+    _getCoursePlanTargets({ level, durationWeeks }) {
+        const normalizedLevel = this._normalizeCourseLevel(level) || 'beginner';
+        const duration = Math.max(1, Number(durationWeeks) > 0 ? Math.round(Number(durationWeeks)) : 8);
+        const isBasic = normalizedLevel === 'beginner';
+        const recommendedTopics = Math.max(2, Math.ceil(duration / 2));
+        const deepTopics = Math.max(recommendedTopics, Math.min(duration, Math.ceil(duration * 0.75)));
+        const minTasksPerTopic = isBasic ? 3 : (normalizedLevel === 'advanced' ? 5 : 4);
+
+        if (isBasic) {
+            const minSubjects = duration >= 16 ? 4 : (duration >= 8 ? 3 : 2);
+            const minTopics = Math.max(recommendedTopics, duration >= 16 ? 8 : (duration >= 8 ? 4 : 2));
+            return { minSubjects, minTopics, minTasks: minTopics * minTasksPerTopic, minTasksPerTopic };
+        }
+
+        const minSubjects = duration >= 32 ? 8 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
+        const minTopics = duration >= 32
+            ? Math.max(16, recommendedTopics)
+            : (duration >= 16 ? Math.max(8, recommendedTopics) : Math.max(4, recommendedTopics));
+        const targetTopics = normalizedLevel === 'advanced' ? deepTopics : minTopics;
+        return {
+            minSubjects,
+            minTopics: targetTopics,
+            minTasks: targetTopics * minTasksPerTopic,
+            minTasksPerTopic,
+        };
+    }
+
+    _normalizeGeneratedCoursePlan(rawPlan) {
+        const source = rawPlan && typeof rawPlan === 'object' ? rawPlan : {};
+        const cleanText = (value, fallback = '') => {
+            const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+            return text || fallback;
+        };
+        const level = this._normalizeCourseLevel(source.level) || 'beginner';
+        const durationWeeks = Number(source.durationWeeks) > 0 ? Math.round(Number(source.durationWeeks)) : 8;
+        const title = cleanText(source.title, 'Curso generado con IA');
+        const focus = cleanText(source.category || title, title);
+        const objective = cleanText(source.description, `desarrollar competencias solidas en ${focus}`);
+        const targets = this._getCoursePlanTargets({ level, durationWeeks });
+
+        const subjects = Array.isArray(source.subjects)
+            ? source.subjects
+                .filter(s => s && typeof s === 'object')
+                .map((subject, subjectIndex) => this._normalizePlanSubject(subject, subjectIndex, { focus, objective, durationWeeks }))
+                .filter(s => s.name)
+            : [];
+
+        while (subjects.length < targets.minSubjects) {
+            subjects.push(this._buildSupplementalSubject(subjects.length, { focus, objective, durationWeeks }));
+        }
+
+        while (this._countPlanTopics(subjects) < targets.minTopics) {
+            const subject = subjects[this._countPlanTopics(subjects) % subjects.length];
+            subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks }));
+        }
+
+        for (const subject of subjects) {
+            for (const topic of subject.topics) {
+                if (!Array.isArray(topic.tasks)) topic.tasks = [];
+                while (topic.tasks.length < targets.minTasksPerTopic) {
+                    topic.tasks.push(this._buildSupplementalTask(topic, topic.tasks.length, { durationWeeks }));
+                }
+            }
+        }
+
+        while (this._countPlanTasks(subjects) < targets.minTasks) {
+            const flatTopics = subjects.flatMap(subject => subject.topics.map(topic => ({ subject, topic })));
+            const entry = flatTopics[this._countPlanTasks(subjects) % flatTopics.length];
+            entry.topic.tasks.push(this._buildSupplementalTask(entry.topic, entry.topic.tasks.length, { durationWeeks }));
+        }
+        this._redistributePlanDueWeeks(subjects, durationWeeks);
+
+        return {
+            ...source,
+            title,
+            description: cleanText(source.description, `Curso de ${focus} orientado a ${objective}.`),
+            category: cleanText(source.category, 'General'),
+            level,
+            durationWeeks,
+            subjects,
+        };
+    }
+
+    _normalizePlanSubject(subject, subjectIndex, context) {
+        const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const normalized = {
+            name: cleanText(subject.name, `${MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES[subjectIndex % MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES.length]} de ${context.focus}`),
+            description: cleanText(subject.description, `Desarrolla competencias especificas de ${context.focus} alineadas con el objetivo del curso.`),
+            topics: [],
+        };
+        normalized.topics = Array.isArray(subject.topics)
+            ? subject.topics
+                .filter(t => t && typeof t === 'object')
+                .map((topic, topicIndex) => this._normalizePlanTopic(topic, topicIndex, normalized, context))
+                .filter(t => t.title)
+            : [];
+        if (normalized.topics.length === 0) {
+            normalized.topics.push(this._buildSupplementalTopic(normalized, 0, context));
+        }
+        return normalized;
+    }
+
+    _normalizePlanTopic(topic, topicIndex, subject, context) {
+        const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const normalized = {
+            title: cleanText(topic.title, `Tema aplicado ${topicIndex + 1}: ${subject.name}`),
+            description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
+            contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados y criterios de aplicacion sobre ${subject.name}.`),
+            tasks: [],
+        };
+        normalized.tasks = Array.isArray(topic.tasks)
+            ? topic.tasks
+                .filter(t => t && typeof t === 'object')
+                .map((task, taskIndex) => this._normalizePlanTask(task, taskIndex, normalized, context))
+                .filter(t => t.title)
+            : [];
+        return normalized;
+    }
+
+    _normalizePlanTask(task, taskIndex, topic, context) {
+        const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const dueWeek = Number.isInteger(Number(task.dueWeek)) && Number(task.dueWeek) > 0
+            ? Math.min(Number(task.dueWeek), context.durationWeeks)
+            : this._suggestDueWeek(taskIndex, context.durationWeeks);
+        return {
+            title: cleanText(task.title, `Actividad aplicada: ${topic.title}`),
+            description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}.`),
+            dueWeek,
+            contentDescription: cleanText(task.contentDescription, 'Guia con instrucciones, criterios de evaluacion, recursos y rubrica para completar la actividad.'),
+        };
+    }
+
+    _buildSupplementalSubject(index, context) {
+        const name = `${MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES[index % MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES.length]} de ${context.focus}`;
+        return {
+            name,
+            description: `Materia orientada a convertir el objetivo "${context.objective}" en competencias observables y aplicables.`,
+            topics: [this._buildSupplementalTopic({ name }, 0, context)],
+        };
+    }
+
+    _buildSupplementalTopic(subject, index, context) {
+        const topicTitles = [
+            `Conceptos clave de ${subject.name}`,
+            `Aplicacion practica de ${subject.name}`,
+            `Casos de uso y criterios de calidad`,
+            `Taller guiado de ${context.focus}`,
+            `Proyecto aplicado del modulo`,
+        ];
+        const title = topicTitles[index % topicTitles.length];
+        return {
+            title,
+            description: `Tema centrado en aplicar ${subject.name} a problemas reales del curso.`,
+            contentDescription: `Documento de estudio con explicaciones, ejemplos, buenas practicas y una guia de aplicacion para ${title}.`,
+            tasks: [this._buildSupplementalTask({ title }, 0, context)],
+        };
+    }
+
+    _buildSupplementalTask(topic, index, context) {
+        const taskTypes = [
+            'Lectura guiada',
+            'Taller practico',
+            'Quiz de verificacion',
+            'Laboratorio o caso aplicado',
+            'Entrega de proyecto',
+            'Revision de portafolio',
+            'Parcial aplicado',
+            'Examen integrador',
+        ];
+        const taskType = taskTypes[index % taskTypes.length];
+        return {
+            title: `${taskType}: ${topic.title}`,
+            description: `Actividad evaluable donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
+            dueWeek: this._suggestDueWeek(index, context.durationWeeks),
+            contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
+        };
+    }
+
+    _suggestDueWeek(index, durationWeeks) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const step = Math.max(1, Math.floor(duration / 10));
+        return Math.min(duration, Math.max(1, (index + 1) * step));
+    }
+
+    _redistributePlanDueWeeks(subjects, durationWeeks) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const tasks = subjects.flatMap(subject =>
+            (subject.topics || []).flatMap(topic => topic.tasks || []),
+        );
+        if (!tasks.length) return;
+        tasks.forEach((task, index) => {
+            task.dueWeek = Math.min(duration, Math.max(1, Math.ceil(((index + 1) * duration) / tasks.length)));
+        });
+    }
+
+    _countPlanTopics(subjects) {
+        return subjects.reduce((total, subject) => total + (Array.isArray(subject.topics) ? subject.topics.length : 0), 0);
+    }
+
+    _countPlanTasks(subjects) {
+        return subjects.reduce(
+            (total, subject) => total + (Array.isArray(subject.topics)
+                ? subject.topics.reduce((topicTotal, topic) => topicTotal + (Array.isArray(topic.tasks) ? topic.tasks.length : 0), 0)
+                : 0),
+            0,
+        );
+    }
+
+    /**
+     * Obtiene informacion de un usuario.
      * @param {{ userId?: number, username?: string }} params
      * @returns {Promise<Result>}
      */
@@ -137,6 +378,7 @@ export class MCPDomainService {
             return Result.fail(new ValidationError('supabaseService no disponible para crear el curso'));
         }
 
+        plan = this._normalizeGeneratedCoursePlan(plan);
         const esc = (s) => String(s == null ? '' : s).replace(/'/g, "''");
         const execInsert = async (sql) => {
             const data = await this.supabase.executeRawSQL(sql);
@@ -154,6 +396,7 @@ export class MCPDomainService {
 
             let topicsCreated = 0;
             let tasksCreated = 0;
+            const subjectsForThumbnails = [];
 
             for (const subject of plan.subjects) {
                 const subjectRow = await execInsert(
@@ -163,6 +406,11 @@ export class MCPDomainService {
                 );
                 const subjectId = subjectRow?.id;
                 if (!subjectId) continue;
+                subjectsForThumbnails.push({
+                    subjectId,
+                    name: subject.name,
+                    description: subject.description || '',
+                });
 
                 for (const topic of (subject.topics || [])) {
                     const topicRow = await execInsert(
@@ -188,17 +436,134 @@ export class MCPDomainService {
                 }
             }
 
-            return Result.ok({ courseId, topicsCreated, tasksCreated });
+            this._generateSubjectThumbnailsInBackground({
+                courseId,
+                courseTitle: plan.title,
+                category: plan.category || 'General',
+                subjects: subjectsForThumbnails,
+            });
+
+            return Result.ok({
+                courseId,
+                topicsCreated,
+                tasksCreated,
+                thumbnailsInProgress: Boolean(this.storage && this.storage.isAvailable && this.storage.isAvailable()),
+            });
         } catch (err) {
             return Result.fail(new ValidationError(`createCourseStructure falló: ${err.message}`));
         }
     }
 
-    /**
-     * Envía notificación vía MCP.
-     * @param {{ userId: number, title: string, message: string, type?: string }} params
-     * @returns {Promise<Result>}
-     */
+    /** Genera miniaturas IA para materias sin bloquear la creacion del curso. */
+    _generateSubjectThumbnailsInBackground({ courseId, courseTitle, category, subjects }) {
+        if (!Array.isArray(subjects) || subjects.length === 0) return;
+        if (!this.storage || typeof this.storage.isAvailable !== 'function' || !this.storage.isAvailable()) return;
+        if (!this.subjectRepo || typeof this.subjectRepo.update !== 'function') return;
+
+        const bgTenantId = getCurrentTenantId();
+        const runBackground = async () => {
+            for (const subject of subjects) {
+                try {
+                    const { buffer, contentType, ext } = await this._generateThumbnailImage(
+                        `${subject.name}, ${courseTitle}, ${category}, ${subject.description || 'materia academica educativa'}`,
+                    );
+                    const key = `courses/${courseId}/subjects/${subject.subjectId}/thumbnail_${Date.now()}.${ext}`;
+                    const thumbnailUrl = await this.storage.uploadFile(buffer, key, contentType, buffer.length);
+                    await this.subjectRepo.update(subject.subjectId, { thumbnailUrl });
+                    console.log(`[MCPDomainService] Subject thumbnail uploaded: subjectId=${subject.subjectId}`);
+                } catch (err) {
+                    console.error(`[MCPDomainService] Subject thumbnail failed id=${subject.subjectId}: ${err.message}`);
+                }
+            }
+        };
+
+        setImmediate(() => {
+            const job = (bgTenantId && hasTenantClient(bgTenantId))
+                ? runInTenantContext(bgTenantId, runBackground)
+                : runBackground();
+            Promise.resolve(job).catch(err =>
+                console.error(`[MCPDomainService] Subject thumbnail background job failed: ${err?.message || err}`));
+        });
+    }
+
+    async _generateThumbnailImage(description) {
+        const apiKey = process.env.OPENROUTER_API_KEY;
+        if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured for image generation');
+
+        const imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
+        const prompt = [
+            `Professional, photorealistic educational subject thumbnail: ${String(description || '').slice(0, 240)}.`,
+            'Realistic academic setting, relevant objects for the subject, natural light, high detail,',
+            'clean 16:9 composition, no text overlays, no logos, no watermarks.',
+        ].join(' ');
+
+        const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': process.env.OPENROUTER_REFERER || process.env.SITE_URL || 'https://coursev.app',
+                'X-Title': 'CourseV',
+            },
+            body: JSON.stringify({
+                model: imageModel,
+                modalities: ['image', 'text'],
+                messages: [{ role: 'user', content: prompt }],
+            }),
+            signal: AbortSignal.timeout(90_000),
+        });
+        if (!resp.ok) {
+            const msg = await resp.text().catch(() => '');
+            throw new Error(`OpenRouter image API ${resp.status}: ${msg.slice(0, 300)}`);
+        }
+
+        const json = await resp.json();
+        const imageRef = this._extractImageRef(json?.choices?.[0]?.message);
+        if (!imageRef) throw new Error(`OpenRouter image generation returned no image for model ${imageModel}`);
+        return this._imageRefToBuffer(imageRef);
+    }
+
+    _extractImageRef(message) {
+        const fromImages = message?.images?.[0]?.image_url?.url;
+        if (fromImages) return fromImages;
+
+        if (Array.isArray(message?.content)) {
+            for (const block of message.content) {
+                if ((block?.type === 'image_url' || block?.type === 'output_image') && block.image_url?.url) return block.image_url.url;
+                if (block?.type === 'image' && block.source?.type === 'base64' && block.source?.data) {
+                    return `data:${block.source.media_type || 'image/png'};base64,${block.source.data}`;
+                }
+                if (block?.type === 'image' && block.source?.url) return block.source.url;
+                if (block?.inlineData?.data) return `data:${block.inlineData.mimeType || 'image/png'};base64,${block.inlineData.data}`;
+                if (block?.data && block?.mimeType) return `data:${block.mimeType};base64,${block.data}`;
+            }
+        }
+
+        if (typeof message?.content === 'string') {
+            const mdImg = message.content.match(/!\[.*?\]\((data:image\/[^)]+)\)/);
+            if (mdImg) return mdImg[1];
+            const dataUri = message.content.match(/(data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{20,})/);
+            if (dataUri) return dataUri[1];
+        }
+
+        return '';
+    }
+
+    async _imageRefToBuffer(ref) {
+        const dataMatch = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(ref);
+        if (dataMatch) {
+            const contentType = dataMatch[1].toLowerCase();
+            const ext = (contentType.split('/')[1] || 'png').replace('jpeg', 'jpg');
+            return { buffer: Buffer.from(dataMatch[2], 'base64'), contentType, ext };
+        }
+
+        const imgResp = await fetch(ref, { signal: AbortSignal.timeout(30_000) });
+        if (!imgResp.ok) throw new Error(`Image download failed: ${imgResp.status}`);
+        const contentType = (imgResp.headers.get('content-type') || 'image/png').split(';')[0].toLowerCase();
+        const ext = (contentType.split('/')[1] || 'png').replace('jpeg', 'jpg');
+        return { buffer: Buffer.from(await imgResp.arrayBuffer()), contentType, ext };
+    }
+
     async sendNotification({ userId, title, message, type }) {
         if (!userId || !title || !message) {
             return Result.fail(new ValidationError('userId, title y message son requeridos'));

@@ -77,6 +77,8 @@ const STATIC_VLM_MODE = String(process.env.SIGN_LANGUAGE_STATIC_VLM_MODE || 'num
 const VLM_MIN_CONFIDENCE = 0.6;
 /** TTL en memoria de cada sesión sin actividad. */
 const SESSION_TTL_MS = 5 * 60 * 1000;
+const MAX_RECOGNITION_QUEUE = 4;
+const MAX_PENDING_OUTPUTS = 8;
 
 /**
  * @typedef {Object} RecognizerState
@@ -90,9 +92,15 @@ const SESSION_TTL_MS = 5 * 60 * 1000;
  * @property {Array<{at: number, buffer: Buffer}>} frames
  * @property {boolean} inflight
  * @property {number} lastFrameAt
+ * @property {number} lastFrameSeq
+ * @property {Array<Function>} recognitionQueue
+ * @property {boolean} recognitionRunning
+ * @property {Array<{event: Object|null, pushed: boolean, warning: Object|null}>} pendingOutputs
+ * @property {boolean} disposed
  * @property {number} lastLetterEmitAt
  * @property {string|null} lastLetterLabel
  * @property {number} lastPhraseEmitAt
+ * @property {number} lastPhraseAcceptedAt
  * @property {string|null} lastPhraseKey
  * @property {number} lastStaticVlmAt
  * @property {number} lastTouchedAt
@@ -100,6 +108,8 @@ const SESSION_TTL_MS = 5 * 60 * 1000;
 
 /** @type {Map<string, RecognizerState>} */
 const states = new Map();
+/** @type {Map<string, Promise<unknown>>} */
+const frameChains = new Map();
 let purgeTimer = null;
 
 function startPurgeTimer() {
@@ -107,7 +117,11 @@ function startPurgeTimer() {
     purgeTimer = setInterval(() => {
         const now = Date.now();
         for (const [id, s] of states) {
-            if (now - s.lastTouchedAt > SESSION_TTL_MS) states.delete(id);
+            if (now - s.lastTouchedAt > SESSION_TTL_MS) {
+                s.disposed = true;
+                states.delete(id);
+                frameChains.delete(id);
+            }
         }
         if (states.size === 0) {
             clearInterval(purgeTimer);
@@ -130,9 +144,15 @@ function getOrCreateState(id) {
             frames: [],
             inflight: false,
             lastFrameAt: 0,
+            lastFrameSeq: 0,
+            recognitionQueue: [],
+            recognitionRunning: false,
+            pendingOutputs: [],
+            disposed: false,
             lastLetterEmitAt: 0,
             lastLetterLabel: null,
             lastPhraseEmitAt: 0,
+            lastPhraseAcceptedAt: 0,
             lastPhraseKey: null,
             lastStaticVlmAt: 0,
             lastTouchedAt: Date.now(),
@@ -148,7 +168,11 @@ function getOrCreateState(id) {
  * phrase-composer; usa deleteSession() en phrase-composer para eso).
  */
 export function resetRecognizerState(id) {
-    states.delete(String(id || ''));
+    const safeId = String(id || '');
+    const state = states.get(safeId);
+    if (state) state.disposed = true;
+    states.delete(safeId);
+    frameChains.delete(safeId);
 }
 
 function pruneFrameBuffer(state, now) {
@@ -184,6 +208,61 @@ function pushRecognizedToken(sessionId, result) {
     }
     pushWord(sessionId, { text, confidence });
     return true;
+}
+
+function recognitionBacklogSize(state) {
+    return state.recognitionQueue.length + (state.recognitionRunning ? 1 : 0);
+}
+
+function canQueueRecognition(state) {
+    return !state.disposed && recognitionBacklogSize(state) < MAX_RECOGNITION_QUEUE;
+}
+
+function pushPendingOutput(state, output) {
+    if (state.disposed || !output) return;
+    state.pendingOutputs.push({
+        event: output.event || null,
+        pushed: Boolean(output.pushed),
+        warning: output.warning || null,
+    });
+    while (state.pendingOutputs.length > MAX_PENDING_OUTPUTS) state.pendingOutputs.shift();
+}
+
+function popPendingOutput(state) {
+    return state.pendingOutputs.shift() || null;
+}
+
+function enqueueRecognitionJob(state, job) {
+    if (!canQueueRecognition(state)) return false;
+    state.recognitionQueue.push(job);
+    void drainRecognitionQueue(state);
+    return true;
+}
+
+async function drainRecognitionQueue(state) {
+    if (state.recognitionRunning || state.disposed) return;
+    state.recognitionRunning = true;
+    state.inflight = true;
+    try {
+        while (!state.disposed && state.recognitionQueue.length) {
+            const job = state.recognitionQueue.shift();
+            try {
+                await job();
+            } catch (err) {
+                console.warn('[SmartRecognizer] recognition job falló:', err?.message || err);
+                pushPendingOutput(state, {
+                    warning: {
+                        code: err?.code || 'RECOGNITION_JOB_FAILED',
+                        message: err?.message || 'Falló una inferencia de señas.',
+                    },
+                });
+            }
+        }
+    } finally {
+        state.recognitionRunning = false;
+        state.inflight = state.recognitionQueue.length > 0;
+        if (state.recognitionQueue.length && !state.disposed) void drainRecognitionQueue(state);
+    }
 }
 
 function eventFromVlm(source, result) {
@@ -248,6 +327,7 @@ function buildCaptureMeta(state, now, motion) {
         motionPeak: state.motionPeak,
         motion,
         inflight: state.inflight,
+        queue: recognitionBacklogSize(state),
     };
 }
 
@@ -265,6 +345,7 @@ function buildCaptureMeta(state, now, motion) {
  * @param {number} [opts.minPhraseConfidence]  - override de VLM_MIN_CONFIDENCE
  * @param {number} [opts.stillDurationMs]      - override de STILL_DURATION_MS
  * @param {number} [opts.capturedAtMs]         - timestamp epoch ms del frame en la camara
+ * @param {number} [opts.frameSeq]             - secuencia monotÃ³nica emitida por el frontend
  * @param {boolean} [opts.allowVlmLetterFallback=true] - si ONNX duda, usar VLM
  * @param {boolean} [opts.debug=false]
  */
@@ -275,15 +356,32 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
         throw new Error('frameBuffer inválido');
     }
 
+    const previous = frameChains.get(safeId) || Promise.resolve();
+    const queued = previous
+        .catch(() => {})
+        .then(() => ingestFrameNow(safeId, frameBuffer, opts));
+    frameChains.set(safeId, queued);
+    queued
+        .finally(() => {
+            if (frameChains.get(safeId) === queued) frameChains.delete(safeId);
+        })
+        .catch(() => {});
+    return queued;
+}
+
+async function ingestFrameNow(safeId, frameBuffer, opts = {}) {
     const state = getOrCreateState(safeId);
     const receivedAt = Date.now();
     const capturedAt = Number(opts.capturedAtMs);
+    const frameSeq = Number(opts.frameSeq);
     const now = Number.isFinite(capturedAt) && capturedAt > 0
         ? Math.max(capturedAt, state.lastFrameAt + 1)
         : receivedAt;
     state.lastTouchedAt = receivedAt;
 
-    if (state.lastFrameAt && capturedAt > 0 && capturedAt <= state.lastFrameAt) {
+    const staleBySeq = Number.isFinite(frameSeq) && frameSeq > 0 && state.lastFrameSeq && frameSeq <= state.lastFrameSeq;
+    const staleByTime = !Number.isFinite(frameSeq) && state.lastFrameAt && capturedAt > 0 && capturedAt <= state.lastFrameAt;
+    if (staleBySeq || staleByTime) {
         const { draft, eventCount } = getSessionDraft(safeId);
         return {
             event: null,
@@ -300,6 +398,7 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
         };
     }
     state.lastFrameAt = now;
+    if (Number.isFinite(frameSeq) && frameSeq > 0) state.lastFrameSeq = frameSeq;
 
     // 1) Motion tracking (siempre, incluso si hay inferencia en vuelo).
     let thumb = null;
@@ -353,9 +452,10 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
     const stillDurationMs = Number.isFinite(opts.stillDurationMs) ? opts.stillDurationMs : STILL_DURATION_MS;
     const allowVlmLetterFallback = opts.allowVlmLetterFallback !== false;
 
-    let event = null;
-    let pushed = false;
-    let warning = null;
+    const pendingOutput = popPendingOutput(state);
+    let event = pendingOutput?.event || null;
+    let pushed = Boolean(pendingOutput?.pushed);
+    let warning = pendingOutput?.warning || null;
 
     const settlingReady =
         state.state === 'settling' &&
@@ -372,7 +472,7 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
         (settlingReady || movingWindowReady) &&
         state.motionStartAt != null &&
         now - state.lastPhraseEmitAt >= MIN_GAP_BETWEEN_PHRASES_MS &&
-        !state.inflight
+        canQueueRecognition(state)
     ) {
         const clipEndAt = settlingReady ? (state.stableSince || now) : now;
         const motionDuration = clipEndAt - state.motionStartAt;
@@ -387,7 +487,10 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                 .map((f) => f.buffer);
 
             if (clipFrames.length >= 2) {
-                state.inflight = true;
+                const triggerAt = now;
+                const source = movingWindowReady ? 'sentence-window' : 'phrase';
+                const mode = movingWindowReady ? 'sentence' : 'dynamic';
+                state.lastPhraseEmitAt = triggerAt;
                 state.frames = state.frames.filter((f) => f.at >= clipEndAt - 200);
                 if (movingWindowReady) {
                     state.state = 'moving';
@@ -400,41 +503,47 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                     state.motionStartAt = null;
                     state.motionPeak = 0;
                 }
-                try {
-                    const previousText = getSessionDraft(safeId)?.draft || '';
-                    const result = await recognizeSignClip(clipFrames, {
-                        context: typeof opts.context === 'string' ? opts.context : undefined,
-                        previousText: previousText || undefined,
-                        model: typeof opts.model === 'string' ? opts.model : undefined,
-                        mode: movingWindowReady ? 'sentence' : 'dynamic',
-                    });
-                    if (
-                        result &&
-                        result.text &&
-                        result.kind !== 'unknown' &&
-                        result.confidence >= minPhraseConf
-                    ) {
-                        const phraseKey = tokenKey(result.kind, result.text);
-                        const repeatedTooSoon =
-                            phraseKey === state.lastPhraseKey &&
-                            now - state.lastPhraseEmitAt < MIN_REPEAT_SAME_PHRASE_MS;
-                        if (!repeatedTooSoon) {
-                            pushed = pushRecognizedToken(safeId, result);
-                            event = eventFromVlm(movingWindowReady ? 'sentence-window' : 'phrase', result);
-                            state.lastPhraseEmitAt = now;
-                            state.lastPhraseKey = phraseKey;
-                            state.lastLetterLabel = null; // permite re-emitir misma letra después de una frase
+                enqueueRecognitionJob(state, async () => {
+                    try {
+                        if (state.disposed) return;
+                        const previousText = getSessionDraft(safeId)?.draft || '';
+                        const result = await recognizeSignClip(clipFrames, {
+                            context: typeof opts.context === 'string' ? opts.context : undefined,
+                            previousText: previousText || undefined,
+                            model: typeof opts.model === 'string' ? opts.model : undefined,
+                            mode,
+                        });
+                        if (
+                            result &&
+                            result.text &&
+                            result.kind !== 'unknown' &&
+                            result.confidence >= minPhraseConf
+                        ) {
+                            const phraseKey = tokenKey(result.kind, result.text);
+                            const repeatedTooSoon =
+                                phraseKey === state.lastPhraseKey &&
+                                triggerAt - state.lastPhraseAcceptedAt < MIN_REPEAT_SAME_PHRASE_MS;
+                            if (!repeatedTooSoon && !state.disposed) {
+                                const didPush = pushRecognizedToken(safeId, result);
+                                state.lastPhraseAcceptedAt = triggerAt;
+                                state.lastPhraseKey = phraseKey;
+                                state.lastLetterLabel = null;
+                                pushPendingOutput(state, {
+                                    pushed: didPush,
+                                    event: eventFromVlm(source, result),
+                                });
+                            }
                         }
+                    } catch (err) {
+                        console.warn('[SmartRecognizer] phrase recognition falló:', err?.message || err);
+                        pushPendingOutput(state, {
+                            warning: {
+                                code: err?.code || 'VLM_FAILED',
+                                message: err?.message || 'No se pudo reconocer la sena dinamica.',
+                            },
+                        });
                     }
-                } catch (err) {
-                    console.warn('[SmartRecognizer] phrase recognition falló:', err?.message || err);
-                    warning = {
-                        code: err?.code || 'VLM_FAILED',
-                        message: err?.message || 'No se pudo reconocer la sena dinamica.',
-                    };
-                } finally {
-                    state.inflight = false;
-                }
+                });
             } else {
                 state.state = 'still';
                 state.stableSince = now;
@@ -463,91 +572,93 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
         state.stableSince != null &&
         now - state.stableSince >= stillDurationMs &&
         now - state.lastLetterEmitAt >= MIN_GAP_BETWEEN_LETTERS_MS &&
-        !state.inflight
+        canQueueRecognition(state)
     ) {
-        state.inflight = true;
-        try {
-            // 4a) Camino rápido: ONNX local (solo A-Z).
-            let candidate = null;
-
+        const triggerAt = now;
+        const staticFrame = frameBuffer;
+        state.lastLetterEmitAt = triggerAt;
+        state.stableSince = triggerAt;
+        enqueueRecognitionJob(state, async () => {
             try {
-                const onnx = await classifyLetter(frameBuffer);
-                if (onnx && onnx.detection) {
-                    candidate = {
-                        source: 'onnx-letter',
-                        kind: 'letter',
-                        text: onnx.detection.label,
-                        confidence: onnx.detection.confidence,
-                        alternatives: onnx.alternatives || [],
-                    };
-                }
-            } catch (err) {
-                console.warn('[SmartRecognizer] ONNX letter falló:', err?.message || err);
-            }
+                if (state.disposed) return;
+                let candidate = null;
 
-            // 4b) Fallback VLM (números o letras de baja confianza).
-            if (allowVlmLetterFallback && shouldUseStaticVlm(candidate, state, now)) {
                 try {
-                    state.lastStaticVlmAt = now;
-                    const previousText = getSessionDraft(safeId)?.draft || '';
-                    const vlm = await recognizeSignClip([frameBuffer], {
-                        context: typeof opts.context === 'string' ? opts.context : undefined,
-                        previousText: previousText || undefined,
-                        model: typeof opts.model === 'string' ? opts.model : undefined,
-                        mode: 'static',
-                    });
-                    if (
-                        vlm &&
-                        vlm.text &&
-                        (vlm.kind === 'letter' || vlm.kind === 'number') &&
-                        vlm.confidence >= minPhraseConf
-                    ) {
-                        const vlmWins =
-                            vlm.kind === 'number' ||
-                            STATIC_VLM_MODE === 'always' ||
-                            !candidate ||
-                            candidate.confidence < minLetterConf;
-                        if (vlmWins) {
-                            candidate = {
-                                ...vlm,
-                                source: vlm.kind === 'number' ? 'vlm-number' : 'vlm-letter',
-                            };
-                        }
+                    const onnx = await classifyLetter(staticFrame);
+                    if (onnx && onnx.detection) {
+                        candidate = {
+                            source: 'onnx-letter',
+                            kind: 'letter',
+                            text: onnx.detection.label,
+                            confidence: onnx.detection.confidence,
+                            alternatives: onnx.alternatives || [],
+                        };
                     }
                 } catch (err) {
-                    console.warn('[SmartRecognizer] VLM letter fallback falló:', err?.message || err);
-                    warning = {
-                        code: err?.code || 'VLM_FAILED',
-                        message: err?.message || 'No se pudo verificar letra o numero con VLM.',
-                    };
+                    console.warn('[SmartRecognizer] ONNX letter falló:', err?.message || err);
                 }
-            }
 
-            if (
-                candidate &&
-                candidate.text &&
-                candidate.confidence >= (candidate.kind === 'number' ? minPhraseConf : minLetterConf)
-            ) {
-                const staticKey = tokenKey(candidate.kind, candidate.text);
-                if (staticKey !== state.lastLetterLabel) {
-                    pushed = pushRecognizedToken(safeId, candidate);
-                    state.lastLetterLabel = staticKey;
-                    state.lastLetterEmitAt = now;
-                    event = eventFromStaticCandidate(candidate.source || 'static', candidate);
-                } else {
-                    // Misma letra sostenida: refrescamos el debounce sin re-emitir.
-                    state.lastLetterEmitAt = now;
+                if (allowVlmLetterFallback && shouldUseStaticVlm(candidate, state, triggerAt)) {
+                    try {
+                        state.lastStaticVlmAt = triggerAt;
+                        const previousText = getSessionDraft(safeId)?.draft || '';
+                        const vlm = await recognizeSignClip([staticFrame], {
+                            context: typeof opts.context === 'string' ? opts.context : undefined,
+                            previousText: previousText || undefined,
+                            model: typeof opts.model === 'string' ? opts.model : undefined,
+                            mode: 'static',
+                        });
+                        if (
+                            vlm &&
+                            vlm.text &&
+                            (vlm.kind === 'letter' || vlm.kind === 'number') &&
+                            vlm.confidence >= minPhraseConf
+                        ) {
+                            const vlmWins =
+                                vlm.kind === 'number' ||
+                                STATIC_VLM_MODE === 'always' ||
+                                !candidate ||
+                                candidate.confidence < minLetterConf;
+                            if (vlmWins) {
+                                candidate = {
+                                    ...vlm,
+                                    source: vlm.kind === 'number' ? 'vlm-number' : 'vlm-letter',
+                                };
+                            }
+                        }
+                    } catch (err) {
+                        console.warn('[SmartRecognizer] VLM letter fallback falló:', err?.message || err);
+                        pushPendingOutput(state, {
+                            warning: {
+                                code: err?.code || 'VLM_FAILED',
+                                message: err?.message || 'No se pudo verificar letra o numero con VLM.',
+                            },
+                        });
+                    }
                 }
-            }
-        } catch (err) {
-            console.warn('[SmartRecognizer] letter trigger falló:', err?.message || err);
-        } finally {
-            state.inflight = false;
-        }
 
-        // Reinicia stableSince solo si no llegaron frames mas nuevos mientras
-        // ONNX/VLM estaba trabajando.
-        if (state.lastFrameAt <= now) state.stableSince = now;
+                if (
+                    candidate &&
+                    candidate.text &&
+                    candidate.confidence >= (candidate.kind === 'number' ? minPhraseConf : minLetterConf)
+                ) {
+                    const staticKey = tokenKey(candidate.kind, candidate.text);
+                    if (staticKey !== state.lastLetterLabel && !state.disposed) {
+                        const didPush = pushRecognizedToken(safeId, candidate);
+                        state.lastLetterLabel = staticKey;
+                        state.lastLetterEmitAt = triggerAt;
+                        pushPendingOutput(state, {
+                            pushed: didPush,
+                            event: eventFromStaticCandidate(candidate.source || 'static', candidate),
+                        });
+                    } else {
+                        state.lastLetterEmitAt = triggerAt;
+                    }
+                }
+            } catch (err) {
+                console.warn('[SmartRecognizer] letter trigger falló:', err?.message || err);
+            }
+        });
     }
 
     const { draft, eventCount } = getSessionDraft(safeId);
@@ -572,6 +683,10 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                 lastPhraseKey: state.lastPhraseKey,
                 lastStaticVlmAt: state.lastStaticVlmAt,
                 lastFrameAt: state.lastFrameAt,
+                lastFrameSeq: state.lastFrameSeq,
+                recognitionQueue: state.recognitionQueue.length,
+                recognitionRunning: state.recognitionRunning,
+                pendingOutputs: state.pendingOutputs.length,
                 inflight: state.inflight,
             },
         } : {}),

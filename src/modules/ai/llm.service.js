@@ -30,6 +30,18 @@ import { TENANT_CONFIGS, runInTenantContext, getCurrentTenantId, hasTenantClient
 const _tenantAskCache = new Map();
 const _courseDraftSessionCache = new Map();
 const COURSE_DRAFT_SESSION_TTL_MS = 60 * 60 * 1000;
+const SUPPLEMENTAL_SUBJECT_TEMPLATES = [
+    'Fundamentos aplicados',
+    'Modelos y conceptos clave',
+    'Herramientas y entorno de trabajo',
+    'Analisis y resolucion de problemas',
+    'Diseno de soluciones',
+    'Buenas practicas profesionales',
+    'Casos reales y toma de decisiones',
+    'Proyecto integrador',
+    'Optimizacion y mejora continua',
+    'Portafolio y evaluacion final',
+];
 
 export class LLMDomainService {
     constructor({
@@ -1415,6 +1427,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             const nextQuestion = this._buildCourseDraftQuestion(nextField, mergedDraft);
             const nextDraft = { ...mergedDraft, lastAskedField: nextField };
             this._rememberCourseDraft(sessionKey, nextDraft);
+
             return Result.ok({
                 response: nextQuestion,
                 respuesta_texto: nextQuestion,
@@ -1471,6 +1484,14 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- Nunca marques el curso como premium. El campo isFree SIEMPRE es true.',
             '- El campo contentDescription en topics y tasks es OBLIGATORIO: describe concretamente qué explicará el documento Word generado para ese tema/tarea.',
             '- Genera un plan completo, coherente y en español. Si faltan detalles, propón una estructura razonable.',
+            '- Si el nivel NO es beginner/basico, el curso debe tener SIEMPRE mas de 2 materias. Nunca entregues solo 1 o 2 materias para nivel intermedio o avanzado.',
+            '- Ajusta el numero total de materias, temas y tareas a la duracion. Un tema normalmente dura 1 a 2 semanas.',
+            '- Regla de escala: temas recomendados = semanas / 2; para cursos profundos puedes acercarte a semanas completas.',
+            '- Regla de tareas: cada tema debe tener lectura, video/recurso, taller o laboratorio, quiz/evaluacion y, cuando aplique, proyecto.',
+            '- Usa 3 tareas por tema en basico, 4 en intermedio y 5 en avanzado.',
+            '- Curso de 16 semanas: 8 a 12 temas y 32 a 60 tareas totales. Curso de 32 semanas: 16 a 24 temas y 64 a 120 tareas totales.',
+            '- Modelo universitario: una materia de 16 semanas suele tener 8 a 10 temas, 25 a 40 tareas, proyecto final, parciales y examen final.',
+            '- Cada tema debe tener varias tareas practicas o evaluables. Distribuye las fechas de entrega a lo largo de la duracion.',
             '- NUNCA digas que no puedes crear cursos. Tu trabajo es SIEMPRE generar el JSON.',
         ].join('\n');
 
@@ -1488,9 +1509,15 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- El area o enfoque opcional ayuda a especializar materias, tareas y ejemplos.',
             '',
             'Cantidad orientativa:',
-            '- 4 semanas: 2 a 4 materias, 3 a 5 temas por materia.',
-            '- 12 semanas: 4 a 8 materias, 5 a 8 temas por materia.',
-            '- 24 semanas: 8 a 12 materias, 6 a 10 temas por materia.',
+            '- Basico: 2 a 4 materias segun duracion.',
+            '- Intermedio o avanzado, 4 a 8 semanas: minimo 3 materias, 4 a 8 temas y 16 a 40 tareas totales.',
+            '- Intermedio o avanzado, 12 semanas: minimo 4 materias, 6 temas y 24 a 30 tareas totales.',
+            '- Intermedio o avanzado, 16 semanas: minimo 5 materias, 8 a 12 temas y 32 a 60 tareas totales.',
+            '- Intermedio o avanzado, 24 semanas: minimo 6 materias, 12 temas y 48 a 60 tareas totales.',
+            '- Intermedio o avanzado, 32 semanas o mas: minimo 8 materias, 16 a 24 temas y 64 a 120 tareas totales.',
+            '- Cada materia debe tener normalmente 4 a 8 temas cuando la duracion lo permita.',
+            '- Cada tema debe tener 3 a 10 tareas, con 4 tareas por tema como base profesional.',
+            '- No infles con relleno: cada materia debe representar una competencia real del objetivo.',
             '',
             'Genera el plan usando estrictamente el brief validado. Incluye en la descripcion el area/enfoque cuando aporte contexto pedagogico.',
         ].join('\n');
@@ -1532,6 +1559,11 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 const partial = this._extractPlanPartial(planContent);
                 if (partial) planContent = partial;
                 // else: send original — frontend will show the friendly error fallback
+            }
+
+            const parsedPlan = this._parseFirstJsonObject(planContent);
+            if (parsedPlan) {
+                planContent = JSON.stringify(this._normalizeGeneratedCoursePlan(parsedPlan, mergedDraft));
             }
 
             return Result.ok({
@@ -1829,6 +1861,215 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         if (/\b(intermedio|intermediate|medio)\b/.test(n)) return 'intermediate';
         if (/\b(avanzado|advanced|experto|profundo|profunda|profundidad|complejo|complejos)\b|buenas practicas/.test(n)) return 'advanced';
         return '';
+    }
+
+    _getCoursePlanTargets({ level, durationWeeks }) {
+        const normalizedLevel = this._normalizeCourseLevel(level) || 'beginner';
+        const duration = Math.max(1, Number(durationWeeks) > 0 ? Math.round(Number(durationWeeks)) : 8);
+        const isBasic = normalizedLevel === 'beginner';
+        const recommendedTopics = Math.max(2, Math.ceil(duration / 2));
+        const deepTopics = Math.max(recommendedTopics, Math.min(duration, Math.ceil(duration * 0.75)));
+        const minTasksPerTopic = isBasic ? 3 : (normalizedLevel === 'advanced' ? 5 : 4);
+
+        if (isBasic) {
+            const minSubjects = duration >= 16 ? 4 : (duration >= 8 ? 3 : 2);
+            const minTopics = Math.max(recommendedTopics, duration >= 16 ? 8 : (duration >= 8 ? 4 : 2));
+            return { minSubjects, minTopics, minTasks: minTopics * minTasksPerTopic, minTasksPerTopic };
+        }
+
+        const minSubjects = duration >= 32 ? 8 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
+        const minTopics = duration >= 32
+            ? Math.max(16, recommendedTopics)
+            : (duration >= 16 ? Math.max(8, recommendedTopics) : Math.max(4, recommendedTopics));
+        const targetTopics = normalizedLevel === 'advanced' ? deepTopics : minTopics;
+        return {
+            minSubjects,
+            minTopics: targetTopics,
+            minTasks: targetTopics * minTasksPerTopic,
+            minTasksPerTopic,
+        };
+    }
+
+    _normalizeGeneratedCoursePlan(rawPlan, draft = {}) {
+        const source = rawPlan && typeof rawPlan === 'object' ? rawPlan : {};
+        const cleanText = (value, fallback = '') => {
+            const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+            return text || fallback;
+        };
+        const level = this._normalizeCourseLevel(source.level || draft.level) || 'beginner';
+        const durationWeeks = Number(source.durationWeeks || draft.durationWeeks) > 0
+            ? Math.round(Number(source.durationWeeks || draft.durationWeeks))
+            : 8;
+        const title = cleanText(source.title, cleanText(draft.topic, 'Curso generado con IA'));
+        const focus = cleanText(draft.area || draft.topic || title, 'la materia');
+        const objective = cleanText(draft.objective || source.description, `desarrollar competencias solidas en ${focus}`);
+        const targets = this._getCoursePlanTargets({ level, durationWeeks });
+
+        const subjects = Array.isArray(source.subjects)
+            ? source.subjects
+                .filter(s => s && typeof s === 'object')
+                .map((subject, subjectIndex) => this._normalizePlanSubject(subject, subjectIndex, { title, focus, objective, durationWeeks }))
+                .filter(s => s.name)
+            : [];
+
+        while (subjects.length < targets.minSubjects) {
+            subjects.push(this._buildSupplementalSubject(subjects.length, { title, focus, objective, durationWeeks }));
+        }
+
+        while (this._countPlanTopics(subjects) < targets.minTopics) {
+            const subject = subjects[this._countPlanTopics(subjects) % subjects.length];
+            subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks }));
+        }
+
+        for (const subject of subjects) {
+            for (const topic of subject.topics) {
+                if (!Array.isArray(topic.tasks)) topic.tasks = [];
+                while (topic.tasks.length < targets.minTasksPerTopic) {
+                    topic.tasks.push(this._buildSupplementalTask(topic, topic.tasks.length, { durationWeeks }));
+                }
+            }
+        }
+
+        while (this._countPlanTasks(subjects) < targets.minTasks) {
+            const flatTopics = subjects.flatMap(subject => subject.topics.map(topic => ({ subject, topic })));
+            const entry = flatTopics[this._countPlanTasks(subjects) % flatTopics.length];
+            entry.topic.tasks.push(this._buildSupplementalTask(entry.topic, entry.topic.tasks.length, { durationWeeks }));
+        }
+        this._redistributePlanDueWeeks(subjects, durationWeeks);
+
+        return {
+            title,
+            description: cleanText(source.description, `Curso de ${focus} orientado a ${objective}. El plan progresa desde fundamentos aplicados hasta proyectos y evaluaciones practicas.`),
+            category: cleanText(source.category, cleanText(draft.area, 'General')),
+            level,
+            durationWeeks,
+            subjects,
+        };
+    }
+
+    _normalizePlanSubject(subject, subjectIndex, context) {
+        const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const normalized = {
+            name: cleanText(subject.name, `${SUPPLEMENTAL_SUBJECT_TEMPLATES[subjectIndex % SUPPLEMENTAL_SUBJECT_TEMPLATES.length]} de ${context.focus}`),
+            description: cleanText(subject.description, `Desarrolla competencias especificas de ${context.focus} alineadas con el objetivo del curso.`),
+            topics: [],
+        };
+        normalized.topics = Array.isArray(subject.topics)
+            ? subject.topics
+                .filter(t => t && typeof t === 'object')
+                .map((topic, topicIndex) => this._normalizePlanTopic(topic, topicIndex, normalized, context))
+                .filter(t => t.title)
+            : [];
+        if (normalized.topics.length === 0) {
+            normalized.topics.push(this._buildSupplementalTopic(normalized, 0, context));
+        }
+        return normalized;
+    }
+
+    _normalizePlanTopic(topic, topicIndex, subject, context) {
+        const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const normalized = {
+            title: cleanText(topic.title, `Tema aplicado ${topicIndex + 1}: ${subject.name}`),
+            description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
+            contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados y criterios de aplicacion sobre ${subject.name}.`),
+            tasks: [],
+        };
+        normalized.tasks = Array.isArray(topic.tasks)
+            ? topic.tasks
+                .filter(t => t && typeof t === 'object')
+                .map((task, taskIndex) => this._normalizePlanTask(task, taskIndex, normalized, context))
+                .filter(t => t.title)
+            : [];
+        return normalized;
+    }
+
+    _normalizePlanTask(task, taskIndex, topic, context) {
+        const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const dueWeek = Number.isInteger(Number(task.dueWeek)) && Number(task.dueWeek) > 0
+            ? Math.min(Number(task.dueWeek), context.durationWeeks)
+            : this._suggestDueWeek(taskIndex, context.durationWeeks);
+        return {
+            title: cleanText(task.title, `Actividad aplicada: ${topic.title}`),
+            description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}.`),
+            dueWeek,
+            contentDescription: cleanText(task.contentDescription, `Guia con instrucciones, criterios de evaluacion, recursos y rubrica para completar la actividad.`),
+        };
+    }
+
+    _buildSupplementalSubject(index, context) {
+        const name = `${SUPPLEMENTAL_SUBJECT_TEMPLATES[index % SUPPLEMENTAL_SUBJECT_TEMPLATES.length]} de ${context.focus}`;
+        return {
+            name,
+            description: `Materia orientada a convertir el objetivo "${context.objective}" en competencias observables y aplicables.`,
+            topics: [this._buildSupplementalTopic({ name }, 0, context)],
+        };
+    }
+
+    _buildSupplementalTopic(subject, index, context) {
+        const topicTitles = [
+            `Conceptos clave de ${subject.name}`,
+            `Aplicacion practica de ${subject.name}`,
+            `Casos de uso y criterios de calidad`,
+            `Taller guiado de ${context.focus}`,
+            `Proyecto aplicado del modulo`,
+        ];
+        const title = topicTitles[index % topicTitles.length];
+        return {
+            title,
+            description: `Tema centrado en aplicar ${subject.name} a problemas reales del curso.`,
+            contentDescription: `Documento de estudio con explicaciones, ejemplos, buenas practicas y una guia de aplicacion para ${title}.`,
+            tasks: [this._buildSupplementalTask({ title }, 0, context)],
+        };
+    }
+
+    _buildSupplementalTask(topic, index, context) {
+        const taskTypes = [
+            'Lectura guiada',
+            'Taller practico',
+            'Quiz de verificacion',
+            'Laboratorio o caso aplicado',
+            'Entrega de proyecto',
+            'Revision de portafolio',
+            'Parcial aplicado',
+            'Examen integrador',
+        ];
+        const taskType = taskTypes[index % taskTypes.length];
+        return {
+            title: `${taskType}: ${topic.title}`,
+            description: `Actividad evaluable donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
+            dueWeek: this._suggestDueWeek(index, context.durationWeeks),
+            contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
+        };
+    }
+
+    _suggestDueWeek(index, durationWeeks) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const step = Math.max(1, Math.floor(duration / 10));
+        return Math.min(duration, Math.max(1, (index + 1) * step));
+    }
+
+    _redistributePlanDueWeeks(subjects, durationWeeks) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const tasks = subjects.flatMap(subject =>
+            (subject.topics || []).flatMap(topic => topic.tasks || []),
+        );
+        if (!tasks.length) return;
+        tasks.forEach((task, index) => {
+            task.dueWeek = Math.min(duration, Math.max(1, Math.ceil(((index + 1) * duration) / tasks.length)));
+        });
+    }
+
+    _countPlanTopics(subjects) {
+        return subjects.reduce((total, subject) => total + (Array.isArray(subject.topics) ? subject.topics.length : 0), 0);
+    }
+
+    _countPlanTasks(subjects) {
+        return subjects.reduce(
+            (total, subject) => total + (Array.isArray(subject.topics)
+                ? subject.topics.reduce((topicTotal, topic) => topicTotal + (Array.isArray(topic.tasks) ? topic.tasks.length : 0), 0)
+                : 0),
+            0,
+        );
     }
 
     _parseFirstJsonObject(raw) {
@@ -2751,6 +2992,7 @@ Responde de forma clara y constructiva.`;
             return Result.fail(new ValidationError('userId es requerido para crear el curso'));
         }
         const sessionKey = this._getCourseDraftSessionKey({ sessionId, userId });
+        plan = this._normalizeGeneratedCoursePlan(plan, this._sanitizeCourseDraft(plan));
 
         try {
             const { MCPService } = await import('./mcp-legacy.service.js');
