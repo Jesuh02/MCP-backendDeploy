@@ -9,6 +9,7 @@
 
 import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
+import { getCurrentTenantId, hasTenantClient, runInTenantContext } from '../../config/tenantRegistry.js';
 
 export class MCPDomainService {
     constructor({
@@ -19,6 +20,8 @@ export class MCPDomainService {
             notificationService,
             llmPort,
             supabaseService,
+            subjectRepository,
+            fileStoragePort,
         }) {
             this.userRepo = userRepository;
             this.courseRepo = courseRepository;
@@ -27,6 +30,8 @@ export class MCPDomainService {
             this.notificationService = notificationService;
             this.llm = llmPort;
             this.supabase = supabaseService || null;
+            this.subjectRepo = subjectRepository || null;
+            this.storage = fileStoragePort || null;
         }
         /**
          * Obtiene el schema de la base de datos.
@@ -154,6 +159,7 @@ export class MCPDomainService {
 
             let topicsCreated = 0;
             let tasksCreated = 0;
+            const subjectsForThumbnails = [];
 
             for (const subject of plan.subjects) {
                 const subjectRow = await execInsert(
@@ -163,6 +169,11 @@ export class MCPDomainService {
                 );
                 const subjectId = subjectRow?.id;
                 if (!subjectId) continue;
+                subjectsForThumbnails.push({
+                    subjectId,
+                    name: subject.name,
+                    description: subject.description || '',
+                });
 
                 for (const topic of (subject.topics || [])) {
                     const topicRow = await execInsert(
@@ -188,17 +199,134 @@ export class MCPDomainService {
                 }
             }
 
-            return Result.ok({ courseId, topicsCreated, tasksCreated });
+            this._generateSubjectThumbnailsInBackground({
+                courseId,
+                courseTitle: plan.title,
+                category: plan.category || 'General',
+                subjects: subjectsForThumbnails,
+            });
+
+            return Result.ok({
+                courseId,
+                topicsCreated,
+                tasksCreated,
+                thumbnailsInProgress: Boolean(this.storage && this.storage.isAvailable && this.storage.isAvailable()),
+            });
         } catch (err) {
             return Result.fail(new ValidationError(`createCourseStructure falló: ${err.message}`));
         }
     }
 
-    /**
-     * Envía notificación vía MCP.
-     * @param {{ userId: number, title: string, message: string, type?: string }} params
-     * @returns {Promise<Result>}
-     */
+    /** Genera miniaturas IA para materias sin bloquear la creacion del curso. */
+    _generateSubjectThumbnailsInBackground({ courseId, courseTitle, category, subjects }) {
+        if (!Array.isArray(subjects) || subjects.length === 0) return;
+        if (!this.storage || typeof this.storage.isAvailable !== 'function' || !this.storage.isAvailable()) return;
+        if (!this.subjectRepo || typeof this.subjectRepo.update !== 'function') return;
+
+        const bgTenantId = getCurrentTenantId();
+        const runBackground = async () => {
+            for (const subject of subjects) {
+                try {
+                    const { buffer, contentType, ext } = await this._generateThumbnailImage(
+                        `${subject.name}, ${courseTitle}, ${category}, ${subject.description || 'materia academica educativa'}`,
+                    );
+                    const key = `courses/${courseId}/subjects/${subject.subjectId}/thumbnail_${Date.now()}.${ext}`;
+                    const thumbnailUrl = await this.storage.uploadFile(buffer, key, contentType, buffer.length);
+                    await this.subjectRepo.update(subject.subjectId, { thumbnailUrl });
+                    console.log(`[MCPDomainService] Subject thumbnail uploaded: subjectId=${subject.subjectId}`);
+                } catch (err) {
+                    console.error(`[MCPDomainService] Subject thumbnail failed id=${subject.subjectId}: ${err.message}`);
+                }
+            }
+        };
+
+        setImmediate(() => {
+            const job = (bgTenantId && hasTenantClient(bgTenantId))
+                ? runInTenantContext(bgTenantId, runBackground)
+                : runBackground();
+            Promise.resolve(job).catch(err =>
+                console.error(`[MCPDomainService] Subject thumbnail background job failed: ${err?.message || err}`));
+        });
+    }
+
+    async _generateThumbnailImage(description) {
+        const apiKey = process.env.OPENROUTER_API_KEY;
+        if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured for image generation');
+
+        const imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
+        const prompt = [
+            `Professional, photorealistic educational subject thumbnail: ${String(description || '').slice(0, 240)}.`,
+            'Realistic academic setting, relevant objects for the subject, natural light, high detail,',
+            'clean 16:9 composition, no text overlays, no logos, no watermarks.',
+        ].join(' ');
+
+        const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': process.env.OPENROUTER_REFERER || process.env.SITE_URL || 'https://coursev.app',
+                'X-Title': 'CourseV',
+            },
+            body: JSON.stringify({
+                model: imageModel,
+                modalities: ['image', 'text'],
+                messages: [{ role: 'user', content: prompt }],
+            }),
+            signal: AbortSignal.timeout(90_000),
+        });
+        if (!resp.ok) {
+            const msg = await resp.text().catch(() => '');
+            throw new Error(`OpenRouter image API ${resp.status}: ${msg.slice(0, 300)}`);
+        }
+
+        const json = await resp.json();
+        const imageRef = this._extractImageRef(json?.choices?.[0]?.message);
+        if (!imageRef) throw new Error(`OpenRouter image generation returned no image for model ${imageModel}`);
+        return this._imageRefToBuffer(imageRef);
+    }
+
+    _extractImageRef(message) {
+        const fromImages = message?.images?.[0]?.image_url?.url;
+        if (fromImages) return fromImages;
+
+        if (Array.isArray(message?.content)) {
+            for (const block of message.content) {
+                if ((block?.type === 'image_url' || block?.type === 'output_image') && block.image_url?.url) return block.image_url.url;
+                if (block?.type === 'image' && block.source?.type === 'base64' && block.source?.data) {
+                    return `data:${block.source.media_type || 'image/png'};base64,${block.source.data}`;
+                }
+                if (block?.type === 'image' && block.source?.url) return block.source.url;
+                if (block?.inlineData?.data) return `data:${block.inlineData.mimeType || 'image/png'};base64,${block.inlineData.data}`;
+                if (block?.data && block?.mimeType) return `data:${block.mimeType};base64,${block.data}`;
+            }
+        }
+
+        if (typeof message?.content === 'string') {
+            const mdImg = message.content.match(/!\[.*?\]\((data:image\/[^)]+)\)/);
+            if (mdImg) return mdImg[1];
+            const dataUri = message.content.match(/(data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{20,})/);
+            if (dataUri) return dataUri[1];
+        }
+
+        return '';
+    }
+
+    async _imageRefToBuffer(ref) {
+        const dataMatch = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(ref);
+        if (dataMatch) {
+            const contentType = dataMatch[1].toLowerCase();
+            const ext = (contentType.split('/')[1] || 'png').replace('jpeg', 'jpg');
+            return { buffer: Buffer.from(dataMatch[2], 'base64'), contentType, ext };
+        }
+
+        const imgResp = await fetch(ref, { signal: AbortSignal.timeout(30_000) });
+        if (!imgResp.ok) throw new Error(`Image download failed: ${imgResp.status}`);
+        const contentType = (imgResp.headers.get('content-type') || 'image/png').split(';')[0].toLowerCase();
+        const ext = (contentType.split('/')[1] || 'png').replace('jpeg', 'jpg');
+        return { buffer: Buffer.from(await imgResp.arrayBuffer()), contentType, ext };
+    }
+
     async sendNotification({ userId, title, message, type }) {
         if (!userId || !title || !message) {
             return Result.fail(new ValidationError('userId, title y message son requeridos'));

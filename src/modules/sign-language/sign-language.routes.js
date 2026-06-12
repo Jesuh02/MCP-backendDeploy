@@ -390,6 +390,7 @@ export function signLanguageRoutes() {
      *   stillDurationMs?: number,       // default 1000
      *   allowVlmLetterFallback?: boolean, // default true (números / letras raras)
      *   capturedAtMs?: number,          // Date.now() del frame en el navegador
+     *   frameSeq?: number,              // contador monotónico para descartar frames tardíos
      *   context?: string,
      *   model?: string,
      *   debug?: boolean,
@@ -428,6 +429,7 @@ export function signLanguageRoutes() {
                 minPhraseConfidence: Number(req.body?.minPhraseConfidence),
                 stillDurationMs: Number(req.body?.stillDurationMs),
                 capturedAtMs: Number(req.body?.capturedAtMs),
+                frameSeq: Number(req.body?.frameSeq),
                 allowVlmLetterFallback: req.body?.allowVlmLetterFallback !== false,
                 debug: Boolean(req.body?.debug),
             });
