@@ -46,26 +46,26 @@ import { recognizeSignClip } from './sign-language-vlm.js';
 /** Movimiento por píxel a partir del cual el frame es "claramente en movimiento". */
 const MOTION_HIGH = 0.030;
 /** Movimiento por píxel por debajo del cual el frame es "claramente quieto". */
-const MOTION_LOW = 0.015;
+const MOTION_LOW = 0.010;
 /** Tiempo en estado `still` antes de disparar reconocimiento de letra (~1 s). */
 const STILL_DURATION_MS = 1000;
 /** Pausa requerida tras dejar de moverse para considerar el gesto terminado. */
 const SETTLE_AFTER_MOTION_MS = 350;
 /** Duración mínima del movimiento para considerarlo una palabra/frase. */
 const MIN_MOTION_DURATION_MS = 500;
-const MAX_MOTION_DURATION_MS = 3500;
+const MAX_MOTION_DURATION_MS = 4500;
 /** Pico mínimo de motion durante el movimiento para considerarlo un gesto real
  *  (no un simple reposicionamiento de la mano entre letras). */
-const MOTION_PEAK_FOR_PHRASE = 0.060;
+const MOTION_PEAK_FOR_PHRASE = 0.030;
 /** Tiempo mínimo entre dos emisiones consecutivas de letra. */
 const MIN_GAP_BETWEEN_LETTERS_MS = 1000;
 /** Tiempo mínimo entre dos emisiones consecutivas de frase. */
 const MIN_GAP_BETWEEN_PHRASES_MS = 1500;
 const MIN_REPEAT_SAME_PHRASE_MS = 4000;
 /** Tamaño máximo del buffer de frames por sesión. */
-const FRAME_BUFFER_MAX = 24;
+const FRAME_BUFFER_MAX = 60;
 /** Edad máxima de un frame en el buffer (ms). */
-const FRAME_BUFFER_MAX_AGE_MS = 3500;
+const FRAME_BUFFER_MAX_AGE_MS = 6000;
 /** Confianza mínima del clasificador ONNX para aceptar una letra. */
 const MIN_LETTER_CONFIDENCE = 0.55;
 /** Si ONNX devuelve < este valor consideramos pedir al VLM (números / letras raras). */
@@ -89,6 +89,7 @@ const SESSION_TTL_MS = 5 * 60 * 1000;
  * @property {number} motionPeak                - pico de movimiento durante el periodo actual
  * @property {Array<{at: number, buffer: Buffer}>} frames
  * @property {boolean} inflight
+ * @property {number} lastFrameAt
  * @property {number} lastLetterEmitAt
  * @property {string|null} lastLetterLabel
  * @property {number} lastPhraseEmitAt
@@ -128,6 +129,7 @@ function getOrCreateState(id) {
             motionPeak: 0,
             frames: [],
             inflight: false,
+            lastFrameAt: 0,
             lastLetterEmitAt: 0,
             lastLetterLabel: null,
             lastPhraseEmitAt: 0,
@@ -232,8 +234,7 @@ function shouldUseStaticVlm(candidate, state, now) {
 function buildCaptureMeta(state, now, motion) {
     const stillMs = state.stableSince == null ? 0 : Math.max(0, now - state.stableSince);
     const motionMs = state.motionStartAt == null ? 0 : Math.max(0, now - state.motionStartAt);
-    const mode =
-        state.inflight ? 'processing' :
+    const physicalMode =
         state.state === 'moving' && motionMs >= MAX_MOTION_DURATION_MS ? 'sentence' :
         state.state === 'moving' ? 'moving' :
         state.state === 'settling' ? 'settling' :
@@ -241,7 +242,7 @@ function buildCaptureMeta(state, now, motion) {
         'idle';
 
     return {
-        mode,
+        mode: state.inflight && physicalMode === 'idle' ? 'processing' : physicalMode,
         stillMs,
         motionMs,
         motionPeak: state.motionPeak,
@@ -263,6 +264,7 @@ function buildCaptureMeta(state, now, motion) {
  * @param {number} [opts.minLetterConfidence]  - override de MIN_LETTER_CONFIDENCE
  * @param {number} [opts.minPhraseConfidence]  - override de VLM_MIN_CONFIDENCE
  * @param {number} [opts.stillDurationMs]      - override de STILL_DURATION_MS
+ * @param {number} [opts.capturedAtMs]         - timestamp epoch ms del frame en la camara
  * @param {boolean} [opts.allowVlmLetterFallback=true] - si ONNX duda, usar VLM
  * @param {boolean} [opts.debug=false]
  */
@@ -274,8 +276,30 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
     }
 
     const state = getOrCreateState(safeId);
-    const now = Date.now();
-    state.lastTouchedAt = now;
+    const receivedAt = Date.now();
+    const capturedAt = Number(opts.capturedAtMs);
+    const now = Number.isFinite(capturedAt) && capturedAt > 0
+        ? Math.max(capturedAt, state.lastFrameAt + 1)
+        : receivedAt;
+    state.lastTouchedAt = receivedAt;
+
+    if (state.lastFrameAt && capturedAt > 0 && capturedAt <= state.lastFrameAt) {
+        const { draft, eventCount } = getSessionDraft(safeId);
+        return {
+            event: null,
+            pushed: false,
+            motion: state.lastMotion,
+            state: state.state,
+            draft,
+            eventCount,
+            capture: buildCaptureMeta(state, state.lastFrameAt, state.lastMotion),
+            warning: {
+                code: 'STALE_FRAME',
+                message: 'Frame recibido fuera de orden; se ignoro para conservar el tracking temporal.',
+            },
+        };
+    }
+    state.lastFrameAt = now;
 
     // 1) Motion tracking (siempre, incluso si hay inferencia en vuelo).
     let thumb = null;
@@ -521,8 +545,9 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
             state.inflight = false;
         }
 
-        // Reinicia stableSince para que pasen otros STILL_DURATION_MS antes de reintentar.
-        state.stableSince = now;
+        // Reinicia stableSince solo si no llegaron frames mas nuevos mientras
+        // ONNX/VLM estaba trabajando.
+        if (state.lastFrameAt <= now) state.stableSince = now;
     }
 
     const { draft, eventCount } = getSessionDraft(safeId);
@@ -546,6 +571,7 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                 lastLetterLabel: state.lastLetterLabel,
                 lastPhraseKey: state.lastPhraseKey,
                 lastStaticVlmAt: state.lastStaticVlmAt,
+                lastFrameAt: state.lastFrameAt,
                 inflight: state.inflight,
             },
         } : {}),
