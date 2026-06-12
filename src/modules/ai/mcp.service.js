@@ -11,6 +11,19 @@ import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
 import { getCurrentTenantId, hasTenantClient, runInTenantContext } from '../../config/tenantRegistry.js';
 
+const MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES = [
+    'Fundamentos aplicados',
+    'Modelos y conceptos clave',
+    'Herramientas y entorno de trabajo',
+    'Analisis y resolucion de problemas',
+    'Diseno de soluciones',
+    'Buenas practicas profesionales',
+    'Casos reales y toma de decisiones',
+    'Proyecto integrador',
+    'Optimizacion y mejora continua',
+    'Portafolio y evaluacion final',
+];
+
 export class MCPDomainService {
     constructor({
             userRepository,
@@ -72,6 +85,229 @@ export class MCPDomainService {
 
     /**
      * Obtiene información de un usuario.
+     * Normalizes course plans before persistence so direct MCP tool calls create professional structures.
+     */
+    _normalizeCourseLevel(value) {
+        const n = String(value || '')
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase().replace(/\s+/g, ' ').trim();
+        if (!n) return '';
+        if (/\b(principiante|basico|basic|beginner|inicial)\b/.test(n)) return 'beginner';
+        if (/\b(intermedio|intermediate|medio)\b/.test(n)) return 'intermediate';
+        if (/\b(avanzado|advanced|experto|profundo|profunda|profundidad|complejo|complejos)\b|buenas practicas/.test(n)) return 'advanced';
+        return '';
+    }
+
+    _getCoursePlanTargets({ level, durationWeeks }) {
+        const normalizedLevel = this._normalizeCourseLevel(level) || 'beginner';
+        const duration = Math.max(1, Number(durationWeeks) > 0 ? Math.round(Number(durationWeeks)) : 8);
+        const isBasic = normalizedLevel === 'beginner';
+        const recommendedTopics = Math.max(2, Math.ceil(duration / 2));
+        const deepTopics = Math.max(recommendedTopics, Math.min(duration, Math.ceil(duration * 0.75)));
+        const minTasksPerTopic = isBasic ? 3 : (normalizedLevel === 'advanced' ? 5 : 4);
+
+        if (isBasic) {
+            const minSubjects = duration >= 16 ? 4 : (duration >= 8 ? 3 : 2);
+            const minTopics = Math.max(recommendedTopics, duration >= 16 ? 8 : (duration >= 8 ? 4 : 2));
+            return { minSubjects, minTopics, minTasks: minTopics * minTasksPerTopic, minTasksPerTopic };
+        }
+
+        const minSubjects = duration >= 32 ? 8 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
+        const minTopics = duration >= 32
+            ? Math.max(16, recommendedTopics)
+            : (duration >= 16 ? Math.max(8, recommendedTopics) : Math.max(4, recommendedTopics));
+        const targetTopics = normalizedLevel === 'advanced' ? deepTopics : minTopics;
+        return {
+            minSubjects,
+            minTopics: targetTopics,
+            minTasks: targetTopics * minTasksPerTopic,
+            minTasksPerTopic,
+        };
+    }
+
+    _normalizeGeneratedCoursePlan(rawPlan) {
+        const source = rawPlan && typeof rawPlan === 'object' ? rawPlan : {};
+        const cleanText = (value, fallback = '') => {
+            const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+            return text || fallback;
+        };
+        const level = this._normalizeCourseLevel(source.level) || 'beginner';
+        const durationWeeks = Number(source.durationWeeks) > 0 ? Math.round(Number(source.durationWeeks)) : 8;
+        const title = cleanText(source.title, 'Curso generado con IA');
+        const focus = cleanText(source.category || title, title);
+        const objective = cleanText(source.description, `desarrollar competencias solidas en ${focus}`);
+        const targets = this._getCoursePlanTargets({ level, durationWeeks });
+
+        const subjects = Array.isArray(source.subjects)
+            ? source.subjects
+                .filter(s => s && typeof s === 'object')
+                .map((subject, subjectIndex) => this._normalizePlanSubject(subject, subjectIndex, { focus, objective, durationWeeks }))
+                .filter(s => s.name)
+            : [];
+
+        while (subjects.length < targets.minSubjects) {
+            subjects.push(this._buildSupplementalSubject(subjects.length, { focus, objective, durationWeeks }));
+        }
+
+        while (this._countPlanTopics(subjects) < targets.minTopics) {
+            const subject = subjects[this._countPlanTopics(subjects) % subjects.length];
+            subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks }));
+        }
+
+        for (const subject of subjects) {
+            for (const topic of subject.topics) {
+                if (!Array.isArray(topic.tasks)) topic.tasks = [];
+                while (topic.tasks.length < targets.minTasksPerTopic) {
+                    topic.tasks.push(this._buildSupplementalTask(topic, topic.tasks.length, { durationWeeks }));
+                }
+            }
+        }
+
+        while (this._countPlanTasks(subjects) < targets.minTasks) {
+            const flatTopics = subjects.flatMap(subject => subject.topics.map(topic => ({ subject, topic })));
+            const entry = flatTopics[this._countPlanTasks(subjects) % flatTopics.length];
+            entry.topic.tasks.push(this._buildSupplementalTask(entry.topic, entry.topic.tasks.length, { durationWeeks }));
+        }
+        this._redistributePlanDueWeeks(subjects, durationWeeks);
+
+        return {
+            ...source,
+            title,
+            description: cleanText(source.description, `Curso de ${focus} orientado a ${objective}.`),
+            category: cleanText(source.category, 'General'),
+            level,
+            durationWeeks,
+            subjects,
+        };
+    }
+
+    _normalizePlanSubject(subject, subjectIndex, context) {
+        const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const normalized = {
+            name: cleanText(subject.name, `${MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES[subjectIndex % MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES.length]} de ${context.focus}`),
+            description: cleanText(subject.description, `Desarrolla competencias especificas de ${context.focus} alineadas con el objetivo del curso.`),
+            topics: [],
+        };
+        normalized.topics = Array.isArray(subject.topics)
+            ? subject.topics
+                .filter(t => t && typeof t === 'object')
+                .map((topic, topicIndex) => this._normalizePlanTopic(topic, topicIndex, normalized, context))
+                .filter(t => t.title)
+            : [];
+        if (normalized.topics.length === 0) {
+            normalized.topics.push(this._buildSupplementalTopic(normalized, 0, context));
+        }
+        return normalized;
+    }
+
+    _normalizePlanTopic(topic, topicIndex, subject, context) {
+        const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const normalized = {
+            title: cleanText(topic.title, `Tema aplicado ${topicIndex + 1}: ${subject.name}`),
+            description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
+            contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados y criterios de aplicacion sobre ${subject.name}.`),
+            tasks: [],
+        };
+        normalized.tasks = Array.isArray(topic.tasks)
+            ? topic.tasks
+                .filter(t => t && typeof t === 'object')
+                .map((task, taskIndex) => this._normalizePlanTask(task, taskIndex, normalized, context))
+                .filter(t => t.title)
+            : [];
+        return normalized;
+    }
+
+    _normalizePlanTask(task, taskIndex, topic, context) {
+        const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const dueWeek = Number.isInteger(Number(task.dueWeek)) && Number(task.dueWeek) > 0
+            ? Math.min(Number(task.dueWeek), context.durationWeeks)
+            : this._suggestDueWeek(taskIndex, context.durationWeeks);
+        return {
+            title: cleanText(task.title, `Actividad aplicada: ${topic.title}`),
+            description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}.`),
+            dueWeek,
+            contentDescription: cleanText(task.contentDescription, 'Guia con instrucciones, criterios de evaluacion, recursos y rubrica para completar la actividad.'),
+        };
+    }
+
+    _buildSupplementalSubject(index, context) {
+        const name = `${MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES[index % MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES.length]} de ${context.focus}`;
+        return {
+            name,
+            description: `Materia orientada a convertir el objetivo "${context.objective}" en competencias observables y aplicables.`,
+            topics: [this._buildSupplementalTopic({ name }, 0, context)],
+        };
+    }
+
+    _buildSupplementalTopic(subject, index, context) {
+        const topicTitles = [
+            `Conceptos clave de ${subject.name}`,
+            `Aplicacion practica de ${subject.name}`,
+            `Casos de uso y criterios de calidad`,
+            `Taller guiado de ${context.focus}`,
+            `Proyecto aplicado del modulo`,
+        ];
+        const title = topicTitles[index % topicTitles.length];
+        return {
+            title,
+            description: `Tema centrado en aplicar ${subject.name} a problemas reales del curso.`,
+            contentDescription: `Documento de estudio con explicaciones, ejemplos, buenas practicas y una guia de aplicacion para ${title}.`,
+            tasks: [this._buildSupplementalTask({ title }, 0, context)],
+        };
+    }
+
+    _buildSupplementalTask(topic, index, context) {
+        const taskTypes = [
+            'Lectura guiada',
+            'Taller practico',
+            'Quiz de verificacion',
+            'Laboratorio o caso aplicado',
+            'Entrega de proyecto',
+            'Revision de portafolio',
+            'Parcial aplicado',
+            'Examen integrador',
+        ];
+        const taskType = taskTypes[index % taskTypes.length];
+        return {
+            title: `${taskType}: ${topic.title}`,
+            description: `Actividad evaluable donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
+            dueWeek: this._suggestDueWeek(index, context.durationWeeks),
+            contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
+        };
+    }
+
+    _suggestDueWeek(index, durationWeeks) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const step = Math.max(1, Math.floor(duration / 10));
+        return Math.min(duration, Math.max(1, (index + 1) * step));
+    }
+
+    _redistributePlanDueWeeks(subjects, durationWeeks) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const tasks = subjects.flatMap(subject =>
+            (subject.topics || []).flatMap(topic => topic.tasks || []),
+        );
+        if (!tasks.length) return;
+        tasks.forEach((task, index) => {
+            task.dueWeek = Math.min(duration, Math.max(1, Math.ceil(((index + 1) * duration) / tasks.length)));
+        });
+    }
+
+    _countPlanTopics(subjects) {
+        return subjects.reduce((total, subject) => total + (Array.isArray(subject.topics) ? subject.topics.length : 0), 0);
+    }
+
+    _countPlanTasks(subjects) {
+        return subjects.reduce(
+            (total, subject) => total + (Array.isArray(subject.topics)
+                ? subject.topics.reduce((topicTotal, topic) => topicTotal + (Array.isArray(topic.tasks) ? topic.tasks.length : 0), 0)
+                : 0),
+            0,
+        );
+    }
+
+    /**
+     * Obtiene informacion de un usuario.
      * @param {{ userId?: number, username?: string }} params
      * @returns {Promise<Result>}
      */
@@ -142,6 +378,7 @@ export class MCPDomainService {
             return Result.fail(new ValidationError('supabaseService no disponible para crear el curso'));
         }
 
+        plan = this._normalizeGeneratedCoursePlan(plan);
         const esc = (s) => String(s == null ? '' : s).replace(/'/g, "''");
         const execInsert = async (sql) => {
             const data = await this.supabase.executeRawSQL(sql);

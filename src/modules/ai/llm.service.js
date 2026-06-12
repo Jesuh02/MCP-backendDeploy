@@ -1485,8 +1485,13 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- El campo contentDescription en topics y tasks es OBLIGATORIO: describe concretamente qué explicará el documento Word generado para ese tema/tarea.',
             '- Genera un plan completo, coherente y en español. Si faltan detalles, propón una estructura razonable.',
             '- Si el nivel NO es beginner/basico, el curso debe tener SIEMPRE mas de 2 materias. Nunca entregues solo 1 o 2 materias para nivel intermedio o avanzado.',
-            '- Ajusta el numero total de materias, temas y tareas a la duracion. Un curso de 32 semanas debe tener al menos 8 materias, 10 temas totales y 10 tareas totales, distribuidos de forma profesional.',
-            '- Cada tema debe tener al menos una tarea practica o evaluable. Distribuye las fechas de entrega a lo largo de la duracion.',
+            '- Ajusta el numero total de materias, temas y tareas a la duracion. Un tema normalmente dura 1 a 2 semanas.',
+            '- Regla de escala: temas recomendados = semanas / 2; para cursos profundos puedes acercarte a semanas completas.',
+            '- Regla de tareas: cada tema debe tener lectura, video/recurso, taller o laboratorio, quiz/evaluacion y, cuando aplique, proyecto.',
+            '- Usa 3 tareas por tema en basico, 4 en intermedio y 5 en avanzado.',
+            '- Curso de 16 semanas: 8 a 12 temas y 32 a 60 tareas totales. Curso de 32 semanas: 16 a 24 temas y 64 a 120 tareas totales.',
+            '- Modelo universitario: una materia de 16 semanas suele tener 8 a 10 temas, 25 a 40 tareas, proyecto final, parciales y examen final.',
+            '- Cada tema debe tener varias tareas practicas o evaluables. Distribuye las fechas de entrega a lo largo de la duracion.',
             '- NUNCA digas que no puedes crear cursos. Tu trabajo es SIEMPRE generar el JSON.',
         ].join('\n');
 
@@ -1505,10 +1510,13 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '',
             'Cantidad orientativa:',
             '- Basico: 2 a 4 materias segun duracion.',
-            '- Intermedio o avanzado, 4 a 8 semanas: minimo 3 materias, 4 temas totales y 4 tareas totales.',
-            '- Intermedio o avanzado, 12 semanas: minimo 4 materias, 6 temas totales y 6 tareas totales.',
-            '- Intermedio o avanzado, 24 semanas: minimo 6 materias, 8 temas totales y 8 tareas totales.',
-            '- Intermedio o avanzado, 32 semanas o mas: minimo 8 materias, 10 temas totales y 10 tareas totales.',
+            '- Intermedio o avanzado, 4 a 8 semanas: minimo 3 materias, 4 a 8 temas y 16 a 40 tareas totales.',
+            '- Intermedio o avanzado, 12 semanas: minimo 4 materias, 6 temas y 24 a 30 tareas totales.',
+            '- Intermedio o avanzado, 16 semanas: minimo 5 materias, 8 a 12 temas y 32 a 60 tareas totales.',
+            '- Intermedio o avanzado, 24 semanas: minimo 6 materias, 12 temas y 48 a 60 tareas totales.',
+            '- Intermedio o avanzado, 32 semanas o mas: minimo 8 materias, 16 a 24 temas y 64 a 120 tareas totales.',
+            '- Cada materia debe tener normalmente 4 a 8 temas cuando la duracion lo permita.',
+            '- Cada tema debe tener 3 a 10 tareas, con 4 tareas por tema como base profesional.',
             '- No infles con relleno: cada materia debe representar una competencia real del objetivo.',
             '',
             'Genera el plan usando estrictamente el brief validado. Incluye en la descripcion el area/enfoque cuando aporte contexto pedagogico.',
@@ -1857,19 +1865,29 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
 
     _getCoursePlanTargets({ level, durationWeeks }) {
         const normalizedLevel = this._normalizeCourseLevel(level) || 'beginner';
-        const duration = Number(durationWeeks) > 0 ? Number(durationWeeks) : 8;
+        const duration = Math.max(1, Number(durationWeeks) > 0 ? Math.round(Number(durationWeeks)) : 8);
         const isBasic = normalizedLevel === 'beginner';
+        const recommendedTopics = Math.max(2, Math.ceil(duration / 2));
+        const deepTopics = Math.max(recommendedTopics, Math.min(duration, Math.ceil(duration * 0.75)));
+        const minTasksPerTopic = isBasic ? 3 : (normalizedLevel === 'advanced' ? 5 : 4);
 
         if (isBasic) {
-            if (duration >= 16) return { minSubjects: 4, minTopics: 6, minTasks: 6 };
-            if (duration >= 8) return { minSubjects: 3, minTopics: 4, minTasks: 4 };
-            return { minSubjects: 2, minTopics: 3, minTasks: 3 };
+            const minSubjects = duration >= 16 ? 4 : (duration >= 8 ? 3 : 2);
+            const minTopics = Math.max(recommendedTopics, duration >= 16 ? 8 : (duration >= 8 ? 4 : 2));
+            return { minSubjects, minTopics, minTasks: minTopics * minTasksPerTopic, minTasksPerTopic };
         }
 
-        if (duration >= 32) return { minSubjects: 8, minTopics: 10, minTasks: 10 };
-        if (duration >= 24) return { minSubjects: 6, minTopics: 8, minTasks: 8 };
-        if (duration >= 12) return { minSubjects: 4, minTopics: 6, minTasks: 6 };
-        return { minSubjects: 3, minTopics: 4, minTasks: 4 };
+        const minSubjects = duration >= 32 ? 8 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
+        const minTopics = duration >= 32
+            ? Math.max(16, recommendedTopics)
+            : (duration >= 16 ? Math.max(8, recommendedTopics) : Math.max(4, recommendedTopics));
+        const targetTopics = normalizedLevel === 'advanced' ? deepTopics : minTopics;
+        return {
+            minSubjects,
+            minTopics: targetTopics,
+            minTasks: targetTopics * minTasksPerTopic,
+            minTasksPerTopic,
+        };
     }
 
     _normalizeGeneratedCoursePlan(rawPlan, draft = {}) {
@@ -1906,7 +1924,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         for (const subject of subjects) {
             for (const topic of subject.topics) {
                 if (!Array.isArray(topic.tasks)) topic.tasks = [];
-                if (topic.tasks.length === 0) {
+                while (topic.tasks.length < targets.minTasksPerTopic) {
                     topic.tasks.push(this._buildSupplementalTask(topic, topic.tasks.length, { durationWeeks }));
                 }
             }
@@ -2005,11 +2023,22 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     }
 
     _buildSupplementalTask(topic, index, context) {
+        const taskTypes = [
+            'Lectura guiada',
+            'Taller practico',
+            'Quiz de verificacion',
+            'Laboratorio o caso aplicado',
+            'Entrega de proyecto',
+            'Revision de portafolio',
+            'Parcial aplicado',
+            'Examen integrador',
+        ];
+        const taskType = taskTypes[index % taskTypes.length];
         return {
-            title: index === 0 ? `Entrega practica: ${topic.title}` : `Revision aplicada ${index + 1}: ${topic.title}`,
-            description: `Actividad evaluable donde el estudiante demuestra dominio practico de ${topic.title}.`,
+            title: `${taskType}: ${topic.title}`,
+            description: `Actividad evaluable donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
             dueWeek: this._suggestDueWeek(index, context.durationWeeks),
-            contentDescription: 'Guia de trabajo con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.',
+            contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
         };
     }
 
