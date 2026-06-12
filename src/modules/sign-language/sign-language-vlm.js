@@ -30,6 +30,7 @@
  */
 
 import axios from 'axios';
+import { computeThumbnail, motionScore } from './motion-detector.js';
 
 // Fix: orden de modelos por VELOCIDAD primero.
 // gemini-2.0-flash-001 ~2-3 s con visión (logs mostraban 6-10 s con 2.5-flash).
@@ -44,6 +45,15 @@ const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 1500
 // espaciados se obtiene cobertura temporal equivalente con ~30% menos coste.
 const MAX_FRAMES = 10;
 const MIN_FRAMES = 1;
+const STREAM_DEFAULT_FRAME_INTERVAL_MS = 250;
+const STREAM_MOTION_HIGH = 0.030;
+const STREAM_MOTION_LOW = 0.015;
+const STREAM_SETTLE_MS = 350;
+const STREAM_MIN_MOTION_MS = 450;
+const STREAM_MIN_STATIC_MS = 900;
+const STREAM_PRE_ROLL_MS = 200;
+const STREAM_POST_ROLL_MS = 200;
+const STREAM_MAX_SEGMENT_FRAMES = 16;
 
 const LSC_REFERENCE_PROMPT = [
     'OBJETIVO PRINCIPAL: Lengua de Señas Colombiana (LSC), español de Colombia.',
@@ -641,29 +651,97 @@ function applyLscSanityChecks(rec) {
 }
 
 /**
- * Reconoce una conversación larga segmentando un stream de frames en
- * clips independientes y llamando al VLM por cada uno. La segmentación
- * puede venir explícita (segments=[{start,end}]) o se hace por ventana
- * deslizante (windowSize, stride).
- *
- * Llamadas concurrentes acotadas por `concurrency` para no saturar el
- * proveedor. Las recogniciones consecutivas idénticas se colapsan.
- *
- * @param {Array<Buffer|string>} frames
- * @param {{
- *   segments?: Array<{ start: number, end: number }>,
- *   windowSize?: number,
- *   stride?: number,
- *   concurrency?: number,
- *   minConfidence?: number,
- *   context?: string,
- *   model?: string,
- *   timeoutMs?: number,
- * }} [opts]
- * @returns {Promise<{
- *   segments: Array<{ start: number, end: number, recognition: object|null }>,
- *   transcript: string,
- * }>}
+ * Segmenta un stream de frames en unidades comunicativas antes de llamar al
+ * VLM: movimiento sostenido produce clips dinamicos; quietud prolongada
+ * produce candidatos estaticos para letras o numeros.
+ */
+export async function segmentSignFrames(frames, opts = {}) {
+    if (!Array.isArray(frames) || frames.length === 0) {
+        throw Object.assign(new Error('Se requiere al menos un frame.'), {
+            code: 'EMPTY_STREAM', statusCode: 400,
+        });
+    }
+
+    const timestampsMs = normalizeTimestamps(
+        opts.timestampsMs,
+        frames.length,
+        Number(opts.frameIntervalMs) || STREAM_DEFAULT_FRAME_INTERVAL_MS,
+    );
+    const high = Number.isFinite(opts.motionHigh) ? opts.motionHigh : STREAM_MOTION_HIGH;
+    const low = Number.isFinite(opts.motionLow) ? opts.motionLow : STREAM_MOTION_LOW;
+    const settleMs = Number.isFinite(opts.settleMs) ? opts.settleMs : STREAM_SETTLE_MS;
+    const minMotionMs = Number.isFinite(opts.minMotionMs) ? opts.minMotionMs : STREAM_MIN_MOTION_MS;
+    const minStaticMs = Number.isFinite(opts.minStaticMs) ? opts.minStaticMs : STREAM_MIN_STATIC_MS;
+    const includeStatic = opts.includeStatic !== false;
+    const motions = await computeStreamMotion(frames);
+    const segments = [];
+
+    let moving = false;
+    let motionStart = 0;
+    let lastMoving = 0;
+    let motionPeak = 0;
+
+    for (let i = 1; i < frames.length; i++) {
+        const motion = motions[i] || 0;
+        if (motion >= high) {
+            if (!moving) {
+                moving = true;
+                motionStart = Math.max(0, i - 1);
+                motionPeak = motion;
+            } else {
+                motionPeak = Math.max(motionPeak, motion);
+            }
+            lastMoving = i;
+            continue;
+        }
+
+        if (!moving) continue;
+        motionPeak = Math.max(motionPeak, motion);
+        const quietMs = timestampsMs[i] - timestampsMs[lastMoving];
+        if (motion <= low && quietMs >= settleMs) {
+            maybePushMotionSegment(segments, {
+                framesLength: frames.length,
+                timestampsMs,
+                start: motionStart,
+                endInclusive: i,
+                motionPeak,
+                minMotionMs,
+            });
+            moving = false;
+            motionPeak = 0;
+        }
+    }
+
+    if (moving) {
+        maybePushMotionSegment(segments, {
+            framesLength: frames.length,
+            timestampsMs,
+            start: motionStart,
+            endInclusive: frames.length - 1,
+            motionPeak,
+            minMotionMs,
+        });
+    }
+
+    if (includeStatic) {
+        addStaticHoldSegments(segments, {
+            framesLength: frames.length,
+            timestampsMs,
+            motions,
+            low,
+            minStaticMs,
+        });
+    }
+
+    return coalesceSegments(segments
+        .sort((a, b) => a.start - b.start || a.end - b.end)
+        .filter((seg, i, arr) => i === 0 || seg.start !== arr[i - 1].start || seg.end !== arr[i - 1].end));
+}
+
+/**
+ * Reconoce una conversacion larga segmentando un stream de frames en clips
+ * independientes y llamando al VLM por cada uno. Si se pasan segmentos
+ * explicitos, los respeta; si no, usa segmentacion por movimiento/quietud.
  */
 export async function recognizeSignStream(frames, opts = {}) {
     if (!Array.isArray(frames) || frames.length === 0) {
@@ -673,17 +751,19 @@ export async function recognizeSignStream(frames, opts = {}) {
     }
     const windowSize = clampInt(opts.windowSize, 2, MAX_FRAMES, 6);
     const stride = clampInt(opts.stride, 1, windowSize, Math.max(1, Math.floor(windowSize / 2)));
-    const concurrency = clampInt(opts.concurrency, 1, 4, 2);
+    const concurrency = clampInt(opts.concurrency, 1, 4, 1);
     const minConfidence = Number.isFinite(opts.minConfidence) ? opts.minConfidence : 0.4;
+    const timestampsMs = normalizeTimestamps(
+        opts.timestampsMs,
+        frames.length,
+        Number(opts.frameIntervalMs) || STREAM_DEFAULT_FRAME_INTERVAL_MS,
+    );
 
     const segments = Array.isArray(opts.segments) && opts.segments.length
-        ? opts.segments
-            .map((s) => ({
-                start: Math.max(0, Math.min(frames.length, Math.floor(s.start ?? 0))),
-                end:   Math.max(0, Math.min(frames.length, Math.floor(s.end ?? 0))),
-            }))
-            .filter((s) => s.end - s.start >= MIN_FRAMES)
-        : slidingWindows(frames.length, windowSize, stride);
+        ? normalizeExplicitSegments(opts.segments, frames.length, timestampsMs)
+        : opts.segmenter === 'sliding'
+            ? slidingWindows(frames.length, windowSize, stride, timestampsMs)
+            : await segmentSignFrames(frames, { ...opts, timestampsMs });
 
     if (!segments.length) {
         return { segments: [], transcript: '' };
@@ -704,15 +784,16 @@ export async function recognizeSignStream(frames, opts = {}) {
                 const rec = await recognizeSignClip(clip, {
                     context: opts.context,
                     previousText,
+                    mode: segments[i].mode || (clip.length <= 1 ? 'static' : 'dynamic'),
                     model: opts.model,
                     timeoutMs: opts.timeoutMs,
                 });
-                results[i] = { start, end, recognition: rec };
+                results[i] = { ...segments[i], recognition: rec };
                 if (rec && rec.text && rec.kind !== 'unknown' && rec.confidence >= minConfidence) {
                     previousText = `${previousText} ${rec.text}`.trim().slice(-300);
                 }
             } catch (err) {
-                results[i] = { start, end, recognition: null, error: err?.message || String(err) };
+                results[i] = { ...segments[i], recognition: null, error: err?.message || String(err) };
             }
         }
     }
@@ -727,9 +808,10 @@ export async function recognizeSignStream(frames, opts = {}) {
         if (!rec || rec.kind === 'unknown' || !rec.text) continue;
         if (rec.confidence < minConfidence) continue;
         const t = rec.text.trim();
-        if (!t || t === lastText) continue;
+        const key = normalizeTranscriptKey(t);
+        if (!t || key === lastText) continue;
         transcriptParts.push(t);
-        lastText = t;
+        lastText = key;
     }
 
     return {
@@ -738,15 +820,195 @@ export async function recognizeSignStream(frames, opts = {}) {
     };
 }
 
-function slidingWindows(total, size, stride) {
+async function computeStreamMotion(frames) {
+    const motions = new Array(frames.length).fill(0);
+    let previous = null;
+    for (let i = 0; i < frames.length; i++) {
+        try {
+            const current = await computeThumbnail(Buffer.isBuffer(frames[i]) ? frames[i] : bufferFromFrameString(frames[i]));
+            motions[i] = previous ? motionScore(previous, current) : 0;
+            previous = current;
+        } catch (err) {
+            console.warn('[SignLanguage][stream] motion falló:', err?.message || err);
+            motions[i] = i === 0 ? 0 : 1;
+            previous = null;
+        }
+    }
+    return motions;
+}
+
+function normalizeTimestamps(raw, total, frameIntervalMs) {
+    const fallback = Math.max(1, Number(frameIntervalMs) || STREAM_DEFAULT_FRAME_INTERVAL_MS);
+    if (!Array.isArray(raw) || raw.length !== total) {
+        return Array.from({ length: total }, (_v, i) => i * fallback);
+    }
+    const out = raw.map((v, i) => {
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 0 ? n : i * fallback;
+    });
+    for (let i = 1; i < out.length; i++) {
+        if (out[i] <= out[i - 1]) out[i] = out[i - 1] + fallback;
+    }
+    return out;
+}
+
+function maybePushMotionSegment(out, cfg) {
+    const startMs = cfg.timestampsMs[cfg.start] || 0;
+    const endMs = cfg.timestampsMs[cfg.endInclusive] || startMs;
+    if (endMs - startMs < cfg.minMotionMs) return;
+
+    const expanded = expandSegment({
+        framesLength: cfg.framesLength,
+        timestampsMs: cfg.timestampsMs,
+        start: cfg.start,
+        endInclusive: cfg.endInclusive,
+        preRollMs: STREAM_PRE_ROLL_MS,
+        postRollMs: STREAM_POST_ROLL_MS,
+    });
+    if (expanded.end - expanded.start < MIN_FRAMES) return;
+    out.push({
+        ...expanded,
+        mode: expanded.end - expanded.start > STREAM_MAX_SEGMENT_FRAMES ? 'sentence' : 'dynamic',
+        motionPeak: clamp01(cfg.motionPeak),
+    });
+}
+
+function addStaticHoldSegments(out, cfg) {
+    let stillStart = null;
+    for (let i = 0; i <= cfg.framesLength; i++) {
+        const isStill = i < cfg.framesLength && (cfg.motions[i] || 0) <= cfg.low;
+        if (isStill) {
+            if (stillStart == null) stillStart = i;
+            continue;
+        }
+        if (stillStart == null) continue;
+
+        const stillEnd = i - 1;
+        const startMs = cfg.timestampsMs[stillStart] || 0;
+        const endMs = cfg.timestampsMs[stillEnd] || startMs;
+        if (endMs - startMs >= cfg.minStaticMs) {
+            const center = Math.floor((stillStart + stillEnd) / 2);
+            const candidate = {
+                start: center,
+                end: Math.min(cfg.framesLength, center + 1),
+                startMs: cfg.timestampsMs[center] || 0,
+                endMs: cfg.timestampsMs[center] || 0,
+                mode: 'static',
+                motionPeak: maxMotion(cfg.motions, stillStart, stillEnd),
+            };
+            if (!overlapsAny(candidate, out)) out.push(candidate);
+        }
+        stillStart = null;
+    }
+}
+
+function expandSegment({ framesLength, timestampsMs, start, endInclusive, preRollMs, postRollMs }) {
+    const fromMs = Math.max(0, (timestampsMs[start] || 0) - preRollMs);
+    const toMs = (timestampsMs[endInclusive] || 0) + postRollMs;
+    const expandedStart = findFirstAtOrAfter(timestampsMs, fromMs);
+    const expandedEnd = Math.max(expandedStart + 1, findFirstAfter(timestampsMs, toMs));
+    const end = Math.min(framesLength, expandedEnd);
+    return {
+        start: expandedStart,
+        end,
+        startMs: timestampsMs[expandedStart] || 0,
+        endMs: timestampsMs[Math.max(expandedStart, end - 1)] || 0,
+    };
+}
+
+function normalizeExplicitSegments(rawSegments, total, timestampsMs) {
+    return rawSegments
+        .map((s) => {
+            const start = Math.max(0, Math.min(total, Math.floor(s.start ?? 0)));
+            const end = Math.max(0, Math.min(total, Math.floor(s.end ?? start + 1)));
+            const safeEnd = Math.max(start + MIN_FRAMES, end);
+            const mode = ['static', 'dynamic', 'sentence'].includes(s.mode) ? s.mode : undefined;
+            return {
+                start,
+                end: Math.min(total, safeEnd),
+                startMs: Number.isFinite(Number(s.startMs)) ? Number(s.startMs) : (timestampsMs[start] || 0),
+                endMs: Number.isFinite(Number(s.endMs)) ? Number(s.endMs) : (timestampsMs[Math.max(start, safeEnd - 1)] || 0),
+                ...(mode ? { mode } : {}),
+            };
+        })
+        .filter((s) => s.end - s.start >= MIN_FRAMES);
+}
+
+function overlapsAny(candidate, segments) {
+    return segments.some((s) => candidate.start < s.end + 1 && candidate.end + 1 > s.start);
+}
+
+function coalesceSegments(segments) {
+    const out = [];
+    for (const seg of segments) {
+        const last = out[out.length - 1];
+        const bothDynamic = last &&
+            last.mode !== 'static' &&
+            seg.mode !== 'static';
+        if (bothDynamic && seg.start < last.end) {
+            last.end = Math.max(last.end, seg.end);
+            last.endMs = Math.max(last.endMs || 0, seg.endMs || 0);
+            last.motionPeak = Math.max(last.motionPeak || 0, seg.motionPeak || 0);
+            last.mode = last.end - last.start > STREAM_MAX_SEGMENT_FRAMES ? 'sentence' : 'dynamic';
+            continue;
+        }
+        out.push({ ...seg });
+    }
+    return out;
+}
+
+function findFirstAtOrAfter(values, target) {
+    const idx = values.findIndex((v) => v >= target);
+    return idx === -1 ? Math.max(0, values.length - 1) : idx;
+}
+
+function findFirstAfter(values, target) {
+    const idx = values.findIndex((v) => v > target);
+    return idx === -1 ? values.length : idx;
+}
+
+function maxMotion(motions, start, endInclusive) {
+    let peak = 0;
+    for (let i = start; i <= endInclusive; i++) peak = Math.max(peak, motions[i] || 0);
+    return clamp01(peak);
+}
+
+function normalizeTranscriptKey(text) {
+    return String(text || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .trim()
+        .toLocaleLowerCase('es');
+}
+
+function bufferFromFrameString(frame) {
+    if (typeof frame !== 'string') throw new Error('Frame invalido.');
+    const clean = frame.includes(',') ? frame.split(',', 2)[1] : frame;
+    return Buffer.from(clean, 'base64');
+}
+
+function slidingWindows(total, size, stride, timestampsMs = []) {
     const out = [];
     if (total <= size) {
-        out.push({ start: 0, end: total });
+        out.push({
+            start: 0,
+            end: total,
+            startMs: timestampsMs[0] || 0,
+            endMs: timestampsMs[Math.max(0, total - 1)] || 0,
+            mode: total <= 1 ? 'static' : 'dynamic',
+        });
         return out;
     }
     for (let start = 0; start + Math.min(size, MIN_FRAMES) <= total; start += stride) {
         const end = Math.min(total, start + size);
-        out.push({ start, end });
+        out.push({
+            start,
+            end,
+            startMs: timestampsMs[start] || 0,
+            endMs: timestampsMs[Math.max(start, end - 1)] || 0,
+            mode: end - start <= 1 ? 'static' : 'dynamic',
+        });
         if (end === total) break;
     }
     return out;
