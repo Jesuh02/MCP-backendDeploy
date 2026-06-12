@@ -20,22 +20,28 @@ config como `vit` despues de exportar.
 ALCANCE DEL MODELO (LEER ANTES DE TOCAR ESTE SCRIPT)
 ----------------------------------------------------
 Este modelo es un clasificador de IMAGEN ESTATICA del alfabeto (A-Z). Por
-diseno NO puede reconocer signos dinamicos (palabras como "hola", que es
-un gesto en movimiento). La comprension de frases completas se resuelve
-en la capa de aplicacion:
+diseno NO puede reconocer signos dinamicos ni Lengua de Senas Colombiana
+(LSC) word-level por si solo. Palabras como "hola", "gracias",
+"buenas tardes", "como estas" o "estoy bien" requieren evidencia temporal,
+locacion, movimiento y rasgos no manuales.
 
-    src/modules/sign-language/phrase-composer.js
-        - Acumula letras detectadas frame por frame en una sesion.
-        - Detecta limites de palabra por gaps temporales.
-        - Llama al LLM (Qwen vía OpenRouter / DeepSeek fallback) para
-          convertir secuencias ruidosas (HHOLLA KOMO ESTAS) en espanol
-          natural (Hola, ¿como estas?).
+En runtime la aplicacion separa responsabilidades:
 
-Si en el futuro se quiere reconocimiento word-level real (clasificacion
-de video, no de imagen), reemplazar este script por uno que exporte un
-modelo de video (ej. MViT/VideoMAE finetuned en WLASL) y anadir un
-segundo endpoint `/sign-language/infer-clip` que reciba un buffer de
-frames en lugar de uno solo.
+    src/modules/sign-language/smart-recognizer.js
+        - Espera mano quieta cerca de 1 segundo para letras/numeros.
+        - Agrupa movimiento sostenido en clips para palabras, frases y
+          oraciones.
+
+    src/modules/sign-language/sign-language-vlm.js
+        - Reconoce clips con un VLM usando reglas y glosas prioritarias LSC.
+        - Desambigua pares frecuentes: hola / como estas, gracias / estoy bien,
+          buenas tardes / hola, como estas / te amo.
+
+Si en el futuro se quiere reconocimiento word-level local sin VLM, este
+script debe reemplazarse por una exportacion de modelo de VIDEO entrenado
+con dataset LSC (no WLASL/ASL como fuente principal), por ejemplo una
+arquitectura tipo VideoMAE/MViT/TimeSformer finetuned con clips colombianos
+etiquetados por glosa.
 """
 
 from __future__ import annotations

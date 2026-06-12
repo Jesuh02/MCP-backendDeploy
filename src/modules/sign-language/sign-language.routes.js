@@ -78,7 +78,10 @@ export function signLanguageRoutes() {
                     capabilities: {
                         letterClassification: true,
                         phraseComposition: true,
+                        colombianSignLanguage: true,
                         clipRecognition: Boolean(process.env.OPENROUTER_API_KEY),
+                        lscLexiconNormalization: Boolean(process.env.OPENROUTER_API_KEY),
+                        sentenceRecognition: Boolean(process.env.OPENROUTER_API_KEY),
                         twoHandedGestures: Boolean(process.env.OPENROUTER_API_KEY),
                         motionIntent: Boolean(process.env.OPENROUTER_API_KEY),
                         smartAutoFrame: Boolean(process.env.OPENROUTER_API_KEY),
@@ -216,6 +219,8 @@ export function signLanguageRoutes() {
         try {
             const result = await recognizeSignClip(frames, {
                 context: typeof req.body?.context === 'string' ? req.body.context : undefined,
+                previousText: typeof req.body?.previousText === 'string' ? req.body.previousText : undefined,
+                mode: ['static', 'dynamic', 'sentence'].includes(req.body?.mode) ? req.body.mode : 'dynamic',
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
             });
             return res.json({ success: true, data: result });
@@ -263,6 +268,7 @@ export function signLanguageRoutes() {
                 previousText: typeof req.body?.previousText === 'string'
                     ? req.body.previousText
                     : (sessionDraft || undefined),
+                mode: ['static', 'dynamic', 'sentence'].includes(req.body?.mode) ? req.body.mode : 'dynamic',
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
             });
             let pushed = false;
@@ -305,7 +311,7 @@ export function signLanguageRoutes() {
      * que el servidor decida qué hacer según el movimiento del usuario:
      *   - mano quieta ≈ 1 segundo  →  detecta LETRA o NÚMERO (ONNX → VLM).
      *   - manos en movimiento sostenido seguido de pausa  →  detecta
-     *     PALABRA o FRASE con el VLM sobre el clip acumulado.
+     *     PALABRA, FRASE u ORACIÓN LSC con el VLM sobre el clip acumulado.
      *
      * El servidor mantiene el buffer de frames y la máquina de estados por
      * sesión: el frontend NO tiene que decidir cuándo cambiar de modo ni
@@ -315,7 +321,7 @@ export function signLanguageRoutes() {
      *   imageBase64: string,
      *   minLetterConfidence?: number,   // default 0.55 (ONNX)
      *   minPhraseConfidence?: number,   // default 0.6  (VLM)
-     *   stillDurationMs?: number,       // default 900
+     *   stillDurationMs?: number,       // default 1000
      *   allowVlmLetterFallback?: boolean, // default true (números / letras raras)
      *   context?: string,
      *   model?: string,
@@ -323,7 +329,7 @@ export function signLanguageRoutes() {
      * }
      *
      * Response: {
-     *   event: null | { source, kind, text, confidence, alternatives, reasoning? },
+     *   event: null | { source, kind, text, confidence, alternatives, handedness, motion, nonManual, reasoning? },
      *   pushed: boolean,
      *   motion: number,    // [0,1] motion score del frame actual
      *   state: 'idle'|'moving'|'settling'|'still',

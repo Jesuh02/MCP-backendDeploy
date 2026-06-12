@@ -328,8 +328,10 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                     state.motionPeak = 0;
                 }
                 try {
+                    const previousText = getSessionDraft(safeId)?.draft || '';
                     const result = await recognizeSignClip(clipFrames, {
                         context: typeof opts.context === 'string' ? opts.context : undefined,
+                        previousText: previousText || undefined,
                         model: typeof opts.model === 'string' ? opts.model : undefined,
                         mode: movingWindowReady ? 'sentence' : 'dynamic',
                     });
@@ -404,8 +406,10 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
             // 4b) Fallback VLM (números o letras de baja confianza).
             if (allowVlmLetterFallback && shouldUseStaticVlm(onnxConfidence)) {
                 try {
+                    const previousText = getSessionDraft(safeId)?.draft || '';
                     const vlm = await recognizeSignClip([frameBuffer], {
                         context: typeof opts.context === 'string' ? opts.context : undefined,
+                        previousText: previousText || undefined,
                         model: typeof opts.model === 'string' ? opts.model : undefined,
                         mode: 'static',
                     });
