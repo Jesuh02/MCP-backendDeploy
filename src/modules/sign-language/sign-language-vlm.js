@@ -32,12 +32,13 @@
 import axios from 'axios';
 import { computeThumbnail, motionScore } from './motion-detector.js';
 
-// Fix: orden de modelos por VELOCIDAD primero.
-// gemini-2.0-flash-001 ~2-3 s con visión (logs mostraban 6-10 s con 2.5-flash).
-// gemini-2.5-flash como fallback de calidad cuando el primario no responde.
-// qwen2.5-vl-32b es muy bueno pero lento (8-15 s) → último recurso.
-const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.0-flash-001';
-const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'google/gemini-2.5-flash';
+// Orden de modelos por disponibilidad + calidad observada en OpenRouter.
+// `google/gemini-2.0-flash-001` devolvio 404 en la prueba real de video, así
+// que no debe ser el default: agregaba una llamada fallida antes de cada
+// reconocimiento. Gemini 2.5 Flash respondio correctamente y mantiene buena
+// latencia para clips cortos.
+const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.5-flash';
+const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'openai/gpt-4o';
 const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'qwen/qwen2.5-vl-32b-instruct';
 const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 15000;
 // MAX_FRAMES = 10 → suficiente evidencia temporal sin inflar el payload.
@@ -54,6 +55,31 @@ const STREAM_MIN_STATIC_MS = 900;
 const STREAM_PRE_ROLL_MS = 200;
 const STREAM_POST_ROLL_MS = 200;
 const STREAM_MAX_SEGMENT_FRAMES = 16;
+const TIMELINE_WINDOW_MS = 30_000;
+const TIMELINE_MAX_FRAMES_PER_WINDOW = 14;
+const TIMELINE_MIN_GAP_DUPLICATE_MS = 3_000;
+
+const LSC_BASIC_VOCABULARY = [
+    'Sordo',
+    'Hola',
+    '¿Cómo estás?',
+    'Bien',
+    'Mal',
+    'Más o menos',
+    'Buenos días',
+    'Buenas tardes',
+    'Buenas noches',
+    'Adiós',
+    'Por favor',
+    'Con gusto',
+    'Bienvenido',
+    'Gracias',
+    'Perdón',
+    'Permiso',
+    'Lo siento',
+    'Feliz cumpleaños',
+    'Feliz Navidad',
+];
 
 const LSC_REFERENCE_PROMPT = [
     'OBJETIVO PRINCIPAL: Lengua de Señas Colombiana (LSC), español de Colombia.',
@@ -67,6 +93,14 @@ const LSC_REFERENCE_PROMPT = [
     '  - BUENAS-NOCHES -> "Buenas noches"',
     '  - DECIR-ADIÓS -> "Adiós"',
     '  - BIEN -> "Bien" o, en respuesta a una pregunta, "Estoy bien"',
+    '  - POR-FAVOR -> "Por favor"',
+    '  - CON-GUSTO -> "Con gusto"',
+    '  - BIENVENIDO / BIENVENIDOS -> "Bienvenido"',
+    '  - PERDONAR / PEDIR-PERDÓN -> "Perdón"',
+    '  - PERMISO -> "Permiso"',
+    '  - LO-SIENTO -> "Lo siento"',
+    '  - FELIZ-CUMPLEAÑOS -> "Feliz cumpleaños"',
+    '  - FELIZ-NAVIDAD -> "Feliz Navidad"',
     '',
     'ERRORES CRÍTICOS QUE DEBES EVITAR EN LSC:',
     '  - No confundas DECIR-HOLA con ¿CÓMO-ESTAR?: hola es saludo; ¿cómo estás?',
@@ -79,6 +113,11 @@ const LSC_REFERENCE_PROMPT = [
     '    o saludo conversacional, NO respondas "Te amo".',
     '  - BUENAS-TARDES, BUENOS-DÍAS y BUENAS-NOCHES son frases de cortesía válidas;',
     '    no las reduzcas a "Hola" ni a "Gracias" si el clip muestra saludo compuesto.',
+    '  - No confundas LO-SIENTO con TE AMO: lo siento suele usar contacto o movimiento',
+    '    sobre el pecho/corazón con expresión de disculpa; "Te amo" requiere señal',
+    '    afectiva inequívoca, ILY/corazón o declaración de amor.',
+    '  - No confundas POR-FAVOR, PERDÓN, PERMISO y LO-SIENTO: todos pueden estar cerca',
+    '    del torso o rostro, pero representan intenciones distintas de cortesía.',
 ].join('\n');
 
 const LSC_TEXT_NORMALIZATIONS = new Map([
@@ -109,6 +148,30 @@ const LSC_TEXT_NORMALIZATIONS = new Map([
     ['bien', 'Bien'],
     ['estoy bien', 'Estoy bien'],
     ['yo estoy bien', 'Estoy bien'],
+    ['sordo', 'Sordo'],
+    ['mas o menos', 'Más o menos'],
+    ['más o menos', 'Más o menos'],
+    ['mas-o-menos', 'Más o menos'],
+    ['maravilloso', 'Maravilloso'],
+    ['por favor', 'Por favor'],
+    ['por-favor', 'Por favor'],
+    ['con gusto', 'Con gusto'],
+    ['con-gusto', 'Con gusto'],
+    ['bienvenido', 'Bienvenido'],
+    ['bienvenidos', 'Bienvenido'],
+    ['perdon', 'Perdón'],
+    ['perdón', 'Perdón'],
+    ['pedir perdon', 'Perdón'],
+    ['pedir perdón', 'Perdón'],
+    ['pedir-perdón', 'Perdón'],
+    ['permiso', 'Permiso'],
+    ['lo siento', 'Lo siento'],
+    ['lo-siento', 'Lo siento'],
+    ['feliz cumpleanos', 'Feliz cumpleaños'],
+    ['feliz cumpleaños', 'Feliz cumpleaños'],
+    ['feliz-cumpleaños', 'Feliz cumpleaños'],
+    ['feliz navidad', 'Feliz Navidad'],
+    ['feliz-navidad', 'Feliz Navidad'],
     ['te amo', 'Te amo'],
 ]);
 
@@ -303,7 +366,7 @@ const SYSTEM_PROMPT = [
  * Reconoce la seña ejecutada en un clip de frames.
  *
  * @param {Array<Buffer|string>} frames - Buffers de imagen o data URLs.
- * @param {{ context?: string, previousText?: string, mode?: 'static'|'dynamic'|'sentence', model?: string, timeoutMs?: number }} [opts]
+ * @param {{ context?: string, previousText?: string, mode?: 'static'|'dynamic'|'sentence', model?: string, timeoutMs?: number, vocabulary?: string[] }} [opts]
  * @returns {Promise<null | {
  *   text: string,
  *   kind: 'word'|'phrase'|'letter'|'number'|'sentence'|'unknown',
@@ -355,6 +418,7 @@ export async function recognizeSignClip(frames, opts = {}) {
                 opts.previousText
                     ? `Señas reconocidas inmediatamente antes en esta conversación: """${opts.previousText.slice(0, 300)}""". Úsalas SOLO como contexto para desambiguar, NO las repitas en tu respuesta.`
                     : null,
+                buildVocabularyInstruction(opts.vocabulary),
                 buildModeInstruction(opts.mode),
                 `Recibes ${sampled.length} frames en orden cronológico (t0 → t${sampled.length - 1}).`,
                 'Analiza la SECUENCIA como un clip de video corto: identifica AMBAS manos,',
@@ -650,6 +714,35 @@ function applyLscSanityChecks(rec) {
     };
 }
 
+function normalizeVocabulary(vocabulary = []) {
+    const source = Array.isArray(vocabulary) && vocabulary.length
+        ? vocabulary
+        : LSC_BASIC_VOCABULARY;
+    const out = [];
+    const seen = new Set();
+    for (const item of source) {
+        const normalized = normalizeLscText(String(item || '').trim());
+        if (!normalized) continue;
+        const key = normalizeTranscriptKey(normalized);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(normalized);
+    }
+    return out.slice(0, 80);
+}
+
+function buildVocabularyInstruction(vocabulary) {
+    if (!Array.isArray(vocabulary) || !vocabulary.length) return null;
+    const list = normalizeVocabulary(vocabulary);
+    if (!list.length) return null;
+    return [
+        'VOCABULARIO DE DOMINIO (pistas, no respuesta fija):',
+        list.map((x) => `- ${x}`).join('\n'),
+        'Si la seña coincide visualmente con una entrada de esta lista, usa exactamente ese texto.',
+        'Si no coincide, responde unknown o una seña externa solo con evidencia clara.',
+    ].join('\n');
+}
+
 /**
  * Segmenta un stream de frames en unidades comunicativas antes de llamar al
  * VLM: movimiento sostenido produce clips dinamicos; quietud prolongada
@@ -749,6 +842,9 @@ export async function recognizeSignStream(frames, opts = {}) {
             code: 'EMPTY_STREAM', statusCode: 400,
         });
     }
+    if (opts.segmenter === 'timeline' || opts.analysisMode === 'timeline') {
+        return recognizeSignTimeline(frames, opts);
+    }
     const windowSize = clampInt(opts.windowSize, 2, MAX_FRAMES, 6);
     const stride = clampInt(opts.stride, 1, windowSize, Math.max(1, Math.floor(windowSize / 2)));
     const concurrency = clampInt(opts.concurrency, 1, 4, 1);
@@ -787,6 +883,7 @@ export async function recognizeSignStream(frames, opts = {}) {
                     mode: segments[i].mode || (clip.length <= 1 ? 'static' : 'dynamic'),
                     model: opts.model,
                     timeoutMs: opts.timeoutMs,
+                    vocabulary: opts.vocabulary,
                 });
                 results[i] = { ...segments[i], recognition: rec };
                 if (rec && rec.text && rec.kind !== 'unknown' && rec.confidence >= minConfidence) {
@@ -818,6 +915,283 @@ export async function recognizeSignStream(frames, opts = {}) {
         segments: results,
         transcript: transcriptParts.join(' ').replace(/\s+([.,!?])/g, '$1').trim(),
     };
+}
+
+/**
+ * Reconoce videos completos con ventanas temporales largas. Este modo evita
+ * el error principal del pipeline por microclips: una misma seña dinámica se
+ * partía en 2-4 clips y el VLM inventaba palabras distintas para cada trozo.
+ */
+export async function recognizeSignTimeline(frames, opts = {}) {
+    if (!process.env.OPENROUTER_API_KEY) {
+        throw Object.assign(new Error('OPENROUTER_API_KEY no está configurada.'), {
+            code: 'VLM_NOT_CONFIGURED',
+            statusCode: 503,
+        });
+    }
+    if (!Array.isArray(frames) || frames.length === 0) {
+        throw Object.assign(new Error('Se requiere al menos un frame.'), {
+            code: 'EMPTY_STREAM', statusCode: 400,
+        });
+    }
+
+    const timestampsMs = normalizeTimestamps(
+        opts.timestampsMs,
+        frames.length,
+        Number(opts.frameIntervalMs) || STREAM_DEFAULT_FRAME_INTERVAL_MS,
+    );
+    const vocabulary = normalizeVocabulary(opts.vocabulary);
+    const windowMs = clampInt(opts.timelineWindowMs, 5_000, 120_000, TIMELINE_WINDOW_MS);
+    const maxFramesPerWindow = clampInt(
+        opts.timelineMaxFrames,
+        4,
+        24,
+        TIMELINE_MAX_FRAMES_PER_WINDOW,
+    );
+    const minConfidence = Number.isFinite(opts.minConfidence) ? opts.minConfidence : 0.55;
+    const windows = buildTimelineWindows(frames.length, timestampsMs, windowMs);
+    const segments = [];
+    const events = [];
+    let previousText = '';
+
+    for (const window of windows) {
+        const clipFrames = frames.slice(window.start, window.end);
+        const clipTimes = timestampsMs.slice(window.start, window.end);
+        if (!clipFrames.length) continue;
+        try {
+            const result = await recognizeTimelineWindow(clipFrames, clipTimes, {
+                window,
+                vocabulary,
+                previousText,
+                model: opts.model,
+                timeoutMs: opts.timeoutMs,
+                maxFramesPerWindow,
+                strictVocabulary: opts.strictVocabulary !== false,
+            });
+            const accepted = result.events.filter((ev) => ev.confidence >= minConfidence);
+            segments.push({ ...window, recognition: result });
+            events.push(...accepted);
+            if (accepted.length) {
+                previousText = `${previousText} ${accepted.map((ev) => ev.text).join(' ')}`.trim().slice(-500);
+            }
+        } catch (err) {
+            segments.push({ ...window, recognition: { events: [], notes: [] }, error: err?.message || String(err) });
+        }
+    }
+
+    const collapsed = collapseTimelineEvents(events, {
+        uniqueVocabulary: Boolean(opts.uniqueVocabulary),
+        duplicateGapMs: Number.isFinite(opts.duplicateGapMs)
+            ? Number(opts.duplicateGapMs)
+            : TIMELINE_MIN_GAP_DUPLICATE_MS,
+    });
+
+    return {
+        segments,
+        events: collapsed,
+        transcript: collapsed.map((ev) => ev.text).join(' ').replace(/\s+([.,!?])/g, '$1').trim(),
+        vocabulary,
+    };
+}
+
+async function recognizeTimelineWindow(frames, timestampsMs, opts) {
+    const sampled = sampleFrameTimePairs(frames, timestampsMs, opts.maxFramesPerWindow);
+    const prompt = [
+        'Modo de captura: TIMELINE DE VIDEO COMPLETO.',
+        `Ventana analizada: ${formatSec(opts.window.startMs)}s a ${formatSec(opts.window.endMs)}s.`,
+        'La ventana puede contener cero, una o varias señas completas.',
+        'NO emitas un evento por frame. Fusiona la misma seña sostenida o repetida para enseñanza.',
+        'Ignora postura neutra, brazos abajo, transiciones, pausas y silencio.',
+        'Si aparece texto del material didáctico en pantalla, úsalo solo como pista débil cuando la seña manual coincide.',
+        'Devuelve eventos en orden cronológico con tiempos absolutos del video.',
+        'Si una seña no se ve completa dentro de la ventana, baja la confianza o no la emitas.',
+        opts.previousText
+            ? `Eventos aceptados antes de esta ventana: "${opts.previousText}". No los repitas salvo que la seña se haga de nuevo claramente.`
+            : null,
+        buildVocabularyInstruction(opts.vocabulary),
+        opts.strictVocabulary
+            ? 'En este modo de vocabulario, prioriza entradas del vocabulario. No inventes palabras fuera de la lista si el gesto es ambiguo.'
+            : null,
+        'Salida JSON estricta: {"events":[{"startSec":number,"endSec":number,"text":string,"kind":"word|phrase|letter|number|sentence","confidence":number,"evidence":string}],"notes":string[]}',
+        'Máximo 6 eventos por ventana.',
+    ].filter(Boolean).join('\n');
+
+    const userParts = [{ type: 'text', text: prompt }];
+    sampled.forEach((item, index) => {
+        userParts.push({
+            type: 'text',
+            text: `Frame ${index + 1}/${sampled.length}: tiempo ${formatSec(item.atMs)}s`,
+        });
+        userParts.push({
+            type: 'image_url',
+            image_url: { url: toDataUrl(item.frame) },
+        });
+    });
+
+    const timeoutMs = Number(opts.timeoutMs) || Math.max(REQUEST_TIMEOUT_MS, 45_000);
+    const primaryModel = opts.model || DEFAULT_MODEL;
+    const chain = [primaryModel, FALLBACK_MODEL, SECONDARY_FALLBACK_MODEL]
+        .filter((m, i, arr) => m && arr.indexOf(m) === i);
+
+    let lastErr = null;
+    for (const model of chain) {
+        try {
+            const parsed = await callOpenRouterTimeline(model, userParts, timeoutMs);
+            return normalizeTimelineResult(parsed, opts);
+        } catch (err) {
+            lastErr = err;
+            console.warn(`[SignLanguage][Timeline] ${model} falló (${err?.message || err}). Probando siguiente...`);
+        }
+    }
+    throw lastErr || new Error('Todos los modelos timeline fallaron.');
+}
+
+async function callOpenRouterTimeline(model, userParts, timeoutMs) {
+    const response = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+            model,
+            messages: [
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: userParts },
+            ],
+            max_tokens: 1400,
+            temperature: 0,
+            top_p: 0.9,
+            response_format: { type: 'json_object' },
+        },
+        {
+            headers: {
+                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://tareamov.com',
+                'X-Title': 'Tareamov Sign Language Timeline',
+            },
+            timeout: timeoutMs,
+        },
+    );
+
+    const raw = response.data?.choices?.[0]?.message?.content || '';
+    const parsed = safeParseJson(raw);
+    if (!parsed) throw new Error(`Respuesta timeline no parseable: ${raw.slice(0, 120)}`);
+    return parsed;
+}
+
+function normalizeTimelineResult(parsed, opts) {
+    const rawEvents = Array.isArray(parsed?.events) ? parsed.events : [];
+    const notes = Array.isArray(parsed?.notes)
+        ? parsed.notes.filter((x) => typeof x === 'string').slice(0, 5)
+        : [];
+    const vocabularyByKey = new Map((opts.vocabulary || []).map((item) => [normalizeTranscriptKey(item), item]));
+    const events = [];
+
+    for (const raw of rawEvents) {
+        const normalizedText = normalizeLscText(String(raw?.text || '').trim());
+        if (!normalizedText) continue;
+        const key = normalizeTranscriptKey(normalizedText);
+        const vocabText = vocabularyByKey.get(key);
+        if (opts.strictVocabulary && vocabularyByKey.size && !vocabText) continue;
+
+        const text = vocabText || normalizedText;
+        const reconciled = reconcileKind(text, raw?.kind || 'word');
+        const startSec = normalizeTimelineSec(raw?.startSec, opts.window, opts.window.startMs / 1000);
+        const endSec = normalizeTimelineSec(raw?.endSec, opts.window, startSec);
+        events.push({
+            startSec,
+            endSec,
+            startMs: Math.round(startSec * 1000),
+            endMs: Math.round(endSec * 1000),
+            text: reconciled.text,
+            kind: reconciled.kind,
+            confidence: clamp01(Number(raw?.confidence)),
+            evidence: typeof raw?.evidence === 'string' ? raw.evidence.slice(0, 160) : '',
+        });
+    }
+
+    events.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+    return { events, notes };
+}
+
+function buildTimelineWindows(total, timestampsMs, windowMs) {
+    const out = [];
+    if (!total) return out;
+    const firstMs = timestampsMs[0] || 0;
+    const lastMs = timestampsMs[total - 1] || firstMs;
+    for (let startMs = firstMs; startMs <= lastMs; startMs += windowMs) {
+        const endMs = Math.min(lastMs, startMs + windowMs);
+        const start = findFirstAtOrAfter(timestampsMs, startMs);
+        const end = Math.max(start + 1, findFirstAfter(timestampsMs, endMs));
+        out.push({
+            start,
+            end: Math.min(total, end),
+            startMs,
+            endMs,
+            mode: 'timeline',
+        });
+        if (endMs >= lastMs) break;
+    }
+    return out;
+}
+
+function sampleFrameTimePairs(frames, timestampsMs, maxFrames) {
+    const pairs = frames.map((frame, i) => ({ frame, atMs: timestampsMs[i] || 0 }));
+    if (pairs.length <= maxFrames) return pairs;
+    const sampled = sampleEvenly(pairs, maxFrames);
+    const seen = new Set();
+    return sampled.filter((item) => {
+        const key = item.atMs;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function collapseTimelineEvents(events, opts = {}) {
+    const sorted = events
+        .filter((ev) => ev && ev.text)
+        .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+    const out = [];
+    const seen = new Map();
+    for (const ev of sorted) {
+        const key = normalizeTranscriptKey(ev.text);
+        if (opts.uniqueVocabulary && seen.has(key)) {
+            const existing = seen.get(key);
+            if (ev.confidence > existing.confidence) {
+                Object.assign(existing, ev);
+            }
+            continue;
+        }
+        const last = out[out.length - 1];
+        if (
+            last &&
+            normalizeTranscriptKey(last.text) === key &&
+            ev.startMs - last.endMs <= opts.duplicateGapMs
+        ) {
+            last.endMs = Math.max(last.endMs, ev.endMs);
+            last.endSec = Number((last.endMs / 1000).toFixed(1));
+            last.confidence = Math.max(last.confidence, ev.confidence);
+            continue;
+        }
+        const copy = {
+            ...ev,
+            startSec: Number((ev.startMs / 1000).toFixed(1)),
+            endSec: Number((ev.endMs / 1000).toFixed(1)),
+        };
+        out.push(copy);
+        seen.set(key, copy);
+    }
+    return out.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+}
+
+function normalizeTimelineSec(raw, window, fallback) {
+    const n = Number(raw);
+    const min = window.startMs / 1000;
+    const max = window.endMs / 1000;
+    if (!Number.isFinite(n)) return clampNumber(fallback, min, max);
+    if (n >= min - 0.5 && n <= max + 0.5) return clampNumber(n, min, max);
+    const relative = min + n;
+    if (n >= 0 && relative <= max + 0.5) return clampNumber(relative, min, max);
+    return clampNumber(fallback, min, max);
 }
 
 async function computeStreamMotion(frames) {
@@ -1020,6 +1394,18 @@ function clampInt(v, min, max, fallback) {
     return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
+function clampNumber(v, min, max) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return min;
+    return Math.max(min, Math.min(max, n));
+}
+
+function formatSec(ms) {
+    const n = Number(ms) / 1000;
+    if (!Number.isFinite(n)) return '0.0';
+    return n.toFixed(1).replace(/\.0$/, '');
+}
+
 function buildModeInstruction(mode) {
     if (mode === 'static') {
         return [
@@ -1100,4 +1486,4 @@ function safeParseJson(raw) {
     }
 }
 
-export default { recognizeSignClip, recognizeSignStream, reconcileKind };
+export default { recognizeSignClip, recognizeSignStream, recognizeSignTimeline, reconcileKind };
