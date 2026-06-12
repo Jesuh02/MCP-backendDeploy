@@ -655,6 +655,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                         `REGLA #2b — FLUJO OBLIGATORIO PARA CREAR CURSOS:\n` +
                         `1. Diseña la estructura del curso (materias, temas, tareas) según lo que pide el usuario\n` +
                         `2. Llama \`create_course_structure\` con el plan completo y el userId del usuario actual (${userId || 'usa el userId disponible en el contexto'})\n` +
+                        `- Para cursos no basicos, nunca generes solo 1 o 2 modulos/materias.\n` +
+                        `- Para 32 semanas: estructura recomendada = 6 a 8 modulos, 16 a 20 temas, 6 tareas por tema y 1 proyecto final.\n` +
+                        `- Cada tema debe incluir tareas variadas: lectura, video/recurso, taller, quiz, laboratorio/caso y entrega/proyecto.\n` +
+                        `- Las miniaturas IA de todas las materias se generan en segundo plano despues de crear la estructura.\n` +
                         `3. Confirma al usuario el resultado con el courseId obtenido\n` +
                         `- NUNCA digas que no puedes crear cursos. Siempre diseña la estructura y ejecuta la herramienta.\n\n` +
                         `REGLA #3 — CÓMO USAR LAS HERRAMIENTAS:\n` +
@@ -1484,12 +1488,12 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- Nunca marques el curso como premium. El campo isFree SIEMPRE es true.',
             '- El campo contentDescription en topics y tasks es OBLIGATORIO: describe concretamente qué explicará el documento Word generado para ese tema/tarea.',
             '- Genera un plan completo, coherente y en español. Si faltan detalles, propón una estructura razonable.',
-            '- Si el nivel NO es beginner/basico, el curso debe tener SIEMPRE mas de 2 materias. Nunca entregues solo 1 o 2 materias para nivel intermedio o avanzado.',
-            '- Ajusta el numero total de materias, temas y tareas a la duracion. Un tema normalmente dura 1 a 2 semanas.',
+            '- Si el nivel NO es beginner/basico, el curso debe tener SIEMPRE mas de 2 modulos/materias. Nunca entregues solo 1 o 2 modulos para nivel intermedio o avanzado.',
+            '- Ajusta el numero total de modulos/materias, temas y tareas a la duracion. Un tema normalmente dura 1 a 2 semanas.',
             '- Regla de escala: temas recomendados = semanas / 2; para cursos profundos puedes acercarte a semanas completas.',
             '- Regla de tareas: cada tema debe tener lectura, video/recurso, taller o laboratorio, quiz/evaluacion y, cuando aplique, proyecto.',
-            '- Usa 3 tareas por tema en basico, 4 en intermedio y 5 en avanzado.',
-            '- Curso de 16 semanas: 8 a 12 temas y 32 a 60 tareas totales. Curso de 32 semanas: 16 a 24 temas y 64 a 120 tareas totales.',
+            '- Usa 3 tareas por tema en basico, 4 en intermedio/avanzado corto y 6 tareas por tema en cursos no basicos de 32 semanas o mas.',
+            '- Curso de 16 semanas: 8 a 12 temas y 32 a 60 tareas totales. Curso de 32 semanas: 6 a 8 modulos, 16 a 20 temas, 96 a 120 tareas totales y 1 proyecto final.',
             '- Modelo universitario: una materia de 16 semanas suele tener 8 a 10 temas, 25 a 40 tareas, proyecto final, parciales y examen final.',
             '- Cada tema debe tener varias tareas practicas o evaluables. Distribuye las fechas de entrega a lo largo de la duracion.',
             '- NUNCA digas que no puedes crear cursos. Tu trabajo es SIEMPRE generar el JSON.',
@@ -1502,22 +1506,22 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             `PETICION ACTUAL DEL USUARIO: ${prompt}`,
             '',
             'Aplica esta logica profesional:',
-            '- Objetivo -> competencias necesarias -> materias -> temas -> contenido de estudio -> tareas practicas.',
-            '- El objetivo define las materias necesarias.',
+            '- Objetivo -> competencias necesarias -> modulos/materias -> temas -> contenido de estudio -> tareas practicas.',
+            '- El objetivo define los modulos/materias necesarios.',
             '- El nivel define la profundidad.',
-            '- La duracion define la cantidad de materias y temas.',
+            '- La duracion define la cantidad de modulos/materias y temas.',
             '- El area o enfoque opcional ayuda a especializar materias, tareas y ejemplos.',
             '',
             'Cantidad orientativa:',
-            '- Basico: 2 a 4 materias segun duracion.',
-            '- Intermedio o avanzado, 4 a 8 semanas: minimo 3 materias, 4 a 8 temas y 16 a 40 tareas totales.',
-            '- Intermedio o avanzado, 12 semanas: minimo 4 materias, 6 temas y 24 a 30 tareas totales.',
-            '- Intermedio o avanzado, 16 semanas: minimo 5 materias, 8 a 12 temas y 32 a 60 tareas totales.',
-            '- Intermedio o avanzado, 24 semanas: minimo 6 materias, 12 temas y 48 a 60 tareas totales.',
-            '- Intermedio o avanzado, 32 semanas o mas: minimo 8 materias, 16 a 24 temas y 64 a 120 tareas totales.',
-            '- Cada materia debe tener normalmente 4 a 8 temas cuando la duracion lo permita.',
-            '- Cada tema debe tener 3 a 10 tareas, con 4 tareas por tema como base profesional.',
-            '- No infles con relleno: cada materia debe representar una competencia real del objetivo.',
+            '- Basico: 2 a 4 modulos/materias segun duracion.',
+            '- Intermedio o avanzado, 4 a 8 semanas: minimo 3 modulos, 4 a 8 temas y 16 a 40 tareas totales.',
+            '- Intermedio o avanzado, 12 semanas: minimo 4 modulos, 6 temas y 24 a 30 tareas totales.',
+            '- Intermedio o avanzado, 16 semanas: minimo 5 modulos, 8 a 12 temas y 32 a 60 tareas totales.',
+            '- Intermedio o avanzado, 24 semanas: minimo 6 modulos, 12 temas y 48 a 60 tareas totales.',
+            '- Intermedio o avanzado, 32 semanas o mas: 6 a 8 modulos, 16 a 20 temas, 6 tareas por tema y 1 proyecto final.',
+            '- Cada modulo/materia debe tener normalmente 2 a 4 temas en cursos largos; no crees 8 materias independientes si 6 modulos robustos cubren mejor el objetivo.',
+            '- Cada tema debe tener 3 a 10 tareas; para 32 semanas usa lectura, video/recurso, taller, quiz, laboratorio/caso y entrega/proyecto.',
+            '- No infles con relleno: cada modulo/materia debe representar una competencia real del objetivo.',
             '',
             'Genera el plan usando estrictamente el brief validado. Incluye en la descripcion el area/enfoque cuando aporte contexto pedagogico.',
         ].join('\n');
@@ -1869,7 +1873,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const isBasic = normalizedLevel === 'beginner';
         const recommendedTopics = Math.max(2, Math.ceil(duration / 2));
         const deepTopics = Math.max(recommendedTopics, Math.min(duration, Math.ceil(duration * 0.75)));
-        const minTasksPerTopic = isBasic ? 3 : (normalizedLevel === 'advanced' ? 5 : 4);
+        const minTasksPerTopic = isBasic ? 3 : (duration >= 32 ? 6 : (normalizedLevel === 'advanced' ? 5 : 4));
 
         if (isBasic) {
             const minSubjects = duration >= 16 ? 4 : (duration >= 8 ? 3 : 2);
@@ -1877,11 +1881,11 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             return { minSubjects, minTopics, minTasks: minTopics * minTasksPerTopic, minTasksPerTopic };
         }
 
-        const minSubjects = duration >= 32 ? 8 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
+        const minSubjects = duration >= 32 ? 6 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
         const minTopics = duration >= 32
-            ? Math.max(16, recommendedTopics)
+            ? Math.min(20, Math.max(16, recommendedTopics))
             : (duration >= 16 ? Math.max(8, recommendedTopics) : Math.max(4, recommendedTopics));
-        const targetTopics = normalizedLevel === 'advanced' ? deepTopics : minTopics;
+        const targetTopics = normalizedLevel === 'advanced' && duration < 32 ? deepTopics : minTopics;
         return {
             minSubjects,
             minTopics: targetTopics,
@@ -1934,6 +1938,9 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             const flatTopics = subjects.flatMap(subject => subject.topics.map(topic => ({ subject, topic })));
             const entry = flatTopics[this._countPlanTasks(subjects) % flatTopics.length];
             entry.topic.tasks.push(this._buildSupplementalTask(entry.topic, entry.topic.tasks.length, { durationWeeks }));
+        }
+        if (level !== 'beginner' && durationWeeks >= 16) {
+            this._ensureFinalProjectTask(subjects, { durationWeeks, focus });
         }
         this._redistributePlanDueWeeks(subjects, durationWeeks);
 
@@ -2040,6 +2047,23 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             dueWeek: this._suggestDueWeek(index, context.durationWeeks),
             contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
         };
+    }
+
+    _ensureFinalProjectTask(subjects, context) {
+        const allTasks = subjects.flatMap(subject =>
+            (subject.topics || []).flatMap(topic => topic.tasks || []),
+        );
+        if (allTasks.some(task => /proyecto\s+final/i.test(String(task.title || '')))) return;
+
+        const lastSubject = subjects[subjects.length - 1];
+        const lastTopic = lastSubject?.topics?.[lastSubject.topics.length - 1];
+        if (!lastTopic) return;
+        lastTopic.tasks.push({
+            title: `Proyecto final integrador: ${context.focus}`,
+            description: `Entrega final donde el estudiante integra las competencias del curso en una solucion completa y defendible.`,
+            dueWeek: Math.max(1, Number(context.durationWeeks) || 8),
+            contentDescription: 'Guia de proyecto final con alcance, entregables, criterios de evaluacion, rubrica y recomendaciones de presentacion.',
+        });
     }
 
     _suggestDueWeek(index, durationWeeks) {

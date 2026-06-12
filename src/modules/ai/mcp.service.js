@@ -104,7 +104,7 @@ export class MCPDomainService {
         const isBasic = normalizedLevel === 'beginner';
         const recommendedTopics = Math.max(2, Math.ceil(duration / 2));
         const deepTopics = Math.max(recommendedTopics, Math.min(duration, Math.ceil(duration * 0.75)));
-        const minTasksPerTopic = isBasic ? 3 : (normalizedLevel === 'advanced' ? 5 : 4);
+        const minTasksPerTopic = isBasic ? 3 : (duration >= 32 ? 6 : (normalizedLevel === 'advanced' ? 5 : 4));
 
         if (isBasic) {
             const minSubjects = duration >= 16 ? 4 : (duration >= 8 ? 3 : 2);
@@ -112,11 +112,11 @@ export class MCPDomainService {
             return { minSubjects, minTopics, minTasks: minTopics * minTasksPerTopic, minTasksPerTopic };
         }
 
-        const minSubjects = duration >= 32 ? 8 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
+        const minSubjects = duration >= 32 ? 6 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
         const minTopics = duration >= 32
-            ? Math.max(16, recommendedTopics)
+            ? Math.min(20, Math.max(16, recommendedTopics))
             : (duration >= 16 ? Math.max(8, recommendedTopics) : Math.max(4, recommendedTopics));
-        const targetTopics = normalizedLevel === 'advanced' ? deepTopics : minTopics;
+        const targetTopics = normalizedLevel === 'advanced' && duration < 32 ? deepTopics : minTopics;
         return {
             minSubjects,
             minTopics: targetTopics,
@@ -167,6 +167,9 @@ export class MCPDomainService {
             const flatTopics = subjects.flatMap(subject => subject.topics.map(topic => ({ subject, topic })));
             const entry = flatTopics[this._countPlanTasks(subjects) % flatTopics.length];
             entry.topic.tasks.push(this._buildSupplementalTask(entry.topic, entry.topic.tasks.length, { durationWeeks }));
+        }
+        if (level !== 'beginner' && durationWeeks >= 16) {
+            this._ensureFinalProjectTask(subjects, { durationWeeks, focus });
         }
         this._redistributePlanDueWeeks(subjects, durationWeeks);
 
@@ -274,6 +277,23 @@ export class MCPDomainService {
             dueWeek: this._suggestDueWeek(index, context.durationWeeks),
             contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
         };
+    }
+
+    _ensureFinalProjectTask(subjects, context) {
+        const allTasks = subjects.flatMap(subject =>
+            (subject.topics || []).flatMap(topic => topic.tasks || []),
+        );
+        if (allTasks.some(task => /proyecto\s+final/i.test(String(task.title || '')))) return;
+
+        const lastSubject = subjects[subjects.length - 1];
+        const lastTopic = lastSubject?.topics?.[lastSubject.topics.length - 1];
+        if (!lastTopic) return;
+        lastTopic.tasks.push({
+            title: `Proyecto final integrador: ${context.focus}`,
+            description: 'Entrega final donde el estudiante integra las competencias del curso en una solucion completa y defendible.',
+            dueWeek: Math.max(1, Number(context.durationWeeks) || 8),
+            contentDescription: 'Guia de proyecto final con alcance, entregables, criterios de evaluacion, rubrica y recomendaciones de presentacion.',
+        });
     }
 
     _suggestDueWeek(index, durationWeeks) {
