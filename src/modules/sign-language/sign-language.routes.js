@@ -53,7 +53,7 @@ import {
     getSessionDraft,
     composePhrase,
 } from './phrase-composer.js';
-import { recognizeSignClip } from './sign-language-vlm.js';
+import { recognizeSignClip, recognizeSignStream } from './sign-language-vlm.js';
 import {
     HF_MODEL_ID,
     getLetterClassifier,
@@ -85,6 +85,7 @@ export function signLanguageRoutes() {
                         twoHandedGestures: Boolean(process.env.OPENROUTER_API_KEY),
                         motionIntent: Boolean(process.env.OPENROUTER_API_KEY),
                         smartAutoFrame: Boolean(process.env.OPENROUTER_API_KEY),
+                        streamRecognition: Boolean(process.env.OPENROUTER_API_KEY),
                     },
                 },
             });
@@ -222,6 +223,56 @@ export function signLanguageRoutes() {
                 previousText: typeof req.body?.previousText === 'string' ? req.body.previousText : undefined,
                 mode: ['static', 'dynamic', 'sentence'].includes(req.body?.mode) ? req.body.mode : 'dynamic',
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+            });
+            return res.json({ success: true, data: result });
+        } catch (err) {
+            return handleVlmError(err, res);
+        }
+    });
+
+    /**
+     * Reconocimiento sin estado para videos completos ya muestreados a frames.
+     *
+     * Body: {
+     *   frames: string[] | { imageBase64: string, atMs?: number }[],
+     *   timestampsMs?: number[],
+     *   frameIntervalMs?: number,
+     *   segmenter?: "motion"|"sliding",
+     *   includeStatic?: boolean,
+     *   minConfidence?: number,
+     *   context?: string,
+     *   model?: string,
+     * }
+     */
+    router.post('/recognize-stream', signLanguageRateLimiter, async (req, res) => {
+        const guard = guardEnabled(res);
+        if (guard) return guard;
+
+        const decoded = decodeStreamFrames(req.body?.frames, res);
+        if (!decoded) return;
+
+        const bodyTimestamps = Array.isArray(req.body?.timestampsMs)
+            ? req.body.timestampsMs.map((v) => Number(v))
+            : null;
+        const timestampsMs = bodyTimestamps && bodyTimestamps.length === decoded.frames.length
+            ? bodyTimestamps
+            : decoded.timestampsMs;
+
+        try {
+            const result = await recognizeSignStream(decoded.frames, {
+                timestampsMs,
+                frameIntervalMs: Number(req.body?.frameIntervalMs),
+                segmenter: req.body?.segmenter === 'sliding' ? 'sliding' : 'motion',
+                includeStatic: req.body?.includeStatic !== false,
+                minConfidence: Number.isFinite(Number(req.body?.minConfidence))
+                    ? Number(req.body.minConfidence)
+                    : undefined,
+                context: typeof req.body?.context === 'string' ? req.body.context.slice(0, 500) : undefined,
+                model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+                timeoutMs: Number(req.body?.timeoutMs),
+                concurrency: Number(req.body?.concurrency),
+                windowSize: Number(req.body?.windowSize),
+                stride: Number(req.body?.stride),
             });
             return res.json({ success: true, data: result });
         } catch (err) {
@@ -566,6 +617,87 @@ function decodeClipFrames(frames, res, maxFrames = 12) {
         }
     }
     return decoded;
+}
+
+function decodeStreamFrames(frames, res, maxFrames = 360) {
+    if (!Array.isArray(frames) || frames.length === 0) {
+        res.status(400).json({
+            success: false,
+            error: {
+                code: 'INVALID_STREAM',
+                message: 'Se requiere "frames" como arreglo de imagenes base64.',
+                statusCode: 400,
+            },
+        });
+        return null;
+    }
+    if (frames.length > maxFrames) {
+        res.status(400).json({
+            success: false,
+            error: {
+                code: 'STREAM_TOO_LONG',
+                message: `Maximo ${maxFrames} frames por peticion de stream.`,
+                statusCode: 400,
+            },
+        });
+        return null;
+    }
+
+    const decoded = [];
+    const timestampsMs = [];
+    let hasAnyTimestamp = false;
+    let hasAllTimestamps = true;
+
+    for (const item of frames) {
+        const raw = typeof item === 'string'
+            ? item
+            : item?.imageBase64 || item?.base64 || item?.dataUrl || item?.image;
+
+        if (typeof raw !== 'string' || raw.length < 100) {
+            res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_STREAM',
+                    message: 'Cada frame debe ser una imagen base64 valida.',
+                    statusCode: 400,
+                },
+            });
+            return null;
+        }
+
+        const t = typeof item === 'object' && item
+            ? Number(item.atMs ?? item.timestampMs ?? item.timeMs)
+            : NaN;
+        if (Number.isFinite(t)) {
+            hasAnyTimestamp = true;
+            timestampsMs.push(t);
+        } else {
+            hasAllTimestamps = false;
+            timestampsMs.push(null);
+        }
+
+        const clean = raw.includes(',') ? raw.split(',', 2)[1] : raw;
+        try {
+            const buf = Buffer.from(clean, 'base64');
+            if (buf.length < 100) throw new Error('payload muy corto');
+            decoded.push(buf);
+        } catch {
+            res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_STREAM',
+                    message: 'Un frame del stream no es base64 valido.',
+                    statusCode: 400,
+                },
+            });
+            return null;
+        }
+    }
+
+    return {
+        frames: decoded,
+        timestampsMs: hasAnyTimestamp && hasAllTimestamps ? timestampsMs : undefined,
+    };
 }
 
 function handleVlmError(err, res) {
