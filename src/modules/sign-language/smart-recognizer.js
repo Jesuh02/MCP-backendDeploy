@@ -61,6 +61,7 @@ const MOTION_PEAK_FOR_PHRASE = 0.060;
 const MIN_GAP_BETWEEN_LETTERS_MS = 1000;
 /** Tiempo mínimo entre dos emisiones consecutivas de frase. */
 const MIN_GAP_BETWEEN_PHRASES_MS = 1500;
+const MIN_REPEAT_SAME_PHRASE_MS = 4000;
 /** Tamaño máximo del buffer de frames por sesión. */
 const FRAME_BUFFER_MAX = 24;
 /** Edad máxima de un frame en el buffer (ms). */
@@ -69,6 +70,8 @@ const FRAME_BUFFER_MAX_AGE_MS = 3500;
 const MIN_LETTER_CONFIDENCE = 0.55;
 /** Si ONNX devuelve < este valor consideramos pedir al VLM (números / letras raras). */
 const ONNX_VLM_FALLBACK_THRESHOLD = 0.45;
+const STATIC_VLM_HIGH_CONFIDENCE = 0.78;
+const STATIC_VLM_NUMBER_PROBE_MIN_GAP_MS = 2500;
 const STATIC_VLM_MODE = String(process.env.SIGN_LANGUAGE_STATIC_VLM_MODE || 'numbers').toLowerCase();
 /** Confianza mínima de la salida del VLM (clip o single-frame) para aceptarla. */
 const VLM_MIN_CONFIDENCE = 0.6;
@@ -89,6 +92,8 @@ const SESSION_TTL_MS = 5 * 60 * 1000;
  * @property {number} lastLetterEmitAt
  * @property {string|null} lastLetterLabel
  * @property {number} lastPhraseEmitAt
+ * @property {string|null} lastPhraseKey
+ * @property {number} lastStaticVlmAt
  * @property {number} lastTouchedAt
  */
 
@@ -126,6 +131,8 @@ function getOrCreateState(id) {
             lastLetterEmitAt: 0,
             lastLetterLabel: null,
             lastPhraseEmitAt: 0,
+            lastPhraseKey: null,
+            lastStaticVlmAt: 0,
             lastTouchedAt: Date.now(),
         };
         states.set(id, s);
@@ -153,6 +160,16 @@ function pruneFrameBuffer(state, now) {
 
 function isSingleLetter(text) {
     return Array.from(String(text || '').trim()).length === 1;
+}
+
+function tokenKey(kind, text) {
+    return `${kind}:${String(text || '').trim().toLocaleUpperCase('es')}`;
+}
+
+function isNumberConfusableLetter(label) {
+    return ['B', 'C', 'F', 'I', 'L', 'O', 'V', 'W', 'Y'].includes(
+        String(label || '').trim().toLocaleUpperCase('es'),
+    );
 }
 
 function pushRecognizedToken(sessionId, result) {
@@ -197,10 +214,40 @@ function eventFromStaticCandidate(source, candidate) {
     };
 }
 
-function shouldUseStaticVlm(confidence) {
+function shouldUseStaticVlm(candidate, state, now) {
     if (STATIC_VLM_MODE === 'off') return false;
-    if (STATIC_VLM_MODE === 'always' || STATIC_VLM_MODE === 'numbers') return true;
+    if (STATIC_VLM_MODE === 'always') return true;
+    if (!candidate) return true;
+
+    const confidence = Number(candidate.confidence) || 0;
+    if (confidence < ONNX_VLM_FALLBACK_THRESHOLD) return true;
+    if (STATIC_VLM_MODE === 'numbers') {
+        if (now - state.lastStaticVlmAt < STATIC_VLM_NUMBER_PROBE_MIN_GAP_MS) return false;
+        if (confidence >= STATIC_VLM_HIGH_CONFIDENCE && !isNumberConfusableLetter(candidate.text)) return false;
+        return true;
+    }
     return confidence < ONNX_VLM_FALLBACK_THRESHOLD;
+}
+
+function buildCaptureMeta(state, now, motion) {
+    const stillMs = state.stableSince == null ? 0 : Math.max(0, now - state.stableSince);
+    const motionMs = state.motionStartAt == null ? 0 : Math.max(0, now - state.motionStartAt);
+    const mode =
+        state.inflight ? 'processing' :
+        state.state === 'moving' && motionMs >= MAX_MOTION_DURATION_MS ? 'sentence' :
+        state.state === 'moving' ? 'moving' :
+        state.state === 'settling' ? 'settling' :
+        state.state === 'still' ? 'still' :
+        'idle';
+
+    return {
+        mode,
+        stillMs,
+        motionMs,
+        motionPeak: state.motionPeak,
+        motion,
+        inflight: state.inflight,
+    };
 }
 
 /**
@@ -253,6 +300,7 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
             state.state = 'moving';
             state.motionStartAt = state.motionStartAt ?? now;
             state.motionPeak = motion;
+            state.lastLetterLabel = null;
         } else {
             if (motion > state.motionPeak) state.motionPeak = motion;
         }
@@ -283,6 +331,7 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
 
     let event = null;
     let pushed = false;
+    let warning = null;
 
     const settlingReady =
         state.state === 'settling' &&
@@ -341,13 +390,24 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                         result.kind !== 'unknown' &&
                         result.confidence >= minPhraseConf
                     ) {
-                        pushed = pushRecognizedToken(safeId, result);
-                        event = eventFromVlm(movingWindowReady ? 'sentence-window' : 'phrase', result);
-                        state.lastPhraseEmitAt = now;
-                        state.lastLetterLabel = null; // permite re-emitir misma letra después de una frase
+                        const phraseKey = tokenKey(result.kind, result.text);
+                        const repeatedTooSoon =
+                            phraseKey === state.lastPhraseKey &&
+                            now - state.lastPhraseEmitAt < MIN_REPEAT_SAME_PHRASE_MS;
+                        if (!repeatedTooSoon) {
+                            pushed = pushRecognizedToken(safeId, result);
+                            event = eventFromVlm(movingWindowReady ? 'sentence-window' : 'phrase', result);
+                            state.lastPhraseEmitAt = now;
+                            state.lastPhraseKey = phraseKey;
+                            state.lastLetterLabel = null; // permite re-emitir misma letra después de una frase
+                        }
                     }
                 } catch (err) {
                     console.warn('[SmartRecognizer] phrase recognition falló:', err?.message || err);
+                    warning = {
+                        code: err?.code || 'VLM_FAILED',
+                        message: err?.message || 'No se pudo reconocer la sena dinamica.',
+                    };
                 } finally {
                     state.inflight = false;
                 }
@@ -385,12 +445,10 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
         try {
             // 4a) Camino rápido: ONNX local (solo A-Z).
             let candidate = null;
-            let onnxConfidence = 0;
 
             try {
                 const onnx = await classifyLetter(frameBuffer);
                 if (onnx && onnx.detection) {
-                    onnxConfidence = onnx.detection.confidence;
                     candidate = {
                         source: 'onnx-letter',
                         kind: 'letter',
@@ -404,8 +462,9 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
             }
 
             // 4b) Fallback VLM (números o letras de baja confianza).
-            if (allowVlmLetterFallback && shouldUseStaticVlm(onnxConfidence)) {
+            if (allowVlmLetterFallback && shouldUseStaticVlm(candidate, state, now)) {
                 try {
+                    state.lastStaticVlmAt = now;
                     const previousText = getSessionDraft(safeId)?.draft || '';
                     const vlm = await recognizeSignClip([frameBuffer], {
                         context: typeof opts.context === 'string' ? opts.context : undefined,
@@ -433,6 +492,10 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                     }
                 } catch (err) {
                     console.warn('[SmartRecognizer] VLM letter fallback falló:', err?.message || err);
+                    warning = {
+                        code: err?.code || 'VLM_FAILED',
+                        message: err?.message || 'No se pudo verificar letra o numero con VLM.',
+                    };
                 }
             }
 
@@ -441,10 +504,10 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                 candidate.text &&
                 candidate.confidence >= (candidate.kind === 'number' ? minPhraseConf : minLetterConf)
             ) {
-                const tokenKey = `${candidate.kind}:${String(candidate.text).trim().toLocaleUpperCase('es')}`;
-                if (tokenKey !== state.lastLetterLabel) {
+                const staticKey = tokenKey(candidate.kind, candidate.text);
+                if (staticKey !== state.lastLetterLabel) {
                     pushed = pushRecognizedToken(safeId, candidate);
-                    state.lastLetterLabel = tokenKey;
+                    state.lastLetterLabel = staticKey;
                     state.lastLetterEmitAt = now;
                     event = eventFromStaticCandidate(candidate.source || 'static', candidate);
                 } else {
@@ -471,6 +534,8 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
         state: state.state,
         draft,
         eventCount,
+        capture: buildCaptureMeta(state, now, motion),
+        warning,
         ...(opts.debug ? {
             debug: {
                 prevState,
@@ -479,6 +544,8 @@ export async function ingestFrame(sessionId, frameBuffer, opts = {}) {
                 motionPeak: state.motionPeak,
                 framesInBuffer: state.frames.length,
                 lastLetterLabel: state.lastLetterLabel,
+                lastPhraseKey: state.lastPhraseKey,
+                lastStaticVlmAt: state.lastStaticVlmAt,
                 inflight: state.inflight,
             },
         } : {}),
