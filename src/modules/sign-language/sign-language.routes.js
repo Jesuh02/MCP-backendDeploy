@@ -53,7 +53,7 @@ import {
     getSessionDraft,
     composePhrase,
 } from './phrase-composer.js';
-import { recognizeSignClip, recognizeSignStream } from './sign-language-vlm.js';
+import { recognizeSignClip, recognizeSignStream, recognizeSignTimeline } from './sign-language-vlm.js';
 import {
     HF_MODEL_ID,
     getLetterClassifier,
@@ -237,9 +237,14 @@ export function signLanguageRoutes() {
      *   frames: string[] | { imageBase64: string, atMs?: number }[],
      *   timestampsMs?: number[],
      *   frameIntervalMs?: number,
-     *   segmenter?: "motion"|"sliding",
+     *   segmenter?: "motion"|"sliding"|"timeline",
      *   includeStatic?: boolean,
      *   minConfidence?: number,
+     *   vocabulary?: string[],
+     *   strictVocabulary?: boolean,
+     *   uniqueVocabulary?: boolean,
+     *   timelineWindowMs?: number,
+     *   timelineMaxFrames?: number,
      *   context?: string,
      *   model?: string,
      * }
@@ -259,21 +264,31 @@ export function signLanguageRoutes() {
             : decoded.timestampsMs;
 
         try {
-            const result = await recognizeSignStream(decoded.frames, {
+            const streamOpts = {
                 timestampsMs,
                 frameIntervalMs: Number(req.body?.frameIntervalMs),
-                segmenter: req.body?.segmenter === 'sliding' ? 'sliding' : 'motion',
+                segmenter: ['sliding', 'timeline'].includes(req.body?.segmenter) ? req.body.segmenter : 'motion',
                 includeStatic: req.body?.includeStatic !== false,
                 minConfidence: Number.isFinite(Number(req.body?.minConfidence))
                     ? Number(req.body.minConfidence)
                     : undefined,
+                vocabulary: Array.isArray(req.body?.vocabulary)
+                    ? req.body.vocabulary.filter((x) => typeof x === 'string').slice(0, 80)
+                    : undefined,
+                strictVocabulary: req.body?.strictVocabulary !== false,
+                uniqueVocabulary: Boolean(req.body?.uniqueVocabulary),
+                timelineWindowMs: Number(req.body?.timelineWindowMs),
+                timelineMaxFrames: Number(req.body?.timelineMaxFrames),
                 context: typeof req.body?.context === 'string' ? req.body.context.slice(0, 500) : undefined,
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
                 timeoutMs: Number(req.body?.timeoutMs),
                 concurrency: Number(req.body?.concurrency),
                 windowSize: Number(req.body?.windowSize),
                 stride: Number(req.body?.stride),
-            });
+            };
+            const result = streamOpts.segmenter === 'timeline'
+                ? await recognizeSignTimeline(decoded.frames, streamOpts)
+                : await recognizeSignStream(decoded.frames, streamOpts);
             return res.json({ success: true, data: result });
         } catch (err) {
             return handleVlmError(err, res);
