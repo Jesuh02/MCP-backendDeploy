@@ -45,9 +45,67 @@ const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 1500
 const MAX_FRAMES = 10;
 const MIN_FRAMES = 1;
 
+const LSC_REFERENCE_PROMPT = [
+    'OBJETIVO PRINCIPAL: Lengua de Señas Colombiana (LSC), español de Colombia.',
+    'Usa LSE/ASL solo como respaldo secundario y NUNCA cuando contradigan una glosa LSC.',
+    'Glosas LSC prioritarias del DBLSC para fórmulas de cortesía y saludos:',
+    '  - DECIR-HOLA -> "Hola"',
+    '  - ¿CÓMO-ESTAR? -> "¿Cómo estás?"',
+    '  - AGRADECER / DECIR-GRACIAS / GRACIAS-A -> "Gracias"',
+    '  - BUENAS-TARDES -> "Buenas tardes"',
+    '  - BUENOS-DÍAS -> "Buenos días"',
+    '  - BUENAS-NOCHES -> "Buenas noches"',
+    '  - DECIR-ADIÓS -> "Adiós"',
+    '  - BIEN -> "Bien" o, en respuesta a una pregunta, "Estoy bien"',
+    '',
+    'ERRORES CRÍTICOS QUE DEBES EVITAR EN LSC:',
+    '  - No confundas DECIR-HOLA con ¿CÓMO-ESTAR?: hola es saludo; ¿cómo estás?',
+    '    requiere intención interrogativa, rasgos no manuales de pregunta y flujo de pregunta.',
+    '  - No confundas BIEN / ESTOY BIEN con GRACIAS: gracias pertenece a la familia',
+    '    AGRADECER/DECIR-GRACIAS/GRACIAS-A; si ves configuración o contacto propio',
+    '    de BIEN y no un acto de agradecer, responde "Estoy bien" o "Bien".',
+    '  - No confundas ¿CÓMO-ESTAR? con TE AMO: "Te amo" requiere una configuración',
+    '    manual claramente amor/ILY/corazón/afecto; si hay pregunta, cejas levantadas',
+    '    o saludo conversacional, NO respondas "Te amo".',
+    '  - BUENAS-TARDES, BUENOS-DÍAS y BUENAS-NOCHES son frases de cortesía válidas;',
+    '    no las reduzcas a "Hola" ni a "Gracias" si el clip muestra saludo compuesto.',
+].join('\n');
+
+const LSC_TEXT_NORMALIZATIONS = new Map([
+    ['decir hola', 'Hola'],
+    ['hola', 'Hola'],
+    ['como estar', '¿Cómo estás?'],
+    ['cómo estar', '¿Cómo estás?'],
+    ['como estas', '¿Cómo estás?'],
+    ['como estás', '¿Cómo estás?'],
+    ['cómo estas', '¿Cómo estás?'],
+    ['cómo estás', '¿Cómo estás?'],
+    ['agradecer', 'Gracias'],
+    ['decir gracias', 'Gracias'],
+    ['gracias a', 'Gracias'],
+    ['gracias-a', 'Gracias'],
+    ['gracias', 'Gracias'],
+    ['buenas tardes', 'Buenas tardes'],
+    ['buenas-tardes', 'Buenas tardes'],
+    ['buenos dias', 'Buenos días'],
+    ['buenos días', 'Buenos días'],
+    ['buenos-días', 'Buenos días'],
+    ['buenas noches', 'Buenas noches'],
+    ['buenas-noches', 'Buenas noches'],
+    ['decir adios', 'Adiós'],
+    ['decir adiós', 'Adiós'],
+    ['adios', 'Adiós'],
+    ['adiós', 'Adiós'],
+    ['bien', 'Bien'],
+    ['estoy bien', 'Estoy bien'],
+    ['yo estoy bien', 'Estoy bien'],
+    ['te amo', 'Te amo'],
+]);
+
 const SYSTEM_PROMPT = [
-    'Eres un LINGÜISTA experto en LENGUAJE DE SEÑAS COLOMBIANO (LSC), Lengua',
-    'de Señas Española (LSE) y American Sign Language (ASL). Recibes una',
+    'Eres un LINGÜISTA experto en LENGUAJE DE SEÑAS COLOMBIANO (LSC).',
+    'Conoces LSE y ASL solo para evitar falsos cognados, pero tu salida debe',
+    'priorizar LSC y español de Colombia. Recibes una',
     'SECUENCIA ORDENADA de frames de video',
     'El clip puede ser una letra, un número, una palabra, una frase o una',
     'oración corta con varias señas encadenadas en un mismo flujo.',
@@ -59,6 +117,8 @@ const SYSTEM_PROMPT = [
     '(expresión facial, mirada, postura). Una imagen estática NO basta: tu',
     'razonamiento DEBE integrar la evolución temporal entre frames.',
     '',
+    LSC_REFERENCE_PROMPT,
+    '',
     'Procedimiento OBLIGATORIO antes de responder (hazlo internamente):',
     '  1. CONFIGURACIÓN: describe la forma EXACTA de cada mano (puño cerrado,',
     '     mano abierta, índice extendido, pulgar+meñique, etc.). NO simplifiques.',
@@ -69,8 +129,8 @@ const SYSTEM_PROMPT = [
     '     simétrico, hacia adelante), si hay CONTACTO con la cara/pecho/otra mano,',
     '     y si se REPITE.',
     '  5. RASGOS NO MANUALES: cejas, boca, mirada.',
-    '  6. SOLO ENTONCES decide qué seña es, comparando con TODO tu conocimiento',
-    '     de LSC/LSE. NO te limites a un vocabulario pequeño.',
+    '  6. SOLO ENTONCES decide qué seña es, comparando primero contra LSC.',
+    '     NO te limites a un vocabulario pequeño ni fuerces ASL/LSE sobre LSC.',
     '',
     'ANTI-SESGO — REGLAS CRÍTICAS para evitar confusión entre señas:',
     '  • NO existe un "vocabulario por defecto" privilegiado. Saludos como',
@@ -86,9 +146,14 @@ const SYSTEM_PROMPT = [
     '  PARES CONFUNDIBLES — léelos con MUCHA atención y NO los mezcles:',
     '    - "hola" = UNA mano abierta (B/5), palma hacia afuera, saludo lateral',
     '      suave cerca de la sien/frente. UNA sola mano. Sin vibración. Corto.',
-    '    - "fine/bien" (ASL) = pulgar extendido tocando el pecho con los otros',
-    '      dedos extendidos hacia arriba (configuración "5" con pulgar al',
-    '      pecho). CONTACTO con el pecho. NO se parece a hola.',
+    '      Si no hay cejas levantadas ni estructura interrogativa, NO lo subas a',
+    '      "¿Cómo estás?".',
+    '    - "buenas tardes" = saludo compuesto de cortesía LSC (BUENAS-TARDES).',
+    '      Si ves dos unidades de saludo/cortesía encadenadas, responde la frase',
+    '      completa "Buenas tardes", no "Hola" ni "Gracias".',
+    '    - "bien / estoy bien" (LSC: BIEN) = estado positivo o respuesta a',
+    '      ¿CÓMO-ESTAR?. No lo conviertas en "Gracias" si no hay contacto/salida',
+    '      desde boca, mentón o cara propio de AGRADECER/DECIR-GRACIAS.',
     '    - "maravilloso/wonderful" = AMBAS manos abiertas (5/5), palmas hacia',
     '      afuera, sacudidas hacia adelante con énfasis. Si ves DOS manos',
     '      sacudiéndose hacia el frente, es maravilloso, NUNCA hola.',
@@ -107,6 +172,13 @@ const SYSTEM_PROMPT = [
     '      mueve la mano HACIA AFUERA desde el mentón, sin inversión).',
     '    - "gracias" = mano plana tocando el mentón/labios y avanzando hacia',
     '      afuera. UN solo movimiento de salida desde la cara.',
+    '      Si el gesto no nace en boca/mentón/cara, NO digas "Gracias".',
+    '    - "bien / estoy bien" = estado positivo/respuesta conversacional. En LSC',
+    '      BIEN puede aparecer como respuesta a ¿CÓMO-ESTAR?; no la confundas con',
+    '      AGRADECER/DECIR-GRACIAS/GRACIAS-A si no hay acto de agradecer.',
+    '    - "te amo" = afecto/amor. Requiere configuración manual inequívoca de',
+    '      amor/ILY/corazón/afecto. NO lo confundas con ¿CÓMO-ESTAR? ni con',
+    '      saludos si el clip muestra pregunta o cortesía conversacional.',
     '    - "sí" = puño cerrado (S/A) asintiendo (movimiento vertical de la',
     '      muñeca, como cabeceo). MUY corto, pocos frames.',
     '    - "no" = índice+medio extendidos cerrándose contra el pulgar una o',
@@ -208,8 +280,9 @@ const SYSTEM_PROMPT = [
     '     palabras encadenadas en un mismo flujo), usa kind="sentence" y text con',
     '     la oración completa correctamente puntuada en español.',
     '  6. Saludos/frases comunes deben salir CORRECTAMENTE PUNTUADOS:',
-    '     "Hola", "Gracias", "Buenos días", "¿Cómo estás?", "Adiós", "Por',
-    '     favor", "Sí", "No", "Te amo".',
+    '     "Hola", "Gracias", "Buenos días", "Buenas tardes", "Buenas noches",',
+    '     "¿Cómo estás?", "Estoy bien", "Adiós", "Por favor", "Sí", "No",',
+    '     "Te amo".',
     '  7. Si NO puedes identificar la seña con razonable certeza (confidence',
     '     < 0.3), usa kind="unknown" y text="". NUNCA inventes señas que no se',
     '     vean. Es preferible "unknown" a una adivinanza.',
@@ -335,10 +408,10 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
         throw new Error(`Respuesta VLM no parseable: ${raw.slice(0, 120)}`);
     }
 
-    const text = String(parsed.text ?? '').trim();
+    const text = normalizeLscText(String(parsed.text ?? '').trim());
     const kindRaw = String(parsed.kind ?? 'unknown').toLowerCase();
     const kind = ['word', 'phrase', 'letter', 'number', 'sentence', 'unknown'].includes(kindRaw) ? kindRaw : 'unknown';
-    const confidence = clamp01(Number(parsed.confidence));
+    let confidence = clamp01(Number(parsed.confidence));
     const alternatives = Array.isArray(parsed.alternatives)
         ? parsed.alternatives.filter((x) => typeof x === 'string').slice(0, 3)
         : [];
@@ -373,12 +446,22 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
     // los límites letter↔number / word↔phrase / phrase↔sentence que la
     // matriz de confusión mostró como principales fuentes de error.
     const reconciled = reconcileKind(text, kind);
-
-    return {
+    const sanity = applyLscSanityChecks({
         text: reconciled.text,
         kind: reconciled.kind,
-        kindRaw: kind,
         confidence,
+        handedness,
+        motion,
+        nonManual,
+        reasoning,
+        alternatives,
+    });
+
+    return {
+        text: sanity.text,
+        kind: sanity.kind,
+        kindRaw: kind,
+        confidence: sanity.confidence,
         alternatives,
         handedness,
         motion,
@@ -441,6 +524,120 @@ export function reconcileKind(rawText, rawKind) {
 
     // 5) Resto (2-4 palabras, sin verbo, sin puntuación final): phrase.
     return { text, kind: 'phrase' };
+}
+
+function normalizeLscText(rawText) {
+    const text = String(rawText || '').trim();
+    if (!text) return '';
+    const key = text
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[¿?¡!.,;:()]/g, ' ')
+        .replace(/[_/]+/g, ' ')
+        .replace(/\s*-\s*/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLocaleLowerCase('es');
+    const spacedKey = key.replace(/-/g, ' ');
+    if ((key.includes('buenas-tardes') || spacedKey.includes('buenas tardes')) &&
+        (key.includes('como-esta') || spacedKey.includes('como esta'))) {
+        return 'Buenas tardes, ¿cómo estás?';
+    }
+    if (key.includes('agradecer') || key.includes('gracias') || spacedKey.includes('decir gracias')) {
+        return 'Gracias';
+    }
+    if (key.includes('decir-hola') || spacedKey.includes('decir hola')) {
+        return 'Hola';
+    }
+    if (key.includes('como-estar') || spacedKey.includes('como estar') || spacedKey.includes('como estas')) {
+        return '¿Cómo estás?';
+    }
+    if (key.includes('buenas-tardes') || spacedKey.includes('buenas tardes')) {
+        return 'Buenas tardes';
+    }
+    if (key.includes('buenos-dias') || spacedKey.includes('buenos dias')) {
+        return 'Buenos días';
+    }
+    if (key.includes('buenas-noches') || spacedKey.includes('buenas noches')) {
+        return 'Buenas noches';
+    }
+    if (key.includes('decir-adios') || spacedKey.includes('decir adios')) {
+        return 'Adiós';
+    }
+    return LSC_TEXT_NORMALIZATIONS.get(key) ||
+        LSC_TEXT_NORMALIZATIONS.get(spacedKey) ||
+        normalizeSpanishDisplay(text);
+}
+
+function normalizeSpanishDisplay(text) {
+    const trimmed = String(text || '').trim().replace(/\s+/g, ' ');
+    if (!trimmed) return '';
+    const lower = trimmed.toLocaleLowerCase('es');
+    if (/^como est[aá]s\??$/i.test(trimmed) || /^cómo est[aá]s\??$/i.test(trimmed)) {
+        return '¿Cómo estás?';
+    }
+    if (/^buenos dias$/i.test(lower)) return 'Buenos días';
+    if (/^buenas tardes$/i.test(lower)) return 'Buenas tardes';
+    if (/^buenas noches$/i.test(lower)) return 'Buenas noches';
+    if (/^estoy bien$/i.test(lower) || /^yo estoy bien$/i.test(lower)) return 'Estoy bien';
+    if (/^te amo$/i.test(lower)) return 'Te amo';
+    if (/^gracias$/i.test(lower)) return 'Gracias';
+    if (/^hola$/i.test(lower)) return 'Hola';
+    return trimmed.charAt(0).toLocaleUpperCase('es') + trimmed.slice(1);
+}
+
+function applyLscSanityChecks(rec) {
+    let { text, kind, confidence } = rec;
+    const normalized = normalizeLscText(text);
+    if (normalized) text = normalized;
+
+    const haystack = [
+        text,
+        rec.reasoning,
+        rec.motion?.trajectory,
+        rec.nonManual?.facial,
+        ...(rec.alternatives || []),
+    ].filter(Boolean).join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+    const hasFaceContact = rec.motion?.contact === 'hand-face' || /\b(menton|barbilla|boca|labio|labios|cara|rostro)\b/.test(haystack);
+    const hasQuestionCue = rec.nonManual?.intent === 'question' || /(\?|ceja|cejas|pregunta|interrog)/.test(haystack);
+    const hasLoveCue = /\b(amor|amo|ily|corazon|afecto|querer)\b/.test(haystack);
+    const hasBienCue = /\b(bien|pecho|estado|positivo|ok|pulgar)\b/.test(haystack);
+
+    if (text === 'Gracias' && !hasFaceContact && hasBienCue) {
+        text = 'Estoy bien';
+        kind = 'sentence';
+        confidence = Math.min(confidence, 0.72);
+    }
+
+    if (text === 'Gracias' && !hasFaceContact && confidence < 0.75) {
+        confidence = Math.min(confidence, 0.49);
+    }
+
+    if (text === '¿Cómo estás?' && !hasQuestionCue && confidence < 0.8) {
+        confidence = Math.min(confidence, 0.52);
+    }
+
+    if (text === 'Te amo' && !hasLoveCue && hasQuestionCue) {
+        text = '¿Cómo estás?';
+        kind = 'sentence';
+        confidence = Math.min(confidence, 0.7);
+    } else if (text === 'Te amo' && !hasLoveCue && confidence < 0.82) {
+        confidence = Math.min(confidence, 0.5);
+    }
+
+    if (text === 'Hola' && rec.handedness === 'both' && hasQuestionCue && confidence < 0.8) {
+        text = '¿Cómo estás?';
+        kind = 'sentence';
+        confidence = Math.min(confidence, 0.68);
+    }
+
+    const reconciled = reconcileKind(text, kind);
+    return {
+        text: reconciled.text,
+        kind: reconciled.kind,
+        confidence: clamp01(confidence),
+    };
 }
 
 /**
@@ -567,21 +764,21 @@ function buildModeInstruction(mode) {
             'Modo de captura: ESTÁTICO. El servidor envió este frame porque la mano',
             'permaneció quieta cerca de 1 segundo. Prioriza kind="letter" o',
             'kind="number"; solo devuelve word/phrase/sentence si hay evidencia visual',
-            'muy clara de una seña léxica estática.',
+            'muy clara de una seña léxica estática de LSC.',
         ].join('\n');
     }
     if (mode === 'sentence') {
         return [
             'Modo de captura: ORACIÓN EN MOVIMIENTO. El usuario siguió moviendo las',
             'manos sin pausa clara; analiza el flujo completo y transcribe la unidad',
-            'comunicativa completa. Si contiene varias señas encadenadas, usa',
+            'comunicativa completa en LSC. Si contiene varias señas encadenadas, usa',
             'kind="sentence" cuando corresponda.',
         ].join('\n');
     }
     if (mode === 'dynamic') {
         return [
             'Modo de captura: DINÁMICO. El servidor detectó movimiento sostenido y',
-            'luego una pausa. Reconoce la palabra, frase u oración completa del clip;',
+            'luego una pausa. Reconoce la palabra, frase u oración completa de LSC;',
             'no lo reduzcas a una sola letra salvo que sea claramente deletreo.',
         ].join('\n');
     }

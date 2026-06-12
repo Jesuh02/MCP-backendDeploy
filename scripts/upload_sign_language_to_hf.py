@@ -21,6 +21,14 @@ Uso:
 Luego en Railway define:
     SIGN_LANGUAGE_HF_REPO=yasuyk/Alphabet-Sign-Language-ONNX
     HF_API_TOKEN=hf_xxx   (solo si el repo es privado)
+
+Nota de arquitectura:
+    Este repo de HuggingFace contiene solo el clasificador ONNX de imagen
+    estatica para alfabeto A-Z. La deteccion profesional de palabras,
+    frases y oraciones en Lengua de Senas Colombiana (LSC) se hace en
+    runtime con smart-recognizer.js + sign-language-vlm.js sobre clips
+    temporales. No subas este artefacto como si fuera un modelo LSC
+    word-level completo.
 """
 
 from __future__ import annotations
