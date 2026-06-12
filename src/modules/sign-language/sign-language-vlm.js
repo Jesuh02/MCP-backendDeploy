@@ -41,14 +41,13 @@ const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.5-
 const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'openai/gpt-4o';
 const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'qwen/qwen2.5-vl-32b-instruct';
 const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 15000;
-// MAX_FRAMES = 10 → suficiente evidencia temporal sin inflar el payload.
-// 14 frames causaba 5-10 s de latencia en Gemini/Qwen. Con 10 frames bien
-// espaciados se obtiene cobertura temporal equivalente con ~30% menos coste.
-const MAX_FRAMES = 10;
+// 14 frames conserva mejor trayectoria de manos en clips dinamicos sin mandar
+// el video completo al VLM.
+const MAX_FRAMES = 14;
 const MIN_FRAMES = 1;
 const STREAM_DEFAULT_FRAME_INTERVAL_MS = 250;
 const STREAM_MOTION_HIGH = 0.030;
-const STREAM_MOTION_LOW = 0.015;
+const STREAM_MOTION_LOW = 0.010;
 const STREAM_SETTLE_MS = 350;
 const STREAM_MIN_MOTION_MS = 450;
 const STREAM_MIN_STATIC_MS = 900;
@@ -56,7 +55,7 @@ const STREAM_PRE_ROLL_MS = 200;
 const STREAM_POST_ROLL_MS = 200;
 const STREAM_MAX_SEGMENT_FRAMES = 16;
 const TIMELINE_WINDOW_MS = 30_000;
-const TIMELINE_MAX_FRAMES_PER_WINDOW = 14;
+const TIMELINE_MAX_FRAMES_PER_WINDOW = 18;
 const TIMELINE_MIN_GAP_DUPLICATE_MS = 3_000;
 
 const LSC_BASIC_VOCABULARY = [

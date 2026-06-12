@@ -2,10 +2,13 @@
  * motion-detector.js — Estimación ligera de movimiento entre frames.
  *
  * Estrategia: para cada frame se calcula un thumbnail 16x16 en escala de
- * grises (256 muestras). El "motion score" entre dos frames es el promedio
- * de la diferencia absoluta por píxel, normalizado a [0, 1]:
+ * grises (256 muestras). El "motion score" entre dos frames combina:
+ *   - promedio global de diferencia absoluta por pixel, normalizado a [0, 1]
+ *   - promedio del 12% de pixeles que mas cambiaron, atenuado
  *
- *     score = sum(|a_i - b_i|) / (N * 255)
+ * Esto evita que el movimiento de manos se diluya cuando el cuerpo/fondo ocupa
+ * casi toda la imagen. En camara a 8-10 fps, el promedio global puede quedar
+ * demasiado bajo aunque la mano siga en movimiento.
  *
  * Es estable frente a ruido de cámara, no requiere modelos pesados, y se
  * computa en < 5 ms por frame en Node (decode + resize via RawImage).
@@ -20,6 +23,8 @@ import { detectMime } from './letter-classifier.js';
 
 const THUMB_SIZE = 16;
 const THUMB_PIXELS = THUMB_SIZE * THUMB_SIZE;
+const LOCAL_MOTION_RATIO = 0.12;
+const LOCAL_MOTION_WEIGHT = 0.35;
 
 /**
  * Decodifica el buffer, lo redimensiona a 16x16 y promedia canales para
@@ -62,11 +67,21 @@ export async function computeThumbnail(buffer) {
 export function motionScore(prev, current) {
     if (!prev || !current || prev.length !== current.length) return 1;
     let sum = 0;
+    const diffs = new Uint8Array(prev.length);
     for (let i = 0; i < prev.length; i++) {
         const d = prev[i] - current[i];
-        sum += d < 0 ? -d : d;
+        const abs = d < 0 ? -d : d;
+        diffs[i] = abs;
+        sum += abs;
     }
-    return sum / (prev.length * 255);
+    diffs.sort().reverse();
+    const topN = Math.max(1, Math.ceil(diffs.length * LOCAL_MOTION_RATIO));
+    let topSum = 0;
+    for (let i = 0; i < topN; i++) topSum += diffs[i];
+
+    const globalMean = sum / (prev.length * 255);
+    const localMean = topSum / (topN * 255);
+    return Math.max(globalMean, localMean * LOCAL_MOTION_WEIGHT);
 }
 
 export default { computeThumbnail, motionScore };

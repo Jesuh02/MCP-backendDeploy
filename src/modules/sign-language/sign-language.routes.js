@@ -373,7 +373,7 @@ export function signLanguageRoutes() {
     /**
      * SMART AUTO-FRAME — el endpoint recomendado para uso en producción.
      *
-     * Recibe UN frame a la vez (la cámara del frontend a 3-5 fps) y deja
+     * Recibe UN frame a la vez (la cámara del frontend a 8-10 fps) y deja
      * que el servidor decida qué hacer según el movimiento del usuario:
      *   - mano quieta ≈ 1 segundo  →  detecta LETRA o NÚMERO (ONNX → VLM).
      *   - manos en movimiento sostenido seguido de pausa  →  detecta
@@ -389,6 +389,7 @@ export function signLanguageRoutes() {
      *   minPhraseConfidence?: number,   // default 0.6  (VLM)
      *   stillDurationMs?: number,       // default 1000
      *   allowVlmLetterFallback?: boolean, // default true (números / letras raras)
+     *   capturedAtMs?: number,          // Date.now() del frame en el navegador
      *   context?: string,
      *   model?: string,
      *   debug?: boolean,
@@ -426,6 +427,7 @@ export function signLanguageRoutes() {
                 minLetterConfidence: Number(req.body?.minLetterConfidence),
                 minPhraseConfidence: Number(req.body?.minPhraseConfidence),
                 stillDurationMs: Number(req.body?.stillDurationMs),
+                capturedAtMs: Number(req.body?.capturedAtMs),
                 allowVlmLetterFallback: req.body?.allowVlmLetterFallback !== false,
                 debug: Boolean(req.body?.debug),
             });
