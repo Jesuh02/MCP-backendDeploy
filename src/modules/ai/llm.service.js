@@ -1479,7 +1479,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '      "topics": [',
             '        {',
             '          "title": string,                  // título del tema',
-            '          "description": string,           // resultado concreto del bloque',
+            '          "description": string,           // qué aprenderá el estudiante y para qué le sirve',
             '          "estimatedWeeks": number,        // duracion academica realista del bloque',
             '          "estimatedHours": number,        // horas totales estimadas del bloque',
             '          "independentHours": number,      // trabajo autonomo estimado',
@@ -1487,14 +1487,14 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '          "competency": string,            // competencia especifica del bloque',
             '          "learningOutcome": string,       // resultado esperado verificable del bloque',
             '          "prerequisites": string[],       // conocimientos previos necesarios',
-            '          "contentDescription": string,    // resumen de 1-2 oraciones de lo que contendrá el documento Word de estudio para este tema (qué conceptos explica, qué ejemplos incluye)',
+            '          "contentDescription": string,    // resumen didáctico de lo que explicará el documento Word/PDF del tema: definiciones en lenguaje sencillo, ejemplos, paso a paso, errores comunes y aplicación práctica',
             '          "tasks": [',
             '            {',
             '              "title": string,              // evidencia, hito, caso, parcial o fase de proyecto',
             '              "type": string,               // "formative" | "milestone" | "project" | "assessment"',
             '              "description": string,       // descripción de la tarea',
             '              "dueWeek": number,            // semana sugerida de entrega',
-            '              "contentDescription": string // qué contendrá el material de apoyo de esta tarea (ejercicios, guía, rúbrica, etc.)',
+            '              "contentDescription": string // qué contendrá el material de apoyo de esta tarea explicado para el estudiante: pasos, ejemplo, dudas comunes, criterios y rúbrica',
             '            }',
             '          ]',
             '        }',
@@ -1507,6 +1507,9 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- Nunca marques el curso como premium. El campo isFree SIEMPRE es true.',
             '- Todo bloque debe incluir competency, learningOutcome, prerequisites, estimatedWeeks, estimatedHours, independentHours y practicalHours.',
             '- El campo contentDescription en topics y tasks es OBLIGATORIO: describe concretamente qué explicará el documento Word generado para ese tema/tarea.',
+            '- Para topics, contentDescription debe pedir material 100% explicativo para aprender desde cero: qué es, por qué importa, cómo funciona, ejemplo guiado, errores comunes y cómo practicarlo.',
+            '- Usa lenguaje natural de docente. Evita jerga innecesaria; si un término técnico es obligatorio, incluye una explicación simple al lado.',
+            '- Los documentos de temas NO deben ser solo listas, plantillas, rúbricas ni resúmenes. Deben enseñar el contenido de forma desarrollada y comprensible.',
             '- Genera un plan completo, coherente y en español. Si faltan detalles, propón una estructura razonable.',
             '- Disena en este orden: competencias -> resultados de aprendizaje -> contenidos -> actividades formativas -> evaluaciones.',
             '- No empieces por cantidades. La duracion limita profundidad y carga, pero no debe imponer simetria artificial.',
@@ -1552,6 +1555,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- Si la duracion es 32 semanas, entrega 4 modulos y 16 bloques de aprendizaje. Las evidencias deben variar por bloque, no quedar exactamente iguales.',
             '- Para 32 semanas, cada bloque debe durar normalmente 2 semanas e indicar 16 horas estimadas: 10 de trabajo autonomo y 6 de trabajo practico, salvo ajustes justificados.',
             '- Cada bloque de cursos largos debe combinar material de estudio, ejercicios guiados, caso/laboratorio o reflexion dentro del contenido, y evidencias cuando corresponda.',
+            '- El material de estudio de cada tema debe estar escrito para aprender: explica conceptos con palabras sencillas, baja los tecnicismos, agrega ejemplos cotidianos o aplicados y muestra el proceso paso a paso.',
             '- Integra continuidad: cada modulo debe explicar como usa lo anterior y prepara el siguiente.',
             '- No infles con relleno: cada modulo/materia debe representar una competencia real del objetivo.',
             '',
@@ -2017,17 +2021,21 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const fallbackTitle = this._getDomainTopicTitles(context.focus || subject.name)[topicIndex] || `Bloque ${topicIndex + 1}: ${subject.name}`;
         const rawTitle = cleanText(topic.title || topic.name, fallbackTitle);
         const title = this._isGenericPlanTopicTitle(rawTitle) ? fallbackTitle : rawTitle;
+        const contentDescription = cleanText(
+            topic.contentDescription,
+            `Documento de estudio sobre ${title}: introduce el tema con lenguaje sencillo, define cada concepto sin jerga innecesaria, explica por que importa, muestra ejemplos paso a paso, senala errores comunes, propone practica guiada y conecta el tema con situaciones reales de ${subject.name}.`,
+        );
         const normalized = {
             title,
-            description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
+            description: cleanText(topic.description, `Aprende los conceptos de ${subject.name} con explicaciones claras, ejemplos guiados y aplicacion gradual en situaciones reales.`),
             estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
             estimatedHours: Number(topic.estimatedHours) > 0 ? Number(topic.estimatedHours) : undefined,
             independentHours: Number(topic.independentHours) >= 0 ? Number(topic.independentHours) : undefined,
             practicalHours: Number(topic.practicalHours) >= 0 ? Number(topic.practicalHours) : undefined,
             competency: cleanText(topic.competency, `Aplicar ${title} en una situacion profesional verificable.`),
-            learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de resolver una tarea aplicada relacionada con ${title}.`),
+            learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de explicar ${title} con sus propias palabras y aplicarlo en una tarea guiada.`),
             prerequisites: this._normalizeStringList(topic.prerequisites, []),
-            contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados, ejercicios progresivos, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos de profundizacion sobre ${subject.name}.`),
+            contentDescription: `${contentDescription} Debe quedar 100% explicativo para aprender: baja el tecnicismo, define la jerga, agrega ejemplos guiados, explica el razonamiento y evita que el archivo sea solo un resumen o una lista.`,
             tasks: [],
         };
         normalized.tasks = Array.isArray(topic.tasks)
@@ -2127,7 +2135,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     _buildTopicDescription(title, stage = {}) {
         const profile = this._getTopicProfile(title);
         if (profile.description) return profile.description;
-        return `Bloque aplicado del modulo "${stage.name || 'curso'}" centrado en ${title}.`;
+        return `Bloque del modulo "${stage.name || 'curso'}" que explica ${title} desde sus fundamentos, con ejemplos y aplicaciones progresivas.`;
     }
 
     _buildTopicCompetency(title, stage = {}) {
@@ -2135,7 +2143,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     }
 
     _buildTopicLearningOutcome(title) {
-        return `Al finalizar este bloque el estudiante sera capaz de producir una evidencia verificable basada en ${title}, seleccionando metodos, metricas y criterios apropiados.`;
+        return `Al finalizar este bloque el estudiante sera capaz de explicar ${title} en lenguaje claro, reconocer sus conceptos principales y aplicarlos en una evidencia verificable.`;
     }
 
     _buildTopicPrerequisites(subjectIndex, topicIndex, subjects) {
@@ -2151,7 +2159,8 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
 
     _buildTopicContentDescription(title) {
         const profile = this._getTopicProfile(title);
-        return profile.contentDescription || `Documento de estudio sobre ${title}, con conceptos clave, ejemplos guiados, practica aplicada, criterios de calidad y errores frecuentes.`;
+        const base = profile.contentDescription || `Documento de estudio sobre ${title}.`;
+        return `${base} Debe escribirse como material 100% explicativo para aprender: definiciones en palabras simples, explicacion paso a paso, ejemplos guiados, analogias cuando ayuden, practica aplicada, errores frecuentes y criterios de calidad explicados sin jerga innecesaria.`;
     }
 
     _buildCoherentTopicTasks(topic, context = {}) {
@@ -2437,7 +2446,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             type: cleanText(task.type, this._inferTaskType(task)),
             description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}, con entregable verificable y criterios de calidad.`),
             dueWeek,
-            contentDescription: cleanText(task.contentDescription, `Guia con instrucciones, ejercicios preparatorios, caso o laboratorio base, criterios de evaluacion, recursos y rubrica para completar la actividad.`),
+            contentDescription: cleanText(task.contentDescription, `Guia explicativa con el proposito de la tarea, instrucciones paso a paso en lenguaje sencillo, ejemplo de entrega, ejercicios preparatorios, criterios de evaluacion explicados y rubrica clara para completar la actividad.`),
         };
     }
 
@@ -2622,7 +2631,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             practicalHours: index === 0 ? 3 : 8,
             competency: this._buildTopicCompetency(title, subject),
             learningOutcome: this._buildTopicLearningOutcome(title),
-            contentDescription: `Documento de estudio con explicaciones, ejemplos, ejercicios guiados, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos sugeridos para ${title}.`,
+            contentDescription: `Documento de estudio 100% explicativo sobre ${title}: explica el tema desde cero, define conceptos en palabras simples, muestra ejemplos paso a paso, incluye practica guiada, errores frecuentes, caso aplicado y recursos sugeridos para seguir aprendiendo.`,
             tasks: [],
         };
     }
@@ -2758,7 +2767,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 type: milestone.type || 'project',
                 description: `Hito transversal donde el estudiante integra lo aprendido hasta la semana ${milestone.dueWeek} en el proyecto del curso.`,
                 dueWeek: milestone.dueWeek,
-                contentDescription: 'Guia del hito con alcance, entregables, criterios de evaluacion, dependencias con modulos previos y recomendaciones de presentacion.',
+                contentDescription: 'Guia explicativa del hito con proposito, alcance, pasos para desarrollarlo, ejemplo de entrega, criterios de evaluacion explicados, dependencias con modulos previos y recomendaciones de presentacion.',
             });
             allTasks.push(topic.tasks[topic.tasks.length - 1]);
         });
@@ -3670,9 +3679,12 @@ Responde de forma clara y constructiva.`;
     /** @private — Ask LLM to generate educational Markdown content for a topic. */
     async _generateTopicContent({ courseTitle, topic, model }) {
         const systemPrompt = [
-            'Eres un experto pedagógico. Genera contenido educativo completo y bien estructurado en español.',
+            'Eres un docente experto en explicar temas difíciles con lenguaje claro, cercano y formativo.',
             'Responde ÚNICAMENTE con el contenido académico solicitado en formato Markdown.',
-            'El contenido debe ser claro, riguroso y apropiado para educación superior.',
+            'El documento debe ser 100% explicativo: su objetivo principal es enseñar, no solo resumir ni listar conceptos.',
+            'Usa español natural y didáctico. Evita lenguaje excesivamente técnico; cuando un término técnico sea necesario, explícalo inmediatamente en palabras simples.',
+            'Cada concepto importante debe responder: qué es, por qué importa, cómo funciona, cómo se aplica, un ejemplo y qué errores conviene evitar.',
+            'No escribas como manual seco, paper académico ni documentación técnica. Escribe como un profesor que acompaña el aprendizaje paso a paso.',
         ].join('\n');
 
         const userPrompt = [
@@ -3682,27 +3694,39 @@ Responde de forma clara y constructiva.`;
             topic.description ? `Descripción del tema: ${topic.description}` : '',
             topic.contentDescription ? `El documento debe cubrir específicamente: ${topic.contentDescription}` : '',
             '',
+            'Reglas de estilo obligatorias:',
+            '- Prioriza explicaciones desarrolladas sobre listas cortas.',
+            '- Define la jerga antes de usarla. No uses siglas sin explicar.',
+            '- Usa ejemplos concretos, analogías sencillas cuando ayuden y pasos numerados para procesos.',
+            '- Incluye transiciones que conecten una idea con la siguiente.',
+            '- Evita frases vagas como "es importante" sin explicar por qué.',
+            '- No llenes el documento con rúbricas ni criterios de evaluación; el archivo del tema debe enseñar el tema.',
+            '- Mantén rigor académico, pero con una voz comprensible para un estudiante que está aprendiendo.',
+            '',
             'El documento debe incluir las siguientes secciones:',
-            '# 1. Introducción',
-            'Contextualiza el tema en 2-3 párrafos.',
+            '# 1. Introducción explicativa',
+            'Contextualiza el tema en 3-4 párrafos: qué problema ayuda a resolver, por qué se estudia y dónde se usa.',
             '',
             '# 2. Objetivos de Aprendizaje',
-            'Lista 4-5 objetivos concretos y medibles.',
+            'Lista 4-5 objetivos concretos y medibles, redactados con lenguaje claro.',
             '',
-            '# 3. Conceptos Clave',
-            'Define y explica 5-7 conceptos fundamentales.',
+            '# 3. Conceptos clave explicados en palabras simples',
+            'Define y desarrolla 5-7 conceptos fundamentales. Para cada concepto incluye definición sencilla, explicación, ejemplo y error común.',
             '',
-            '# 4. Desarrollo del Contenido',
-            'Explica el tema en profundidad con subtítulos y ejemplos.',
+            '# 4. Desarrollo paso a paso del tema',
+            'Explica el tema en profundidad con subtítulos, secuencia lógica, ejemplos guiados y conexiones entre ideas.',
             '',
             '# 5. Ejemplos Prácticos',
-            'Presenta 2-3 casos o ejemplos concretos aplicados.',
+            'Presenta 2-3 casos o ejemplos concretos aplicados. Cada ejemplo debe mostrar el razonamiento, no solo el resultado.',
             '',
-            '# 6. Resumen',
-            'Sintetiza los puntos más importantes.',
+            '# 6. Errores comunes y cómo evitarlos',
+            'Explica equivocaciones frecuentes, por qué ocurren y cómo corregirlas.',
             '',
-            '# 7. Actividades de Refuerzo',
-            'Propón 3 actividades para consolidar el aprendizaje.',
+            '# 7. Resumen para recordar',
+            'Sintetiza los puntos más importantes con explicaciones breves, no solo palabras clave.',
+            '',
+            '# 8. Actividades de aprendizaje',
+            'Propón 3 actividades para consolidar el aprendizaje, con instrucciones claras y propósito pedagógico.',
         ].filter(Boolean).join('\n');
 
         const response = await this.llm.chat(systemPrompt, userPrompt, {
@@ -4070,9 +4094,11 @@ Responde de forma clara y constructiva.`;
      */
     async _generateTaskContent({ task, model }) {
         const systemPrompt = [
-            'Eres un experto pedagógico. Genera una guía completa para el desarrollo de una tarea académica.',
+            'Eres un docente experto en guiar estudiantes con instrucciones claras y explicaciones comprensibles.',
             'Responde ÚNICAMENTE con el contenido en formato Markdown.',
-            'El documento debe ser claro, práctico y orientar al estudiante paso a paso.',
+            'El documento debe ser claro, práctico y explicativo: el estudiante debe entender qué debe hacer, por qué lo hace y cómo hacerlo.',
+            'Evita lenguaje innecesariamente técnico. Si debes usar un término técnico, explícalo en palabras simples antes de pedir que el estudiante lo aplique.',
+            'No entregues solo una rúbrica o una lista de requisitos; acompaña el proceso con ejemplos, pasos, recomendaciones y dudas frecuentes.',
         ].join('\n');
 
         const userPrompt = [
@@ -4083,15 +4109,21 @@ Responde de forma clara y constructiva.`;
             task.description ? `Descripción de la tarea: ${task.description}` : '',
             task.contentDescription ? `El documento debe cubrir específicamente: ${task.contentDescription}` : '',
             '',
+            'Reglas de estilo obligatorias:',
+            '- Escribe como una guía de aprendizaje, no como una orden administrativa.',
+            '- Explica el sentido de cada paso antes de pedirlo.',
+            '- Incluye ejemplos de decisiones correctas e incorrectas cuando sea útil.',
+            '- La rúbrica debe estar explicada en lenguaje sencillo para que el estudiante sepa cómo mejorar.',
+            '',
             'El documento debe incluir las siguientes secciones:',
             '# 1. Introducción a la Tarea',
-            'Describe el propósito y la relevancia de esta tarea (2-3 párrafos).',
+            'Describe el propósito, la relevancia y la relación con el tema (2-3 párrafos).',
             '',
             '# 2. Objetivos de la Tarea',
             'Lista 3-4 objetivos específicos que el estudiante debe cumplir.',
             '',
             '# 3. Instrucciones Paso a Paso',
-            'Guía detallada numerada de cómo desarrollar y entregar la tarea.',
+            'Guía detallada numerada de cómo desarrollar y entregar la tarea. Cada paso debe explicar qué hacer, por qué hacerlo y qué cuidar.',
             '',
             '# 4. Recursos y Referencias',
             'Bibliografía sugerida, herramientas y materiales de apoyo.',
@@ -4100,7 +4132,7 @@ Responde de forma clara y constructiva.`;
             'Tabla Markdown con criterios de evaluación, niveles de desempeño y puntajes.',
             '',
             '# 6. Ejemplo o Modelo de Entrega',
-            'Muestra un ejemplo concreto de cómo debe verse el producto final.',
+            'Muestra un ejemplo concreto de cómo debe verse el producto final y explica por qué cumple con lo esperado.',
             '',
             '# 7. Preguntas Frecuentes',
             'Anticipa y responde 3-5 dudas comunes que puedan tener los estudiantes.',

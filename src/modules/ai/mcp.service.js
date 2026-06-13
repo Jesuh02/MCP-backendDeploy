@@ -206,17 +206,21 @@ export class MCPDomainService {
         const fallbackTitle = this._getDomainTopicTitles(context.focus || subject.name)[topicIndex] || `Bloque ${topicIndex + 1}: ${subject.name}`;
         const rawTitle = cleanText(topic.title || topic.name, fallbackTitle);
         const title = this._isGenericPlanTopicTitle(rawTitle) ? fallbackTitle : rawTitle;
+        const contentDescription = cleanText(
+            topic.contentDescription,
+            `Documento de estudio sobre ${title}: introduce el tema con lenguaje sencillo, define cada concepto sin jerga innecesaria, explica por que importa, muestra ejemplos paso a paso, senala errores comunes, propone practica guiada y conecta el tema con situaciones reales de ${subject.name}.`,
+        );
         const normalized = {
             title,
-            description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
+            description: cleanText(topic.description, `Aprende los conceptos de ${subject.name} con explicaciones claras, ejemplos guiados y aplicacion gradual en situaciones reales.`),
             estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
             estimatedHours: Number(topic.estimatedHours) > 0 ? Number(topic.estimatedHours) : undefined,
             independentHours: Number(topic.independentHours) >= 0 ? Number(topic.independentHours) : undefined,
             practicalHours: Number(topic.practicalHours) >= 0 ? Number(topic.practicalHours) : undefined,
             competency: cleanText(topic.competency, `Aplicar ${title} en una situacion profesional verificable.`),
-            learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de resolver una tarea aplicada relacionada con ${title}.`),
+            learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de explicar ${title} con sus propias palabras y aplicarlo en una tarea guiada.`),
             prerequisites: this._normalizeStringList(topic.prerequisites, []),
-            contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados, ejercicios progresivos, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos de profundizacion sobre ${subject.name}.`),
+            contentDescription: `${contentDescription} Debe quedar 100% explicativo para aprender: baja el tecnicismo, define la jerga, agrega ejemplos guiados, explica el razonamiento y evita que el archivo sea solo un resumen o una lista.`,
             tasks: [],
         };
         normalized.tasks = Array.isArray(topic.tasks)
@@ -316,7 +320,7 @@ export class MCPDomainService {
     _buildTopicDescription(title, stage = {}) {
         const profile = this._getTopicProfile(title);
         if (profile.description) return profile.description;
-        return `Bloque aplicado del modulo "${stage.name || 'curso'}" centrado en ${title}.`;
+        return `Bloque del modulo "${stage.name || 'curso'}" que explica ${title} desde sus fundamentos, con ejemplos y aplicaciones progresivas.`;
     }
 
     _buildTopicCompetency(title, stage = {}) {
@@ -324,7 +328,7 @@ export class MCPDomainService {
     }
 
     _buildTopicLearningOutcome(title) {
-        return `Al finalizar este bloque el estudiante sera capaz de producir una evidencia verificable basada en ${title}, seleccionando metodos, metricas y criterios apropiados.`;
+        return `Al finalizar este bloque el estudiante sera capaz de explicar ${title} en lenguaje claro, reconocer sus conceptos principales y aplicarlos en una evidencia verificable.`;
     }
 
     _buildTopicPrerequisites(subjectIndex, topicIndex, subjects) {
@@ -340,7 +344,8 @@ export class MCPDomainService {
 
     _buildTopicContentDescription(title) {
         const profile = this._getTopicProfile(title);
-        return profile.contentDescription || `Documento de estudio sobre ${title}, con conceptos clave, ejemplos guiados, practica aplicada, criterios de calidad y errores frecuentes.`;
+        const base = profile.contentDescription || `Documento de estudio sobre ${title}.`;
+        return `${base} Debe escribirse como material 100% explicativo para aprender: definiciones en palabras simples, explicacion paso a paso, ejemplos guiados, analogias cuando ayuden, practica aplicada, errores frecuentes y criterios de calidad explicados sin jerga innecesaria.`;
     }
 
     _buildCoherentTopicTasks(topic, context = {}) {
@@ -626,7 +631,7 @@ export class MCPDomainService {
             type: cleanText(task.type, this._inferTaskType(task)),
             description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}, con entregable verificable y criterios de calidad.`),
             dueWeek,
-            contentDescription: cleanText(task.contentDescription, 'Guia con instrucciones, ejercicios preparatorios, caso o laboratorio base, criterios de evaluacion, recursos y rubrica para completar la actividad.'),
+            contentDescription: cleanText(task.contentDescription, 'Guia explicativa con el proposito de la tarea, instrucciones paso a paso en lenguaje sencillo, ejemplo de entrega, ejercicios preparatorios, criterios de evaluacion explicados y rubrica clara para completar la actividad.'),
         };
     }
 
@@ -811,7 +816,7 @@ export class MCPDomainService {
             practicalHours: index === 0 ? 3 : 8,
             competency: this._buildTopicCompetency(title, subject),
             learningOutcome: this._buildTopicLearningOutcome(title),
-            contentDescription: `Documento de estudio con explicaciones, ejemplos, ejercicios guiados, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos sugeridos para ${title}.`,
+            contentDescription: `Documento de estudio 100% explicativo sobre ${title}: explica el tema desde cero, define conceptos en palabras simples, muestra ejemplos paso a paso, incluye practica guiada, errores frecuentes, caso aplicado y recursos sugeridos para seguir aprendiendo.`,
             tasks: [],
         };
     }
@@ -947,7 +952,7 @@ export class MCPDomainService {
                 type: milestone.type || 'project',
                 description: `Hito transversal donde el estudiante integra lo aprendido hasta la semana ${milestone.dueWeek} en el proyecto del curso.`,
                 dueWeek: milestone.dueWeek,
-                contentDescription: 'Guia del hito con alcance, entregables, criterios de evaluacion, dependencias con modulos previos y recomendaciones de presentacion.',
+                contentDescription: 'Guia explicativa del hito con proposito, alcance, pasos para desarrollarlo, ejemplo de entrega, criterios de evaluacion explicados, dependencias con modulos previos y recomendaciones de presentacion.',
             });
             allTasks.push(topic.tasks[topic.tasks.length - 1]);
         });
