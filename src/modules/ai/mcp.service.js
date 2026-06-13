@@ -98,23 +98,19 @@ export class MCPDomainService {
     _getCoursePlanTargets({ level, durationWeeks }) {
         const normalizedLevel = this._normalizeCourseLevel(level) || 'beginner';
         const duration = Math.max(1, Number(durationWeeks) > 0 ? Math.round(Number(durationWeeks)) : 8);
-        const minSubjects = duration >= 24
-            ? 4
-            : (normalizedLevel === 'beginner'
-                ? (duration >= 12 ? 3 : 2)
-                : (duration >= 16 ? 4 : 3));
-        const minTopics = duration >= 24
-            ? Math.max(minSubjects * 4, Math.ceil(duration / 2))
-            : Math.max(minSubjects, Math.ceil(duration / 4));
-        const minTasks = duration >= 24
-            ? Math.max(minTopics + minSubjects * 2, Math.ceil(duration * 0.75))
-            : Math.max(minSubjects, Math.ceil(duration / 2));
-        const maxTasksPerTopic = duration >= 24 ? 3 : 2;
+        const minTopics = Math.max(1, Math.ceil(duration / 2));
+        const minSubjects = Math.max(1, Math.ceil(minTopics / 4));
+        const evidenceMultiplier = normalizedLevel === 'advanced'
+            ? 3
+            : (normalizedLevel === 'intermediate' ? 2.5 : 2);
+        const minTasks = Math.ceil(minTopics * evidenceMultiplier);
+        const maxTasksPerTopic = Math.ceil(evidenceMultiplier);
         return {
             minSubjects,
             minTopics,
             minTasks,
             maxTasksPerTopic,
+            evidenceMultiplier,
         };
     }
 
@@ -143,16 +139,16 @@ export class MCPDomainService {
         }
 
         while (this._countPlanTopics(subjects) < targets.minTopics) {
-            const subject = subjects[this._countPlanTopics(subjects) % subjects.length];
+            const subject = this._findSubjectWithFewestTopics(subjects);
             subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks, targets }));
         }
 
         this._reduceTemplateMicroAssessments(subjects, targets);
         this._ensureSubjectMilestones(subjects, { durationWeeks, focus, targets });
-        this._ensurePlanEvidenceDensity(subjects, { durationWeeks, focus, targets });
         if (level !== 'beginner' || durationWeeks >= 8) {
             this._ensureFinalProjectTask(subjects, { durationWeeks, focus });
         }
+        this._ensurePlanEvidenceDensity(subjects, { durationWeeks, focus, targets });
         this._redistributeTopicDurations(subjects, durationWeeks);
         this._redistributePlanDueWeeks(subjects, durationWeeks);
 
@@ -199,8 +195,10 @@ export class MCPDomainService {
 
     _normalizePlanTopic(topic, topicIndex, subject, context) {
         const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
+        const fallbackTitle = `Bloque ${topicIndex + 1}: ${subject.name}`;
+        const rawTitle = cleanText(topic.title || topic.name, fallbackTitle);
         const normalized = {
-            title: cleanText(topic.title, `Tema aplicado ${topicIndex + 1}: ${subject.name}`),
+            title: this._isGenericPlanTopicTitle(rawTitle) ? fallbackTitle : rawTitle,
             description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
             estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
             contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados, ejercicios progresivos, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos de profundizacion sobre ${subject.name}.`),
@@ -227,6 +225,13 @@ export class MCPDomainService {
             dueWeek,
             contentDescription: cleanText(task.contentDescription, 'Guia con instrucciones, ejercicios preparatorios, caso o laboratorio base, criterios de evaluacion, recursos y rubrica para completar la actividad.'),
         };
+    }
+
+    _isGenericPlanTopicTitle(title) {
+        const normalized = String(title || '')
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase().replace(/\s+/g, ' ').trim();
+        return /^(casos de uso y criterios de calidad|taller guiado|practica|practica aplicada|proyecto aplicado del modulo|aplicacion practica|conceptos clave)$/.test(normalized);
     }
 
     _composeSubjectDescription(subject) {
@@ -336,6 +341,7 @@ export class MCPDomainService {
     _ensurePlanEvidenceDensity(subjects, context) {
         const targets = context.targets || {};
         const minTasks = Math.max(0, Number(targets.minTasks) || 0);
+        const maxTasksPerTopic = Math.max(1, Number(targets.maxTasksPerTopic) || 2);
         if (!minTasks) return;
 
         const topics = subjects.flatMap(subject => Array.isArray(subject.topics) ? subject.topics : []);
@@ -345,7 +351,9 @@ export class MCPDomainService {
         while (this._countPlanTasks(subjects) < minTasks) {
             const topic = topics[cursor % topics.length];
             if (!Array.isArray(topic.tasks)) topic.tasks = [];
-            topic.tasks.push(this._buildSupplementalTask(topic, this._countPlanTasks(subjects), context));
+            if (topic.tasks.length < maxTasksPerTopic) {
+                topic.tasks.push(this._buildSupplementalTask(topic, this._countPlanTasks(subjects), context));
+            }
             cursor++;
             if (cursor > minTasks * 4) break;
         }
@@ -370,11 +378,12 @@ export class MCPDomainService {
 
     _buildSupplementalTopic(subject, index, context) {
         const topicTitles = [
-            `Conceptos clave de ${subject.name}`,
-            `Aplicacion practica de ${subject.name}`,
-            `Casos de uso y criterios de calidad`,
-            `Taller guiado de ${context.focus}`,
-            `Proyecto aplicado del modulo`,
+            `Fundamentos tecnicos de ${subject.name}`,
+            `Metodos y herramientas de ${subject.name}`,
+            `Analisis de problemas en ${subject.name}`,
+            `Diseno de soluciones en ${subject.name}`,
+            `Validacion y mejora de ${subject.name}`,
+            `Integracion profesional de ${subject.name}`,
         ];
         const title = topicTitles[index % topicTitles.length];
         return {
@@ -465,6 +474,14 @@ export class MCPDomainService {
                 : 0),
             0,
         );
+    }
+
+    _findSubjectWithFewestTopics(subjects) {
+        return subjects.reduce((selected, subject) => {
+            const selectedCount = Array.isArray(selected.topics) ? selected.topics.length : 0;
+            const currentCount = Array.isArray(subject.topics) ? subject.topics.length : 0;
+            return currentCount < selectedCount ? subject : selected;
+        }, subjects[0]);
     }
 
     /**
