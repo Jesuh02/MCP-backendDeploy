@@ -149,7 +149,6 @@ export class MCPDomainService {
 
         this._ensureSpecificTopicTitles(subjects, { focus });
         this._reduceTemplateMicroAssessments(subjects, targets);
-        this._ensureSubjectMilestones(subjects, { durationWeeks, focus, targets });
         if (level !== 'beginner' || durationWeeks >= 8) {
             this._ensureTransversalProjectMilestones(subjects, { durationWeeks, focus, targets });
         }
@@ -207,6 +206,9 @@ export class MCPDomainService {
             title: this._isGenericPlanTopicTitle(rawTitle) ? fallbackTitle : rawTitle,
             description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
             estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
+            estimatedHours: Number(topic.estimatedHours) > 0 ? Number(topic.estimatedHours) : undefined,
+            competency: cleanText(topic.competency, `Aplicar ${rawTitle} en una situacion profesional verificable.`),
+            learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de resolver una tarea aplicada relacionada con ${rawTitle}.`),
             contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados, ejercicios progresivos, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos de profundizacion sobre ${subject.name}.`),
             tasks: [],
         };
@@ -251,7 +253,7 @@ export class MCPDomainService {
 
     _isGenericPlanTopicTitle(title) {
         const normalized = this._normalizeIntentText(title);
-        return /^(casos de uso y criterios de calidad|taller guiado|practica|practica aplicada|proyecto aplicado del modulo|aplicacion practica|conceptos clave|analisis de problemas|diseno de soluciones|metodos y herramientas|integracion profesional|validacion y mejora)$/.test(normalized);
+        return /^(casos de uso y criterios de calidad|taller guiado|practica|practica aplicada|proyecto aplicado del modulo|aplicacion practica|conceptos clave|analisis de problemas|diseno de soluciones|metodos y herramientas|integracion profesional|validacion y mejora|definicion del proyecto|implementacion del proyecto|evaluacion del proyecto|presentacion del proyecto|presentacion tecnica de resultados y decisiones)$/.test(normalized);
     }
 
     _composeSubjectDescription(subject) {
@@ -270,6 +272,9 @@ export class MCPDomainService {
         const parts = [
             topic.description,
             topic.estimatedWeeks ? `Duracion estimada: ${topic.estimatedWeeks} semana(s).` : '',
+            topic.estimatedHours ? `Horas estimadas: ${topic.estimatedHours}.` : '',
+            topic.competency ? `Competencia del bloque: ${topic.competency}` : '',
+            topic.learningOutcome ? `Resultado esperado: ${topic.learningOutcome}` : '',
         ].filter(Boolean);
         return parts.join('\n\n');
     }
@@ -416,6 +421,9 @@ export class MCPDomainService {
             title,
             description: `Tema centrado en aplicar ${subject.name} a problemas reales del curso.`,
             estimatedWeeks: index === 0 ? 1 : 2,
+            estimatedHours: (index === 0 ? 1 : 2) * 9,
+            competency: `Aplicar ${title} para resolver un caso profesional del curso.`,
+            learningOutcome: `El estudiante sera capaz de producir una evidencia tecnica basada en ${title}.`,
             contentDescription: `Documento de estudio con explicaciones, ejemplos, ejercicios guiados, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos sugeridos para ${title}.`,
             tasks: [],
         };
@@ -440,7 +448,7 @@ export class MCPDomainService {
                 'Monitoreo de modelos y deriva de datos',
                 'MLOps introductorio y versionado de experimentos',
                 'Construccion de producto de datos',
-                'Presentacion tecnica de resultados y decisiones',
+                'Gobernanza y mantenimiento de modelos en produccion',
             ];
         }
         if (/\b(programacion|software|python|javascript|web|backend|frontend)\b/.test(n)) {
@@ -501,7 +509,7 @@ export class MCPDomainService {
         if (topicIndex === 0 && taskIndex === 0) return 'Diagnostico inicial';
         if (progress < 0.2) return ['Ejercicio guiado', 'Laboratorio dirigido', 'Ficha de idea aplicada'][taskIndex % 3];
         if (progress < 0.45) return ['Laboratorio dirigido', 'Caso contextualizado', 'Plan de aplicacion', 'Bitacora tecnica'][taskIndex % 4];
-        if (progress < 0.7) return ['Caso empresarial', 'Implementacion tecnica del bloque', 'Evaluacion intermedia', 'Revision tecnica aplicada'][taskIndex % 4];
+        if (progress < 0.7) return ['Caso empresarial', 'Implementacion tecnica del bloque', 'Caso integrador intermedio', 'Revision tecnica aplicada'][taskIndex % 4];
         if (progress < 0.9) return ['Validacion funcional', 'Caso de validacion', 'Mejora iterativa', 'Informe tecnico aplicado'][taskIndex % 4];
         return ['Entrega profesional del bloque', 'Sustentacion tecnica', 'Retrospectiva profesional', 'Plan de mejora'][taskIndex % 4];
     }
@@ -517,6 +525,7 @@ export class MCPDomainService {
             { marker: /propuesta del proyecto/i, title: `Propuesta del proyecto transversal: ${context.focus}`, dueWeek: Math.max(1, Math.ceil(duration * 0.125)) },
             { marker: /diseno del proyecto/i, title: `Diseno del proyecto transversal: ${context.focus}`, dueWeek: Math.max(1, Math.ceil(duration * 0.25)) },
             { marker: /prototipo parcial/i, title: `Prototipo parcial del proyecto: ${context.focus}`, dueWeek: Math.max(1, Math.ceil(duration * 0.5)) },
+            { marker: /evaluacion intermedia integradora/i, title: `Evaluacion intermedia integradora: ${context.focus}`, dueWeek: Math.max(1, Math.ceil(duration * 0.5)), type: 'assessment' },
             { marker: /version funcional/i, title: `Version funcional del proyecto: ${context.focus}`, dueWeek: Math.max(1, Math.ceil(duration * 0.75)) },
             { marker: /entrega final del proyecto|proyecto final/i, title: `Entrega final del proyecto integrador: ${context.focus}`, dueWeek: duration },
             { marker: /defensa tecnica/i, title: `Defensa tecnica del proyecto: ${context.focus}`, dueWeek: duration },
@@ -527,7 +536,7 @@ export class MCPDomainService {
             if (!Array.isArray(topic.tasks)) topic.tasks = [];
             topic.tasks.push({
                 title: milestone.title,
-                type: 'project',
+                type: milestone.type || 'project',
                 description: `Hito transversal donde el estudiante integra lo aprendido hasta la semana ${milestone.dueWeek} en el proyecto del curso.`,
                 dueWeek: milestone.dueWeek,
                 contentDescription: 'Guia del hito con alcance, entregables, criterios de evaluacion, dependencias con modulos previos y recomendaciones de presentacion.',
@@ -605,6 +614,9 @@ export class MCPDomainService {
         topics.forEach(topic => {
             const extraWeek = remainingWeeks > 0 ? 1 : 0;
             topic.estimatedWeeks = baseWeeks + extraWeek;
+            topic.estimatedHours = topic.estimatedHours || topic.estimatedWeeks * 9;
+            topic.competency = topic.competency || `Aplicar ${topic.title} en una situacion profesional verificable.`;
+            topic.learningOutcome = topic.learningOutcome || `El estudiante sera capaz de construir una evidencia tecnica relacionada con ${topic.title}.`;
             remainingWeeks -= extraWeek;
         });
     }
