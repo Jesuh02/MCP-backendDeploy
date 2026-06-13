@@ -1447,7 +1447,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             'Eres un planificador experto de cursos académicos. Tu ÚNICA función es generar planes de cursos en formato JSON.',
             '',
             'El usuario puede enviarte:',
-            '  a) Una petición para crear un curso nuevo — genera el plan completo (el usuario solo da el título; tú añades descripción, categoría, nivel y duración).',
+            '  a) Una petición para crear un curso nuevo con brief ya validado — genera el plan completo usando la duración del brief; nunca inventes duración.',
             '  b) Su propia planificación estructurada — conviértela al JSON conservando su estructura.',
             '  c) Ajustes o correcciones al plan actual — aplica solo los cambios pedidos.',
             '',
@@ -1703,12 +1703,20 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             const hasExplicitArea = /\b(area|especialidad|enfoque)\s+(de|en|sobre)\b/i.test(this._normalizeIntentText(prompt));
             if (isAnsweringKnownField && currentDraft.topic) delete incoming.topic;
             if (isAnsweringKnownField && !hasExplicitArea) delete incoming.area;
+            if (!this._shouldAcceptDurationFromPrompt(prompt, currentDraft)) delete incoming.durationWeeks;
             const merged = this._mergeCourseDraftValues(currentDraft, incoming);
             return { ...merged, lastAskedField: currentDraft.lastAskedField };
         } catch (err) {
             console.warn('[LLMDomainService] Course draft merge failed, using deterministic fallback:', err.message);
             return this._mergeCourseDraftDeterministic(prompt, currentDraft);
         }
+    }
+
+    _shouldAcceptDurationFromPrompt(prompt, currentDraft = {}) {
+        if (currentDraft.lastAskedField === 'durationWeeks') return true;
+        const text = this._normalizeIntentText(this._unwrapPlannerUserText(prompt));
+        return /\b\d{1,2}\s*(?:semanas?|weeks?)\b/.test(text) ||
+            /\b(?:duracion|dura|durara|duraría|duraria)\b.{0,40}\b\d{1,2}\b/.test(text);
     }
 
     _mergeCourseDraftValues(currentDraft, incomingDraft) {
