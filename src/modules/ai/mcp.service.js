@@ -12,16 +12,13 @@ import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
 import { getCurrentTenantId, hasTenantClient, runInTenantContext } from '../../config/tenantRegistry.js';
 
 const MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES = [
-    'Fundamentos aplicados',
-    'Modelos y conceptos clave',
-    'Herramientas y entorno de trabajo',
-    'Analisis y resolucion de problemas',
-    'Diseno de soluciones',
-    'Buenas practicas profesionales',
-    'Casos reales y toma de decisiones',
-    'Proyecto integrador',
-    'Optimizacion y mejora continua',
-    'Portafolio y evaluacion final',
+    'Fundamentos y lenguaje profesional',
+    'Aplicacion guiada',
+    'Resolucion de problemas',
+    'Casos complejos',
+    'Integracion de competencias',
+    'Proyecto profesional',
+    'Trabajo autonomo y portafolio',
 ];
 
 export class MCPDomainService {
@@ -101,27 +98,13 @@ export class MCPDomainService {
     _getCoursePlanTargets({ level, durationWeeks }) {
         const normalizedLevel = this._normalizeCourseLevel(level) || 'beginner';
         const duration = Math.max(1, Number(durationWeeks) > 0 ? Math.round(Number(durationWeeks)) : 8);
-        const isBasic = normalizedLevel === 'beginner';
-        const recommendedTopics = Math.max(2, Math.ceil(duration / 2));
-        const deepTopics = Math.max(recommendedTopics, Math.min(duration, Math.ceil(duration * 0.75)));
-        const minTasksPerTopic = isBasic ? 3 : (duration >= 32 ? 6 : (normalizedLevel === 'advanced' ? 5 : 4));
-
-        if (isBasic) {
-            const minSubjects = duration >= 16 ? 4 : (duration >= 8 ? 3 : 2);
-            const minTopics = Math.max(recommendedTopics, duration >= 16 ? 8 : (duration >= 8 ? 4 : 2));
-            return { minSubjects, minTopics, minTasks: minTopics * minTasksPerTopic, minTasksPerTopic };
-        }
-
-        const minSubjects = duration >= 32 ? 6 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
-        const minTopics = duration >= 32
-            ? Math.min(20, Math.max(16, recommendedTopics))
-            : (duration >= 16 ? Math.max(8, recommendedTopics) : Math.max(4, recommendedTopics));
-        const targetTopics = normalizedLevel === 'advanced' && duration < 32 ? deepTopics : minTopics;
+        const minSubjects = normalizedLevel === 'beginner'
+            ? (duration >= 12 ? 3 : 2)
+            : (duration >= 16 ? 4 : 3);
+        const minTopics = Math.max(minSubjects, Math.ceil(duration / 4));
         return {
             minSubjects,
-            minTopics: targetTopics,
-            minTasks: targetTopics * minTasksPerTopic,
-            minTasksPerTopic,
+            minTopics,
         };
     }
 
@@ -154,21 +137,9 @@ export class MCPDomainService {
             subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks }));
         }
 
-        for (const subject of subjects) {
-            for (const topic of subject.topics) {
-                if (!Array.isArray(topic.tasks)) topic.tasks = [];
-                while (topic.tasks.length < targets.minTasksPerTopic) {
-                    topic.tasks.push(this._buildSupplementalTask(topic, topic.tasks.length, { durationWeeks }));
-                }
-            }
-        }
-
-        while (this._countPlanTasks(subjects) < targets.minTasks) {
-            const flatTopics = subjects.flatMap(subject => subject.topics.map(topic => ({ subject, topic })));
-            const entry = flatTopics[this._countPlanTasks(subjects) % flatTopics.length];
-            entry.topic.tasks.push(this._buildSupplementalTask(entry.topic, entry.topic.tasks.length, { durationWeeks }));
-        }
-        if (level !== 'beginner' && durationWeeks >= 16) {
+        this._reduceTemplateMicroAssessments(subjects);
+        this._ensureSubjectMilestones(subjects, { durationWeeks, focus });
+        if (level !== 'beginner' || durationWeeks >= 8) {
             this._ensureFinalProjectTask(subjects, { durationWeeks, focus });
         }
         this._redistributePlanDueWeeks(subjects, durationWeeks);
@@ -180,6 +151,9 @@ export class MCPDomainService {
             category: cleanText(source.category, 'General'),
             level,
             durationWeeks,
+            competencies: this._normalizeStringList(source.competencies, this._buildCompetencies(focus, objective)),
+            learningOutcomes: this._normalizeStringList(source.learningOutcomes, this._buildLearningOutcomes(focus, level)),
+            workload: this._normalizeWorkload(source.workload, durationWeeks, source.hoursPerWeek),
             subjects,
         };
     }
@@ -189,6 +163,14 @@ export class MCPDomainService {
         const normalized = {
             name: cleanText(subject.name, `${MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES[subjectIndex % MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES.length]} de ${context.focus}`),
             description: cleanText(subject.description, `Desarrolla competencias especificas de ${context.focus} alineadas con el objetivo del curso.`),
+            competency: cleanText(subject.competency, `Aplicar ${context.focus} para resolver problemas progresivamente mas complejos.`),
+            learningOutcomes: this._normalizeStringList(subject.learningOutcomes, [
+                `Explicar los conceptos clave de ${context.focus} usados en este modulo.`,
+                `Aplicar tecnicas del modulo en una evidencia verificable.`,
+            ]),
+            integration: cleanText(subject.integration, subjectIndex === 0
+                ? 'Establece la base conceptual y practica para los modulos posteriores.'
+                : 'Usa aprendizajes previos y prepara una evidencia de mayor complejidad.'),
             topics: [],
         };
         normalized.topics = Array.isArray(subject.topics)
@@ -208,6 +190,7 @@ export class MCPDomainService {
         const normalized = {
             title: cleanText(topic.title, `Tema aplicado ${topicIndex + 1}: ${subject.name}`),
             description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
+            estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
             contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados y criterios de aplicacion sobre ${subject.name}.`),
             tasks: [],
         };
@@ -227,10 +210,114 @@ export class MCPDomainService {
             : this._suggestDueWeek(taskIndex, context.durationWeeks);
         return {
             title: cleanText(task.title, `Actividad aplicada: ${topic.title}`),
+            type: cleanText(task.type, this._inferTaskType(task)),
             description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}.`),
             dueWeek,
             contentDescription: cleanText(task.contentDescription, 'Guia con instrucciones, criterios de evaluacion, recursos y rubrica para completar la actividad.'),
         };
+    }
+
+    _composeSubjectDescription(subject) {
+        const parts = [
+            subject.description,
+            subject.competency ? `Competencia: ${subject.competency}` : '',
+            Array.isArray(subject.learningOutcomes) && subject.learningOutcomes.length
+                ? `Resultados de aprendizaje: ${subject.learningOutcomes.join('; ')}`
+                : '',
+            subject.integration ? `Integracion: ${subject.integration}` : '',
+        ].filter(Boolean);
+        return parts.join('\n\n');
+    }
+
+    _composeTopicDescription(topic) {
+        const parts = [
+            topic.description,
+            topic.estimatedWeeks ? `Duracion estimada: ${topic.estimatedWeeks} semana(s).` : '',
+        ].filter(Boolean);
+        return parts.join('\n\n');
+    }
+
+    _composeTaskDescription(task) {
+        const parts = [
+            task.type ? `Tipo de evidencia: ${task.type}.` : '',
+            task.description,
+        ].filter(Boolean);
+        return parts.join('\n\n');
+    }
+
+    _normalizeStringList(value, fallback = []) {
+        const raw = Array.isArray(value) ? value : [];
+        const list = raw
+            .map(item => String(item ?? '').replace(/\s+/g, ' ').trim())
+            .filter(Boolean);
+        return list.length ? list : fallback;
+    }
+
+    _normalizeWorkload(value, durationWeeks, hoursPerWeek) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const weeklyHours = Math.max(4, Number(hoursPerWeek) || 6);
+        const totalHours = Math.round(Number(value?.totalHours) > 0 ? Number(value.totalHours) : duration * weeklyHours);
+        const guidedHours = Math.round(Number(value?.guidedHours) > 0 ? Number(value.guidedHours) : totalHours * 0.35);
+        const projectHours = Math.round(Number(value?.projectHours) > 0 ? Number(value.projectHours) : totalHours * 0.25);
+        const independentHours = Math.max(0, totalHours - guidedHours - projectHours);
+        return { totalHours, guidedHours, independentHours, projectHours };
+    }
+
+    _buildCompetencies(focus, objective) {
+        return [
+            `Interpretar fundamentos de ${focus} para tomar decisiones tecnicas justificadas.`,
+            `Aplicar metodos y herramientas de ${focus} en problemas reales o simulados.`,
+            `Integrar aprendizajes del curso en una solucion o proyecto defendible.`,
+            `Evaluar resultados, riesgos y criterios de calidad relacionados con ${objective}.`,
+        ];
+    }
+
+    _buildLearningOutcomes(focus, level) {
+        const autonomy = level === 'advanced' ? 'con autonomia profesional' : 'con acompanamiento gradual';
+        return [
+            `Explicar conceptos clave de ${focus} usando lenguaje tecnico adecuado.`,
+            `Resolver casos de ${focus} ${autonomy}.`,
+            `Construir evidencias progresivas que demuestren dominio practico.`,
+            `Presentar un proyecto integrador con criterios de calidad verificables.`,
+        ];
+    }
+
+    _inferTaskType(task = {}) {
+        const text = `${task.title || ''} ${task.description || ''}`.toLowerCase();
+        if (/proyecto|fase|prototipo|entrega final|integrador/.test(text)) return 'project';
+        if (/parcial|examen|evaluacion|rúbrica|rubrica|portafolio/.test(text)) return 'assessment';
+        if (/caso|laboratorio|taller|reto|hito|entrega/.test(text)) return 'milestone';
+        return 'formative';
+    }
+
+    _reduceTemplateMicroAssessments(subjects) {
+        const micro = /\b(lectura|leer|video|recurso|quiz|cuestionario|verificacion)\b/i;
+        const evidence = /\b(taller|laboratorio|caso|proyecto|fase|parcial|examen|portafolio|entrega|reto|informe|presentacion)\b/i;
+        for (const subject of subjects) {
+            for (const topic of (subject.topics || [])) {
+                if (!Array.isArray(topic.tasks)) {
+                    topic.tasks = [];
+                    continue;
+                }
+                if (topic.tasks.length <= 2) continue;
+                const preferred = topic.tasks.filter(task => {
+                    const text = `${task.title || ''} ${task.description || ''}`;
+                    return evidence.test(text) || !micro.test(text);
+                });
+                topic.tasks = (preferred.length ? preferred : topic.tasks).slice(0, 2);
+            }
+        }
+    }
+
+    _ensureSubjectMilestones(subjects, context) {
+        subjects.forEach((subject, index) => {
+            const topics = Array.isArray(subject.topics) ? subject.topics : [];
+            if (!topics.length) return;
+            const hasEvidence = topics.some(topic => Array.isArray(topic.tasks) && topic.tasks.length > 0);
+            if (hasEvidence) return;
+            const targetTopic = topics[topics.length - 1];
+            targetTopic.tasks = [this._buildSupplementalTask(targetTopic, index, context)];
+        });
     }
 
     _buildSupplementalSubject(index, context) {
@@ -238,6 +325,14 @@ export class MCPDomainService {
         return {
             name,
             description: `Materia orientada a convertir el objetivo "${context.objective}" en competencias observables y aplicables.`,
+            competency: `Resolver problemas de ${context.focus} con el nivel de autonomia esperado para esta etapa.`,
+            learningOutcomes: [
+                `Interpretar criterios y conceptos clave de ${context.focus}.`,
+                `Construir una evidencia aplicada que demuestre progreso profesional.`,
+            ],
+            integration: index === 0
+                ? 'Construye la base para los siguientes modulos.'
+                : 'Integra aprendizajes previos en una evidencia de mayor complejidad.',
             topics: [this._buildSupplementalTopic({ name }, 0, context)],
         };
     }
@@ -254,26 +349,24 @@ export class MCPDomainService {
         return {
             title,
             description: `Tema centrado en aplicar ${subject.name} a problemas reales del curso.`,
+            estimatedWeeks: index === 0 ? 1 : 2,
             contentDescription: `Documento de estudio con explicaciones, ejemplos, buenas practicas y una guia de aplicacion para ${title}.`,
-            tasks: [this._buildSupplementalTask({ title }, 0, context)],
+            tasks: [],
         };
     }
 
     _buildSupplementalTask(topic, index, context) {
         const taskTypes = [
-            'Lectura guiada',
-            'Taller practico',
-            'Quiz de verificacion',
-            'Laboratorio o caso aplicado',
-            'Entrega de proyecto',
+            'Caso aplicado',
+            'Hito de proyecto',
+            'Parcial integrador',
             'Revision de portafolio',
-            'Parcial aplicado',
-            'Examen integrador',
         ];
         const taskType = taskTypes[index % taskTypes.length];
         return {
             title: `${taskType}: ${topic.title}`,
-            description: `Actividad evaluable donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
+            type: /proyecto/i.test(taskType) ? 'project' : (/parcial|portafolio/i.test(taskType) ? 'assessment' : 'milestone'),
+            description: `Evidencia donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
             dueWeek: this._suggestDueWeek(index, context.durationWeeks),
             contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
         };
@@ -290,6 +383,7 @@ export class MCPDomainService {
         if (!lastTopic) return;
         lastTopic.tasks.push({
             title: `Proyecto final integrador: ${context.focus}`,
+            type: 'project',
             description: 'Entrega final donde el estudiante integra las competencias del curso en una solucion completa y defendible.',
             dueWeek: Math.max(1, Number(context.durationWeeks) || 8),
             contentDescription: 'Guia de proyecto final con alcance, entregables, criterios de evaluacion, rubrica y recomendaciones de presentacion.',
@@ -419,9 +513,10 @@ export class MCPDomainService {
             const subjectsForThumbnails = [];
 
             for (const subject of plan.subjects) {
+                const subjectDescription = this._composeSubjectDescription(subject);
                 const subjectRow = await execInsert(
                     `INSERT INTO subjects (name, description, course_id, created_by)
-                     VALUES ('${esc(subject.name)}', '${esc(subject.description)}', ${courseId}, ${userId})
+                     VALUES ('${esc(subject.name)}', '${esc(subjectDescription)}', ${courseId}, ${userId})
                      RETURNING id`,
                 );
                 const subjectId = subjectRow?.id;
@@ -429,13 +524,14 @@ export class MCPDomainService {
                 subjectsForThumbnails.push({
                     subjectId,
                     name: subject.name,
-                    description: subject.description || '',
+                    description: subjectDescription || '',
                 });
 
                 for (const topic of (subject.topics || [])) {
+                    const topicDescription = this._composeTopicDescription(topic);
                     const topicRow = await execInsert(
                         `INSERT INTO topics (name, description, materia_id, created_by)
-                         VALUES ('${esc(topic.title)}', '${esc(topic.description)}', ${subjectId}, ${userId})
+                         VALUES ('${esc(topic.title)}', '${esc(topicDescription)}', ${subjectId}, ${userId})
                          RETURNING id`,
                     );
                     const topicId = topicRow?.id;
@@ -443,12 +539,13 @@ export class MCPDomainService {
                     topicsCreated++;
 
                     for (const task of (topic.tasks || [])) {
+                        const taskDescription = this._composeTaskDescription(task);
                         const dueExpr = task.dueWeek && Number.isInteger(task.dueWeek) && task.dueWeek > 0
                             ? `NOW() + INTERVAL '${task.dueWeek} weeks'`
                             : 'NULL';
                         const taskRow = await execInsert(
                             `INSERT INTO tasks (title, description, topic_id, due_date, created_by)
-                             VALUES ('${esc(task.title)}', '${esc(task.description)}', ${topicId}, ${dueExpr}, ${userId})
+                             VALUES ('${esc(task.title)}', '${esc(taskDescription)}', ${topicId}, ${dueExpr}, ${userId})
                              RETURNING id`,
                         );
                         if (taskRow?.id) tasksCreated++;

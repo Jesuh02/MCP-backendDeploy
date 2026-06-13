@@ -31,16 +31,13 @@ const _tenantAskCache = new Map();
 const _courseDraftSessionCache = new Map();
 const COURSE_DRAFT_SESSION_TTL_MS = 60 * 60 * 1000;
 const SUPPLEMENTAL_SUBJECT_TEMPLATES = [
-    'Fundamentos aplicados',
-    'Modelos y conceptos clave',
-    'Herramientas y entorno de trabajo',
-    'Analisis y resolucion de problemas',
-    'Diseno de soluciones',
-    'Buenas practicas profesionales',
-    'Casos reales y toma de decisiones',
-    'Proyecto integrador',
-    'Optimizacion y mejora continua',
-    'Portafolio y evaluacion final',
+    'Fundamentos y lenguaje profesional',
+    'Aplicacion guiada',
+    'Resolucion de problemas',
+    'Casos complejos',
+    'Integracion de competencias',
+    'Proyecto profesional',
+    'Trabajo autonomo y portafolio',
 ];
 
 export class LLMDomainService {
@@ -653,11 +650,13 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                         `3. Ejecuta con \`query_database\`\n` +
                         `4. Formula tu respuesta en Markdown con los datos reales\n\n` +
                         `REGLA #2b — FLUJO OBLIGATORIO PARA CREAR CURSOS:\n` +
-                        `1. Diseña la estructura del curso (materias, temas, tareas) según lo que pide el usuario\n` +
+                        `1. Disena la estructura desde competencias, resultados de aprendizaje, contenidos y evidencias, segun lo que pide el usuario\n` +
                         `2. Llama \`create_course_structure\` con el plan completo y el userId del usuario actual (${userId || 'usa el userId disponible en el contexto'})\n` +
                         `- Para cursos no basicos, nunca generes solo 1 o 2 modulos/materias.\n` +
-                        `- Para 32 semanas: estructura recomendada = 6 a 8 modulos, 16 a 20 temas, 6 tareas por tema y 1 proyecto final.\n` +
-                        `- Cada tema debe incluir tareas variadas: lectura, video/recurso, taller, quiz, laboratorio/caso y entrega/proyecto.\n` +
+                        `- No disenes por cuotas de tareas. La duracion define profundidad, carga y progresion, no simetria artificial.\n` +
+                        `- Las tareas son evidencias formales o hitos del proyecto; evita lectura + quiz + taller + laboratorio + proyecto en cada tema.\n` +
+                        `- Incluye actividades formativas dentro de contentDescription cuando no requieran entrega formal.\n` +
+                        `- El proyecto debe evolucionar por fases y cerrar con una entrega integradora.\n` +
                         `- Las miniaturas IA de todas las materias se generan en segundo plano despues de crear la estructura.\n` +
                         `3. Confirma al usuario el resultado con el courseId obtenido\n` +
                         `- NUNCA digas que no puedes crear cursos. Siempre diseña la estructura y ejecuta la herramienta.\n\n` +
@@ -668,7 +667,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                         "```\n" +
                         `O para crear un curso:\n` +
                         "```json\n" +
-                        `{"tool": "create_course_structure", "arguments": {"plan": {"title": "...", "description": "...", "category": "...", "subjects": [{"name": "...", "description": "...", "topics": [{"title": "...", "description": "...", "tasks": [{"title": "...", "description": "...", "dueWeek": 1}]}]}]}, "userId": ${userId || 0}}}\n` +
+                        `{"tool": "create_course_structure", "arguments": {"plan": {"title": "...", "description": "...", "category": "...", "competencies": ["..."], "learningOutcomes": ["..."], "subjects": [{"name": "...", "description": "...", "competency": "...", "integration": "...", "topics": [{"title": "...", "description": "...", "estimatedWeeks": 2, "tasks": [{"title": "...", "type": "milestone", "description": "...", "dueWeek": 1}]}]}]}, "userId": ${userId || 0}}}\n` +
                         "```\n" +
                         `O para ver el esquema:\n` +
                         "```json\n" +
@@ -1460,19 +1459,32 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '  "description": string,                    // descripción completa del curso (2-3 oraciones)',
             '  "category": string,                       // categoría educativa (ej: Matemáticas, Programación, Ciencias)',
             '  "level": string,                          // "beginner" | "intermediate" | "advanced"',
-            '  "durationWeeks": number,                  // duración en semanas',
+            '  "durationWeeks": number,                  // duracion en semanas',
+            '  "competencies": string[],                 // 3-6 competencias profesionales observables',
+            '  "learningOutcomes": string[],             // 4-8 resultados medibles de aprendizaje',
+            '  "workload": {',
+            '    "totalHours": number,',
+            '    "guidedHours": number,',
+            '    "independentHours": number,',
+            '    "projectHours": number',
+            '  },',
             '  "subjects": [',
             '    {',
             '      "name": string,                       // nombre del módulo/materia',
-            '      "description": string,               // descripción del módulo',
+            '      "description": string,               // proposito e integracion del modulo',
+            '      "competency": string,                // competencia principal que desarrolla',
+            '      "learningOutcomes": string[],        // resultados del modulo',
+            '      "integration": string,               // como usa o prepara otros modulos',
             '      "topics": [',
             '        {',
             '          "title": string,                  // título del tema',
-            '          "description": string,           // descripción del tema',
+            '          "description": string,           // resultado concreto del bloque',
+            '          "estimatedWeeks": number,        // duracion academica realista del bloque',
             '          "contentDescription": string,    // resumen de 1-2 oraciones de lo que contendrá el documento Word de estudio para este tema (qué conceptos explica, qué ejemplos incluye)',
             '          "tasks": [',
             '            {',
-            '              "title": string,              // título de la tarea',
+            '              "title": string,              // evidencia, hito, caso, parcial o fase de proyecto',
+            '              "type": string,               // "formative" | "milestone" | "project" | "assessment"',
             '              "description": string,       // descripción de la tarea',
             '              "dueWeek": number,            // semana sugerida de entrega',
             '              "contentDescription": string // qué contendrá el material de apoyo de esta tarea (ejercicios, guía, rúbrica, etc.)',
@@ -1488,14 +1500,14 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- Nunca marques el curso como premium. El campo isFree SIEMPRE es true.',
             '- El campo contentDescription en topics y tasks es OBLIGATORIO: describe concretamente qué explicará el documento Word generado para ese tema/tarea.',
             '- Genera un plan completo, coherente y en español. Si faltan detalles, propón una estructura razonable.',
-            '- Si el nivel NO es beginner/basico, el curso debe tener SIEMPRE mas de 2 modulos/materias. Nunca entregues solo 1 o 2 modulos para nivel intermedio o avanzado.',
-            '- Ajusta el numero total de modulos/materias, temas y tareas a la duracion. Un tema normalmente dura 1 a 2 semanas.',
-            '- Regla de escala: temas recomendados = semanas / 2; para cursos profundos puedes acercarte a semanas completas.',
-            '- Regla de tareas: cada tema debe tener lectura, video/recurso, taller o laboratorio, quiz/evaluacion y, cuando aplique, proyecto.',
-            '- Usa 3 tareas por tema en basico, 4 en intermedio/avanzado corto y 6 tareas por tema en cursos no basicos de 32 semanas o mas.',
-            '- Curso de 16 semanas: 8 a 12 temas y 32 a 60 tareas totales. Curso de 32 semanas: 6 a 8 modulos, 16 a 20 temas, 96 a 120 tareas totales y 1 proyecto final.',
-            '- Modelo universitario: una materia de 16 semanas suele tener 8 a 10 temas, 25 a 40 tareas, proyecto final, parciales y examen final.',
-            '- Cada tema debe tener varias tareas practicas o evaluables. Distribuye las fechas de entrega a lo largo de la duracion.',
+            '- Disena en este orden: competencias -> resultados de aprendizaje -> contenidos -> actividades formativas -> evaluaciones.',
+            '- No empieces por cantidades. La duracion limita profundidad y carga, pero no debe imponer simetria artificial.',
+            '- Los modulos deben mostrar progresion: fundamentos, aplicacion guiada, problemas, casos complejos, proyecto integrador y autonomia.',
+            '- No todos los modulos ni temas pesan lo mismo. Usa bloques cortos y largos segun la dificultad real.',
+            '- Las tasks son evidencias formales o hitos importantes, no una lista de microactividades. NO repitas lectura + quiz + taller + laboratorio + proyecto en cada tema.',
+            '- Usa actividades formativas dentro de contentDescription cuando no requieran entrega formal.',
+            '- Incluye parciales, casos o fases de proyecto solo cuando evaluen una competencia acumulada.',
+            '- El proyecto debe evolucionar por fases conectadas y terminar en una entrega integradora, no en proyectos aislados por tema.',
             '- NUNCA digas que no puedes crear cursos. Tu trabajo es SIEMPRE generar el JSON.',
         ].join('\n');
 
@@ -1506,21 +1518,18 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             `PETICION ACTUAL DEL USUARIO: ${prompt}`,
             '',
             'Aplica esta logica profesional:',
-            '- Objetivo -> competencias necesarias -> modulos/materias -> temas -> contenido de estudio -> tareas practicas.',
-            '- El objetivo define los modulos/materias necesarios.',
-            '- El nivel define la profundidad.',
-            '- La duracion define la cantidad de modulos/materias y temas.',
-            '- El area o enfoque opcional ayuda a especializar materias, tareas y ejemplos.',
+            '- Objetivo -> competencias necesarias -> resultados de aprendizaje -> modulos/materias -> temas -> evidencias.',
+            '- El objetivo define las competencias. Las competencias definen los modulos. Los modulos definen contenidos y evidencias.',
+            '- El nivel define profundidad, autonomia y complejidad de los casos.',
+            '- La duracion define carga academica, tiempos de maduracion y profundidad, no cuotas de tareas.',
+            '- El area o enfoque opcional ayuda a especializar materias, casos, herramientas y proyecto.',
             '',
-            'Cantidad orientativa:',
-            '- Basico: 2 a 4 modulos/materias segun duracion.',
-            '- Intermedio o avanzado, 4 a 8 semanas: minimo 3 modulos, 4 a 8 temas y 16 a 40 tareas totales.',
-            '- Intermedio o avanzado, 12 semanas: minimo 4 modulos, 6 temas y 24 a 30 tareas totales.',
-            '- Intermedio o avanzado, 16 semanas: minimo 5 modulos, 8 a 12 temas y 32 a 60 tareas totales.',
-            '- Intermedio o avanzado, 24 semanas: minimo 6 modulos, 12 temas y 48 a 60 tareas totales.',
-            '- Intermedio o avanzado, 32 semanas o mas: 6 a 8 modulos, 16 a 20 temas, 6 tareas por tema y 1 proyecto final.',
-            '- Cada modulo/materia debe tener normalmente 2 a 4 temas en cursos largos; no crees 8 materias independientes si 6 modulos robustos cubren mejor el objetivo.',
-            '- Cada tema debe tener 3 a 10 tareas; para 32 semanas usa lectura, video/recurso, taller, quiz, laboratorio/caso y entrega/proyecto.',
+            'Criterios curriculares:',
+            '- Prefiere una estructura asimetrica y realista: algunos modulos pueden durar 1 semana y otros 4 o 5.',
+            '- Cada modulo debe declarar una competencia y explicar como usa lo aprendido antes o prepara el siguiente modulo.',
+            '- Incluye actividades formativas en los documentos de estudio; solo crea tasks cuando haya una evidencia evaluable o un hito del proyecto.',
+            '- Distribuye evaluaciones parciales e hitos integradores. Evita microevaluaciones por cada pequeno contenido.',
+            '- Si hay proyecto, disena fases acumulativas: diagnostico/diseno, prototipo o aplicacion, validacion, entrega final.',
             '- No infles con relleno: cada modulo/materia debe representar una competencia real del objetivo.',
             '',
             'Genera el plan usando estrictamente el brief validado. Incluye en la descripcion el area/enfoque cuando aporte contexto pedagogico.',
@@ -1870,27 +1879,13 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     _getCoursePlanTargets({ level, durationWeeks }) {
         const normalizedLevel = this._normalizeCourseLevel(level) || 'beginner';
         const duration = Math.max(1, Number(durationWeeks) > 0 ? Math.round(Number(durationWeeks)) : 8);
-        const isBasic = normalizedLevel === 'beginner';
-        const recommendedTopics = Math.max(2, Math.ceil(duration / 2));
-        const deepTopics = Math.max(recommendedTopics, Math.min(duration, Math.ceil(duration * 0.75)));
-        const minTasksPerTopic = isBasic ? 3 : (duration >= 32 ? 6 : (normalizedLevel === 'advanced' ? 5 : 4));
-
-        if (isBasic) {
-            const minSubjects = duration >= 16 ? 4 : (duration >= 8 ? 3 : 2);
-            const minTopics = Math.max(recommendedTopics, duration >= 16 ? 8 : (duration >= 8 ? 4 : 2));
-            return { minSubjects, minTopics, minTasks: minTopics * minTasksPerTopic, minTasksPerTopic };
-        }
-
-        const minSubjects = duration >= 32 ? 6 : (duration >= 24 ? 6 : (duration >= 16 ? 5 : (duration >= 12 ? 4 : 3)));
-        const minTopics = duration >= 32
-            ? Math.min(20, Math.max(16, recommendedTopics))
-            : (duration >= 16 ? Math.max(8, recommendedTopics) : Math.max(4, recommendedTopics));
-        const targetTopics = normalizedLevel === 'advanced' && duration < 32 ? deepTopics : minTopics;
+        const minSubjects = normalizedLevel === 'beginner'
+            ? (duration >= 12 ? 3 : 2)
+            : (duration >= 16 ? 4 : 3);
+        const minTopics = Math.max(minSubjects, Math.ceil(duration / 4));
         return {
             minSubjects,
-            minTopics: targetTopics,
-            minTasks: targetTopics * minTasksPerTopic,
-            minTasksPerTopic,
+            minTopics,
         };
     }
 
@@ -1925,21 +1920,9 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks }));
         }
 
-        for (const subject of subjects) {
-            for (const topic of subject.topics) {
-                if (!Array.isArray(topic.tasks)) topic.tasks = [];
-                while (topic.tasks.length < targets.minTasksPerTopic) {
-                    topic.tasks.push(this._buildSupplementalTask(topic, topic.tasks.length, { durationWeeks }));
-                }
-            }
-        }
-
-        while (this._countPlanTasks(subjects) < targets.minTasks) {
-            const flatTopics = subjects.flatMap(subject => subject.topics.map(topic => ({ subject, topic })));
-            const entry = flatTopics[this._countPlanTasks(subjects) % flatTopics.length];
-            entry.topic.tasks.push(this._buildSupplementalTask(entry.topic, entry.topic.tasks.length, { durationWeeks }));
-        }
-        if (level !== 'beginner' && durationWeeks >= 16) {
+        this._reduceTemplateMicroAssessments(subjects);
+        this._ensureSubjectMilestones(subjects, { durationWeeks, focus });
+        if (level !== 'beginner' || durationWeeks >= 8) {
             this._ensureFinalProjectTask(subjects, { durationWeeks, focus });
         }
         this._redistributePlanDueWeeks(subjects, durationWeeks);
@@ -1950,6 +1933,9 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             category: cleanText(source.category, cleanText(draft.area, 'General')),
             level,
             durationWeeks,
+            competencies: this._normalizeStringList(source.competencies, this._buildCompetencies(focus, objective)),
+            learningOutcomes: this._normalizeStringList(source.learningOutcomes, this._buildLearningOutcomes(focus, level)),
+            workload: this._normalizeWorkload(source.workload, durationWeeks, draft.hoursPerWeek),
             subjects,
         };
     }
@@ -1959,6 +1945,14 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const normalized = {
             name: cleanText(subject.name, `${SUPPLEMENTAL_SUBJECT_TEMPLATES[subjectIndex % SUPPLEMENTAL_SUBJECT_TEMPLATES.length]} de ${context.focus}`),
             description: cleanText(subject.description, `Desarrolla competencias especificas de ${context.focus} alineadas con el objetivo del curso.`),
+            competency: cleanText(subject.competency, `Aplicar ${context.focus} para resolver problemas progresivamente mas complejos.`),
+            learningOutcomes: this._normalizeStringList(subject.learningOutcomes, [
+                `Explicar los conceptos clave de ${context.focus} usados en este modulo.`,
+                `Aplicar tecnicas del modulo en una evidencia verificable.`,
+            ]),
+            integration: cleanText(subject.integration, subjectIndex === 0
+                ? 'Establece la base conceptual y practica para los modulos posteriores.'
+                : 'Usa aprendizajes previos y prepara una evidencia de mayor complejidad.'),
             topics: [],
         };
         normalized.topics = Array.isArray(subject.topics)
@@ -1978,6 +1972,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const normalized = {
             title: cleanText(topic.title, `Tema aplicado ${topicIndex + 1}: ${subject.name}`),
             description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
+            estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
             contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados y criterios de aplicacion sobre ${subject.name}.`),
             tasks: [],
         };
@@ -1997,10 +1992,114 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             : this._suggestDueWeek(taskIndex, context.durationWeeks);
         return {
             title: cleanText(task.title, `Actividad aplicada: ${topic.title}`),
+            type: cleanText(task.type, this._inferTaskType(task)),
             description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}.`),
             dueWeek,
             contentDescription: cleanText(task.contentDescription, `Guia con instrucciones, criterios de evaluacion, recursos y rubrica para completar la actividad.`),
         };
+    }
+
+    _composeSubjectDescription(subject) {
+        const parts = [
+            subject.description,
+            subject.competency ? `Competencia: ${subject.competency}` : '',
+            Array.isArray(subject.learningOutcomes) && subject.learningOutcomes.length
+                ? `Resultados de aprendizaje: ${subject.learningOutcomes.join('; ')}`
+                : '',
+            subject.integration ? `Integracion: ${subject.integration}` : '',
+        ].filter(Boolean);
+        return parts.join('\n\n');
+    }
+
+    _composeTopicDescription(topic) {
+        const parts = [
+            topic.description,
+            topic.estimatedWeeks ? `Duracion estimada: ${topic.estimatedWeeks} semana(s).` : '',
+        ].filter(Boolean);
+        return parts.join('\n\n');
+    }
+
+    _composeTaskDescription(task) {
+        const parts = [
+            task.type ? `Tipo de evidencia: ${task.type}.` : '',
+            task.description,
+        ].filter(Boolean);
+        return parts.join('\n\n');
+    }
+
+    _normalizeStringList(value, fallback = []) {
+        const raw = Array.isArray(value) ? value : [];
+        const list = raw
+            .map(item => String(item ?? '').replace(/\s+/g, ' ').trim())
+            .filter(Boolean);
+        return list.length ? list : fallback;
+    }
+
+    _normalizeWorkload(value, durationWeeks, hoursPerWeek) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const weeklyHours = Math.max(4, Number(hoursPerWeek) || 6);
+        const totalHours = Math.round(Number(value?.totalHours) > 0 ? Number(value.totalHours) : duration * weeklyHours);
+        const guidedHours = Math.round(Number(value?.guidedHours) > 0 ? Number(value.guidedHours) : totalHours * 0.35);
+        const projectHours = Math.round(Number(value?.projectHours) > 0 ? Number(value.projectHours) : totalHours * 0.25);
+        const independentHours = Math.max(0, totalHours - guidedHours - projectHours);
+        return { totalHours, guidedHours, independentHours, projectHours };
+    }
+
+    _buildCompetencies(focus, objective) {
+        return [
+            `Interpretar fundamentos de ${focus} para tomar decisiones tecnicas justificadas.`,
+            `Aplicar metodos y herramientas de ${focus} en problemas reales o simulados.`,
+            `Integrar aprendizajes del curso en una solucion o proyecto defendible.`,
+            `Evaluar resultados, riesgos y criterios de calidad relacionados con ${objective}.`,
+        ];
+    }
+
+    _buildLearningOutcomes(focus, level) {
+        const autonomy = level === 'advanced' ? 'con autonomia profesional' : 'con acompanamiento gradual';
+        return [
+            `Explicar conceptos clave de ${focus} usando lenguaje tecnico adecuado.`,
+            `Resolver casos de ${focus} ${autonomy}.`,
+            `Construir evidencias progresivas que demuestren dominio practico.`,
+            `Presentar un proyecto integrador con criterios de calidad verificables.`,
+        ];
+    }
+
+    _inferTaskType(task = {}) {
+        const text = `${task.title || ''} ${task.description || ''}`.toLowerCase();
+        if (/proyecto|fase|prototipo|entrega final|integrador/.test(text)) return 'project';
+        if (/parcial|examen|evaluacion|rúbrica|rubrica|portafolio/.test(text)) return 'assessment';
+        if (/caso|laboratorio|taller|reto|hito|entrega/.test(text)) return 'milestone';
+        return 'formative';
+    }
+
+    _reduceTemplateMicroAssessments(subjects) {
+        const micro = /\b(lectura|leer|video|recurso|quiz|cuestionario|verificacion)\b/i;
+        const evidence = /\b(taller|laboratorio|caso|proyecto|fase|parcial|examen|portafolio|entrega|reto|informe|presentacion)\b/i;
+        for (const subject of subjects) {
+            for (const topic of (subject.topics || [])) {
+                if (!Array.isArray(topic.tasks)) {
+                    topic.tasks = [];
+                    continue;
+                }
+                if (topic.tasks.length <= 2) continue;
+                const preferred = topic.tasks.filter(task => {
+                    const text = `${task.title || ''} ${task.description || ''}`;
+                    return evidence.test(text) || !micro.test(text);
+                });
+                topic.tasks = (preferred.length ? preferred : topic.tasks).slice(0, 2);
+            }
+        }
+    }
+
+    _ensureSubjectMilestones(subjects, context) {
+        subjects.forEach((subject, index) => {
+            const topics = Array.isArray(subject.topics) ? subject.topics : [];
+            if (!topics.length) return;
+            const hasEvidence = topics.some(topic => Array.isArray(topic.tasks) && topic.tasks.length > 0);
+            if (hasEvidence) return;
+            const targetTopic = topics[topics.length - 1];
+            targetTopic.tasks = [this._buildSupplementalTask(targetTopic, index, context)];
+        });
     }
 
     _buildSupplementalSubject(index, context) {
@@ -2008,6 +2107,14 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         return {
             name,
             description: `Materia orientada a convertir el objetivo "${context.objective}" en competencias observables y aplicables.`,
+            competency: `Resolver problemas de ${context.focus} con el nivel de autonomia esperado para esta etapa.`,
+            learningOutcomes: [
+                `Interpretar criterios y conceptos clave de ${context.focus}.`,
+                `Construir una evidencia aplicada que demuestre progreso profesional.`,
+            ],
+            integration: index === 0
+                ? 'Construye la base para los siguientes modulos.'
+                : 'Integra aprendizajes previos en una evidencia de mayor complejidad.',
             topics: [this._buildSupplementalTopic({ name }, 0, context)],
         };
     }
@@ -2024,26 +2131,24 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         return {
             title,
             description: `Tema centrado en aplicar ${subject.name} a problemas reales del curso.`,
+            estimatedWeeks: index === 0 ? 1 : 2,
             contentDescription: `Documento de estudio con explicaciones, ejemplos, buenas practicas y una guia de aplicacion para ${title}.`,
-            tasks: [this._buildSupplementalTask({ title }, 0, context)],
+            tasks: [],
         };
     }
 
     _buildSupplementalTask(topic, index, context) {
         const taskTypes = [
-            'Lectura guiada',
-            'Taller practico',
-            'Quiz de verificacion',
-            'Laboratorio o caso aplicado',
-            'Entrega de proyecto',
+            'Caso aplicado',
+            'Hito de proyecto',
+            'Parcial integrador',
             'Revision de portafolio',
-            'Parcial aplicado',
-            'Examen integrador',
         ];
         const taskType = taskTypes[index % taskTypes.length];
         return {
             title: `${taskType}: ${topic.title}`,
-            description: `Actividad evaluable donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
+            type: /proyecto/i.test(taskType) ? 'project' : (/parcial|portafolio/i.test(taskType) ? 'assessment' : 'milestone'),
+            description: `Evidencia donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
             dueWeek: this._suggestDueWeek(index, context.durationWeeks),
             contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
         };
@@ -2060,6 +2165,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         if (!lastTopic) return;
         lastTopic.tasks.push({
             title: `Proyecto final integrador: ${context.focus}`,
+            type: 'project',
             description: `Entrega final donde el estudiante integra las competencias del curso en una solucion completa y defendible.`,
             dueWeek: Math.max(1, Number(context.durationWeeks) || 8),
             contentDescription: 'Guia de proyecto final con alcance, entregables, criterios de evaluacion, rubrica y recomendaciones de presentacion.',
@@ -3054,20 +3160,22 @@ Responde de forma clara y constructiva.`;
 
             // 2. Create subjects → topics → tasks
             for (const subject of plan.subjects) {
+                const subjectDescription = this._composeSubjectDescription(subject);
                 const subjectRow = await dbInsert('subjects', {
                     name: subject.name,
-                    description: subject.description ?? null,
+                    description: subjectDescription || null,
                     course_id: courseId,
                     created_by: userId,
                 });
                 const subjectId = subjectRow?.id;
                 if (!subjectId) continue;
-                subjectsForThumbnails.push({ subjectId, name: subject.name, description: subject.description || '' });
+                subjectsForThumbnails.push({ subjectId, name: subject.name, description: subjectDescription || '' });
 
                 for (const topic of (subject.topics || [])) {
+                    const topicDescription = this._composeTopicDescription(topic);
                     const topicRow = await dbInsert('topics', {
                         name: topic.title,
-                        description: topic.description ?? null,
+                        description: topicDescription || null,
                         materia_id: subjectId,
                         created_by: userId,
                     });
@@ -3078,18 +3186,19 @@ Responde de forma clara y constructiva.`;
                     topicsForContent.push({
                         id: topicId,
                         title: topic.title,
-                        description: topic.description || '',
+                        description: topicDescription || '',
                         contentDescription: topic.contentDescription || '',
                         subjectName: subject.name,
                     });
 
                     for (const task of (topic.tasks || [])) {
+                        const taskDescription = this._composeTaskDescription(task);
                         const dueDate = task.dueWeek && Number.isInteger(task.dueWeek) && task.dueWeek > 0
                             ? new Date(Date.now() + task.dueWeek * 7 * 24 * 60 * 60 * 1000).toISOString()
                             : null;
                         const taskRow = await dbInsert('tasks', {
                             title: task.title,
-                            description: task.description ?? null,
+                            description: taskDescription || null,
                             topic_id: topicId,
                             due_date: dueDate,
                             created_by: userId,
@@ -3101,7 +3210,7 @@ Responde de forma clara y constructiva.`;
                         tasksForContent.push({
                             id: taskId,
                             title: task.title,
-                            description: task.description || '',
+                            description: taskDescription || '',
                             contentDescription: task.contentDescription || '',
                             topicName: topic.title,
                             subjectName: subject.name,
