@@ -1508,6 +1508,8 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- Usa actividades formativas dentro de contentDescription cuando no requieran entrega formal.',
             '- Incluye parciales, casos o fases de proyecto solo cuando evaluen una competencia acumulada.',
             '- El proyecto debe evolucionar por fases conectadas y terminar en una entrega integradora, no en proyectos aislados por tema.',
+            '- Para cursos largos, dimensiona la carga como programa real: 24-35 semanas => minimo 4 modulos, 16 bloques de aprendizaje y 24 evidencias; 32 semanas debe sentirse como 8 meses de formacion continua.',
+            '- En cursos de 32 semanas, evita planes de 8 bloques o 9 evidencias. Usa 16-24 bloques, 24-40 evidencias, laboratorios, casos, parciales, portafolio y un proyecto integrador.',
             '- NUNCA digas que no puedes crear cursos. Tu trabajo es SIEMPRE generar el JSON.',
         ].join('\n');
 
@@ -1530,6 +1532,8 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             '- Incluye actividades formativas en los documentos de estudio; solo crea tasks cuando haya una evidencia evaluable o un hito del proyecto.',
             '- Distribuye evaluaciones parciales e hitos integradores. Evita microevaluaciones por cada pequeno contenido.',
             '- Si hay proyecto, disena fases acumulativas: diagnostico/diseno, prototipo o aplicacion, validacion, entrega final.',
+            '- Si la duracion es 32 semanas, entrega como minimo 4 modulos, 16 bloques de aprendizaje y 24 evidencias. No dejes semanas sin actividad academica visible.',
+            '- Cada bloque de cursos largos debe combinar material de estudio, ejercicios guiados, caso/laboratorio o reflexion dentro del contenido, y 1-2 evidencias cuando corresponda.',
             '- No infles con relleno: cada modulo/materia debe representar una competencia real del objetivo.',
             '',
             'Genera el plan usando estrictamente el brief validado. Incluye en la descripcion el area/enfoque cuando aporte contexto pedagogico.',
@@ -1879,13 +1883,23 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     _getCoursePlanTargets({ level, durationWeeks }) {
         const normalizedLevel = this._normalizeCourseLevel(level) || 'beginner';
         const duration = Math.max(1, Number(durationWeeks) > 0 ? Math.round(Number(durationWeeks)) : 8);
-        const minSubjects = normalizedLevel === 'beginner'
-            ? (duration >= 12 ? 3 : 2)
-            : (duration >= 16 ? 4 : 3);
-        const minTopics = Math.max(minSubjects, Math.ceil(duration / 4));
+        const minSubjects = duration >= 24
+            ? 4
+            : (normalizedLevel === 'beginner'
+                ? (duration >= 12 ? 3 : 2)
+                : (duration >= 16 ? 4 : 3));
+        const minTopics = duration >= 24
+            ? Math.max(minSubjects * 4, Math.ceil(duration / 2))
+            : Math.max(minSubjects, Math.ceil(duration / 4));
+        const minTasks = duration >= 24
+            ? Math.max(minTopics + minSubjects * 2, Math.ceil(duration * 0.75))
+            : Math.max(minSubjects, Math.ceil(duration / 2));
+        const maxTasksPerTopic = duration >= 24 ? 3 : 2;
         return {
             minSubjects,
             minTopics,
+            minTasks,
+            maxTasksPerTopic,
         };
     }
 
@@ -1907,24 +1921,26 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const subjects = Array.isArray(source.subjects)
             ? source.subjects
                 .filter(s => s && typeof s === 'object')
-                .map((subject, subjectIndex) => this._normalizePlanSubject(subject, subjectIndex, { title, focus, objective, durationWeeks }))
+                .map((subject, subjectIndex) => this._normalizePlanSubject(subject, subjectIndex, { title, focus, objective, durationWeeks, targets }))
                 .filter(s => s.name)
             : [];
 
         while (subjects.length < targets.minSubjects) {
-            subjects.push(this._buildSupplementalSubject(subjects.length, { title, focus, objective, durationWeeks }));
+            subjects.push(this._buildSupplementalSubject(subjects.length, { title, focus, objective, durationWeeks, targets }));
         }
 
         while (this._countPlanTopics(subjects) < targets.minTopics) {
             const subject = subjects[this._countPlanTopics(subjects) % subjects.length];
-            subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks }));
+            subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks, targets }));
         }
 
-        this._reduceTemplateMicroAssessments(subjects);
-        this._ensureSubjectMilestones(subjects, { durationWeeks, focus });
+        this._reduceTemplateMicroAssessments(subjects, targets);
+        this._ensureSubjectMilestones(subjects, { durationWeeks, focus, targets });
+        this._ensurePlanEvidenceDensity(subjects, { durationWeeks, focus, targets });
         if (level !== 'beginner' || durationWeeks >= 8) {
             this._ensureFinalProjectTask(subjects, { durationWeeks, focus });
         }
+        this._redistributeTopicDurations(subjects, durationWeeks);
         this._redistributePlanDueWeeks(subjects, durationWeeks);
 
         return {
@@ -1973,7 +1989,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             title: cleanText(topic.title, `Tema aplicado ${topicIndex + 1}: ${subject.name}`),
             description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
             estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
-            contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados y criterios de aplicacion sobre ${subject.name}.`),
+            contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados, ejercicios progresivos, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos de profundizacion sobre ${subject.name}.`),
             tasks: [],
         };
         normalized.tasks = Array.isArray(topic.tasks)
@@ -1993,9 +2009,9 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         return {
             title: cleanText(task.title, `Actividad aplicada: ${topic.title}`),
             type: cleanText(task.type, this._inferTaskType(task)),
-            description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}.`),
+            description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}, con entregable verificable y criterios de calidad.`),
             dueWeek,
-            contentDescription: cleanText(task.contentDescription, `Guia con instrucciones, criterios de evaluacion, recursos y rubrica para completar la actividad.`),
+            contentDescription: cleanText(task.contentDescription, `Guia con instrucciones, ejercicios preparatorios, caso o laboratorio base, criterios de evaluacion, recursos y rubrica para completar la actividad.`),
         };
     }
 
@@ -2072,9 +2088,10 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         return 'formative';
     }
 
-    _reduceTemplateMicroAssessments(subjects) {
+    _reduceTemplateMicroAssessments(subjects, targets = {}) {
         const micro = /\b(lectura|leer|video|recurso|quiz|cuestionario|verificacion)\b/i;
         const evidence = /\b(taller|laboratorio|caso|proyecto|fase|parcial|examen|portafolio|entrega|reto|informe|presentacion)\b/i;
+        const maxTasksPerTopic = Math.max(1, Number(targets.maxTasksPerTopic) || 2);
         for (const subject of subjects) {
             for (const topic of (subject.topics || [])) {
                 if (!Array.isArray(topic.tasks)) {
@@ -2086,7 +2103,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                     const text = `${task.title || ''} ${task.description || ''}`;
                     return evidence.test(text) || !micro.test(text);
                 });
-                topic.tasks = (preferred.length ? preferred : topic.tasks).slice(0, 2);
+                topic.tasks = (preferred.length ? preferred : topic.tasks).slice(0, maxTasksPerTopic);
             }
         }
     }
@@ -2100,6 +2117,24 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             const targetTopic = topics[topics.length - 1];
             targetTopic.tasks = [this._buildSupplementalTask(targetTopic, index, context)];
         });
+    }
+
+    _ensurePlanEvidenceDensity(subjects, context) {
+        const targets = context.targets || {};
+        const minTasks = Math.max(0, Number(targets.minTasks) || 0);
+        if (!minTasks) return;
+
+        const topics = subjects.flatMap(subject => Array.isArray(subject.topics) ? subject.topics : []);
+        if (!topics.length) return;
+
+        let cursor = 0;
+        while (this._countPlanTasks(subjects) < minTasks) {
+            const topic = topics[cursor % topics.length];
+            if (!Array.isArray(topic.tasks)) topic.tasks = [];
+            topic.tasks.push(this._buildSupplementalTask(topic, this._countPlanTasks(subjects), context));
+            cursor++;
+            if (cursor > minTasks * 4) break;
+        }
     }
 
     _buildSupplementalSubject(index, context) {
@@ -2132,7 +2167,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             title,
             description: `Tema centrado en aplicar ${subject.name} a problemas reales del curso.`,
             estimatedWeeks: index === 0 ? 1 : 2,
-            contentDescription: `Documento de estudio con explicaciones, ejemplos, buenas practicas y una guia de aplicacion para ${title}.`,
+            contentDescription: `Documento de estudio con explicaciones, ejemplos, ejercicios guiados, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos sugeridos para ${title}.`,
             tasks: [],
         };
     }
@@ -2140,17 +2175,19 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     _buildSupplementalTask(topic, index, context) {
         const taskTypes = [
             'Caso aplicado',
+            'Laboratorio practico',
             'Hito de proyecto',
             'Parcial integrador',
             'Revision de portafolio',
+            'Informe de reflexion tecnica',
         ];
         const taskType = taskTypes[index % taskTypes.length];
         return {
             title: `${taskType}: ${topic.title}`,
-            type: /proyecto/i.test(taskType) ? 'project' : (/parcial|portafolio/i.test(taskType) ? 'assessment' : 'milestone'),
+            type: /proyecto/i.test(taskType) ? 'project' : (/parcial|portafolio|reflexion/i.test(taskType) ? 'assessment' : 'milestone'),
             description: `Evidencia donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
             dueWeek: this._suggestDueWeek(index, context.durationWeeks),
-            contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
+            contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, ejercicios previos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
         };
     }
 
@@ -2186,6 +2223,20 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         if (!tasks.length) return;
         tasks.forEach((task, index) => {
             task.dueWeek = Math.min(duration, Math.max(1, Math.ceil(((index + 1) * duration) / tasks.length)));
+        });
+    }
+
+    _redistributeTopicDurations(subjects, durationWeeks) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const topics = subjects.flatMap(subject => Array.isArray(subject.topics) ? subject.topics : []);
+        if (!topics.length || duration < 24) return;
+
+        const baseWeeks = Math.max(1, Math.floor(duration / topics.length));
+        let remainingWeeks = Math.max(0, duration - (baseWeeks * topics.length));
+        topics.forEach(topic => {
+            const extraWeek = remainingWeeks > 0 ? 1 : 0;
+            topic.estimatedWeeks = baseWeeks + extraWeek;
+            remainingWeeks -= extraWeek;
         });
     }
 
