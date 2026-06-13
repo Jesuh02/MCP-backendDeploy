@@ -1975,6 +1975,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         this._limitFormalAssessments(subjects, { durationWeeks, focus });
         this._redistributeTopicDurations(subjects, durationWeeks);
         this._redistributePlanDueWeeks(subjects, durationWeeks);
+        this._ensureUniquePlanSubjectNames(subjects);
 
         return {
             title,
@@ -1987,6 +1988,29 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             workload: this._normalizeWorkload(source.workload, durationWeeks, draft.hoursPerWeek),
             subjects,
         };
+    }
+
+    _ensureUniquePlanSubjectNames(subjects) {
+        if (!Array.isArray(subjects)) return;
+        const seen = new Map();
+        const used = new Set();
+
+        subjects.forEach((subject, index) => {
+            const baseName = String(subject?.name ?? '').replace(/\s+/g, ' ').trim() || `Modulo ${index + 1}`;
+            const baseKey = this._normalizeIntentText(baseName) || `modulo ${index + 1}`;
+            let count = (seen.get(baseKey) || 0) + 1;
+            seen.set(baseKey, count);
+
+            let name = count === 1 ? baseName : `${baseName} - Parte ${count}`;
+            let key = this._normalizeIntentText(name) || `modulo ${index + 1}`;
+            while (used.has(key)) {
+                count += 1;
+                name = `${baseName} - Parte ${count}`;
+                key = this._normalizeIntentText(name) || `modulo ${index + 1}`;
+            }
+            used.add(key);
+            subject.name = name;
+        });
     }
 
     _normalizePlanSubject(subject, subjectIndex, context) {
