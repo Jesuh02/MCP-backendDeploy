@@ -70,15 +70,28 @@ export const confirmCoursePlanSchema = Joi.object({
         category: Joi.string().allow('', null).optional(),
         level: Joi.string().allow('', null).optional(),
         durationWeeks: Joi.number().integer().optional(),
+        competencies: Joi.array().items(Joi.string().allow('', null)).optional(),
+        learningOutcomes: Joi.array().items(Joi.string().allow('', null)).optional(),
+        workload: Joi.object({
+            totalHours: Joi.number().optional(),
+            guidedHours: Joi.number().optional(),
+            independentHours: Joi.number().optional(),
+            projectHours: Joi.number().optional(),
+        }).optional(),
         subjects: Joi.array().items(Joi.object({
             name: Joi.string().min(1).required(),
             description: Joi.string().allow('', null).optional(),
+            competency: Joi.string().allow('', null).optional(),
+            learningOutcomes: Joi.array().items(Joi.string().allow('', null)).optional(),
+            integration: Joi.string().allow('', null).optional(),
             topics: Joi.array().items(Joi.object({
                 title: Joi.string().min(1).required(),
                 description: Joi.string().allow('', null).optional(),
+                estimatedWeeks: Joi.number().positive().optional(),
                 contentDescription: Joi.string().allow('', null).optional(),
                 tasks: Joi.array().items(Joi.object({
                     title: Joi.string().min(1).required(),
+                    type: Joi.string().allow('', null).optional(),
                     description: Joi.string().allow('', null).optional(),
                     dueWeek: Joi.number().integer().optional(),
                     contentDescription: Joi.string().allow('', null).optional(),
