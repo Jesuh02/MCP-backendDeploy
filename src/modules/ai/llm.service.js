@@ -1945,6 +1945,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         }
 
         this._ensureSpecificTopicTitles(subjects, { focus });
+        this._ensureModuleCoherence(subjects, { focus, objective });
         this._reduceTemplateMicroAssessments(subjects, targets);
         if (level !== 'beginner' || durationWeeks >= 8) {
             this._ensureTransversalProjectMilestones(subjects, { durationWeeks, focus, targets });
@@ -1998,13 +1999,14 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
         const fallbackTitle = this._getDomainTopicTitles(context.focus || subject.name)[topicIndex] || `Bloque ${topicIndex + 1}: ${subject.name}`;
         const rawTitle = cleanText(topic.title || topic.name, fallbackTitle);
+        const title = this._isGenericPlanTopicTitle(rawTitle) ? fallbackTitle : rawTitle;
         const normalized = {
-            title: this._isGenericPlanTopicTitle(rawTitle) ? fallbackTitle : rawTitle,
+            title,
             description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
             estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
             estimatedHours: Number(topic.estimatedHours) > 0 ? Number(topic.estimatedHours) : undefined,
-            competency: cleanText(topic.competency, `Aplicar ${rawTitle} en una situacion profesional verificable.`),
-            learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de resolver una tarea aplicada relacionada con ${rawTitle}.`),
+            competency: cleanText(topic.competency, `Aplicar ${title} en una situacion profesional verificable.`),
+            learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de resolver una tarea aplicada relacionada con ${title}.`),
             contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados, ejercicios progresivos, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos de profundizacion sobre ${subject.name}.`),
             tasks: [],
         };
@@ -2026,11 +2028,89 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 const normalized = this._normalizeIntentText(topic.title);
                 if (this._isGenericPlanTopicTitle(topic.title) || /^bloque\s+\d+/.test(normalized) || seen.has(normalized)) {
                     topic.title = domainTitles[topicIndex % domainTitles.length];
+                    topic.competency = `Aplicar ${topic.title} para resolver un caso profesional del curso.`;
+                    topic.learningOutcome = `El estudiante sera capaz de producir una evidencia tecnica basada en ${topic.title}.`;
                 }
                 seen.add(this._normalizeIntentText(topic.title));
                 topicIndex++;
             }
         }
+    }
+
+    _ensureModuleCoherence(subjects, context) {
+        const stages = this._getDomainModuleStages(context.focus);
+        if (!stages.length || !subjects.length) return;
+        subjects.forEach((subject, index) => {
+            const stage = stages[index % stages.length];
+            subject.name = stage.name;
+            subject.description = stage.description;
+            subject.competency = stage.competency;
+            subject.learningOutcomes = stage.learningOutcomes;
+            subject.integration = index === 0
+                ? 'Establece la base conceptual y practica que se reutiliza durante todo el curso y alimenta el proyecto transversal.'
+                : `Integra el modulo anterior y prepara ${stages[Math.min(stages.length - 1, index + 1)]?.name || 'la siguiente etapa'} sin crear un proyecto separado.`;
+        });
+    }
+
+    _getDomainModuleStages(focus) {
+        const n = this._normalizeIntentText(focus);
+        if (/\b(machine learning|aprendizaje automatico|deep learning|inteligencia artificial|ia|ciencia de datos|data science)\b/.test(n)) {
+            return [
+                {
+                    name: 'Fundamentos y preparacion de datos',
+                    description: 'Construye la base conceptual, prepara datos confiables y define criterios de experimentacion para modelos predictivos.',
+                    competency: 'Preparar datos y formular problemas de aprendizaje automatico con criterios tecnicos verificables.',
+                    learningOutcomes: ['Distinguir tipos de problemas de aprendizaje automatico.', 'Construir conjuntos de datos listos para entrenamiento.'],
+                },
+                {
+                    name: 'Modelado supervisado y seleccion de modelos',
+                    description: 'Desarrolla modelos de clasificacion, regresion y ensambles con comparacion tecnica de resultados.',
+                    competency: 'Entrenar y comparar modelos supervisados adecuados al problema y a los datos disponibles.',
+                    learningOutcomes: ['Implementar modelos supervisados base y avanzados.', 'Seleccionar modelos con metricas y validacion reproducibles.'],
+                },
+                {
+                    name: 'Evaluacion, optimizacion y despliegue',
+                    description: 'Optimiza modelos, interpreta resultados y prepara despliegues basicos con monitoreo inicial.',
+                    competency: 'Evaluar, optimizar e interpretar modelos antes de llevarlos a un entorno operativo.',
+                    learningOutcomes: ['Ajustar hiperparametros y explicar decisiones del modelo.', 'Preparar un servicio predictivo basico con criterios de monitoreo.'],
+                },
+                {
+                    name: 'Operacion, MLOps y producto de datos',
+                    description: 'Organiza experimentos, mantenimiento, gobernanza y criterios de producto sin duplicar el proyecto transversal.',
+                    competency: 'Operar modelos como productos de datos mantenibles, medibles y gobernados.',
+                    learningOutcomes: ['Versionar experimentos y controlar deriva de datos.', 'Definir criterios de mantenimiento y mejora para una solucion predictiva.'],
+                },
+            ];
+        }
+        if (/\b(programacion|software|python|javascript|web|backend|frontend)\b/.test(n)) {
+            return [
+                {
+                    name: 'Fundamentos del lenguaje y calidad base',
+                    description: 'Establece el entorno, las estructuras del lenguaje y practicas basicas de calidad.',
+                    competency: 'Construir programas pequenos y correctos usando fundamentos del lenguaje.',
+                    learningOutcomes: ['Organizar codigo legible y ejecutable.', 'Resolver problemas basicos con estructuras de datos y control de flujo.'],
+                },
+                {
+                    name: 'Arquitectura, datos e integraciones',
+                    description: 'Conecta componentes, datos y servicios con estructuras mantenibles.',
+                    competency: 'Integrar datos, APIs y modulos en aplicaciones mantenibles.',
+                    learningOutcomes: ['Persistir y consultar datos.', 'Comunicar servicios mediante APIs o modulos bien definidos.'],
+                },
+                {
+                    name: 'Seguridad, pruebas y despliegue',
+                    description: 'Fortalece el producto con pruebas, seguridad y despliegue controlado.',
+                    competency: 'Validar y publicar aplicaciones con criterios de calidad y seguridad.',
+                    learningOutcomes: ['Automatizar pruebas relevantes.', 'Configurar despliegues y manejo de fallos.'],
+                },
+                {
+                    name: 'Operacion y mejora del producto',
+                    description: 'Optimiza rendimiento, observabilidad y mantenimiento sin convertir el modulo en proyecto final.',
+                    competency: 'Mantener aplicaciones productivas con observabilidad y mejora continua.',
+                    learningOutcomes: ['Medir rendimiento y fallos.', 'Documentar decisiones tecnicas defendibles.'],
+                },
+            ];
+        }
+        return [];
     }
 
     _normalizePlanTask(task, taskIndex, topic, context) {
@@ -2049,7 +2129,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
 
     _isGenericPlanTopicTitle(title) {
         const normalized = this._normalizeIntentText(title);
-        return /^(casos de uso y criterios de calidad|taller guiado|practica|practica aplicada|proyecto aplicado del modulo|aplicacion practica|conceptos clave|analisis de problemas|diseno de soluciones|metodos y herramientas|integracion profesional|validacion y mejora|definicion del proyecto|implementacion del proyecto|evaluacion del proyecto|presentacion del proyecto|presentacion tecnica de resultados y decisiones)$/.test(normalized);
+        return /^(casos de uso y criterios de calidad|taller guiado|practica|practica aplicada|proyecto aplicado del modulo|aplicacion practica|conceptos clave|analisis de problemas(?:\s+en\b.*)?|diseno de soluciones(?:\s+en\b.*)?|metodos y herramientas(?:\s+de\b.*)?|integracion profesional|validacion y mejora|definicion del proyecto|implementacion del proyecto|evaluacion del proyecto|presentacion del proyecto|presentacion tecnica de resultados y decisiones)$/.test(normalized);
     }
 
     _composeSubjectDescription(subject) {
@@ -2179,7 +2259,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
     }
 
     _buildEvidenceDistribution(topicCount, targetTasks, maxTasksPerTopic) {
-        const pattern = [2, 2, 2, 3, 2, 3, 3, 2, 2, 3, 3, 3, 2, 3, 4, 4, 2, 3, 3, 4];
+        const pattern = [2, 3, 2, 2, 3, 4, 2, 3, 4, 3, 2, 3, 3, 2, 4, 2, 3, 2, 4, 3];
         const counts = Array.from({ length: topicCount }, (_, index) => Math.min(maxTasksPerTopic, pattern[index % pattern.length]));
         let total = counts.reduce((sum, count) => sum + count, 0);
         let cursor = topicCount - 1;
@@ -2229,21 +2309,21 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const n = this._normalizeIntentText(focus);
         if (/\b(machine learning|aprendizaje automatico|deep learning|inteligencia artificial|ia|ciencia de datos|data science)\b/.test(n)) {
             return [
-                'Fundamentos de aprendizaje supervisado y no supervisado',
+                'Fundamentos de aprendizaje automatico y tipos de problemas',
                 'Preparacion de datos y analisis exploratorio',
-                'Algoritmos de clasificacion',
+                'Ingenieria y seleccion de caracteristicas',
+                'Validacion de datos y particion experimental',
+                'Modelos de clasificacion supervisada',
                 'Modelos de regresion y metricas de error',
-                'Seleccion de caracteristicas y reduccion de dimensionalidad',
-                'Validacion cruzada y control de sobreajuste',
-                'Pipelines de entrenamiento reproducibles',
                 'Modelos basados en arboles y ensambles',
-                'Introduccion a redes neuronales',
+                'Redes neuronales introductorias',
                 'Ajuste de hiperparametros y comparacion de modelos',
                 'Interpretabilidad, sesgos y explicabilidad',
                 'Despliegue basico de modelos predictivos',
                 'Monitoreo de modelos y deriva de datos',
-                'MLOps introductorio y versionado de experimentos',
-                'Construccion de producto de datos',
+                'Pipelines reproducibles y versionado de experimentos',
+                'MLOps introductorio para ciclo de vida de modelos',
+                'Metricas de producto para soluciones predictivas',
                 'Gobernanza y mantenimiento de modelos en produccion',
             ];
         }
@@ -2281,7 +2361,7 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
             `Gestion de riesgos y errores frecuentes en ${focus}`,
             `Integracion de herramientas en ${focus}`,
             `Construccion de una solucion aplicada en ${focus}`,
-            `Mejora iterativa de la solucion en ${focus}`,
+            `Pruebas aplicadas y ajuste de resultados en ${focus}`,
             `Preparacion de entrega profesional en ${focus}`,
             `Defensa tecnica y comunicacion de resultados en ${focus}`,
         ];
@@ -2303,11 +2383,11 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
         const topicsCount = Math.max(1, Number(context.topicsCount) || 1);
         const progress = topicsCount <= 1 ? 1 : topicIndex / (topicsCount - 1);
         if (topicIndex === 0 && taskIndex === 0) return 'Diagnostico inicial';
-        if (progress < 0.2) return ['Ejercicio guiado', 'Laboratorio dirigido', 'Ficha de idea aplicada'][taskIndex % 3];
-        if (progress < 0.45) return ['Laboratorio dirigido', 'Caso contextualizado', 'Plan de aplicacion', 'Bitacora tecnica'][taskIndex % 4];
+        if (progress < 0.2) return ['Ejercicio aplicado', 'Laboratorio de datos', 'Mini caso tecnico'][taskIndex % 3];
+        if (progress < 0.45) return ['Laboratorio de modelado', 'Caso empresarial guiado', 'Implementacion tecnica', 'Comparacion de resultados'][taskIndex % 4];
         if (progress < 0.7) return ['Caso empresarial', 'Implementacion tecnica del bloque', 'Caso integrador intermedio', 'Revision tecnica aplicada'][taskIndex % 4];
-        if (progress < 0.9) return ['Validacion funcional', 'Caso de validacion', 'Mejora iterativa', 'Informe tecnico aplicado'][taskIndex % 4];
-        return ['Entrega profesional del bloque', 'Sustentacion tecnica', 'Retrospectiva profesional', 'Plan de mejora'][taskIndex % 4];
+        if (progress < 0.9) return ['Experimento de optimizacion', 'Caso de validacion', 'Despliegue controlado', 'Informe tecnico aplicado'][taskIndex % 4];
+        return ['Auditoria tecnica del modelo', 'Sustentacion tecnica', 'Prueba de mantenimiento', 'Informe ejecutivo tecnico'][taskIndex % 4];
     }
 
     _ensureTransversalProjectMilestones(subjects, context) {
