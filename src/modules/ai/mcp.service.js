@@ -147,8 +147,10 @@ export class MCPDomainService {
             subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks, targets }));
         }
 
+        this._fitSubjectsToDomainStages(subjects, { focus, objective, durationWeeks, targets });
         this._ensureSpecificTopicTitles(subjects, { focus });
         this._ensureModuleCoherence(subjects, { focus, objective });
+        this._ensureModuleTopicCoherence(subjects, { focus, durationWeeks, targets });
         this._reduceTemplateMicroAssessments(subjects, targets);
         if (level !== 'beginner' || durationWeeks >= 8) {
             this._ensureTransversalProjectMilestones(subjects, { durationWeeks, focus, targets });
@@ -209,6 +211,8 @@ export class MCPDomainService {
             description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
             estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
             estimatedHours: Number(topic.estimatedHours) > 0 ? Number(topic.estimatedHours) : undefined,
+            independentHours: Number(topic.independentHours) >= 0 ? Number(topic.independentHours) : undefined,
+            practicalHours: Number(topic.practicalHours) >= 0 ? Number(topic.practicalHours) : undefined,
             competency: cleanText(topic.competency, `Aplicar ${title} en una situacion profesional verificable.`),
             learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de resolver una tarea aplicada relacionada con ${title}.`),
             contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados, ejercicios progresivos, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos de profundizacion sobre ${subject.name}.`),
@@ -241,6 +245,25 @@ export class MCPDomainService {
         }
     }
 
+    _fitSubjectsToDomainStages(subjects, context) {
+        const stages = this._getDomainModuleStages(context.focus);
+        if (!stages.length || !Array.isArray(subjects)) return;
+        const duration = Math.max(1, Number(context.durationWeeks) || 8);
+        if (duration < 24) return;
+
+        while (subjects.length < stages.length) {
+            subjects.push(this._buildSupplementalSubject(subjects.length, context));
+        }
+        if (subjects.length <= stages.length) return;
+
+        const extras = subjects.splice(stages.length);
+        extras.forEach((extra, index) => {
+            const target = subjects[index % stages.length];
+            if (!Array.isArray(target.topics)) target.topics = [];
+            target.topics.push(...(Array.isArray(extra.topics) ? extra.topics : []));
+        });
+    }
+
     _ensureModuleCoherence(subjects, context) {
         const stages = this._getDomainModuleStages(context.focus);
         if (!stages.length || !subjects.length) return;
@@ -256,6 +279,45 @@ export class MCPDomainService {
         });
     }
 
+    _ensureModuleTopicCoherence(subjects, context) {
+        const stages = this._getDomainModuleStages(context.focus);
+        if (!stages.length || !Array.isArray(subjects)) return;
+        const duration = Math.max(1, Number(context.durationWeeks) || 8);
+        const targetPerModule = duration >= 24
+            ? Math.max(1, Math.ceil((Number(context.targets?.minTopics) || subjects.length) / stages.length))
+            : 0;
+
+        subjects.forEach((subject, subjectIndex) => {
+            const stage = stages[subjectIndex % stages.length];
+            const stageTitles = Array.isArray(stage.topicTitles) ? stage.topicTitles : [];
+            if (!stageTitles.length) return;
+            if (!Array.isArray(subject.topics)) subject.topics = [];
+
+            while (targetPerModule && subject.topics.length < targetPerModule) {
+                subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, context));
+            }
+
+            const limit = targetPerModule || subject.topics.length;
+            subject.topics = subject.topics.slice(0, Math.max(limit, stageTitles.length));
+            subject.topics.forEach((topic, topicIndex) => {
+                const title = stageTitles[topicIndex % stageTitles.length];
+                topic.title = title;
+                topic.description = `Bloque aplicado del modulo "${stage.name}" centrado en ${title}.`;
+                topic.competency = this._buildTopicCompetency(title, stage);
+                topic.learningOutcome = this._buildTopicLearningOutcome(title);
+                topic.contentDescription = topic.contentDescription || `Documento de estudio sobre ${title}, con conceptos clave, ejemplos guiados, practica aplicada, criterios de calidad y errores frecuentes.`;
+            });
+        });
+    }
+
+    _buildTopicCompetency(title, stage = {}) {
+        return `Aplicar ${title} en coherencia con la competencia del modulo: ${stage.competency || 'resolver problemas profesionales del curso'}.`;
+    }
+
+    _buildTopicLearningOutcome(title) {
+        return `El estudiante sera capaz de producir una evidencia verificable basada en ${title}, seleccionando metodos y metricas apropiadas.`;
+    }
+
     _getDomainModuleStages(focus) {
         const n = this._normalizeIntentText(focus);
         if (/\b(machine learning|aprendizaje automatico|deep learning|inteligencia artificial|ia|ciencia de datos|data science)\b/.test(n)) {
@@ -265,24 +327,48 @@ export class MCPDomainService {
                     description: 'Construye la base conceptual, prepara datos confiables y define criterios de experimentacion para modelos predictivos.',
                     competency: 'Preparar datos y formular problemas de aprendizaje automatico con criterios tecnicos verificables.',
                     learningOutcomes: ['Distinguir tipos de problemas de aprendizaje automatico.', 'Construir conjuntos de datos listos para entrenamiento.'],
+                    topicTitles: [
+                        'Fundamentos de aprendizaje automatico y tipos de problemas',
+                        'Preparacion de datos y analisis exploratorio',
+                        'Ingenieria y seleccion de caracteristicas',
+                        'Validacion de datos y particion experimental',
+                    ],
                 },
                 {
                     name: 'Modelado supervisado y seleccion de modelos',
                     description: 'Desarrolla modelos de clasificacion, regresion y ensambles con comparacion tecnica de resultados.',
                     competency: 'Entrenar y comparar modelos supervisados adecuados al problema y a los datos disponibles.',
                     learningOutcomes: ['Implementar modelos supervisados base y avanzados.', 'Seleccionar modelos con metricas y validacion reproducibles.'],
+                    topicTitles: [
+                        'Modelos de clasificacion supervisada',
+                        'Modelos de regresion y metricas de error',
+                        'Modelos basados en arboles y ensambles',
+                        'Ajuste de hiperparametros y comparacion de modelos',
+                    ],
                 },
                 {
-                    name: 'Evaluacion, optimizacion y despliegue',
-                    description: 'Optimiza modelos, interpreta resultados y prepara despliegues basicos con monitoreo inicial.',
-                    competency: 'Evaluar, optimizar e interpretar modelos antes de llevarlos a un entorno operativo.',
-                    learningOutcomes: ['Ajustar hiperparametros y explicar decisiones del modelo.', 'Preparar un servicio predictivo basico con criterios de monitoreo.'],
+                    name: 'Aplicaciones avanzadas de aprendizaje automatico',
+                    description: 'Aplica modelos a dominios especializados sin mezclar esta etapa con la operacion del ciclo de vida.',
+                    competency: 'Implementar soluciones de aprendizaje automatico en dominios de aplicacion avanzados.',
+                    learningOutcomes: ['Resolver casos aplicados de vision artificial y lenguaje natural.', 'Seleccionar enfoques para recomendacion, secuencias y series temporales.'],
+                    topicTitles: [
+                        'Vision artificial aplicada',
+                        'Procesamiento de lenguaje natural',
+                        'Sistemas de recomendacion',
+                        'Series temporales y deteccion de anomalias',
+                    ],
                 },
                 {
-                    name: 'Operacion, MLOps y producto de datos',
-                    description: 'Organiza experimentos, mantenimiento, gobernanza y criterios de producto sin duplicar el proyecto transversal.',
+                    name: 'Operacion y gestion de modelos',
+                    description: 'Organiza MLOps, versionado, observabilidad, gobernanza y valor de negocio sin repetir preparacion de datos.',
                     competency: 'Operar modelos como productos de datos mantenibles, medibles y gobernados.',
-                    learningOutcomes: ['Versionar experimentos y controlar deriva de datos.', 'Definir criterios de mantenimiento y mejora para una solucion predictiva.'],
+                    learningOutcomes: ['Versionar experimentos y modelos con trazabilidad.', 'Definir monitoreo, gobernanza y metricas de negocio para una solucion predictiva.'],
+                    topicTitles: [
+                        'Registro de experimentos y trazabilidad',
+                        'Versionado de datos, pipelines y modelos',
+                        'Observabilidad, monitoreo y deriva',
+                        'Gobernanza, riesgos y metricas de negocio',
+                    ],
                 },
             ];
         }
@@ -353,6 +439,8 @@ export class MCPDomainService {
             topic.description,
             topic.estimatedWeeks ? `Duracion estimada: ${topic.estimatedWeeks} semana(s).` : '',
             topic.estimatedHours ? `Horas estimadas: ${topic.estimatedHours}.` : '',
+            topic.independentHours !== undefined ? `Trabajo autonomo: ${topic.independentHours} hora(s).` : '',
+            topic.practicalHours !== undefined ? `Trabajo practico: ${topic.practicalHours} hora(s).` : '',
             topic.competency ? `Competencia del bloque: ${topic.competency}` : '',
             topic.learningOutcome ? `Resultado esperado: ${topic.learningOutcome}` : '',
         ].filter(Boolean);
@@ -377,12 +465,13 @@ export class MCPDomainService {
 
     _normalizeWorkload(value, durationWeeks, hoursPerWeek) {
         const duration = Math.max(1, Number(durationWeeks) || 8);
-        const weeklyHours = Math.max(4, Number(hoursPerWeek) || 6);
+        const weeklyHours = Math.max(4, Number(hoursPerWeek) || 8);
         const totalHours = Math.round(Number(value?.totalHours) > 0 ? Number(value.totalHours) : duration * weeklyHours);
-        const guidedHours = Math.round(Number(value?.guidedHours) > 0 ? Number(value.guidedHours) : totalHours * 0.35);
-        const projectHours = Math.round(Number(value?.projectHours) > 0 ? Number(value.projectHours) : totalHours * 0.25);
-        const independentHours = Math.max(0, totalHours - guidedHours - projectHours);
-        return { totalHours, guidedHours, independentHours, projectHours };
+        const practicalHours = Math.round(Number(value?.practicalHours) > 0 ? Number(value.practicalHours) : totalHours * 0.375);
+        const guidedHours = Math.round(Number(value?.guidedHours) > 0 ? Number(value.guidedHours) : practicalHours);
+        const projectHours = Math.round(Number(value?.projectHours) > 0 ? Number(value.projectHours) : practicalHours);
+        const independentHours = Math.round(Number(value?.independentHours) > 0 ? Number(value.independentHours) : Math.max(0, totalHours - practicalHours));
+        return { totalHours, guidedHours, independentHours, practicalHours, projectHours };
     }
 
     _buildCompetencies(focus, objective) {
@@ -502,8 +591,10 @@ export class MCPDomainService {
             description: `Tema centrado en aplicar ${subject.name} a problemas reales del curso.`,
             estimatedWeeks: index === 0 ? 1 : 2,
             estimatedHours: (index === 0 ? 1 : 2) * 9,
-            competency: `Aplicar ${title} para resolver un caso profesional del curso.`,
-            learningOutcome: `El estudiante sera capaz de producir una evidencia tecnica basada en ${title}.`,
+            independentHours: index === 0 ? 6 : 10,
+            practicalHours: index === 0 ? 3 : 8,
+            competency: this._buildTopicCompetency(title, subject),
+            learningOutcome: this._buildTopicLearningOutcome(title),
             contentDescription: `Documento de estudio con explicaciones, ejemplos, ejercicios guiados, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos sugeridos para ${title}.`,
             tasks: [],
         };
@@ -520,15 +611,15 @@ export class MCPDomainService {
                 'Modelos de clasificacion supervisada',
                 'Modelos de regresion y metricas de error',
                 'Modelos basados en arboles y ensambles',
-                'Redes neuronales introductorias',
                 'Ajuste de hiperparametros y comparacion de modelos',
-                'Interpretabilidad, sesgos y explicabilidad',
-                'Despliegue basico de modelos predictivos',
-                'Monitoreo de modelos y deriva de datos',
-                'Pipelines reproducibles y versionado de experimentos',
-                'MLOps introductorio para ciclo de vida de modelos',
-                'Metricas de producto para soluciones predictivas',
-                'Gobernanza y mantenimiento de modelos en produccion',
+                'Vision artificial aplicada',
+                'Procesamiento de lenguaje natural',
+                'Sistemas de recomendacion',
+                'Series temporales y deteccion de anomalias',
+                'Registro de experimentos y trazabilidad',
+                'Versionado de datos, pipelines y modelos',
+                'Observabilidad, monitoreo y deriva',
+                'Gobernanza, riesgos y metricas de negocio',
             ];
         }
         if (/\b(programacion|software|python|javascript|web|backend|frontend)\b/.test(n)) {
@@ -694,7 +785,9 @@ export class MCPDomainService {
         topics.forEach(topic => {
             const extraWeek = remainingWeeks > 0 ? 1 : 0;
             topic.estimatedWeeks = baseWeeks + extraWeek;
-            topic.estimatedHours = topic.estimatedHours || topic.estimatedWeeks * 9;
+            topic.estimatedHours = topic.estimatedWeeks * 8;
+            topic.independentHours = Math.round(topic.estimatedHours * 0.625);
+            topic.practicalHours = Math.max(0, topic.estimatedHours - topic.independentHours);
             topic.competency = topic.competency || `Aplicar ${topic.title} en una situacion profesional verificable.`;
             topic.learningOutcome = topic.learningOutcome || `El estudiante sera capaz de construir una evidencia tecnica relacionada con ${topic.title}.`;
             remainingWeeks -= extraWeek;
