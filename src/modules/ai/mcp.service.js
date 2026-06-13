@@ -206,16 +206,21 @@ export class MCPDomainService {
         const fallbackTitle = this._getDomainTopicTitles(context.focus || subject.name)[topicIndex] || `Bloque ${topicIndex + 1}: ${subject.name}`;
         const rawTitle = cleanText(topic.title || topic.name, fallbackTitle);
         const title = this._isGenericPlanTopicTitle(rawTitle) ? fallbackTitle : rawTitle;
+        const contentDescription = cleanText(
+            topic.contentDescription,
+            `Documento de estudio sobre ${title}: introduce el tema con lenguaje sencillo, define cada concepto sin jerga innecesaria, explica por que importa, muestra ejemplos paso a paso, senala errores comunes, propone practica guiada y conecta el tema con situaciones reales de ${subject.name}.`,
+        );
         const normalized = {
             title,
-            description: cleanText(topic.description, `Estudia conceptos y metodos necesarios para aplicar ${subject.name} en situaciones reales.`),
+            description: cleanText(topic.description, `Aprende los conceptos de ${subject.name} con explicaciones claras, ejemplos guiados y aplicacion gradual en situaciones reales.`),
             estimatedWeeks: Number(topic.estimatedWeeks) > 0 ? Number(topic.estimatedWeeks) : undefined,
             estimatedHours: Number(topic.estimatedHours) > 0 ? Number(topic.estimatedHours) : undefined,
             independentHours: Number(topic.independentHours) >= 0 ? Number(topic.independentHours) : undefined,
             practicalHours: Number(topic.practicalHours) >= 0 ? Number(topic.practicalHours) : undefined,
             competency: cleanText(topic.competency, `Aplicar ${title} en una situacion profesional verificable.`),
-            learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de resolver una tarea aplicada relacionada con ${title}.`),
-            contentDescription: cleanText(topic.contentDescription, `Documento de estudio con conceptos clave, ejemplos guiados, ejercicios progresivos, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos de profundizacion sobre ${subject.name}.`),
+            learningOutcome: cleanText(topic.learningOutcome || topic.learning_outcome, `El estudiante sera capaz de explicar ${title} con sus propias palabras y aplicarlo en una tarea guiada.`),
+            prerequisites: this._normalizeStringList(topic.prerequisites, []),
+            contentDescription: `${contentDescription} Debe quedar 100% explicativo para aprender: baja el tecnicismo, define la jerga, agrega ejemplos guiados, explica el razonamiento y evita que el archivo sea solo un resumen o una lista.`,
             tasks: [],
         };
         normalized.tasks = Array.isArray(topic.tasks)
@@ -302,12 +307,20 @@ export class MCPDomainService {
             subject.topics.forEach((topic, topicIndex) => {
                 const title = stageTitles[topicIndex % stageTitles.length];
                 topic.title = title;
-                topic.description = `Bloque aplicado del modulo "${stage.name}" centrado en ${title}.`;
+                topic.description = this._buildTopicDescription(title, stage);
                 topic.competency = this._buildTopicCompetency(title, stage);
                 topic.learningOutcome = this._buildTopicLearningOutcome(title);
-                topic.contentDescription = topic.contentDescription || `Documento de estudio sobre ${title}, con conceptos clave, ejemplos guiados, practica aplicada, criterios de calidad y errores frecuentes.`;
+                topic.prerequisites = this._buildTopicPrerequisites(subjectIndex, topicIndex, subjects);
+                topic.contentDescription = this._buildTopicContentDescription(title);
+                topic.tasks = this._buildCoherentTopicTasks(topic, { ...context, subjectIndex, topicIndex });
             });
         });
+    }
+
+    _buildTopicDescription(title, stage = {}) {
+        const profile = this._getTopicProfile(title);
+        if (profile.description) return profile.description;
+        return `Bloque del modulo "${stage.name || 'curso'}" que explica ${title} desde sus fundamentos, con ejemplos y aplicaciones progresivas.`;
     }
 
     _buildTopicCompetency(title, stage = {}) {
@@ -315,7 +328,212 @@ export class MCPDomainService {
     }
 
     _buildTopicLearningOutcome(title) {
-        return `El estudiante sera capaz de producir una evidencia verificable basada en ${title}, seleccionando metodos y metricas apropiadas.`;
+        return `Al finalizar este bloque el estudiante sera capaz de explicar ${title} en lenguaje claro, reconocer sus conceptos principales y aplicarlos en una evidencia verificable.`;
+    }
+
+    _buildTopicPrerequisites(subjectIndex, topicIndex, subjects) {
+        if (subjectIndex === 0 && topicIndex === 0) return ['Algebra lineal basica', 'Probabilidad descriptiva', 'Programacion en Python'];
+        const currentSubject = subjects[subjectIndex] || {};
+        const previousTopic = topicIndex > 0
+            ? currentSubject.topics?.[topicIndex - 1]
+            : subjects[subjectIndex - 1]?.topics?.slice(-1)?.[0];
+        return previousTopic?.title
+            ? [`Dominio practico de ${previousTopic.title}`]
+            : ['Fundamentos del modulo anterior'];
+    }
+
+    _buildTopicContentDescription(title) {
+        const profile = this._getTopicProfile(title);
+        const base = profile.contentDescription || `Documento de estudio sobre ${title}.`;
+        return `${base} Debe escribirse como material 100% explicativo para aprender: definiciones en palabras simples, explicacion paso a paso, ejemplos guiados, analogias cuando ayuden, practica aplicada, errores frecuentes y criterios de calidad explicados sin jerga innecesaria.`;
+    }
+
+    _buildCoherentTopicTasks(topic, context = {}) {
+        const templates = this._getTopicEvidenceTemplates(topic.title);
+        const count = Math.min(3, Math.max(2, Number(context.targets?.maxTasksPerTopic) ? 2 : 2));
+        return templates.slice(0, count).map((template, index) => ({
+            title: `${template.label}: ${topic.title}`,
+            type: template.type,
+            description: template.description(topic.title),
+            dueWeek: this._suggestDueWeekByTopic(context.topicIndex || 0, index, context.durationWeeks),
+            contentDescription: template.content(topic.title),
+        }));
+    }
+
+    _getTopicProfile(title) {
+        const n = this._normalizeIntentText(title);
+        if (/fundamentos de aprendizaje automatico/.test(n)) {
+            return {
+                description: 'Define problemas predictivos, tipos de aprendizaje, variables, datos, objetivos y criterios basicos para decidir si un caso requiere aprendizaje automatico.',
+                contentDescription: 'Documento introductorio con tipos de problemas, ejemplos de clasificacion/regresion, criterios de viabilidad, riesgos comunes y ejercicios de formulacion.',
+            };
+        }
+        if (/preparacion de datos|analisis exploratorio/.test(n)) {
+            return {
+                description: 'Limpia, explora y documenta conjuntos de datos para detectar calidad, distribuciones, valores atipicos y relaciones relevantes antes del modelado.',
+                contentDescription: 'Documento centrado en EDA: calidad de datos, perfiles estadisticos, visualizaciones, tratamiento de faltantes, outliers y bitacora de decisiones.',
+            };
+        }
+        if (/ingenieria y seleccion de caracteristicas/.test(n)) {
+            return {
+                description: 'Construye, transforma y selecciona caracteristicas relevantes evitando fuga de informacion y mejorando la capacidad predictiva del modelo.',
+                contentDescription: 'Documento sobre feature engineering: codificacion, escalado, seleccion, leakage, importancia de variables y validacion de transformaciones.',
+            };
+        }
+        if (/validacion de datos|particion experimental/.test(n)) {
+            return {
+                description: 'Disena particiones experimentales confiables y valida datos de entrenamiento, prueba y produccion para reducir leakage y sesgos iniciales.',
+                contentDescription: 'Documento sobre particion experimental: holdout, estratificacion, particiones temporales, validacion de esquemas, leakage y trazabilidad de datasets.',
+            };
+        }
+        if (/procesamiento de lenguaje natural|nlp/.test(n)) {
+            return {
+                description: 'Estudia representacion, limpieza, modelado y evaluacion de texto para tareas de clasificacion, extraccion y analisis semantico.',
+                contentDescription: 'Documento centrado en NLP: tokenizacion, embeddings, modelos de lenguaje, evaluacion de tareas de texto, errores frecuentes y ejercicios con corpus reales.',
+            };
+        }
+        if (/vision artificial/.test(n)) {
+            return {
+                description: 'Aborda captura, preprocesamiento, representacion y evaluacion de imagenes para clasificacion, deteccion o segmentacion visual.',
+                contentDescription: 'Documento centrado en vision artificial: pipelines de imagen, aumento de datos, CNN/transformers visuales a nivel aplicado, metricas visuales y analisis de errores.',
+            };
+        }
+        if (/clasificacion/.test(n)) {
+            return {
+                description: 'Entrena y evalua modelos de clasificacion para asignar categorias, analizar matrices de confusion y balancear precision, recall y F1.',
+                contentDescription: 'Documento centrado en clasificacion supervisada: regresion logistica como clasificador, k-NN, arboles, metricas de clasificacion, umbrales y tratamiento de clases desbalanceadas.',
+            };
+        }
+        if (/regresion/.test(n)) {
+            return {
+                description: 'Modela variables continuas, compara errores y analiza supuestos, residuos y sensibilidad de modelos predictivos numericos.',
+                contentDescription: 'Documento centrado en regresion: regresion lineal y no lineal, MAE/RMSE/R2, validacion de supuestos, analisis de residuos y comparacion de modelos.',
+            };
+        }
+        if (/validacion rigurosa|generalizacion|sobreajuste|sesgo/.test(n)) {
+            return {
+                description: 'Profundiza en validacion, generalizacion, metricas, sesgo, varianza, sobreajuste y criterios para confiar en un modelo fuera del conjunto de entrenamiento.',
+                contentDescription: 'Documento centrado en evaluacion rigurosa: holdout, cross-validation, leakage, sesgo-varianza, sobreajuste, metricas por tipo de problema e interpretacion de resultados.',
+            };
+        }
+        if (/ajuste de hiperparametros|comparacion de modelos/.test(n)) {
+            return {
+                description: 'Compara familias de modelos y ajusta hiperparametros con protocolos reproducibles, evitando optimizar contra el conjunto de prueba.',
+                contentDescription: 'Documento sobre busqueda de hiperparametros, validacion cruzada, baselines, comparacion justa de modelos y reporte reproducible de resultados.',
+            };
+        }
+        if (/recomendacion/.test(n)) {
+            return {
+                description: 'Presenta sistemas de recomendacion como caso especial aplicado, con filtrado colaborativo, contenido, ranking y evaluacion offline/online.',
+                contentDescription: 'Documento de caso especial sobre recomendadores: matrices usuario-item, similitud, ranking, precision@k, cold start y riesgos de sesgo.',
+            };
+        }
+        if (/series temporales|anomalias/.test(n)) {
+            return {
+                description: 'Presenta series temporales como caso especial aplicado, con ventanas, tendencia, estacionalidad, pronostico y deteccion de anomalias.',
+                contentDescription: 'Documento de caso especial sobre series temporales: particion temporal, features de ventana, backtesting, metricas de pronostico y deteccion de anomalias.',
+            };
+        }
+        if (/registro de experimentos|trazabilidad/.test(n)) {
+            return {
+                description: 'Registra configuraciones, datos, metricas, artefactos y decisiones para reproducir experimentos y auditar resultados de modelos.',
+                contentDescription: 'Documento sobre tracking de experimentos: parametros, metricas, artefactos, bitacoras, comparacion de corridas y criterios de reproducibilidad.',
+            };
+        }
+        if (/versionado de datos|pipelines|modelos/.test(n)) {
+            return {
+                description: 'Versiona datasets, pipelines y modelos para controlar cambios, recuperar estados y coordinar ciclos de entrenamiento y despliegue.',
+                contentDescription: 'Documento sobre versionado en MLOps: datasets, features, pipelines, modelos, artefactos, dependencias y estrategias de rollback.',
+            };
+        }
+        if (/observabilidad|monitoreo|deriva/.test(n)) {
+            return {
+                description: 'Monitorea rendimiento, calidad de datos, deriva y alertas operativas para detectar degradacion del modelo en produccion.',
+                contentDescription: 'Documento sobre observabilidad de modelos: metricas online/offline, deriva de datos y concepto, alertas, dashboards y acciones de mantenimiento.',
+            };
+        }
+        if (/gobernanza|riesgos|metricas de negocio/.test(n)) {
+            return {
+                description: 'Conecta desempeno tecnico con riesgo, cumplimiento, impacto de negocio y criterios de decision para operar modelos responsablemente.',
+                contentDescription: 'Documento sobre gobernanza: riesgos, responsables, aprobaciones, metricas de negocio, documentacion, auditoria y planes de mitigacion.',
+            };
+        }
+        return {};
+    }
+
+    _getTopicEvidenceTemplates(title) {
+        const n = this._normalizeIntentText(title);
+        if (/clasificacion/.test(n)) return [
+            { label: 'Laboratorio de clasificacion', type: 'milestone', description: t => `Entrena clasificadores para ${t} y analiza matriz de confusion, precision, recall y F1.`, content: t => `Guia con dataset, preparacion, entrenamiento de clasificadores, analisis de errores y rubrica especifica para ${t}.` },
+            { label: 'Informe tecnico de metricas', type: 'assessment', description: t => `Justifica la seleccion del clasificador con metricas de clasificacion y analisis de umbrales.`, content: t => `Plantilla de informe tecnico, criterios de comparacion y ejemplos de interpretacion de metricas para ${t}.` },
+        ];
+        if (/preparacion de datos|analisis exploratorio/.test(n)) return [
+            { label: 'Bitacora de calidad de datos', type: 'milestone', description: t => `Documenta hallazgos de calidad, distribuciones, faltantes y decisiones de limpieza para ${t}.`, content: t => `Guia de EDA con checklist de calidad, visualizaciones requeridas y bitacora de decisiones para ${t}.` },
+            { label: 'Informe exploratorio reproducible', type: 'assessment', description: t => `Entrega un notebook o reporte reproducible con conclusiones accionables del analisis exploratorio.`, content: t => `Plantilla de reporte EDA, criterios de reproducibilidad y rubrica de interpretacion para ${t}.` },
+        ];
+        if (/ingenieria y seleccion de caracteristicas/.test(n)) return [
+            { label: 'Laboratorio de caracteristicas', type: 'milestone', description: t => `Construye y compara caracteristicas evitando fuga de informacion.`, content: t => `Guia con transformaciones, seleccion de variables, pruebas de leakage y criterios de mejora para ${t}.` },
+            { label: 'Code review de transformaciones', type: 'formative', description: t => `Revisa si las transformaciones son reproducibles, justificadas y seguras para entrenamiento.`, content: t => `Lista de chequeo para revisar pipelines de features y riesgos de leakage en ${t}.` },
+        ];
+        if (/validacion de datos|particion experimental/.test(n)) return [
+            { label: 'Diseno experimental', type: 'milestone', description: t => `Propone particiones y validaciones de datos acordes con el problema.`, content: t => `Guia para holdout, estratificacion, particion temporal, validacion de esquemas y control de leakage en ${t}.` },
+            { label: 'Auditoria de particion', type: 'assessment', description: t => `Evalua si una particion experimental sostiene conclusiones confiables.`, content: t => `Rubrica de auditoria para detectar leakage, sesgo de muestreo y fallos de particion en ${t}.` },
+        ];
+        if (/regresion/.test(n)) return [
+            { label: 'Benchmark de regresion', type: 'milestone', description: t => `Compara modelos de regresion con MAE, RMSE y analisis de residuos.`, content: t => `Guia de benchmark con particion de datos, metricas de error y analisis de residuos para ${t}.` },
+            { label: 'Code review de pipeline predictivo', type: 'formative', description: t => `Revisa reproducibilidad, limpieza y supuestos de un pipeline de regresion.`, content: t => `Lista de chequeo para revisar codigo, supuestos y decisiones tecnicas en ${t}.` },
+        ];
+        if (/validacion rigurosa|generalizacion|sobreajuste|sesgo/.test(n)) return [
+            { label: 'Auditoria de generalizacion', type: 'assessment', description: t => `Detecta leakage, sobreajuste, sesgo y debilidades de validacion en un experimento.`, content: t => `Guia de auditoria con pruebas de validacion, sesgo-varianza, leakage y seleccion de metricas para ${t}.` },
+            { label: 'Debate tecnico de metricas', type: 'milestone', description: t => `Defiende que metrica usar segun el riesgo y el objetivo del problema.`, content: t => `Material para debate con escenarios, tradeoffs de metricas y criterios de decision para ${t}.` },
+        ];
+        if (/ajuste de hiperparametros|comparacion de modelos/.test(n)) return [
+            { label: 'Benchmark de seleccion de modelos', type: 'milestone', description: t => `Compara baselines y modelos ajustados con protocolo reproducible.`, content: t => `Guia de benchmark con grid/random search, validacion cruzada, tabla comparativa y control de prueba para ${t}.` },
+            { label: 'Presentacion de tradeoffs', type: 'assessment', description: t => `Defiende la seleccion final considerando desempeno, costo, interpretabilidad y riesgo.`, content: t => `Plantilla de presentacion tecnica y rubrica para justificar decisiones en ${t}.` },
+        ];
+        if (/vision artificial/.test(n)) return [
+            { label: 'Laboratorio de vision artificial', type: 'milestone', description: t => `Construye un pipeline visual y evalua errores de clasificacion, deteccion o segmentacion.`, content: t => `Guia con dataset de imagenes, preprocesamiento, aumento de datos, evaluacion visual y rubrica para ${t}.` },
+            { label: 'Analisis de errores visuales', type: 'assessment', description: t => `Presenta fallos del modelo visual y propone mejoras basadas en evidencia.`, content: t => `Plantilla de analisis cualitativo/cuantitativo de errores visuales para ${t}.` },
+        ];
+        if (/procesamiento de lenguaje natural|nlp/.test(n)) return [
+            { label: 'Laboratorio de NLP', type: 'milestone', description: t => `Procesa un corpus textual y evalua una tarea de clasificacion, extraccion o similitud semantica.`, content: t => `Guia con corpus, limpieza de texto, representaciones, entrenamiento y evaluacion de tareas de ${t}.` },
+            { label: 'Analisis de articulo de NLP', type: 'formative', description: t => `Relaciona una tecnica de NLP con sus supuestos, limites y riesgos de sesgo.`, content: t => `Lectura guiada, preguntas de analisis tecnico y rubrica breve para ${t}.` },
+        ];
+        if (/recomendacion/.test(n)) return [
+            { label: 'Prototipo de recomendador', type: 'project', description: t => `Implementa un recomendador simple y evalua ranking, cold start y sesgos.`, content: t => `Guia de caso especial con datos usuario-item, baseline, metricas de ranking y riesgos para ${t}.` },
+            { label: 'Presentacion de decisiones de ranking', type: 'milestone', description: t => `Explica decisiones de ranking y sus impactos de producto.`, content: t => `Plantilla de presentacion tecnica con criterios de negocio y metricas para ${t}.` },
+        ];
+        if (/series temporales|anomalias/.test(n)) return [
+            { label: 'Backtesting de serie temporal', type: 'milestone', description: t => `Evalua un pronostico o detector de anomalias respetando particion temporal.`, content: t => `Guia de backtesting, ventanas, metricas temporales y analisis de anomalias para ${t}.` },
+            { label: 'Informe de riesgo temporal', type: 'assessment', description: t => `Documenta limitaciones de estacionalidad, deriva y horizonte de prediccion.`, content: t => `Plantilla de informe tecnico para riesgos y decisiones en ${t}.` },
+        ];
+        if (/registro de experimentos|trazabilidad/.test(n)) return [
+            { label: 'Bitacora de experimentos', type: 'milestone', description: t => `Registra corridas, parametros, metricas y artefactos comparables.`, content: t => `Guia de tracking con convenciones de nombres, parametros, metricas y artefactos para ${t}.` },
+            { label: 'Auditoria de reproducibilidad', type: 'assessment', description: t => `Verifica si un experimento puede reproducirse y auditarse.`, content: t => `Checklist de reproducibilidad, evidencia requerida y rubrica de trazabilidad para ${t}.` },
+        ];
+        if (/versionado de datos|pipelines|modelos/.test(n)) return [
+            { label: 'Practica de versionado MLOps', type: 'milestone', description: t => `Versiona datos, pipeline y modelo con cambios rastreables.`, content: t => `Guia de versionado de datasets, artefactos, pipelines, dependencias y rollback para ${t}.` },
+            { label: 'Code review de pipeline', type: 'formative', description: t => `Revisa mantenibilidad, reproducibilidad y riesgos de un pipeline versionado.`, content: t => `Lista de chequeo para revisar estructura, dependencias, artefactos y automatizacion en ${t}.` },
+        ];
+        if (/observabilidad|monitoreo|deriva/.test(n)) return [
+            { label: 'Dashboard de monitoreo', type: 'project', description: t => `Define metricas, alertas y visualizaciones para detectar degradacion.`, content: t => `Guia para disenar dashboard, umbrales, alertas, deriva y acciones operativas en ${t}.` },
+            { label: 'Informe de incidente de deriva', type: 'assessment', description: t => `Analiza un caso de deriva y propone acciones de mantenimiento.`, content: t => `Plantilla de postmortem tecnico con sintomas, hipotesis, evidencia y plan de respuesta para ${t}.` },
+        ];
+        if (/gobernanza|riesgos|metricas de negocio/.test(n)) return [
+            { label: 'Matriz de gobernanza y riesgo', type: 'assessment', description: t => `Relaciona riesgos, responsables, controles y metricas de negocio del modelo.`, content: t => `Plantilla de matriz de gobernanza, riesgos, aprobaciones, metricas e indicadores para ${t}.` },
+            { label: 'Presentacion ejecutiva de valor', type: 'milestone', description: t => `Comunica impacto, limites y decisiones de operacion del modelo a un publico no tecnico.`, content: t => `Guia de presentacion ejecutiva con narrativa, metricas de negocio, riesgos y recomendaciones para ${t}.` },
+        ];
+        return [
+            { label: 'Laboratorio aplicado', type: 'milestone', description: t => `Aplica ${t} en un caso practico con entregable verificable.`, content: t => `Guia de laboratorio con pasos, criterios de calidad y rubrica para ${t}.` },
+            { label: 'Informe tecnico', type: 'assessment', description: t => `Argumenta decisiones, resultados y limites del trabajo realizado en ${t}.`, content: t => `Plantilla de informe tecnico y criterios de evaluacion para ${t}.` },
+        ];
+    }
+
+    _suggestDueWeekByTopic(topicIndex, taskIndex, durationWeeks) {
+        const duration = Math.max(1, Number(durationWeeks) || 8);
+        const topicCount = Math.max(1, Math.ceil(duration / 2));
+        const week = Math.round(((topicIndex + 1) / topicCount) * duration) + taskIndex;
+        return Math.min(duration, Math.max(1, week));
     }
 
     _getDomainModuleStages(focus) {
@@ -342,7 +560,7 @@ export class MCPDomainService {
                     topicTitles: [
                         'Modelos de clasificacion supervisada',
                         'Modelos de regresion y metricas de error',
-                        'Modelos basados en arboles y ensambles',
+                        'Validacion rigurosa, generalizacion, sesgo y sobreajuste',
                         'Ajuste de hiperparametros y comparacion de modelos',
                     ],
                 },
@@ -354,8 +572,8 @@ export class MCPDomainService {
                     topicTitles: [
                         'Vision artificial aplicada',
                         'Procesamiento de lenguaje natural',
-                        'Sistemas de recomendacion',
-                        'Series temporales y deteccion de anomalias',
+                        'Caso optativo: sistemas de recomendacion',
+                        'Caso optativo: series temporales y deteccion de anomalias',
                     ],
                 },
                 {
@@ -413,7 +631,7 @@ export class MCPDomainService {
             type: cleanText(task.type, this._inferTaskType(task)),
             description: cleanText(task.description, `Desarrolla una evidencia practica relacionada con ${topic.title}, con entregable verificable y criterios de calidad.`),
             dueWeek,
-            contentDescription: cleanText(task.contentDescription, 'Guia con instrucciones, ejercicios preparatorios, caso o laboratorio base, criterios de evaluacion, recursos y rubrica para completar la actividad.'),
+            contentDescription: cleanText(task.contentDescription, 'Guia explicativa con el proposito de la tarea, instrucciones paso a paso en lenguaje sencillo, ejemplo de entrega, ejercicios preparatorios, criterios de evaluacion explicados y rubrica clara para completar la actividad.'),
         };
     }
 
@@ -441,6 +659,9 @@ export class MCPDomainService {
             topic.estimatedHours ? `Horas estimadas: ${topic.estimatedHours}.` : '',
             topic.independentHours !== undefined ? `Trabajo autonomo: ${topic.independentHours} hora(s).` : '',
             topic.practicalHours !== undefined ? `Trabajo practico: ${topic.practicalHours} hora(s).` : '',
+            Array.isArray(topic.prerequisites) && topic.prerequisites.length
+                ? `Prerequisitos: ${topic.prerequisites.join('; ')}`
+                : '',
             topic.competency ? `Competencia del bloque: ${topic.competency}` : '',
             topic.learningOutcome ? `Resultado esperado: ${topic.learningOutcome}` : '',
         ].filter(Boolean);
@@ -595,7 +816,7 @@ export class MCPDomainService {
             practicalHours: index === 0 ? 3 : 8,
             competency: this._buildTopicCompetency(title, subject),
             learningOutcome: this._buildTopicLearningOutcome(title),
-            contentDescription: `Documento de estudio con explicaciones, ejemplos, ejercicios guiados, caso aplicado, laboratorio o practica reflexiva, criterios de evaluacion y recursos sugeridos para ${title}.`,
+            contentDescription: `Documento de estudio 100% explicativo sobre ${title}: explica el tema desde cero, define conceptos en palabras simples, muestra ejemplos paso a paso, incluye practica guiada, errores frecuentes, caso aplicado y recursos sugeridos para seguir aprendiendo.`,
             tasks: [],
         };
     }
@@ -610,12 +831,12 @@ export class MCPDomainService {
                 'Validacion de datos y particion experimental',
                 'Modelos de clasificacion supervisada',
                 'Modelos de regresion y metricas de error',
-                'Modelos basados en arboles y ensambles',
+                'Validacion rigurosa, generalizacion, sesgo y sobreajuste',
                 'Ajuste de hiperparametros y comparacion de modelos',
                 'Vision artificial aplicada',
                 'Procesamiento de lenguaje natural',
-                'Sistemas de recomendacion',
-                'Series temporales y deteccion de anomalias',
+                'Caso optativo: sistemas de recomendacion',
+                'Caso optativo: series temporales y deteccion de anomalias',
                 'Registro de experimentos y trazabilidad',
                 'Versionado de datos, pipelines y modelos',
                 'Observabilidad, monitoreo y deriva',
@@ -663,6 +884,17 @@ export class MCPDomainService {
     }
 
     _buildSupplementalTask(topic, index, context) {
+        const templates = this._getTopicEvidenceTemplates(topic.title);
+        const template = index < templates.length ? templates[index] : this._getDiverseSupplementalEvidence(index);
+        if (template) {
+            return {
+                title: `${template.label}: ${topic.title}`,
+                type: template.type,
+                description: template.description(topic.title),
+                dueWeek: this._suggestDueWeek(index, context.durationWeeks),
+                contentDescription: template.content(topic.title),
+            };
+        }
         const taskType = this._selectEvidenceTemplate(index, context);
         return {
             title: `${taskType}: ${topic.title}`,
@@ -671,6 +903,16 @@ export class MCPDomainService {
             dueWeek: this._suggestDueWeek(index, context.durationWeeks),
             contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, ejercicios previos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
         };
+    }
+
+    _getDiverseSupplementalEvidence(index) {
+        const pool = [
+            { label: 'Code review tecnico', type: 'formative', description: t => `Revisa reproducibilidad, claridad y riesgos tecnicos de una solucion sobre ${t}.`, content: t => `Lista de chequeo para code review, criterios de mantenibilidad y preguntas de reflexion para ${t}.` },
+            { label: 'Benchmark comparativo', type: 'milestone', description: t => `Compara alternativas tecnicas para ${t} con metricas y restricciones claras.`, content: t => `Guia de benchmark con baseline, metricas, tabla comparativa y conclusiones para ${t}.` },
+            { label: 'Presentacion tecnica', type: 'assessment', description: t => `Comunica decisiones, resultados y limites de una solucion relacionada con ${t}.`, content: t => `Plantilla de presentacion tecnica, criterios de evaluacion y recomendaciones para defender resultados de ${t}.` },
+            { label: 'Analisis de articulo aplicado', type: 'formative', description: t => `Analiza una lectura tecnica y conecta sus aportes con un caso de ${t}.`, content: t => `Guia de lectura, preguntas criticas y rubrica breve para analizar literatura sobre ${t}.` },
+        ];
+        return pool[index % pool.length];
     }
 
     _selectEvidenceTemplate(taskIndex, context = {}) {
@@ -710,7 +952,7 @@ export class MCPDomainService {
                 type: milestone.type || 'project',
                 description: `Hito transversal donde el estudiante integra lo aprendido hasta la semana ${milestone.dueWeek} en el proyecto del curso.`,
                 dueWeek: milestone.dueWeek,
-                contentDescription: 'Guia del hito con alcance, entregables, criterios de evaluacion, dependencias con modulos previos y recomendaciones de presentacion.',
+                contentDescription: 'Guia explicativa del hito con proposito, alcance, pasos para desarrollarlo, ejemplo de entrega, criterios de evaluacion explicados, dependencias con modulos previos y recomendaciones de presentacion.',
             });
             allTasks.push(topic.tasks[topic.tasks.length - 1]);
         });

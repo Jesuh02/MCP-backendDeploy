@@ -94,6 +94,7 @@ export const confirmCoursePlanSchema = Joi.object({
                 practicalHours: Joi.number().min(0).optional(),
                 competency: Joi.string().allow('', null).optional(),
                 learningOutcome: Joi.string().allow('', null).optional(),
+                prerequisites: Joi.array().items(Joi.string().allow('', null)).optional(),
                 contentDescription: Joi.string().allow('', null).optional(),
                 tasks: Joi.array().items(Joi.object({
                     title: Joi.string().min(1).required(),
