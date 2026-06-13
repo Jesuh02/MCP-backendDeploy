@@ -4031,19 +4031,21 @@ Responde de forma clara y constructiva.`;
                         }
                     }
 
-                    // 3b. Task guide + rubric documents (Word + PDF)
+                    // 3b. Task guidance documents (Word + PDF). These explain how to
+                    // approach the assignment without giving away the final answer.
                     for (const task of tasksForContent) {
                         try {
                             const content = await self._generateTaskContent({ task, model });
                             const safeName = (task.title || 'tarea')
                                 .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
+                            const guideTitle = `Guia de desarrollo: ${task.title}`;
 
                             // Word (.docx)
                             const docBuffer = await self._buildWordDocument(
-                                { title: task.title, subjectName: task.subjectName },
+                                { title: guideTitle, subjectName: task.subjectName },
                                 content,
                             );
-                            const docKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_${safeName}.docx`;
+                            const docKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.docx`;
                             const docUrl = await storage.uploadFile(
                                 docBuffer, docKey,
                                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -4051,11 +4053,11 @@ Responde de forma clara y constructiva.`;
                             );
                             await contentItemRepo.create({
                                 taskId: task.id,
-                                title: task.title,
+                                title: guideTitle,
                                 body: docUrl,
                                 contentType: 'file',
                                 fileUri: docUrl,
-                                fileName: `${safeName}.docx`,
+                                fileName: `guia_${safeName}.docx`,
                                 orderIndex: 0,
                                 creatorUsuarioId: userId || null,
                                 creatorUsername: username || null,
@@ -4064,17 +4066,17 @@ Responde de forma clara y constructiva.`;
 
                             // PDF
                             const pdfBuffer = await self._buildEducationalPdf(
-                                task.title, `${task.topicName} · ${task.subjectName}`, content,
+                                guideTitle, `${task.topicName} - ${task.subjectName}`, content,
                             );
-                            const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_${safeName}.pdf`;
+                            const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.pdf`;
                             const pdfUrl = await storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
                             await contentItemRepo.create({
                                 taskId: task.id,
-                                title: `${task.title} (PDF)`,
+                                title: `${guideTitle} (PDF)`,
                                 body: pdfUrl,
                                 contentType: 'file',
                                 fileUri: pdfUrl,
-                                fileName: `${safeName}.pdf`,
+                                fileName: `guia_${safeName}.pdf`,
                                 orderIndex: 1,
                                 creatorUsuarioId: userId || null,
                                 creatorUsername: username || null,
