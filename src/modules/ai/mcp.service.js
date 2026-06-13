@@ -85,14 +85,18 @@ export class MCPDomainService {
      * Normalizes course plans before persistence so direct MCP tool calls create professional structures.
      */
     _normalizeCourseLevel(value) {
-        const n = String(value || '')
-            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-            .toLowerCase().replace(/\s+/g, ' ').trim();
+        const n = this._normalizeIntentText(value || '');
         if (!n) return '';
         if (/\b(principiante|basico|basic|beginner|inicial)\b/.test(n)) return 'beginner';
         if (/\b(intermedio|intermediate|medio)\b/.test(n)) return 'intermediate';
         if (/\b(avanzado|advanced|experto|profundo|profunda|profundidad|complejo|complejos)\b|buenas practicas/.test(n)) return 'advanced';
         return '';
+    }
+
+    _normalizeIntentText(value) {
+        return String(value || '')
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase().replace(/\s+/g, ' ').trim();
     }
 
     _getCoursePlanTargets({ level, durationWeeks }) {
@@ -101,10 +105,10 @@ export class MCPDomainService {
         const minTopics = Math.max(1, Math.ceil(duration / 2));
         const minSubjects = Math.max(1, Math.ceil(minTopics / 4));
         const evidenceMultiplier = normalizedLevel === 'advanced'
-            ? 3
-            : (normalizedLevel === 'intermediate' ? 2.5 : 2);
+            ? 2.75
+            : (normalizedLevel === 'intermediate' ? 2.4 : 2);
         const minTasks = Math.ceil(minTopics * evidenceMultiplier);
-        const maxTasksPerTopic = Math.ceil(evidenceMultiplier);
+        const maxTasksPerTopic = normalizedLevel === 'advanced' ? 6 : (normalizedLevel === 'intermediate' ? 5 : 4);
         return {
             minSubjects,
             minTopics,
@@ -143,12 +147,14 @@ export class MCPDomainService {
             subject.topics.push(this._buildSupplementalTopic(subject, subject.topics.length, { focus, objective, durationWeeks, targets }));
         }
 
+        this._ensureSpecificTopicTitles(subjects, { focus });
         this._reduceTemplateMicroAssessments(subjects, targets);
         this._ensureSubjectMilestones(subjects, { durationWeeks, focus, targets });
         if (level !== 'beginner' || durationWeeks >= 8) {
-            this._ensureFinalProjectTask(subjects, { durationWeeks, focus });
+            this._ensureTransversalProjectMilestones(subjects, { durationWeeks, focus, targets });
         }
         this._ensurePlanEvidenceDensity(subjects, { durationWeeks, focus, targets });
+        this._limitFormalAssessments(subjects, { durationWeeks, focus });
         this._redistributeTopicDurations(subjects, durationWeeks);
         this._redistributePlanDueWeeks(subjects, durationWeeks);
 
@@ -195,7 +201,7 @@ export class MCPDomainService {
 
     _normalizePlanTopic(topic, topicIndex, subject, context) {
         const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
-        const fallbackTitle = `Bloque ${topicIndex + 1}: ${subject.name}`;
+        const fallbackTitle = this._getDomainTopicTitles(context.focus || subject.name)[topicIndex] || `Bloque ${topicIndex + 1}: ${subject.name}`;
         const rawTitle = cleanText(topic.title || topic.name, fallbackTitle);
         const normalized = {
             title: this._isGenericPlanTopicTitle(rawTitle) ? fallbackTitle : rawTitle,
@@ -213,6 +219,22 @@ export class MCPDomainService {
         return normalized;
     }
 
+    _ensureSpecificTopicTitles(subjects, context) {
+        const domainTitles = this._getDomainTopicTitles(context.focus);
+        const seen = new Set();
+        let topicIndex = 0;
+        for (const subject of subjects) {
+            for (const topic of (subject.topics || [])) {
+                const normalized = this._normalizeIntentText(topic.title);
+                if (this._isGenericPlanTopicTitle(topic.title) || /^bloque\s+\d+/.test(normalized) || seen.has(normalized)) {
+                    topic.title = domainTitles[topicIndex % domainTitles.length];
+                }
+                seen.add(this._normalizeIntentText(topic.title));
+                topicIndex++;
+            }
+        }
+    }
+
     _normalizePlanTask(task, taskIndex, topic, context) {
         const cleanText = (value, fallback = '') => String(value ?? '').replace(/\s+/g, ' ').trim() || fallback;
         const dueWeek = Number.isInteger(Number(task.dueWeek)) && Number(task.dueWeek) > 0
@@ -228,10 +250,8 @@ export class MCPDomainService {
     }
 
     _isGenericPlanTopicTitle(title) {
-        const normalized = String(title || '')
-            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-            .toLowerCase().replace(/\s+/g, ' ').trim();
-        return /^(casos de uso y criterios de calidad|taller guiado|practica|practica aplicada|proyecto aplicado del modulo|aplicacion practica|conceptos clave)$/.test(normalized);
+        const normalized = this._normalizeIntentText(title);
+        return /^(casos de uso y criterios de calidad|taller guiado|practica|practica aplicada|proyecto aplicado del modulo|aplicacion practica|conceptos clave|analisis de problemas|diseno de soluciones|metodos y herramientas|integracion profesional|validacion y mejora)$/.test(normalized);
     }
 
     _composeSubjectDescription(subject) {
@@ -341,22 +361,35 @@ export class MCPDomainService {
     _ensurePlanEvidenceDensity(subjects, context) {
         const targets = context.targets || {};
         const minTasks = Math.max(0, Number(targets.minTasks) || 0);
-        const maxTasksPerTopic = Math.max(1, Number(targets.maxTasksPerTopic) || 2);
+        const maxTasksPerTopic = Math.max(2, Number(targets.maxTasksPerTopic) || 4);
         if (!minTasks) return;
 
         const topics = subjects.flatMap(subject => Array.isArray(subject.topics) ? subject.topics : []);
         if (!topics.length) return;
 
-        let cursor = 0;
-        while (this._countPlanTasks(subjects) < minTasks) {
-            const topic = topics[cursor % topics.length];
+        const desiredCounts = this._buildEvidenceDistribution(topics.length, minTasks, maxTasksPerTopic);
+        for (let topicIndex = 0; topicIndex < topics.length; topicIndex++) {
+            const topic = topics[topicIndex];
             if (!Array.isArray(topic.tasks)) topic.tasks = [];
-            if (topic.tasks.length < maxTasksPerTopic) {
-                topic.tasks.push(this._buildSupplementalTask(topic, this._countPlanTasks(subjects), context));
+            while (topic.tasks.length < desiredCounts[topicIndex]) {
+                topic.tasks.push(this._buildSupplementalTask(topic, topic.tasks.length, { ...context, topicIndex, topicsCount: topics.length }));
             }
-            cursor++;
-            if (cursor > minTasks * 4) break;
         }
+    }
+
+    _buildEvidenceDistribution(topicCount, targetTasks, maxTasksPerTopic) {
+        const pattern = [2, 2, 2, 3, 2, 3, 3, 2, 2, 3, 3, 3, 2, 3, 4, 4, 2, 3, 3, 4];
+        const counts = Array.from({ length: topicCount }, (_, index) => Math.min(maxTasksPerTopic, pattern[index % pattern.length]));
+        let total = counts.reduce((sum, count) => sum + count, 0);
+        let cursor = topicCount - 1;
+        while (total < targetTasks && counts.some(count => count < maxTasksPerTopic)) {
+            if (counts[cursor] < maxTasksPerTopic) {
+                counts[cursor]++;
+                total++;
+            }
+            cursor = cursor <= 0 ? topicCount - 1 : cursor - 1;
+        }
+        return counts;
     }
 
     _buildSupplementalSubject(index, context) {
@@ -377,14 +410,7 @@ export class MCPDomainService {
     }
 
     _buildSupplementalTopic(subject, index, context) {
-        const topicTitles = [
-            `Fundamentos tecnicos de ${subject.name}`,
-            `Metodos y herramientas de ${subject.name}`,
-            `Analisis de problemas en ${subject.name}`,
-            `Diseno de soluciones en ${subject.name}`,
-            `Validacion y mejora de ${subject.name}`,
-            `Integracion profesional de ${subject.name}`,
-        ];
+        const topicTitles = this._getDomainTopicTitles(context.focus || subject.name);
         const title = topicTitles[index % topicTitles.length];
         return {
             title,
@@ -395,41 +421,138 @@ export class MCPDomainService {
         };
     }
 
-    _buildSupplementalTask(topic, index, context) {
-        const taskTypes = [
-            'Caso aplicado',
-            'Laboratorio practico',
-            'Hito de proyecto',
-            'Parcial integrador',
-            'Revision de portafolio',
-            'Informe de reflexion tecnica',
+    _getDomainTopicTitles(focus) {
+        const n = this._normalizeIntentText(focus);
+        if (/\b(machine learning|aprendizaje automatico|deep learning|inteligencia artificial|ia|ciencia de datos|data science)\b/.test(n)) {
+            return [
+                'Fundamentos de aprendizaje supervisado y no supervisado',
+                'Preparacion de datos y analisis exploratorio',
+                'Algoritmos de clasificacion',
+                'Modelos de regresion y metricas de error',
+                'Seleccion de caracteristicas y reduccion de dimensionalidad',
+                'Validacion cruzada y control de sobreajuste',
+                'Pipelines de entrenamiento reproducibles',
+                'Modelos basados en arboles y ensambles',
+                'Introduccion a redes neuronales',
+                'Ajuste de hiperparametros y comparacion de modelos',
+                'Interpretabilidad, sesgos y explicabilidad',
+                'Despliegue basico de modelos predictivos',
+                'Monitoreo de modelos y deriva de datos',
+                'MLOps introductorio y versionado de experimentos',
+                'Construccion de producto de datos',
+                'Presentacion tecnica de resultados y decisiones',
+            ];
+        }
+        if (/\b(programacion|software|python|javascript|web|backend|frontend)\b/.test(n)) {
+            return [
+                'Fundamentos del lenguaje y entorno de trabajo',
+                'Estructuras de datos y control de flujo',
+                'Funciones, modulos y organizacion del codigo',
+                'Programacion orientada a objetos',
+                'Manejo de errores y depuracion',
+                'Persistencia de datos y archivos',
+                'Pruebas automatizadas y calidad de codigo',
+                'APIs y comunicacion entre servicios',
+                'Autenticacion y seguridad basica',
+                'Arquitectura de aplicaciones mantenibles',
+                'Integracion con bases de datos',
+                'Despliegue y configuracion de entornos',
+                'Observabilidad y manejo de fallos',
+                'Optimizacion y rendimiento',
+                'Construccion de producto funcional',
+                'Documentacion y defensa tecnica',
+            ];
+        }
+        return [
+            `Fundamentos conceptuales de ${focus}`,
+            `Lenguaje tecnico y criterios de calidad en ${focus}`,
+            `Herramientas principales de ${focus}`,
+            `Procedimientos aplicados de ${focus}`,
+            `Diagnostico de casos en ${focus}`,
+            `Modelos y metodos de trabajo en ${focus}`,
+            `Toma de decisiones con evidencia en ${focus}`,
+            `Practicas guiadas de complejidad media en ${focus}`,
+            `Casos profesionales de ${focus}`,
+            `Validacion de resultados en ${focus}`,
+            `Gestion de riesgos y errores frecuentes en ${focus}`,
+            `Integracion de herramientas en ${focus}`,
+            `Construccion de una solucion aplicada en ${focus}`,
+            `Mejora iterativa de la solucion en ${focus}`,
+            `Preparacion de entrega profesional en ${focus}`,
+            `Defensa tecnica y comunicacion de resultados en ${focus}`,
         ];
-        const taskType = taskTypes[index % taskTypes.length];
+    }
+
+    _buildSupplementalTask(topic, index, context) {
+        const taskType = this._selectEvidenceTemplate(index, context);
         return {
             title: `${taskType}: ${topic.title}`,
-            type: /proyecto/i.test(taskType) ? 'project' : (/parcial|portafolio|reflexion/i.test(taskType) ? 'assessment' : 'milestone'),
+            type: /proyecto|prototipo|version funcional|defensa/i.test(taskType) ? 'project' : (/diagnostico|evaluacion|defensa/i.test(taskType) ? 'assessment' : 'milestone'),
             description: `Evidencia donde el estudiante demuestra dominio practico de ${topic.title} mediante ${taskType.toLowerCase()}.`,
             dueWeek: this._suggestDueWeek(index, context.durationWeeks),
             contentDescription: `Guia de ${taskType.toLowerCase()} con pasos, ejercicios previos, criterios de entrega, recursos sugeridos y rubrica de evaluacion.`,
         };
     }
 
-    _ensureFinalProjectTask(subjects, context) {
+    _selectEvidenceTemplate(taskIndex, context = {}) {
+        const topicIndex = Number(context.topicIndex) || 0;
+        const topicsCount = Math.max(1, Number(context.topicsCount) || 1);
+        const progress = topicsCount <= 1 ? 1 : topicIndex / (topicsCount - 1);
+        if (topicIndex === 0 && taskIndex === 0) return 'Diagnostico inicial';
+        if (progress < 0.2) return ['Ejercicio guiado', 'Laboratorio dirigido', 'Ficha de idea aplicada'][taskIndex % 3];
+        if (progress < 0.45) return ['Laboratorio dirigido', 'Caso contextualizado', 'Plan de aplicacion', 'Bitacora tecnica'][taskIndex % 4];
+        if (progress < 0.7) return ['Caso empresarial', 'Implementacion tecnica del bloque', 'Evaluacion intermedia', 'Revision tecnica aplicada'][taskIndex % 4];
+        if (progress < 0.9) return ['Validacion funcional', 'Caso de validacion', 'Mejora iterativa', 'Informe tecnico aplicado'][taskIndex % 4];
+        return ['Entrega profesional del bloque', 'Sustentacion tecnica', 'Retrospectiva profesional', 'Plan de mejora'][taskIndex % 4];
+    }
+
+    _ensureTransversalProjectMilestones(subjects, context) {
         const allTasks = subjects.flatMap(subject =>
             (subject.topics || []).flatMap(topic => topic.tasks || []),
         );
-        if (allTasks.some(task => /proyecto\s+final/i.test(String(task.title || '')))) return;
-
-        const lastSubject = subjects[subjects.length - 1];
-        const lastTopic = lastSubject?.topics?.[lastSubject.topics.length - 1];
-        if (!lastTopic) return;
-        lastTopic.tasks.push({
-            title: `Proyecto final integrador: ${context.focus}`,
-            type: 'project',
-            description: 'Entrega final donde el estudiante integra las competencias del curso en una solucion completa y defendible.',
-            dueWeek: Math.max(1, Number(context.durationWeeks) || 8),
-            contentDescription: 'Guia de proyecto final con alcance, entregables, criterios de evaluacion, rubrica y recomendaciones de presentacion.',
+        const topics = subjects.flatMap(subject => Array.isArray(subject.topics) ? subject.topics : []);
+        if (!topics.length) return;
+        const duration = Math.max(1, Number(context.durationWeeks) || 8);
+        const milestones = [
+            { marker: /propuesta del proyecto/i, title: `Propuesta del proyecto transversal: ${context.focus}`, dueWeek: Math.max(1, Math.ceil(duration * 0.125)) },
+            { marker: /diseno del proyecto/i, title: `Diseno del proyecto transversal: ${context.focus}`, dueWeek: Math.max(1, Math.ceil(duration * 0.25)) },
+            { marker: /prototipo parcial/i, title: `Prototipo parcial del proyecto: ${context.focus}`, dueWeek: Math.max(1, Math.ceil(duration * 0.5)) },
+            { marker: /version funcional/i, title: `Version funcional del proyecto: ${context.focus}`, dueWeek: Math.max(1, Math.ceil(duration * 0.75)) },
+            { marker: /entrega final del proyecto|proyecto final/i, title: `Entrega final del proyecto integrador: ${context.focus}`, dueWeek: duration },
+            { marker: /defensa tecnica/i, title: `Defensa tecnica del proyecto: ${context.focus}`, dueWeek: duration },
+        ];
+        milestones.forEach(milestone => {
+            if (allTasks.some(task => milestone.marker.test(String(task.title || '')))) return;
+            const topic = topics[Math.min(topics.length - 1, Math.floor((milestone.dueWeek - 1) * topics.length / duration))];
+            if (!Array.isArray(topic.tasks)) topic.tasks = [];
+            topic.tasks.push({
+                title: milestone.title,
+                type: 'project',
+                description: `Hito transversal donde el estudiante integra lo aprendido hasta la semana ${milestone.dueWeek} en el proyecto del curso.`,
+                dueWeek: milestone.dueWeek,
+                contentDescription: 'Guia del hito con alcance, entregables, criterios de evaluacion, dependencias con modulos previos y recomendaciones de presentacion.',
+            });
+            allTasks.push(topic.tasks[topic.tasks.length - 1]);
         });
+    }
+
+    _limitFormalAssessments(subjects, context) {
+        const tasks = subjects.flatMap(subject => (subject.topics || []).flatMap(topic => topic.tasks || []));
+        let partialSeen = false;
+        for (const task of tasks) {
+            const text = `${task.title || ''} ${task.description || ''}`;
+            if (/examen|evaluacion intermedia|evaluacion parcial|parcial integrador/i.test(text)) {
+                if (partialSeen) {
+                    task.title = String(task.title || '').replace(/parcial|examen|evaluacion intermedia/ig, 'Caso integrador');
+                    task.type = 'milestone';
+                    task.description = 'Caso aplicado que integra aprendizajes mediante una entrega practica acumulativa.';
+                } else {
+                    partialSeen = true;
+                    task.title = `Evaluacion intermedia integradora: ${context.focus}`;
+                    task.type = 'assessment';
+                }
+            }
+        }
     }
 
     _suggestDueWeek(index, durationWeeks) {
@@ -440,13 +563,36 @@ export class MCPDomainService {
 
     _redistributePlanDueWeeks(subjects, durationWeeks) {
         const duration = Math.max(1, Number(durationWeeks) || 8);
-        const tasks = subjects.flatMap(subject =>
-            (subject.topics || []).flatMap(topic => topic.tasks || []),
-        );
-        if (!tasks.length) return;
-        tasks.forEach((task, index) => {
-            task.dueWeek = Math.min(duration, Math.max(1, Math.ceil(((index + 1) * duration) / tasks.length)));
+        const topics = subjects.flatMap(subject => Array.isArray(subject.topics) ? subject.topics : []);
+        if (!topics.length) return;
+        let startWeek = 1;
+        topics.forEach(topic => {
+            const topicWeeks = Math.max(1, Number(topic.estimatedWeeks) || Math.ceil(duration / topics.length));
+            const endWeek = Math.min(duration, startWeek + topicWeeks - 1);
+            const tasks = Array.isArray(topic.tasks) ? topic.tasks : [];
+            tasks.forEach((task, taskIndex) => {
+                const explicitProjectWeek = this._getProjectMilestoneWeek(task, duration);
+                if (explicitProjectWeek) {
+                    task.dueWeek = explicitProjectWeek;
+                    return;
+                }
+                const slot = tasks.length <= 1 ? 1 : (taskIndex + 1) / tasks.length;
+                const suggested = Math.round(startWeek + (endWeek - startWeek) * slot);
+                task.dueWeek = Math.min(duration, Math.max(1, suggested));
+            });
+            startWeek = Math.min(duration, endWeek + 1);
         });
+    }
+
+    _getProjectMilestoneWeek(task, duration) {
+        const text = this._normalizeIntentText(`${task.title || ''} ${task.description || ''}`);
+        if (/diagnostico inicial/.test(text)) return 1;
+        if (/propuesta del proyecto/.test(text)) return Math.max(1, Math.ceil(duration * 0.125));
+        if (/diseno del proyecto/.test(text)) return Math.max(1, Math.ceil(duration * 0.25));
+        if (/evaluacion intermedia|prototipo parcial/.test(text)) return Math.max(1, Math.ceil(duration * 0.5));
+        if (/version funcional/.test(text)) return Math.max(1, Math.ceil(duration * 0.75));
+        if (/entrega final|proyecto final|defensa tecnica/.test(text)) return duration;
+        return null;
     }
 
     _redistributeTopicDurations(subjects, durationWeeks) {
