@@ -1,78 +1,37 @@
 # =============================================================================
-# Stage 1 — Exportar el modelo de lengua de señas a ONNX con optimum.
-# Se hace en una imagen Python descartable: el resultado (~95 MB) se copia al
-# stage final, pero torch/optimum (~2 GB) NO viajan a producción.
-# =============================================================================
-FROM python:3.11-slim AS sign-language-builder
-
-WORKDIR /build
-
-# git es requerido por algunas dependencias de huggingface_hub al resolver
-# repos; build-essential evita fallos al compilar wheels nativos en arm64.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Instalar sólo lo necesario para torch.onnx.export. Se fija torch CPU para
-# evitar bajar wheels de CUDA (~1 GB extra innecesario en build).
-# optimum/onnxruntime NO son necesarios: usamos la API nativa de PyTorch.
-RUN pip install --no-cache-dir \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        "torch==2.4.1+cpu" \
-    && pip install --no-cache-dir \
-        "transformers>=4.44,<5" \
-        "onnx>=1.16" \
-        "pillow>=10"
-
-# Sólo copiamos el script de conversión para maximizar el cache: este stage
-# sólo se reconstruye si cambia el script.
-COPY scripts/convert_sign_language_to_onnx.py scripts/convert_sign_language_to_onnx.py
-
-RUN python scripts/convert_sign_language_to_onnx.py \
-    && ls -lah models/sign-language models/sign-language/onnx
-
-# =============================================================================
-# Stage 2 — Imagen final de producción (Node 20 + FFmpeg).
-# Usamos node:20-slim (Debian) en lugar de node:20-alpine porque
-# `onnxruntime-node` distribuye binarios enlazados contra glibc; en Alpine
-# (musl) falla con "Error loading shared library ld-linux-x86-64.so.2".
+# Production image (Node 20 + FFmpeg)
+#
+# Do not export the sign-language ONNX model during Docker builds. The PyTorch
+# download/export step can exceed Railway's build deadline. If static letter
+# classification is needed in production, provide one of these:
+#   - prebuilt files in models/sign-language/
+#   - SIGN_LANGUAGE_HF_REPO pointing to a Hugging Face repo with the ONNX files
+# Dynamic word/phrase recognition continues to use the VLM runtime path.
 # =============================================================================
 FROM node:20-slim
 
-# Install FFmpeg for video processing
+# Install FFmpeg for video processing.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files
 COPY package*.json ./
 
-# Install dependencies
 RUN npm install --omit=dev --legacy-peer-deps
 
-# Copy source code
 COPY . .
 
-# Copiar el modelo ONNX generado en el stage de Python. Se hace después del
-# `COPY . .` para que aunque el repo incluya un models/sign-language/ vacío,
-# los artefactos del builder prevalezcan.
-COPY --from=sign-language-builder /build/models/sign-language /app/models/sign-language
-
-# Create logs directory
 RUN mkdir -p logs
 
-# Disable Dockerfile HEALTHCHECK to let Railway handle it via UI configuration
+# Disable Dockerfile HEALTHCHECK to let Railway handle it via UI configuration.
 # HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=10 \
 #   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/health || exit 1
 
-# Make start script executable and fix CRLF line endings (Windows compatibility)
+# Make start script executable and fix CRLF line endings (Windows compatibility).
 RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
-# Force cache bust for start.sh updates
-ENV START_SCRIPT_VERSION=v6
+ENV START_SCRIPT_VERSION=v7
 
-# Start the application directly with node to ensure PID 1 and signal handling
 CMD ["node", "index.js"]
