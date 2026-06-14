@@ -4040,47 +4040,53 @@ Responde de forma clara y constructiva.`;
                                 .toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '_').slice(0, 60);
                             const guideTitle = `Guia de desarrollo: ${task.title}`;
 
-                            // Word (.docx)
-                            const docBuffer = await self._buildWordDocument(
-                                { title: guideTitle, subjectName: task.subjectName },
-                                content,
-                            );
-                            const docKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.docx`;
-                            const docUrl = await storage.uploadFile(
-                                docBuffer, docKey,
-                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                docBuffer.length,
-                            );
-                            await contentItemRepo.create({
-                                taskId: task.id,
-                                title: guideTitle,
-                                body: docUrl,
-                                contentType: 'file',
-                                fileUri: docUrl,
-                                fileName: `guia_${safeName}.docx`,
-                                orderIndex: 0,
-                                creatorUsuarioId: userId || null,
-                                creatorUsername: username || null,
-                            });
-                            taskDocs++;
+                            try {
+                                const pdfBuffer = await self._buildEducationalPdf(
+                                    guideTitle, `${task.topicName} - ${task.subjectName}`, content,
+                                );
+                                const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.pdf`;
+                                const pdfUrl = await storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
+                                await contentItemRepo.create({
+                                    taskId: task.id,
+                                    title: `${guideTitle} (PDF)`,
+                                    body: pdfUrl,
+                                    contentType: 'file',
+                                    fileUri: pdfUrl,
+                                    fileName: `guia_${safeName}.pdf`,
+                                    orderIndex: 0,
+                                    creatorUsuarioId: userId || null,
+                                    creatorUsername: username || null,
+                                });
+                                taskDocs++;
+                            } catch (pdfErr) {
+                                console.error(`[LLMDomainService] Task PDF failed task=${task.id}: ${pdfErr.message}`);
+                            }
 
-                            // PDF
-                            const pdfBuffer = await self._buildEducationalPdf(
-                                guideTitle, `${task.topicName} - ${task.subjectName}`, content,
-                            );
-                            const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.pdf`;
-                            const pdfUrl = await storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
-                            await contentItemRepo.create({
-                                taskId: task.id,
-                                title: `${guideTitle} (PDF)`,
-                                body: pdfUrl,
-                                contentType: 'file',
-                                fileUri: pdfUrl,
-                                fileName: `guia_${safeName}.pdf`,
-                                orderIndex: 1,
-                                creatorUsuarioId: userId || null,
-                                creatorUsername: username || null,
-                            });
+                            try {
+                                const docBuffer = await self._buildWordDocument(
+                                    { title: guideTitle, subjectName: task.subjectName },
+                                    content,
+                                );
+                                const docKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.docx`;
+                                const docUrl = await storage.uploadFile(
+                                    docBuffer, docKey,
+                                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                    docBuffer.length,
+                                );
+                                await contentItemRepo.create({
+                                    taskId: task.id,
+                                    title: guideTitle,
+                                    body: docUrl,
+                                    contentType: 'file',
+                                    fileUri: docUrl,
+                                    fileName: `guia_${safeName}.docx`,
+                                    orderIndex: 1,
+                                    creatorUsuarioId: userId || null,
+                                    creatorUsername: username || null,
+                                });
+                            } catch (docErr) {
+                                console.error(`[LLMDomainService] Task Word doc failed task=${task.id}: ${docErr.message}`);
+                            }
                         } catch (err) {
                             console.error(`[LLMDomainService] Task doc failed task=${task.id}: ${err.message}`);
                         }

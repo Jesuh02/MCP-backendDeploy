@@ -428,6 +428,7 @@ export function createContainer() {
         supabaseService: supabase,
         subjectRepository: subjectRepo,
         fileStoragePort: storageAdapter,
+        contentItemRepository: contentItemRepo,
     });
 
     // MCPService legacy (singleton interno) — se inyecta en ExcelDomainService y PdfDomainService
