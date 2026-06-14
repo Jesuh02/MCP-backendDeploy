@@ -19,11 +19,11 @@ config como `vit` despues de exportar.
 
 ALCANCE DEL MODELO (LEER ANTES DE TOCAR ESTE SCRIPT)
 ----------------------------------------------------
-Este modelo es un clasificador de IMAGEN ESTATICA del alfabeto (A-Z). Por
-diseno NO puede reconocer signos dinamicos ni Lengua de Senas Colombiana
-(LSC) word-level por si solo. Palabras como "hola", "gracias",
-"buenas tardes", "como estas" o "estoy bien" requieren evidencia temporal,
-locacion, movimiento y rasgos no manuales.
+Este modelo es un clasificador de IMAGEN ESTATICA del alfabeto manual ASL
+(A-Z). Por diseno NO puede reconocer signos dinamicos ni vocabulario
+word-level por si solo. Palabras como "hello", "thank you", "how are you",
+"I am fine" o "I love you" requieren evidencia temporal, locacion,
+movimiento y rasgos no manuales.
 
 En runtime la aplicacion separa responsabilidades:
 
@@ -33,15 +33,14 @@ En runtime la aplicacion separa responsabilidades:
           oraciones.
 
     src/modules/sign-language/sign-language-vlm.js
-        - Reconoce clips con un VLM usando reglas y glosas prioritarias LSC.
-        - Desambigua pares frecuentes: hola / como estas, gracias / estoy bien,
-          buenas tardes / hola, como estas / te amo.
+        - Reconoce clips con un VLM usando ASL/ingles por defecto.
+        - Desambigua pares frecuentes: hello / how are you, thank you / fine,
+          please / sorry, how are you / I love you.
 
 Si en el futuro se quiere reconocimiento word-level local sin VLM, este
 script debe reemplazarse por una exportacion de modelo de VIDEO entrenado
-con dataset LSC (no WLASL/ASL como fuente principal), por ejemplo una
-arquitectura tipo VideoMAE/MViT/TimeSformer finetuned con clips colombianos
-etiquetados por glosa.
+con dataset ASL de clips etiquetados por glosa, por ejemplo una arquitectura
+tipo VideoMAE/MViT/TimeSformer.
 """
 
 from __future__ import annotations

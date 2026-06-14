@@ -341,6 +341,7 @@ function buildCaptureMeta(state, now, motion) {
  * @param {Object} [opts]
  * @param {string} [opts.context]              - contexto previo para el VLM
  * @param {string} [opts.model]                - modelo VLM override
+ * @param {string} [opts.language]             - 'asl' (default) o 'lsc'
  * @param {number} [opts.minLetterConfidence]  - override de MIN_LETTER_CONFIDENCE
  * @param {number} [opts.minPhraseConfidence]  - override de VLM_MIN_CONFIDENCE
  * @param {number} [opts.stillDurationMs]      - override de STILL_DURATION_MS
@@ -511,6 +512,7 @@ async function ingestFrameNow(safeId, frameBuffer, opts = {}) {
                             context: typeof opts.context === 'string' ? opts.context : undefined,
                             previousText: previousText || undefined,
                             model: typeof opts.model === 'string' ? opts.model : undefined,
+                            language: typeof opts.language === 'string' ? opts.language : undefined,
                             mode,
                         });
                         if (
@@ -606,6 +608,7 @@ async function ingestFrameNow(safeId, frameBuffer, opts = {}) {
                             context: typeof opts.context === 'string' ? opts.context : undefined,
                             previousText: previousText || undefined,
                             model: typeof opts.model === 'string' ? opts.model : undefined,
+                            language: typeof opts.language === 'string' ? opts.language : undefined,
                             mode: 'static',
                         });
                         if (

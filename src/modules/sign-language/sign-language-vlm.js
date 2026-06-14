@@ -1,6 +1,6 @@
 /**
  * sign-language-vlm.js — Reconocimiento de SEÑAS DINÁMICAS (palabras y
- * frases completas como "hola", "¿cómo estás?", "gracias", "buenos días")
+ * frases completas ASL en inglés como "hello", "how are you?", "thank you")
  * usando un Vision-Language Model (VLM) multimodal vía OpenRouter.
  *
  * ¿Por qué existe este módulo?
@@ -8,7 +8,7 @@
  * El pipeline ONNX local (`Alphabet-Sign-Language-Detection`) SOLO
  * clasifica imágenes estáticas del alfabeto A-Z. Por construcción, no
  * puede reconocer palabras (que son gestos en MOVIMIENTO). Cuando el
- * usuario hace la seña de "hola", el modelo estático solo ve "vocales
+ * usuario hace la seña de "hello", el modelo estático solo ve "vocales
  * parecidas a la forma de la mano" → por eso la queja "solo detecta
  * vocales".
  *
@@ -27,6 +27,7 @@
  *   SIGN_LANGUAGE_VLM_TIMEOUT  (ms, default 20000)
  *   SIGN_LANGUAGE_VLM_FALLBACK (modelo alterno si el primario falla;
  *                               default: "google/gemini-flash-1.5")
+ *   SIGN_LANGUAGE_PROFILE      "asl" por defecto; usar "lsc" para LSC/español.
  */
 
 import axios from 'axios';
@@ -210,6 +211,214 @@ const LSC_TEXT_NORMALIZATIONS = new Map([
     ['feliz-navidad', 'Feliz Navidad'],
     ['te amo', 'Te amo'],
 ]);
+
+const ASL_BASIC_VOCABULARY = [
+    'Hello',
+    'Hi',
+    'How are you?',
+    'I am fine.',
+    'Fine',
+    'Good',
+    'Bad',
+    'Good morning',
+    'Good afternoon',
+    'Good night',
+    'Goodbye',
+    'Thank you',
+    'Please',
+    'Sorry',
+    'Excuse me',
+    'I love you',
+    'Yes',
+    'No',
+    'Okay',
+    'What?',
+    'Where?',
+    'Who?',
+    'When?',
+    'Why?',
+    'How?',
+    'Help',
+    'Want',
+    'Need',
+    'Home',
+    'School',
+    'Work',
+    'Eat',
+    'Drink',
+    'Water',
+    'Bathroom',
+    'Friend',
+    'Teacher',
+    'Student',
+    'Understand',
+    "I don't understand.",
+    'Again',
+    'Finish',
+    'My name is',
+    'Nice to meet you',
+    'Busy',
+    'Wonderful',
+    'So-so',
+    'Nothing much',
+    'Stop',
+];
+
+const ASL_TEXT_NORMALIZATIONS = new Map([
+    ['hello', 'Hello'],
+    ['hi', 'Hi'],
+    ['asl hello', 'Hello'],
+    ['how are you', 'How are you?'],
+    ['how you', 'How are you?'],
+    ['how-you', 'How are you?'],
+    ['how are you doing', 'How are you?'],
+    ['whats up', "What's up?"],
+    ["what's up", "What's up?"],
+    ['what up', "What's up?"],
+    ['i am fine', 'I am fine.'],
+    ["i'm fine", 'I am fine.'],
+    ['im fine', 'I am fine.'],
+    ['fine', 'Fine'],
+    ['good', 'Good'],
+    ['bad', 'Bad'],
+    ['good morning', 'Good morning'],
+    ['good-morning', 'Good morning'],
+    ['good afternoon', 'Good afternoon'],
+    ['good-afternoon', 'Good afternoon'],
+    ['good night', 'Good night'],
+    ['good-night', 'Good night'],
+    ['goodbye', 'Goodbye'],
+    ['good bye', 'Goodbye'],
+    ['bye', 'Goodbye'],
+    ['thank you', 'Thank you'],
+    ['thank-you', 'Thank you'],
+    ['thanks', 'Thank you'],
+    ['please', 'Please'],
+    ['sorry', 'Sorry'],
+    ['excuse me', 'Excuse me'],
+    ['excuse-me', 'Excuse me'],
+    ['i love you', 'I love you.'],
+    ['ily', 'I love you.'],
+    ['yes', 'Yes'],
+    ['no', 'No'],
+    ['ok', 'Okay'],
+    ['okay', 'Okay'],
+    ['what', 'What?'],
+    ['where', 'Where?'],
+    ['who', 'Who?'],
+    ['when', 'When?'],
+    ['why', 'Why?'],
+    ['how', 'How?'],
+    ['help', 'Help'],
+    ['want', 'Want'],
+    ['need', 'Need'],
+    ['home', 'Home'],
+    ['school', 'School'],
+    ['work', 'Work'],
+    ['eat', 'Eat'],
+    ['drink', 'Drink'],
+    ['water', 'Water'],
+    ['bathroom', 'Bathroom'],
+    ['friend', 'Friend'],
+    ['teacher', 'Teacher'],
+    ['student', 'Student'],
+    ['understand', 'Understand'],
+    ['i dont understand', "I don't understand."],
+    ["i don't understand", "I don't understand."],
+    ['dont understand', "I don't understand."],
+    ["don't understand", "I don't understand."],
+    ['again', 'Again'],
+    ['finish', 'Finish'],
+    ['my name is', 'My name is'],
+    ['name', 'Name'],
+    ['nice to meet you', 'Nice to meet you.'],
+    ['busy', 'Busy'],
+    ['wonderful', 'Wonderful'],
+    ['so so', 'So-so'],
+    ['so-so', 'So-so'],
+    ['nothing much', 'Nothing much'],
+    ['stop', 'Stop'],
+]);
+
+const ASL_SYSTEM_PROMPT = [
+    'You are an expert American Sign Language (ASL) linguist and visual interpreter.',
+    'Your output language is English (en-US). Do not translate ASL signs into Spanish.',
+    'You receive an ordered sequence of camera frames (t0, t1, ..., tN) that may show',
+    'a single static handshape, a number, a word, a phrase, or a short sentence.',
+    'ASL is multimodal: you must integrate handshape, palm orientation, location,',
+    'movement path, repetition, contact, both hands, gaze, eyebrows, mouth morphemes,',
+    'head movement, and body posture across the whole clip.',
+    '',
+    'Required internal procedure before returning JSON:',
+    '  1. Identify the exact handshape of each hand: fist, flat-B, open-5, index,',
+    '     index+middle, ILY handshape, O, C, bent fingers, etc.',
+    '  2. Identify palm orientation: inward, outward, up, down, side.',
+    '  3. Identify location: forehead, chin, mouth, chest, neutral space, one hand',
+    '     contacting the other, or both hands moving.',
+    '  4. Identify motion: direction, arc, circle, repeated movement, tapping, twist,',
+    '     wrist nod, opening/closing, or no semantic movement.',
+    '  5. Identify non-manual markers: raised eyebrows for yes/no or wh questions,',
+    '     head shake for negation, facial affect, mouth morphemes.',
+    '  6. Decide the sign only after comparing these cues against ASL, not against LSC/LSE.',
+    '',
+    'ASL priority lexicon and anti-confusion rules:',
+    '  - HELLO/HI: one open hand near the forehead/temple, palm outward, short side wave.',
+    '    Do not upgrade it to "How are you?" unless there is clear question expression',
+    '    and an ASL question/you-directed movement.',
+    '  - HOW ARE YOU: ASL HOW + YOU / conversational question, usually with raised',
+    '    eyebrows and directed movement. It must output "How are you?".',
+    '  - THANK YOU: flat hand from chin/lips moving outward. If the hand does not start',
+    '    at chin/lips/face, do not guess "Thank you".',
+    '  - GOOD/FINE/I AM FINE: positive state signs are not THANK YOU unless there is',
+    '    chin/lip contact and outward gratitude movement.',
+    '  - PLEASE: open flat hand circles on chest. Do not confuse with SORRY.',
+    '  - SORRY: fist circles on chest. Do not confuse with PLEASE.',
+    '  - I LOVE YOU: requires a clear ILY handshape or explicit love/heart sign. Do not',
+    '    confuse it with HOW ARE YOU, HELLO, or static letter Y/I/L shapes.',
+    '  - YES: S/A fist nodding at the wrist. NO: index+middle closing to thumb.',
+    '  - OKAY/OK: thumb and index form a circle with other fingers extended.',
+    '  - SO-SO: open flat hand palm down rocking side to side.',
+    '  - BUSY: repeated short movement against the other hand/thumb area. Do not call it STOP.',
+    '  - STOP: one vertical palm strikes or drops onto a horizontal palm once.',
+    '  - If most frames are nearly identical and there is no semantic path, treat it as',
+    '    static fingerspelling or a number, not as a dynamic greeting.',
+    '  - Numbers must be returned as Arabic digits, for example "0", "5", "23", "100".',
+    '',
+    'Kind rules, applied in this order:',
+    '  - "letter": text is exactly one uppercase A-Z letter. Use this for static',
+    '    ASL fingerspelling letters, including vowels A, E, I, O, U.',
+    '  - "number": text is only Arabic digits. Use digits, not number words.',
+    '  - "word": one lexical English word with no spaces, for example "Hello", "Work".',
+    '  - "phrase": 2-4 English words that are not a full subject+verb sentence,',
+    '    for example "Good morning", "Thank you", "My name is".',
+    '  - "sentence": a complete English sentence or question, or 5+ words, for example',
+    '    "How are you?", "I am fine.", "I need help.", "I love you.".',
+    '  - "unknown": confidence < 0.3 or unclear signing. Return text="".',
+    '',
+    'Strict JSON response:',
+    '  1. Return exactly one JSON object and no markdown fences.',
+    '  2. Required schema:',
+    '     {',
+    '       "text": string,',
+    '       "kind": "word"|"phrase"|"letter"|"number"|"sentence"|"unknown",',
+    '       "confidence": number,',
+    '       "alternatives": string[],',
+    '       "handedness": "left"|"right"|"both"|"none",',
+    '       "motion": {',
+    '         "trajectory": string,',
+    '         "direction": string|null,',
+    '         "repeated": boolean,',
+    '         "contact": "none"|"hand-hand"|"hand-face"|"hand-body"',
+    '       },',
+    '       "nonManual": {',
+    '         "facial": string|null,',
+    '         "intent": "statement"|"question"|"exclamation"|"negation"|"affirmation"|"unknown"',
+    '       },',
+    '       "reasoning": string',
+    '     }',
+    '  3. If you are not visually sure, return kind="unknown" instead of guessing.',
+    '  4. Output English text with normal capitalization and punctuation.',
+].join('\n');
 
 const SYSTEM_PROMPT = [
     'Eres un LINGÜISTA experto en LENGUAJE DE SEÑAS COLOMBIANO (LSC).',
@@ -398,11 +607,82 @@ const SYSTEM_PROMPT = [
     '  8. Idioma de salida: español (es-CO). Usa ¿? y ¡! cuando aplique.',
 ].join('\n');
 
+function resolveSignLanguageProfile(raw) {
+    const value = String(
+        raw ||
+        process.env.SIGN_LANGUAGE_PROFILE ||
+        process.env.SIGN_LANGUAGE_VARIANT ||
+        process.env.SIGN_LANGUAGE_LANGUAGE ||
+        'asl',
+    ).trim().toLowerCase();
+    if (['lsc', 'es', 'es-co', 'spanish', 'colombian', 'colombia', 'lengua-de-senas-colombiana'].includes(value)) {
+        return 'lsc';
+    }
+    return 'asl';
+}
+
+function buildSystemPrompt(language) {
+    return resolveSignLanguageProfile(language) === 'lsc'
+        ? SYSTEM_PROMPT
+        : ASL_SYSTEM_PROMPT;
+}
+
+function buildPreviousTextInstruction(previousText, language) {
+    if (!previousText) return null;
+    const text = String(previousText).slice(0, 300);
+    if (resolveSignLanguageProfile(language) === 'lsc') {
+        return `Señas reconocidas inmediatamente antes en esta conversación: """${text}""". Úsalas SOLO como contexto para desambiguar, NO las repitas en tu respuesta.`;
+    }
+    return `Signs recognized immediately before this turn: """${text}""". Use them only as context for disambiguation; do not repeat them unless the signer signs them again.`;
+}
+
+function buildContextInstruction(context, language) {
+    if (!context) return null;
+    const text = String(context).slice(0, 300);
+    if (resolveSignLanguageProfile(language) === 'lsc') {
+        return `Contexto previo del usuario: """${text}"""`;
+    }
+    return `User context: """${text}"""`;
+}
+
+function buildClipPrompt(opts, frameCount, language) {
+    if (resolveSignLanguageProfile(language) === 'lsc') {
+        return [
+            buildContextInstruction(opts.context, language),
+            buildPreviousTextInstruction(opts.previousText, language),
+            buildVocabularyInstruction(opts.vocabulary, language),
+            buildModeInstruction(opts.mode, language),
+            `Recibes ${frameCount} frames en orden cronológico (t0 -> t${frameCount - 1}).`,
+            'Analiza la SECUENCIA como un clip de video corto: identifica AMBAS manos,',
+            'la trayectoria del movimiento entre frames, contacto entre manos o con la',
+            'cara, expresión facial y, a partir de todo eso, la INTENCIÓN comunicativa',
+            '(afirmación, pregunta, exclamación, negación, saludo, agradecimiento, etc.).',
+            'Aplica de forma estricta los CRITERIOS CUANTITATIVOS de "kind" definidos',
+            'en las reglas del sistema: text y kind deben ser COHERENTES entre sí.',
+            'Responde con el JSON exacto definido en las reglas del sistema.',
+        ].filter(Boolean).join('\n');
+    }
+
+    return [
+        buildContextInstruction(opts.context, language),
+        buildPreviousTextInstruction(opts.previousText, language),
+        buildVocabularyInstruction(opts.vocabulary, language),
+        buildModeInstruction(opts.mode, language),
+        `You receive ${frameCount} frames in chronological order (t0 -> t${frameCount - 1}).`,
+        'Analyze the whole sequence as a short ASL video clip. Identify both hands,',
+        'the motion path between frames, hand-face or hand-body contact, facial',
+        'expression, gaze, and communicative intent.',
+        'Apply the strict "kind" rules from the system prompt. The text and kind',
+        'must be coherent with each other.',
+        'Return exactly the JSON object required by the system prompt.',
+    ].filter(Boolean).join('\n');
+}
+
 /**
  * Reconoce la seña ejecutada en un clip de frames.
  *
  * @param {Array<Buffer|string>} frames - Buffers de imagen o data URLs.
- * @param {{ context?: string, previousText?: string, mode?: 'static'|'dynamic'|'sentence', model?: string, timeoutMs?: number, vocabulary?: string[] }} [opts]
+ * @param {{ context?: string, previousText?: string, mode?: 'static'|'dynamic'|'sentence', model?: string, timeoutMs?: number, vocabulary?: string[], language?: 'asl'|'lsc'|string }} [opts]
  * @returns {Promise<null | {
  *   text: string,
  *   kind: 'word'|'phrase'|'letter'|'number'|'sentence'|'unknown',
@@ -437,6 +717,8 @@ export async function recognizeSignClip(frames, opts = {}) {
         });
     }
 
+    const language = resolveSignLanguageProfile(opts.language);
+
     // Submuestreo uniforme si vienen demasiados frames (manten coste acotado).
     const sampled = sampleEvenly(frames, MAX_FRAMES);
     const imageParts = sampled.map((f) => ({
@@ -447,24 +729,7 @@ export async function recognizeSignClip(frames, opts = {}) {
     const userParts = [
         {
             type: 'text',
-            text: [
-                opts.context
-                    ? `Contexto previo del usuario: """${opts.context.slice(0, 300)}"""`
-                    : null,
-                opts.previousText
-                    ? `Señas reconocidas inmediatamente antes en esta conversación: """${opts.previousText.slice(0, 300)}""". Úsalas SOLO como contexto para desambiguar, NO las repitas en tu respuesta.`
-                    : null,
-                buildVocabularyInstruction(opts.vocabulary),
-                buildModeInstruction(opts.mode),
-                `Recibes ${sampled.length} frames en orden cronológico (t0 → t${sampled.length - 1}).`,
-                'Analiza la SECUENCIA como un clip de video corto: identifica AMBAS manos,',
-                'la trayectoria del movimiento entre frames, contacto entre manos o con la',
-                'cara, expresión facial y, a partir de todo eso, la INTENCIÓN comunicativa',
-                '(afirmación, pregunta, exclamación, negación, saludo, agradecimiento, etc.).',
-                'Aplica de forma estricta los CRITERIOS CUANTITATIVOS de "kind" definidos',
-                'en las reglas del sistema: text y kind deben ser COHERENTES entre sí.',
-                'Responde con el JSON exacto definido en las reglas del sistema.',
-            ].filter(Boolean).join('\n'),
+            text: buildClipPrompt(opts, sampled.length, language),
         },
         ...imageParts,
     ];
@@ -478,7 +743,7 @@ export async function recognizeSignClip(frames, opts = {}) {
     let lastErr = null;
     for (const m of chain) {
         try {
-            return await callOpenRouterVLM(m, userParts, timeoutMs);
+            return await callOpenRouterVLM(m, userParts, timeoutMs, { language });
         } catch (err) {
             lastErr = err;
             console.warn(`[SignLanguage][VLM] ${m} fall\u00f3 (${err?.message || err}). Probando siguiente...`);
@@ -487,13 +752,14 @@ export async function recognizeSignClip(frames, opts = {}) {
     throw lastErr || new Error('Todos los modelos VLM fallaron.');
 }
 
-async function callOpenRouterVLM(model, userParts, timeoutMs) {
+async function callOpenRouterVLM(model, userParts, timeoutMs, opts = {}) {
+    const language = resolveSignLanguageProfile(opts.language);
     const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
             model,
             messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'system', content: buildSystemPrompt(language) },
                 { role: 'user', content: userParts },
             ],
             max_tokens: 600,
@@ -518,7 +784,7 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
         throw new Error(`Respuesta VLM no parseable: ${raw.slice(0, 120)}`);
     }
 
-    const text = normalizeLscText(String(parsed.text ?? '').trim());
+    const text = normalizeSignText(String(parsed.text ?? '').trim(), language);
     const kindRaw = String(parsed.kind ?? 'unknown').toLowerCase();
     const kind = ['word', 'phrase', 'letter', 'number', 'sentence', 'unknown'].includes(kindRaw) ? kindRaw : 'unknown';
     let confidence = clamp01(Number(parsed.confidence));
@@ -556,7 +822,7 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
     // los límites letter↔number / word↔phrase / phrase↔sentence que la
     // matriz de confusión mostró como principales fuentes de error.
     const reconciled = reconcileKind(text, kind);
-    const sanity = applyLscSanityChecks({
+    const sanity = applySignSanityChecks({
         text: reconciled.text,
         kind: reconciled.kind,
         confidence,
@@ -565,7 +831,7 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
         nonManual,
         reasoning,
         alternatives,
-    });
+    }, language);
 
     return {
         text: sanity.text,
@@ -578,6 +844,7 @@ async function callOpenRouterVLM(model, userParts, timeoutMs) {
         nonManual,
         reasoning,
         model,
+        language,
     };
 }
 
@@ -618,12 +885,13 @@ export function reconcileKind(rawText, rawKind) {
     const wordCount = tokens.length;
 
     // Heurística de oración: tiene puntuación final, signo de
-    // interrogación/exclamación, o un verbo conjugado típico en español.
+    // interrogación/exclamación, o un verbo conjugado típico en español/inglés.
     const hasSentencePunct = /[.!?¡¿]/.test(text);
-    const verbHint = /\b(es|son|soy|eres|está|estoy|estás|estamos|están|hay|tengo|tienes|tiene|tenemos|tienen|quiero|quieres|quiere|necesito|necesitas|necesita|voy|vas|va|vamos|van|hago|haces|hace|hacemos|hacen|puedo|puedes|puede|amo|amas|ama|sé|sabes|sabe|gusta|gustan|llamo|llamas|llama|vivo|vives|vive)\b/i;
+    const verbHint = /\b(es|son|soy|eres|está|estoy|estás|estamos|están|hay|tengo|tienes|tiene|tenemos|tienen|quiero|quieres|quiere|necesito|necesitas|necesita|voy|vas|va|vamos|van|hago|haces|hace|hacemos|hacen|puedo|puedes|puede|amo|amas|ama|sé|sabes|sabe|gusta|gustan|llamo|llamas|llama|vivo|vives|vive|am|are|is|was|were|be|been|being|have|has|had|do|does|did|can|will|would|want|need|needs|like|likes|love|loves|go|goes|going|went|eat|eats|drink|drinks|work|works|study|studies|learn|learns|understand|understands|help|helps|live|lives|feel|feels|know|knows|see|sees|come|comes|meet|meets|name|names)\b/i;
 
-    // 3) Oración: 5+ palabras, o puntuación de cierre, o verbo conjugado.
-    if (wordCount >= 5 || hasSentencePunct || verbHint.test(text)) {
+    // 3) Oración: 5+ palabras, o puntuación de cierre, o verbo conjugado
+    // en una unidad de 2+ palabras. Una sola glosa como "Help" sigue siendo word.
+    if (wordCount >= 5 || hasSentencePunct || (wordCount >= 2 && verbHint.test(text))) {
         return { text, kind: 'sentence' };
     }
 
@@ -696,6 +964,146 @@ function normalizeSpanishDisplay(text) {
     return trimmed.charAt(0).toLocaleUpperCase('es') + trimmed.slice(1);
 }
 
+function normalizeSignText(rawText, language) {
+    return resolveSignLanguageProfile(language) === 'lsc'
+        ? normalizeLscText(rawText)
+        : normalizeAslText(rawText);
+}
+
+function normalizeAslText(rawText) {
+    const text = String(rawText || '').trim();
+    if (!text) return '';
+    const key = text
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[¿?¡!.,;:()]/g, ' ')
+        .replace(/[_/]+/g, ' ')
+        .replace(/\s*-\s*/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLocaleLowerCase('en-US');
+    const spacedKey = key.replace(/-/g, ' ');
+
+    const letterMatch = spacedKey.match(/^(?:letter|alphabet|fingerspell|fingerspelling)\s+([a-z])$/i);
+    if (letterMatch) return letterMatch[1].toLocaleUpperCase('en-US');
+
+    const numberWords = new Map([
+        ['zero', '0'],
+        ['one', '1'],
+        ['two', '2'],
+        ['three', '3'],
+        ['four', '4'],
+        ['five', '5'],
+        ['six', '6'],
+        ['seven', '7'],
+        ['eight', '8'],
+        ['nine', '9'],
+        ['ten', '10'],
+    ]);
+    if (numberWords.has(spacedKey)) return numberWords.get(spacedKey);
+    if (/^\d+$/.test(spacedKey)) return spacedKey;
+
+    return ASL_TEXT_NORMALIZATIONS.get(key) ||
+        ASL_TEXT_NORMALIZATIONS.get(spacedKey) ||
+        normalizeEnglishDisplay(text);
+}
+
+function normalizeEnglishDisplay(text) {
+    const trimmed = String(text || '').trim().replace(/\s+/g, ' ');
+    if (!trimmed) return '';
+    const lower = trimmed.toLocaleLowerCase('en-US');
+    if (/^how are you\??$/i.test(trimmed) || /^how you\??$/i.test(trimmed)) return 'How are you?';
+    if (/^(what|where|who|when|why|how)\??$/i.test(trimmed)) {
+        return `${trimmed.replace(/[?!.]+$/g, '').toLocaleLowerCase('en-US').replace(/^./, (c) => c.toLocaleUpperCase('en-US'))}?`;
+    }
+    if (/^i am fine\.?$/i.test(trimmed) || /^i'?m fine\.?$/i.test(trimmed)) return 'I am fine.';
+    if (/^i love you\.?$/i.test(trimmed)) return 'I love you.';
+    if (/^i do not understand\.?$/i.test(trimmed) || /^i don'?t understand\.?$/i.test(trimmed)) return "I don't understand.";
+    if (/^nice to meet you\.?$/i.test(trimmed)) return 'Nice to meet you.';
+    if (/^thank you\.?$/i.test(trimmed) || /^thanks\.?$/i.test(trimmed)) return 'Thank you';
+    if (/^good morning\.?$/i.test(trimmed)) return 'Good morning';
+    if (/^good afternoon\.?$/i.test(trimmed)) return 'Good afternoon';
+    if (/^good night\.?$/i.test(trimmed)) return 'Good night';
+    if (/^good ?bye\.?$/i.test(trimmed) || /^bye\.?$/i.test(trimmed)) return 'Goodbye';
+    if (/^ok(?:ay)?\.?$/i.test(trimmed)) return 'Okay';
+    if (/^[a-z]$/i.test(trimmed)) return trimmed.toLocaleUpperCase('en-US');
+    return trimmed.charAt(0).toLocaleUpperCase('en-US') + trimmed.slice(1);
+}
+
+function applySignSanityChecks(rec, language) {
+    return resolveSignLanguageProfile(language) === 'lsc'
+        ? applyLscSanityChecks(rec)
+        : applyAslSanityChecks(rec);
+}
+
+function applyAslSanityChecks(rec) {
+    let { text, kind, confidence } = rec;
+    const normalized = normalizeAslText(text);
+    if (normalized) text = normalized;
+
+    const haystack = [
+        text,
+        rec.reasoning,
+        rec.motion?.trajectory,
+        rec.nonManual?.facial,
+        ...(rec.alternatives || []),
+    ].filter(Boolean).join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+    const hasFaceContact = rec.motion?.contact === 'hand-face' || /\b(chin|mouth|lip|lips|face|forehead)\b/.test(haystack);
+    const hasChestContact = rec.motion?.contact === 'hand-body' || /\b(chest|torso|body)\b/.test(haystack);
+    const hasQuestionCue = rec.nonManual?.intent === 'question' || /(\?|question|eyebrow|eyebrows|raised brow|wh\b)/.test(haystack);
+    const hasLoveCue = /\b(love|ily|i-l-y|heart|affection|pinkie|pinky|thumb.*index|index.*thumb)\b/.test(haystack);
+    const hasFineCue = /\b(fine|good|positive|thumbs? up|state|well)\b/.test(haystack);
+    const hasThankCue = /\b(thank|gratitude|chin|mouth|lips|outward from face)\b/.test(haystack);
+    const hasPleaseCue = /\b(please|open palm|flat hand|circle|circular|rub|rubbing)\b/.test(haystack) && hasChestContact;
+    const hasSorryCue = /\b(sorry|apology|fist|s hand|circular)\b/.test(haystack) && hasChestContact;
+
+    if (text === 'Thank you' && !hasFaceContact && hasFineCue) {
+        text = 'I am fine.';
+        kind = 'sentence';
+        confidence = Math.min(confidence, 0.72);
+    }
+
+    if (text === 'Thank you' && !hasFaceContact && !hasThankCue && confidence < 0.78) {
+        confidence = Math.min(confidence, 0.49);
+    }
+
+    if (text === 'How are you?' && !hasQuestionCue && confidence < 0.8) {
+        confidence = Math.min(confidence, 0.52);
+    }
+
+    if (text === 'I love you.' && !hasLoveCue && hasQuestionCue) {
+        text = 'How are you?';
+        kind = 'sentence';
+        confidence = Math.min(confidence, 0.7);
+    } else if (text === 'I love you.' && !hasLoveCue && confidence < 0.82) {
+        confidence = Math.min(confidence, 0.5);
+    }
+
+    if (text === 'Hello' && rec.handedness === 'both' && hasQuestionCue && confidence < 0.8) {
+        text = 'How are you?';
+        kind = 'sentence';
+        confidence = Math.min(confidence, 0.68);
+    }
+
+    if (text === 'Please' && hasSorryCue && !hasPleaseCue && confidence < 0.78) {
+        text = 'Sorry';
+        kind = 'word';
+        confidence = Math.min(confidence, 0.7);
+    } else if (text === 'Sorry' && hasPleaseCue && !hasSorryCue && confidence < 0.78) {
+        text = 'Please';
+        kind = 'word';
+        confidence = Math.min(confidence, 0.7);
+    }
+
+    const reconciled = reconcileKind(text, kind);
+    return {
+        text: reconciled.text,
+        kind: reconciled.kind,
+        confidence: clamp01(confidence),
+    };
+}
+
 function applyLscSanityChecks(rec) {
     let { text, kind, confidence } = rec;
     const normalized = normalizeLscText(text);
@@ -750,14 +1158,17 @@ function applyLscSanityChecks(rec) {
     };
 }
 
-function normalizeVocabulary(vocabulary = []) {
+function normalizeVocabulary(vocabulary = [], language) {
+    const profile = resolveSignLanguageProfile(language);
     const source = Array.isArray(vocabulary) && vocabulary.length
         ? vocabulary
-        : LSC_BASIC_VOCABULARY;
+        : profile === 'lsc'
+            ? LSC_BASIC_VOCABULARY
+            : ASL_BASIC_VOCABULARY;
     const out = [];
     const seen = new Set();
     for (const item of source) {
-        const normalized = normalizeLscText(String(item || '').trim());
+        const normalized = normalizeSignText(String(item || '').trim(), profile);
         if (!normalized) continue;
         const key = normalizeTranscriptKey(normalized);
         if (seen.has(key)) continue;
@@ -767,10 +1178,19 @@ function normalizeVocabulary(vocabulary = []) {
     return out.slice(0, 80);
 }
 
-function buildVocabularyInstruction(vocabulary) {
+function buildVocabularyInstruction(vocabulary, language) {
     if (!Array.isArray(vocabulary) || !vocabulary.length) return null;
-    const list = normalizeVocabulary(vocabulary);
+    const profile = resolveSignLanguageProfile(language);
+    const list = normalizeVocabulary(vocabulary, profile);
     if (!list.length) return null;
+    if (profile === 'asl') {
+        return [
+            'DOMAIN VOCABULARY (visual hints, not a fixed answer list):',
+            list.map((x) => `- ${x}`).join('\n'),
+            'If the sign visually matches one of these entries, use exactly that English text.',
+            'If it does not match, return unknown or an outside ASL sign only with clear visual evidence.',
+        ].join('\n');
+    }
     return [
         'VOCABULARIO DE DOMINIO (pistas, no respuesta fija):',
         list.map((x) => `- ${x}`).join('\n'),
@@ -920,6 +1340,7 @@ export async function recognizeSignStream(frames, opts = {}) {
                     model: opts.model,
                     timeoutMs: opts.timeoutMs,
                     vocabulary: opts.vocabulary,
+                    language: opts.language,
                 });
                 results[i] = { ...segments[i], recognition: rec };
                 if (rec && rec.text && rec.kind !== 'unknown' && rec.confidence >= minConfidence) {
@@ -976,7 +1397,8 @@ export async function recognizeSignTimeline(frames, opts = {}) {
         frames.length,
         Number(opts.frameIntervalMs) || STREAM_DEFAULT_FRAME_INTERVAL_MS,
     );
-    const vocabulary = normalizeVocabulary(opts.vocabulary);
+    const language = resolveSignLanguageProfile(opts.language);
+    const vocabulary = normalizeVocabulary(opts.vocabulary, language);
     const windowMs = clampInt(opts.timelineWindowMs, 5_000, 120_000, TIMELINE_WINDOW_MS);
     const maxFramesPerWindow = clampInt(
         opts.timelineMaxFrames,
@@ -1003,6 +1425,7 @@ export async function recognizeSignTimeline(frames, opts = {}) {
                 timeoutMs: opts.timeoutMs,
                 maxFramesPerWindow,
                 strictVocabulary: opts.strictVocabulary !== false,
+                language,
             });
             const accepted = result.events.filter((ev) => ev.confidence >= minConfidence);
             segments.push({ ...window, recognition: result });
@@ -1031,32 +1454,55 @@ export async function recognizeSignTimeline(frames, opts = {}) {
 }
 
 async function recognizeTimelineWindow(frames, timestampsMs, opts) {
+    const language = resolveSignLanguageProfile(opts.language);
     const sampled = sampleFrameTimePairs(frames, timestampsMs, opts.maxFramesPerWindow);
-    const prompt = [
-        'Modo de captura: TIMELINE DE VIDEO COMPLETO.',
-        `Ventana analizada: ${formatSec(opts.window.startMs)}s a ${formatSec(opts.window.endMs)}s.`,
-        'La ventana puede contener cero, una o varias señas completas.',
-        'NO emitas un evento por frame. Fusiona la misma seña sostenida o repetida para enseñanza.',
-        'Ignora postura neutra, brazos abajo, transiciones, pausas y silencio.',
-        'Si aparece texto del material didáctico en pantalla, úsalo solo como pista débil cuando la seña manual coincide.',
-        'Devuelve eventos en orden cronológico con tiempos absolutos del video.',
-        'Si una seña no se ve completa dentro de la ventana, baja la confianza o no la emitas.',
-        opts.previousText
-            ? `Eventos aceptados antes de esta ventana: "${opts.previousText}". No los repitas salvo que la seña se haga de nuevo claramente.`
-            : null,
-        buildVocabularyInstruction(opts.vocabulary),
-        opts.strictVocabulary
-            ? 'En este modo de vocabulario, prioriza entradas del vocabulario. No inventes palabras fuera de la lista si el gesto es ambiguo.'
-            : null,
-        'Salida JSON estricta: {"events":[{"startSec":number,"endSec":number,"text":string,"kind":"word|phrase|letter|number|sentence","confidence":number,"evidence":string}],"notes":string[]}',
-        'Máximo 6 eventos por ventana.',
-    ].filter(Boolean).join('\n');
+    const prompt = language === 'lsc'
+        ? [
+            'Modo de captura: TIMELINE DE VIDEO COMPLETO.',
+            `Ventana analizada: ${formatSec(opts.window.startMs)}s a ${formatSec(opts.window.endMs)}s.`,
+            'La ventana puede contener cero, una o varias señas completas.',
+            'NO emitas un evento por frame. Fusiona la misma seña sostenida o repetida para enseñanza.',
+            'Ignora postura neutra, brazos abajo, transiciones, pausas y silencio.',
+            'Si aparece texto del material didáctico en pantalla, úsalo solo como pista débil cuando la seña manual coincide.',
+            'Devuelve eventos en orden cronológico con tiempos absolutos del video.',
+            'Si una seña no se ve completa dentro de la ventana, baja la confianza o no la emitas.',
+            opts.previousText
+                ? `Eventos aceptados antes de esta ventana: "${opts.previousText}". No los repitas salvo que la seña se haga de nuevo claramente.`
+                : null,
+            buildVocabularyInstruction(opts.vocabulary, language),
+            opts.strictVocabulary
+                ? 'En este modo de vocabulario, prioriza entradas del vocabulario. No inventes palabras fuera de la lista si el gesto es ambiguo.'
+                : null,
+            'Salida JSON estricta: {"events":[{"startSec":number,"endSec":number,"text":string,"kind":"word|phrase|letter|number|sentence","confidence":number,"evidence":string}],"notes":string[]}',
+            'Máximo 6 eventos por ventana.',
+        ].filter(Boolean).join('\n')
+        : [
+            'Capture mode: FULL VIDEO TIMELINE.',
+            `Analyzed window: ${formatSec(opts.window.startMs)}s to ${formatSec(opts.window.endMs)}s.`,
+            'This window may contain zero, one, or several complete ASL signs.',
+            'Do not emit one event per frame. Merge the same sustained or repeated teaching sign.',
+            'Ignore neutral posture, arms down, transitions, pauses, and silence.',
+            'If instructional text appears on screen, use it only as a weak hint when the manual sign matches.',
+            'Return events in chronological order with absolute video times.',
+            'If a sign is incomplete inside this window, lower confidence or omit it.',
+            opts.previousText
+                ? `Accepted events before this window: "${opts.previousText}". Do not repeat them unless the sign is made again clearly.`
+                : null,
+            buildVocabularyInstruction(opts.vocabulary, language),
+            opts.strictVocabulary
+                ? 'In vocabulary mode, prioritize vocabulary entries. Do not invent outside words if the gesture is ambiguous.'
+                : null,
+            'Strict JSON output: {"events":[{"startSec":number,"endSec":number,"text":string,"kind":"word|phrase|letter|number|sentence","confidence":number,"evidence":string}],"notes":string[]}',
+            'Maximum 6 events per window.',
+        ].filter(Boolean).join('\n');
 
     const userParts = [{ type: 'text', text: prompt }];
     sampled.forEach((item, index) => {
         userParts.push({
             type: 'text',
-            text: `Frame ${index + 1}/${sampled.length}: tiempo ${formatSec(item.atMs)}s`,
+            text: language === 'lsc'
+                ? `Frame ${index + 1}/${sampled.length}: tiempo ${formatSec(item.atMs)}s`
+                : `Frame ${index + 1}/${sampled.length}: time ${formatSec(item.atMs)}s`,
         });
         userParts.push({
             type: 'image_url',
@@ -1072,7 +1518,7 @@ async function recognizeTimelineWindow(frames, timestampsMs, opts) {
     let lastErr = null;
     for (const model of chain) {
         try {
-            const parsed = await callOpenRouterTimeline(model, userParts, timeoutMs);
+            const parsed = await callOpenRouterTimeline(model, userParts, timeoutMs, { language });
             return normalizeTimelineResult(parsed, opts);
         } catch (err) {
             lastErr = err;
@@ -1082,13 +1528,14 @@ async function recognizeTimelineWindow(frames, timestampsMs, opts) {
     throw lastErr || new Error('Todos los modelos timeline fallaron.');
 }
 
-async function callOpenRouterTimeline(model, userParts, timeoutMs) {
+async function callOpenRouterTimeline(model, userParts, timeoutMs, opts = {}) {
+    const language = resolveSignLanguageProfile(opts.language);
     const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
             model,
             messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'system', content: buildSystemPrompt(language) },
                 { role: 'user', content: userParts },
             ],
             max_tokens: 1400,
@@ -1122,7 +1569,7 @@ function normalizeTimelineResult(parsed, opts) {
     const events = [];
 
     for (const raw of rawEvents) {
-        const normalizedText = normalizeLscText(String(raw?.text || '').trim());
+        const normalizedText = normalizeSignText(String(raw?.text || '').trim(), opts.language);
         if (!normalizedText) continue;
         const key = normalizeTranscriptKey(normalizedText);
         const vocabText = vocabularyByKey.get(key);
@@ -1442,7 +1889,35 @@ function formatSec(ms) {
     return n.toFixed(1).replace(/\.0$/, '');
 }
 
-function buildModeInstruction(mode) {
+function buildModeInstruction(mode, language) {
+    const profile = resolveSignLanguageProfile(language);
+    if (profile === 'asl') {
+        if (mode === 'static') {
+            return [
+                'Capture mode: STATIC. The server sent this frame because the hand stayed',
+                'still for about 1 second. Prioritize kind="letter" or kind="number".',
+                'Only return word/phrase/sentence if there is very clear visual evidence',
+                'of a lexical static ASL sign.',
+            ].join('\n');
+        }
+        if (mode === 'sentence') {
+            return [
+                'Capture mode: MOVING SENTENCE. The signer kept moving without a clear',
+                'pause. Analyze the complete flow and transcribe the full ASL unit in',
+                'English. If several signs are chained together, use kind="sentence"',
+                'when the output is a complete sentence.',
+            ].join('\n');
+        }
+        if (mode === 'dynamic') {
+            return [
+                'Capture mode: DYNAMIC. The server detected sustained movement followed',
+                'by a pause. Recognize the complete ASL word, phrase, or sentence.',
+                'Do not reduce it to one letter unless it is clearly fingerspelling.',
+            ].join('\n');
+        }
+        return null;
+    }
+
     if (mode === 'static') {
         return [
             'Modo de captura: ESTÁTICO. El servidor envió este frame porque la mano',

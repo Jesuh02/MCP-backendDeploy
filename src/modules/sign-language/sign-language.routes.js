@@ -78,8 +78,14 @@ export function signLanguageRoutes() {
                     capabilities: {
                         letterClassification: true,
                         phraseComposition: true,
+                        americanSignLanguage: true,
+                        englishOutput: true,
                         colombianSignLanguage: true,
+                        spanishOutput: true,
+                        supportedProfiles: ['asl', 'lsc'],
+                        defaultProfile: getSignLanguageProfile(),
                         clipRecognition: Boolean(process.env.OPENROUTER_API_KEY),
+                        aslLexiconNormalization: Boolean(process.env.OPENROUTER_API_KEY),
                         lscLexiconNormalization: Boolean(process.env.OPENROUTER_API_KEY),
                         sentenceRecognition: Boolean(process.env.OPENROUTER_API_KEY),
                         twoHandedGestures: Boolean(process.env.OPENROUTER_API_KEY),
@@ -183,6 +189,7 @@ export function signLanguageRoutes() {
             const composed = await finalizeSession(sessionId, {
                 useLLM: req.body?.useLLM !== false,
                 context: typeof req.body?.context === 'string' ? req.body.context.slice(0, 500) : undefined,
+                language: getSignLanguageProfile(req.body),
                 keep: Boolean(req.body?.keep),
             });
             return res.json({ success: true, data: composed });
@@ -223,6 +230,7 @@ export function signLanguageRoutes() {
                 previousText: typeof req.body?.previousText === 'string' ? req.body.previousText : undefined,
                 mode: ['static', 'dynamic', 'sentence'].includes(req.body?.mode) ? req.body.mode : 'dynamic',
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+                language: getSignLanguageProfile(req.body),
             });
             return res.json({ success: true, data: result });
         } catch (err) {
@@ -280,6 +288,7 @@ export function signLanguageRoutes() {
                 timelineWindowMs: Number(req.body?.timelineWindowMs),
                 timelineMaxFrames: Number(req.body?.timelineMaxFrames),
                 context: typeof req.body?.context === 'string' ? req.body.context.slice(0, 500) : undefined,
+                language: getSignLanguageProfile(req.body),
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
                 timeoutMs: Number(req.body?.timeoutMs),
                 concurrency: Number(req.body?.concurrency),
@@ -336,6 +345,7 @@ export function signLanguageRoutes() {
                     : (sessionDraft || undefined),
                 mode: ['static', 'dynamic', 'sentence'].includes(req.body?.mode) ? req.body.mode : 'dynamic',
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+                language: getSignLanguageProfile(req.body),
             });
             let pushed = false;
             if (result && result.text && result.kind !== 'unknown' && result.confidence >= minConfidence) {
@@ -377,7 +387,8 @@ export function signLanguageRoutes() {
      * que el servidor decida qué hacer según el movimiento del usuario:
      *   - mano quieta ≈ 1 segundo  →  detecta LETRA o NÚMERO (ONNX → VLM).
      *   - manos en movimiento sostenido seguido de pausa  →  detecta
-     *     PALABRA, FRASE u ORACIÓN LSC con el VLM sobre el clip acumulado.
+     *     PALABRA, FRASE u ORACIÓN ASL/inglés con el VLM sobre el clip acumulado
+     *     (LSC sigue disponible pasando language="lsc").
      *
      * El servidor mantiene el buffer de frames y la máquina de estados por
      * sesión: el frontend NO tiene que decidir cuándo cambiar de modo ni
@@ -425,6 +436,7 @@ export function signLanguageRoutes() {
             const result = await smartIngestFrame(sessionId, decoded, {
                 context: typeof req.body?.context === 'string' ? req.body.context.slice(0, 300) : undefined,
                 model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+                language: getSignLanguageProfile(req.body),
                 minLetterConfidence: Number(req.body?.minLetterConfidence),
                 minPhraseConfidence: Number(req.body?.minPhraseConfidence),
                 stillDurationMs: Number(req.body?.stillDurationMs),
@@ -483,6 +495,7 @@ export function signLanguageRoutes() {
             const composed = await composePhrase(rawSequence, {
                 useLLM: req.body?.useLLM !== false,
                 context: typeof req.body?.context === 'string' ? req.body.context.slice(0, 500) : undefined,
+                language: getSignLanguageProfile(req.body),
             });
             return res.json({ success: true, data: composed });
         } catch (err) {
@@ -495,6 +508,21 @@ export function signLanguageRoutes() {
     });
 
     return router;
+}
+
+function getSignLanguageProfile(body = {}) {
+    const raw = String(
+        body?.language ||
+        body?.profile ||
+        process.env.SIGN_LANGUAGE_PROFILE ||
+        process.env.SIGN_LANGUAGE_VARIANT ||
+        process.env.SIGN_LANGUAGE_LANGUAGE ||
+        'asl',
+    ).trim().toLowerCase();
+    if (['lsc', 'es', 'es-co', 'spanish', 'colombian', 'colombia', 'lengua-de-senas-colombiana'].includes(raw)) {
+        return 'lsc';
+    }
+    return 'asl';
 }
 
 /**

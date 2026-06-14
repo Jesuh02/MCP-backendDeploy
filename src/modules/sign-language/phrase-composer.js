@@ -27,6 +27,20 @@ const WORD_GAP_MS = 1800;             // gap entre letras → espacio implícito
 const MAX_SEQUENCE_LEN = 240;          // límite duro por sesión
 const LLM_PRIMARY_TIMEOUT_MS = 8000;   // si el LLM tarda más, abortamos
 
+function resolveComposerLanguage(raw) {
+    const value = String(
+        raw ||
+        process.env.SIGN_LANGUAGE_PROFILE ||
+        process.env.SIGN_LANGUAGE_VARIANT ||
+        process.env.SIGN_LANGUAGE_LANGUAGE ||
+        'asl',
+    ).trim().toLowerCase();
+    if (['lsc', 'es', 'es-co', 'spanish', 'colombian', 'colombia', 'lengua-de-senas-colombiana'].includes(value)) {
+        return 'lsc';
+    }
+    return 'asl';
+}
+
 /**
  * Eventos en la sesión.
  *   kind="letter" → label es una sola letra (alfabeto, pipeline ONNX).
@@ -178,8 +192,9 @@ function buildDraft(events) {
  *   - Colapsa letras idénticas adyacentes (HHOLLA -> HOLA).
  *   - Pasa a minúsculas, capitaliza la primera letra de cada oración.
  */
-export function cleanLocal(raw) {
+export function cleanLocal(raw, language) {
     if (!raw) return '';
+    if (resolveComposerLanguage(language) === 'asl') return cleanEnglishLocal(raw);
     const collapsed = String(raw)
         .toUpperCase()
         .replace(/([A-ZÑ])\1{1,}/g, '$1')
@@ -189,12 +204,38 @@ export function cleanLocal(raw) {
     return collapsed.replace(/(^|[.!?¡¿]\s+)([a-záéíóúñ])/g, (_m, p1, p2) => p1 + p2.toUpperCase());
 }
 
+function cleanEnglishLocal(raw) {
+    const original = String(raw || '').trim();
+    if (!original) return '';
+    const collapsed = original
+        .replace(/([A-Z])\1{2,}/g, '$1')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!collapsed) return '';
+    if (/^\d+$/.test(collapsed)) return collapsed;
+    if (/^[A-Z]$/.test(collapsed)) return collapsed;
+    const lower = collapsed.toLocaleLowerCase('en-US');
+    const normalized = lower
+        .replace(/\bi am fine\.?$/i, 'I am fine.')
+        .replace(/\bim fine\.?$/i, 'I am fine.')
+        .replace(/\bi'?m fine\.?$/i, 'I am fine.')
+        .replace(/\bi love you\.?$/i, 'I love you.')
+        .replace(/\bi dont understand\.?$/i, "I don't understand.")
+        .replace(/\bi do not understand\.?$/i, "I don't understand.")
+        .replace(/\bthank you\.?$/i, 'Thank you')
+        .replace(/\bgood morning\.?$/i, 'Good morning')
+        .replace(/\bgood afternoon\.?$/i, 'Good afternoon')
+        .replace(/\bgood night\.?$/i, 'Good night')
+        .replace(/\bhow are you\??$/i, 'How are you?');
+    return normalized.replace(/(^|[.!?]\s+)([a-z])/g, (_m, p1, p2) => p1 + p2.toUpperCase());
+}
+
 /**
  * Llama al LLM para convertir la secuencia ruidosa en español coherente.
  * Devuelve `null` si el LLM no está disponible / falla / time-out.
  *
  * @param {string} rawSequence
- * @param {{ context?: string }} [opts]
+ * @param {{ context?: string, language?: string }} [opts]
  * @returns {Promise<string|null>}
  */
 async function llmCompose(rawSequence, opts = {}) {
@@ -202,25 +243,46 @@ async function llmCompose(rawSequence, opts = {}) {
         const { HumanMessage, SystemMessage } = await import('@langchain/core/messages');
         const llm = LLMService.getInstance();
 
-        const systemPrompt = [
-            'Eres un asistente especializado en transcribir lengua de señas a español.',
-            'Recibes una secuencia RUIDOSA de letras detectadas frame por frame por un',
-            'modelo de visión que solo reconoce el alfabeto. Tu tarea es producir UNA SOLA',
-            'frase en español natural que mejor explique esa secuencia.',
-            '',
-            'Reglas estrictas:',
-            ' 1. Devuelve SOLO el texto final, sin comillas, sin explicaciones, sin prefijos.',
-            ' 2. Corrige letras duplicadas o pegadas por mantenimiento de la seña (HHOLLA → hola).',
-            ' 3. Inserta espacios y signos de puntuación donde tenga sentido en español.',
-            ' 4. Si detectas saludos comunes (HOLA, BUENOS DIAS, GRACIAS, ADIOS), úsalos con tildes/signos correctos.',
-            ' 5. Si la secuencia es incomprensible, devuelve exactamente la cadena: ???',
-            ' 6. Nunca inventes contenido nuevo: solo reordena, corrige o puntúa lo dado.',
-            ' 7. Idioma de salida: español (es-CO). Usa ¿? y ¡! cuando aplique.',
-        ].join('\n');
+        const language = resolveComposerLanguage(opts.language);
+        const systemPrompt = language === 'lsc'
+            ? [
+                'Eres un asistente especializado en transcribir lengua de señas a español.',
+                'Recibes una secuencia RUIDOSA de letras detectadas frame por frame por un',
+                'modelo de visión que solo reconoce el alfabeto. Tu tarea es producir UNA SOLA',
+                'frase en español natural que mejor explique esa secuencia.',
+                '',
+                'Reglas estrictas:',
+                ' 1. Devuelve SOLO el texto final, sin comillas, sin explicaciones, sin prefijos.',
+                ' 2. Corrige letras duplicadas o pegadas por mantenimiento de la seña (HHOLLA → hola).',
+                ' 3. Inserta espacios y signos de puntuación donde tenga sentido en español.',
+                ' 4. Si detectas saludos comunes (HOLA, BUENOS DIAS, GRACIAS, ADIOS), úsalos con tildes/signos correctos.',
+                ' 5. Si la secuencia es incomprensible, devuelve exactamente la cadena: ???',
+                ' 6. Nunca inventes contenido nuevo: solo reordena, corrige o puntúa lo dado.',
+                ' 7. Idioma de salida: español (es-CO). Usa ¿? y ¡! cuando aplique.',
+            ].join('\n')
+            : [
+                'You specialize in transcribing American Sign Language (ASL) into English.',
+                'You receive a noisy sequence of detected letters, numbers, words, phrases,',
+                'and sentence tokens from the camera recognizer. Produce one final English',
+                'transcript that best fits the detected sequence.',
+                '',
+                'Strict rules:',
+                ' 1. Return only the final text, with no quotes, explanations, or prefixes.',
+                ' 2. Correct duplicate letters caused by a held sign (HHELLO -> Hello).',
+                ' 3. Insert spaces and punctuation where they make sense in English.',
+                ' 4. Keep ASL recognitions in English: Hello, How are you?, Thank you, I am fine., Yes, No, I love you.',
+                ' 5. If the sequence is incomprehensible, return exactly: ???',
+                ' 6. Never invent new content; only reorder, correct, or punctuate what was detected.',
+                ' 7. Output language: English (en-US). Do not translate to Spanish.',
+            ].join('\n');
 
         const userPrompt = opts.context
-            ? `Contexto previo del usuario: """${opts.context}"""\n\nSecuencia detectada: """${rawSequence}"""`
-            : `Secuencia detectada: """${rawSequence}"""`;
+            ? language === 'lsc'
+                ? `Contexto previo del usuario: """${opts.context}"""\n\nSecuencia detectada: """${rawSequence}"""`
+                : `User context: """${opts.context}"""\n\nDetected sequence: """${rawSequence}"""`
+            : language === 'lsc'
+                ? `Secuencia detectada: """${rawSequence}"""`
+                : `Detected sequence: """${rawSequence}"""`;
 
         const response = await llm.generateResponse(
             [new SystemMessage(systemPrompt), new HumanMessage(userPrompt)],
@@ -244,14 +306,14 @@ async function llmCompose(rawSequence, opts = {}) {
  * salida; si no, devuelve la versión local.
  *
  * @param {string} rawSequence
- * @param {{ context?: string, useLLM?: boolean }} [opts]
+ * @param {{ context?: string, useLLM?: boolean, language?: string }} [opts]
  * @returns {Promise<{ text: string, source: 'llm' | 'local', raw: string }>}
  */
 export async function composePhrase(rawSequence, opts = {}) {
     const raw = String(rawSequence || '').trim();
     if (!raw) return { text: '', source: 'local', raw: '' };
 
-    const local = cleanLocal(raw);
+    const local = cleanLocal(raw, opts.language);
     if (opts.useLLM === false) return { text: local, source: 'local', raw };
 
     const llm = await llmCompose(raw, opts);
@@ -263,7 +325,7 @@ export async function composePhrase(rawSequence, opts = {}) {
  * Finaliza una sesión: compone la frase a partir del draft y la borra.
  *
  * @param {string} id
- * @param {{ context?: string, useLLM?: boolean, keep?: boolean }} [opts]
+ * @param {{ context?: string, useLLM?: boolean, language?: string, keep?: boolean }} [opts]
  */
 export async function finalizeSession(id, opts = {}) {
     const s = sessions.get(String(id || ''));
