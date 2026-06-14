@@ -35,8 +35,13 @@ models/sign-language/
 
 Estos archivos son pesados; **no se versionan en git**. Para producción:
 
-1. Súbelos a R2/S3 (`coursev-models/sign-language/...`) o
-2. Inclúyelos en la imagen Docker en el paso de build.
+1. Súbelos a un repo de Hugging Face con `scripts/upload_sign_language_to_hf.py`
+   y define `SIGN_LANGUAGE_HF_REPO=tu_usuario/Alphabet-Sign-Language-ONNX`.
+2. O inclúyelos ya preconstruidos en `models/sign-language/` antes de construir
+   la imagen Docker.
+
+El Dockerfile de producción **no** descarga ni convierte este modelo. Hacer la
+exportación ONNX dentro del build puede superar el deadline de Railway.
 
 El backend los busca en `process.env.SIGN_LANGUAGE_MODEL_DIR`
 (por defecto `<repo>/models/sign-language`).
