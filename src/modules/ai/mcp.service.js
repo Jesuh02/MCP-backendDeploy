@@ -32,6 +32,7 @@ export class MCPDomainService {
             supabaseService,
             subjectRepository,
             fileStoragePort,
+            contentItemRepository,
         }) {
             this.userRepo = userRepository;
             this.courseRepo = courseRepository;
@@ -42,6 +43,7 @@ export class MCPDomainService {
             this.supabase = supabaseService || null;
             this.subjectRepo = subjectRepository || null;
             this.storage = fileStoragePort || null;
+            this.contentItemRepo = contentItemRepository || null;
         }
         /**
          * Obtiene el schema de la base de datos.
@@ -1148,6 +1150,7 @@ export class MCPDomainService {
             let topicsCreated = 0;
             let tasksCreated = 0;
             const subjectsForThumbnails = [];
+            const tasksForGuides = [];
 
             for (const subject of plan.subjects) {
                 const subjectDescription = this._composeSubjectDescription(subject);
@@ -1185,7 +1188,18 @@ export class MCPDomainService {
                              VALUES ('${esc(task.title)}', '${esc(taskDescription)}', ${topicId}, ${dueExpr}, ${userId})
                              RETURNING id`,
                         );
-                        if (taskRow?.id) tasksCreated++;
+                        if (taskRow?.id) {
+                            tasksCreated++;
+                            tasksForGuides.push({
+                                id: taskRow.id,
+                                title: task.title,
+                                description: taskDescription || '',
+                                contentDescription: task.contentDescription || '',
+                                topicName: topic.title,
+                                subjectName: subject.name,
+                                courseTitle: plan.title,
+                            });
+                        }
                     }
                 }
             }
@@ -1197,15 +1211,182 @@ export class MCPDomainService {
                 subjects: subjectsForThumbnails,
             });
 
+            this._generateTaskGuidePdfsInBackground({
+                courseId,
+                tasks: tasksForGuides,
+                userId,
+            });
+
             return Result.ok({
                 courseId,
                 topicsCreated,
                 tasksCreated,
                 thumbnailsInProgress: Boolean(this.storage && this.storage.isAvailable && this.storage.isAvailable()),
+                docsInProgress: Boolean(this.storage && this.storage.isAvailable && this.storage.isAvailable() && this.contentItemRepo),
             });
         } catch (err) {
             return Result.fail(new ValidationError(`createCourseStructure falló: ${err.message}`));
         }
+    }
+
+    _safeFileSlug(value, fallback = 'tarea') {
+        return String(value || fallback)
+            .toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s+/g, '_')
+            .slice(0, 60) || fallback;
+    }
+
+    /** Genera un PDF explicativo por cada tarea sin bloquear la creacion del curso. */
+    _generateTaskGuidePdfsInBackground({ courseId, tasks, userId }) {
+        if (!Array.isArray(tasks) || tasks.length === 0) return;
+        if (!this.storage || typeof this.storage.isAvailable !== 'function' || !this.storage.isAvailable()) return;
+        if (!this.contentItemRepo || typeof this.contentItemRepo.create !== 'function') {
+            console.error('[MCPDomainService] Content item repository unavailable; task guide PDFs cannot be registered.');
+            return;
+        }
+        if (!this.llm || typeof this.llm.chat !== 'function') {
+            console.error('[MCPDomainService] LLM port unavailable; task guide PDFs cannot be generated.');
+            return;
+        }
+
+        const bgTenantId = getCurrentTenantId();
+        const runBackground = async () => {
+            for (const task of tasks) {
+                try {
+                    const content = await this._generateTaskGuideContent(task);
+                    const guideTitle = `Guia de desarrollo: ${task.title}`;
+                    const safeName = this._safeFileSlug(task.title);
+                    const pdfBuffer = await this._buildTaskGuidePdf(
+                        guideTitle,
+                        `${task.topicName} - ${task.subjectName}`,
+                        content,
+                    );
+                    const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.pdf`;
+                    const pdfUrl = await this.storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
+                    await this.contentItemRepo.create({
+                        taskId: task.id,
+                        title: `${guideTitle} (PDF)`,
+                        body: pdfUrl,
+                        contentType: 'file',
+                        fileUri: pdfUrl,
+                        fileName: `guia_${safeName}.pdf`,
+                        orderIndex: 0,
+                        creatorUsuarioId: userId || null,
+                        creatorUsername: null,
+                    });
+                    console.log(`[MCPDomainService] Task guide PDF uploaded: taskId=${task.id}`);
+                } catch (err) {
+                    console.error(`[MCPDomainService] Task guide PDF failed task=${task.id}: ${err.message}`);
+                }
+            }
+        };
+
+        setImmediate(() => {
+            const job = (bgTenantId && hasTenantClient(bgTenantId))
+                ? runInTenantContext(bgTenantId, runBackground)
+                : runBackground();
+            Promise.resolve(job).catch(err =>
+                console.error(`[MCPDomainService] Task guide PDF background job failed: ${err?.message || err}`));
+        });
+    }
+
+    async _generateTaskGuideContent(task) {
+        const systemPrompt = [
+            'Eres un docente experto en orientar estudiantes sin hacerles la tarea.',
+            'Responde UNICAMENTE con contenido en formato Markdown.',
+            'El documento debe explicar como abordar la tarea, como organizar el trabajo y como verificar la calidad de la entrega.',
+            'PROHIBIDO resolver la tarea: no entregues respuestas finales, resultados calculados, conclusiones listas, codigo completo listo para copiar, ensayos completos, reportes finales ni archivos de entrega terminados.',
+            'Usa preguntas guia, plantillas incompletas y micro-ejemplos parciales solo para ensenar el metodo.',
+        ].join('\n');
+
+        const userPrompt = [
+            `Genera una guia de desarrollo para esta tarea: "${task.title}"`,
+            `Tema: "${task.topicName}"`,
+            `Materia: "${task.subjectName}"`,
+            `Curso: "${task.courseTitle}"`,
+            task.description ? `Descripcion de la tarea: ${task.description}` : '',
+            task.contentDescription ? `La guia debe orientar especificamente sobre: ${task.contentDescription}` : '',
+            '',
+            'El documento debe incluir:',
+            '# 1. Proposito de la Tarea',
+            '# 2. Antes de Empezar',
+            '# 3. Instrucciones Paso a Paso',
+            '# 4. Plantilla de Trabajo No Resuelta',
+            '# 5. Errores Comunes y Como Evitarlos',
+            '# 6. Criterios de Evaluacion',
+            '# 7. Preguntas Frecuentes',
+            '',
+            'No llenes la plantilla ni escribas la entrega final del estudiante.',
+        ].filter(Boolean).join('\n');
+
+        const response = await this.llm.chat(systemPrompt, userPrompt, {
+            tools: [],
+            toolChoice: 'none',
+        });
+        return response?.content || '';
+    }
+
+    async _buildTaskGuidePdf(title, subtitle, markdownContent) {
+        const { default: PDFDocument } = await import('pdfkit');
+        return new Promise((resolve, reject) => {
+            const doc = new PDFDocument({ size: 'A4', margin: 50, autoFirstPage: true });
+            const chunks = [];
+            doc.on('data', c => chunks.push(c));
+            doc.on('end', () => resolve(Buffer.concat(chunks)));
+            doc.on('error', reject);
+
+            const W = doc.page.width;
+            doc.rect(0, 0, W, 72).fill('#1e3a5f');
+            doc.fontSize(19).fillColor('#ffffff').font('Helvetica-Bold')
+                .text(String(title || '').slice(0, 90), 50, 14, { width: W - 100, ellipsis: true });
+            if (subtitle) {
+                doc.fontSize(11).fillColor('#93c5fd').font('Helvetica')
+                    .text(String(subtitle).slice(0, 120), 50, 44, { width: W - 100 });
+            }
+
+            doc.y = 90;
+            for (const rawLine of String(markdownContent || '').split('\n')) {
+                if (doc.y > doc.page.height - 70) { doc.addPage(); doc.y = 50; }
+                if (rawLine.startsWith('# ')) {
+                    doc.moveDown(0.4);
+                    doc.fontSize(15).font('Helvetica-Bold').fillColor('#1e3a5f')
+                        .text(rawLine.slice(2).trim(), 50, doc.y, { width: W - 100 });
+                    doc.moveDown(0.2);
+                } else if (rawLine.startsWith('## ')) {
+                    doc.moveDown(0.3);
+                    doc.fontSize(13).font('Helvetica-Bold').fillColor('#2c5282')
+                        .text(rawLine.slice(3).trim(), 50, doc.y, { width: W - 100 });
+                    doc.moveDown(0.15);
+                } else if (rawLine.startsWith('- ') || rawLine.startsWith('* ')) {
+                    doc.fontSize(10.5).font('Helvetica').fillColor('#374151')
+                        .text(`- ${rawLine.slice(2).trim()}`, 62, doc.y, { width: W - 112 });
+                } else if (/^\d+\.\s/.test(rawLine)) {
+                    doc.fontSize(10.5).font('Helvetica').fillColor('#374151')
+                        .text(rawLine.trim(), 62, doc.y, { width: W - 112 });
+                } else if (rawLine.trim() === '') {
+                    doc.moveDown(0.35);
+                } else {
+                    const clean = rawLine
+                        .replace(/\*\*([^*]+)\*\*/g, '$1')
+                        .replace(/\*([^*]+)\*/g, '$1')
+                        .replace(/`([^`]+)`/g, '$1');
+                    doc.fontSize(10.5).font('Helvetica').fillColor('#374151')
+                        .text(clean.trim(), 50, doc.y, { width: W - 100 });
+                }
+            }
+
+            const footerY = doc.page.height - 38;
+            doc.rect(0, footerY, W, 38).fill('#dbeafe');
+            doc.fontSize(8).fillColor('#4b5563').font('Helvetica')
+                .text(`Generado por CourseV - ${new Date().toLocaleDateString('es-CO')}`, 50, footerY + 13, {
+                    width: W - 100,
+                    align: 'center',
+                });
+
+            doc.end();
+        });
     }
 
     /** Genera miniaturas IA para materias sin bloquear la creacion del curso. */
