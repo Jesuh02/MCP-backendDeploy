@@ -365,6 +365,7 @@ CREATE TABLE public.tasks (
   title text NOT NULL,
   description text,
   due_date timestamp with time zone,
+  order_index integer DEFAULT 0,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT tasks_pkey PRIMARY KEY (id),
   CONSTRAINT tasks_topic_id_fkey FOREIGN KEY (topic_id) REFERENCES public.topics(id)

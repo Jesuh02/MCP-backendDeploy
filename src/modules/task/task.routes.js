@@ -7,6 +7,7 @@ export function taskRoutes({ taskController }) {
     router.get('/topic/:topicId', taskController.getByTopic);
     router.get('/subject/:subjectId', taskController.getBySubject);
     router.get('/course/:courseId', taskController.getByCourse);
+    router.put('/reorder', taskController.reorder);
     router.get('/:id', taskController.getById);
     router.post('/', taskController.create);
     router.put('/:id', taskController.update);

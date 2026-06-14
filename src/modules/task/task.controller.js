@@ -1,5 +1,5 @@
 import { BaseController } from '../../shared/BaseController.js';
-import { createTaskSchema, updateTaskSchema } from '../../shared/validators/CommonSchemas.js';
+import { createTaskSchema, updateTaskSchema, reorderTasksSchema } from '../../shared/validators/CommonSchemas.js';
 import { ValidationError } from '../../shared/errors/index.js';
 import { parsePagination, buildPaginatedResponse } from '../../shared/pagination.js';
 
@@ -54,6 +54,12 @@ export class TaskController extends BaseController {
         const { error, value } = updateTaskSchema.validate(req.body);
         if (error) return next(ValidationError.fromJoi(error));
         this.store(req, res, next, () => this.taskService.updateAndNotify(parseInt(req.params.id), value, req.user?.userId, req.user));
+    };
+
+    reorder = async(req, res, next) => {
+        const { error, value } = reorderTasksSchema.validate(req.body);
+        if (error) return next(ValidationError.fromJoi(error));
+        this.store(req, res, next, () => this.taskService.reorder(value.items, req.user?.userId));
     };
 
     delete = async(req, res, next) => {

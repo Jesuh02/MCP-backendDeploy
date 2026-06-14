@@ -10,7 +10,7 @@ import { Task } from '../task.entity.js';
  *   3. Mapear datos de dominio camelCase a snake_case para inserts / updates.
  *
  * Tabla `tasks` (columnas reales):
- *   id | topic_id | title | description | due_date | time_limit_minutes | period_id | created_at
+ *   id | topic_id | title | description | due_date | time_limit_minutes | period_id | order_index | created_at
  *
  * Nota: NO existe `course_id` en `tasks`; la relaci�n con cursos va
  *       tasks.topic_id → topics.materia_id → subjects.course_id. Los métodos que necesitan filtrar
@@ -127,6 +127,7 @@ export class SupabaseTaskRepository {
             due_date: taskData.dueDate || null,
             time_limit_minutes: taskData.timeLimitMinutes ?? null,
             period_id: taskData.periodId ?? null,
+            order_index: taskData.orderIndex ?? 0,
         };
         if (taskData.createdBy) payload.created_by = taskData.createdBy;
         const { data, error } = await this.client
@@ -144,6 +145,7 @@ export class SupabaseTaskRepository {
         if (updateData.description !== undefined) payload.description = updateData.description;
         if (updateData.dueDate !== undefined) payload.due_date = updateData.dueDate;
         if (updateData.timeLimitMinutes !== undefined) payload.time_limit_minutes = updateData.timeLimitMinutes;
+        if (updateData.orderIndex !== undefined) payload.order_index = updateData.orderIndex;
         if (updateData.updatedBy) payload.updated_by = updateData.updatedBy;
         // No se incluyen campos inexistentes (max_score, is_active, updated_at)
 
@@ -155,6 +157,21 @@ export class SupabaseTaskRepository {
             .single();
         if (error) throw new Error(error.message);
         return this._toDomain(data);
+    }
+
+    async updateOrder(items = []) {
+        const updated = [];
+        for (const item of items) {
+            const { data, error } = await this.client
+                .from('tasks')
+                .update({ order_index: item.orderIndex })
+                .eq('id', item.id)
+                .select()
+                .single();
+            if (error) throw new Error(error.message);
+            if (data) updated.push(data);
+        }
+        return this._toDomainList(updated);
     }
 
     async delete(id) {

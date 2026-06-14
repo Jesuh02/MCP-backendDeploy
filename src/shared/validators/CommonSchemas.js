@@ -91,15 +91,28 @@ export const updateTaskSchema = Joi.object({
     due_date: Joi.date().iso().allow(null).optional(),
     timeLimitMinutes: Joi.number().integer().min(1).allow(null).optional(),
     time_limit_minutes: Joi.number().integer().min(1).allow(null).optional(),
+    orderIndex: Joi.number().integer().min(0).optional(),
+    order_index: Joi.number().integer().min(0).optional(),
 }).custom((value) => {
     if (!value.dueDate && value.due_date) value.dueDate = value.due_date;
     if (value.timeLimitMinutes === undefined && value.time_limit_minutes !== undefined) {
         value.timeLimitMinutes = value.time_limit_minutes;
     }
+    if (value.order_index !== undefined && value.orderIndex === undefined) value.orderIndex = value.order_index;
     delete value.due_date;
     delete value.time_limit_minutes;
+    delete value.order_index;
     return value;
 }).min(1);
+
+export const reorderTasksSchema = Joi.object({
+    items: Joi.array().items(
+        Joi.object({
+            id: Joi.number().integer().required(),
+            orderIndex: Joi.number().integer().min(0).required(),
+        })
+    ).min(1).required(),
+});
 
 // ─── Content Items ───────────────────────────────────────
 // Columnas reales en la tabla: id, topic_id, title, body, content_type, created_at,
