@@ -10,6 +10,7 @@
 import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
 import { getCurrentTenantId, hasTenantClient, runInTenantContext } from '../../config/tenantRegistry.js';
+import { buildEducationalDocx } from './educational-document.builder.js';
 
 const MCP_SUPPLEMENTAL_SUBJECT_TEMPLATES = [
     'Fundamentos y lenguaje profesional',
@@ -1211,7 +1212,7 @@ export class MCPDomainService {
                 subjects: subjectsForThumbnails,
             });
 
-            this._generateTaskGuidePdfsInBackground({
+            this._generateTaskGuideFilesInBackground({
                 courseId,
                 tasks: tasksForGuides,
                 userId,
@@ -1238,16 +1239,16 @@ export class MCPDomainService {
             .slice(0, 60) || fallback;
     }
 
-    /** Genera un PDF explicativo por cada tarea sin bloquear la creacion del curso. */
-    _generateTaskGuidePdfsInBackground({ courseId, tasks, userId }) {
+    /** Genera Word y PDF explicativos por cada tarea sin bloquear la creacion del curso. */
+    _generateTaskGuideFilesInBackground({ courseId, tasks, userId }) {
         if (!Array.isArray(tasks) || tasks.length === 0) return;
         if (!this.storage || typeof this.storage.isAvailable !== 'function' || !this.storage.isAvailable()) return;
         if (!this.contentItemRepo || typeof this.contentItemRepo.create !== 'function') {
-            console.error('[MCPDomainService] Content item repository unavailable; task guide PDFs cannot be registered.');
+            console.error('[MCPDomainService] Content item repository unavailable; task guide files cannot be registered.');
             return;
         }
         if (!this.llm || typeof this.llm.chat !== 'function') {
-            console.error('[MCPDomainService] LLM port unavailable; task guide PDFs cannot be generated.');
+            console.error('[MCPDomainService] LLM port unavailable; task guide files cannot be generated.');
             return;
         }
 
@@ -1258,27 +1259,61 @@ export class MCPDomainService {
                     const content = await this._generateTaskGuideContent(task);
                     const guideTitle = `Guia de desarrollo: ${task.title}`;
                     const safeName = this._safeFileSlug(task.title);
-                    const pdfBuffer = await this._buildTaskGuidePdf(
-                        guideTitle,
-                        `${task.topicName} - ${task.subjectName}`,
-                        content,
-                    );
-                    const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.pdf`;
-                    const pdfUrl = await this.storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
-                    await this.contentItemRepo.create({
-                        taskId: task.id,
-                        title: `${guideTitle} (PDF)`,
-                        body: pdfUrl,
-                        contentType: 'file',
-                        fileUri: pdfUrl,
-                        fileName: `guia_${safeName}.pdf`,
-                        orderIndex: 0,
-                        creatorUsuarioId: userId || null,
-                        creatorUsername: null,
-                    });
-                    console.log(`[MCPDomainService] Task guide PDF uploaded: taskId=${task.id}`);
+
+                    try {
+                        const docBuffer = await this._buildTaskGuideDocx(
+                            guideTitle,
+                            `${task.topicName} - ${task.subjectName}`,
+                            content,
+                        );
+                        const docKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.docx`;
+                        const docUrl = await this.storage.uploadFile(
+                            docBuffer,
+                            docKey,
+                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            docBuffer.length,
+                        );
+                        await this.contentItemRepo.create({
+                            taskId: task.id,
+                            title: `${guideTitle} (Word)`,
+                            body: docUrl,
+                            contentType: 'file',
+                            fileUri: docUrl,
+                            fileName: `guia_${safeName}.docx`,
+                            orderIndex: 0,
+                            creatorUsuarioId: userId || null,
+                            creatorUsername: null,
+                        });
+                        console.log(`[MCPDomainService] Task guide Word uploaded: taskId=${task.id}`);
+                    } catch (docErr) {
+                        console.error(`[MCPDomainService] Task guide Word failed task=${task.id}: ${docErr.message}`);
+                    }
+
+                    try {
+                        const pdfBuffer = await this._buildTaskGuidePdf(
+                            guideTitle,
+                            `${task.topicName} - ${task.subjectName}`,
+                            content,
+                        );
+                        const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.pdf`;
+                        const pdfUrl = await this.storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
+                        await this.contentItemRepo.create({
+                            taskId: task.id,
+                            title: `${guideTitle} (PDF)`,
+                            body: pdfUrl,
+                            contentType: 'file',
+                            fileUri: pdfUrl,
+                            fileName: `guia_${safeName}.pdf`,
+                            orderIndex: 1,
+                            creatorUsuarioId: userId || null,
+                            creatorUsername: null,
+                        });
+                        console.log(`[MCPDomainService] Task guide PDF uploaded: taskId=${task.id}`);
+                    } catch (pdfErr) {
+                        console.error(`[MCPDomainService] Task guide PDF failed task=${task.id}: ${pdfErr.message}`);
+                    }
                 } catch (err) {
-                    console.error(`[MCPDomainService] Task guide PDF failed task=${task.id}: ${err.message}`);
+                    console.error(`[MCPDomainService] Task guide files failed task=${task.id}: ${err.message}`);
                 }
             }
         };
@@ -1288,7 +1323,7 @@ export class MCPDomainService {
                 ? runInTenantContext(bgTenantId, runBackground)
                 : runBackground();
             Promise.resolve(job).catch(err =>
-                console.error(`[MCPDomainService] Task guide PDF background job failed: ${err?.message || err}`));
+                console.error(`[MCPDomainService] Task guide files background job failed: ${err?.message || err}`));
         });
     }
 
@@ -1299,6 +1334,7 @@ export class MCPDomainService {
             'El documento debe explicar como abordar la tarea, como organizar el trabajo y como verificar la calidad de la entrega.',
             'PROHIBIDO resolver la tarea: no entregues respuestas finales, resultados calculados, conclusiones listas, codigo completo listo para copiar, ensayos completos, reportes finales ni archivos de entrega terminados.',
             'Usa preguntas guia, plantillas incompletas y micro-ejemplos parciales solo para ensenar el metodo.',
+            'Cuando incluyas tablas, usa tablas Markdown validas con encabezado y filas claras para que el archivo Word las convierta en celdas reales.',
         ].join('\n');
 
         const userPrompt = [
@@ -1316,6 +1352,7 @@ export class MCPDomainService {
             '# 4. Plantilla de Trabajo No Resuelta',
             '# 5. Errores Comunes y Como Evitarlos',
             '# 6. Criterios de Evaluacion',
+            'Incluye una tabla Markdown con criterios, niveles de desempeno y recomendaciones, sin resolver la tarea.',
             '# 7. Preguntas Frecuentes',
             '',
             'No llenes la plantilla ni escribas la entrega final del estudiante.',
@@ -1326,6 +1363,14 @@ export class MCPDomainService {
             toolChoice: 'none',
         });
         return response?.content || '';
+    }
+
+    async _buildTaskGuideDocx(title, subtitle, markdownContent) {
+        return buildEducationalDocx({
+            title,
+            subtitle,
+            markdownContent,
+        });
     }
 
     async _buildTaskGuidePdf(title, subtitle, markdownContent) {
