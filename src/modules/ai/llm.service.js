@@ -3769,7 +3769,6 @@ Responde de forma clara y constructiva.`;
             subtitle: topic.subjectName ? `Modulo: ${topic.subjectName}` : '',
             markdownContent,
         });
-
     }
 
     /** @private — Parse bold/italic inline Markdown into TextRun array. */
