@@ -21,6 +21,7 @@ import { QuizMathValidator } from '../../shared/math/QuizMathValidator.js';
 import { OrderingQuestionValidator } from '../../shared/math/OrderingQuestionValidator.js';
 import { ValidationPipeline } from '../../shared/math/ValidationPipeline.js';
 import { TENANT_CONFIGS, runInTenantContext, getCurrentTenantId, hasTenantClient } from '../../config/tenantRegistry.js';
+import { buildEducationalDocx } from './educational-document.builder.js';
 
 /**
  * In-memory cache: tracks the last time a multi-tenant user was asked
@@ -3763,43 +3764,12 @@ Responde de forma clara y constructiva.`;
 
     /** @private — Convert Markdown content into a Word (.docx) Buffer. */
     async _buildWordDocument(topic, markdownContent) {
-        const { Document, Paragraph, TextRun, HeadingLevel, Packer, AlignmentType } = await import('docx');
+        return buildEducationalDocx({
+            title: topic.title,
+            subtitle: topic.subjectName ? `Modulo: ${topic.subjectName}` : '',
+            markdownContent,
+        });
 
-        const children = [];
-
-        children.push(new Paragraph({
-            text: topic.title,
-            heading: HeadingLevel.TITLE,
-            alignment: AlignmentType.CENTER,
-        }));
-
-        children.push(new Paragraph({
-            children: [new TextRun({ text: `Módulo: ${topic.subjectName}`, italics: true, size: 24 })],
-            alignment: AlignmentType.CENTER,
-        }));
-
-        children.push(new Paragraph({ text: '' }));
-
-        for (const line of markdownContent.split('\n')) {
-            if (line.startsWith('# ')) {
-                children.push(new Paragraph({ text: line.slice(2).trim(), heading: HeadingLevel.HEADING_1 }));
-            } else if (line.startsWith('## ')) {
-                children.push(new Paragraph({ text: line.slice(3).trim(), heading: HeadingLevel.HEADING_2 }));
-            } else if (line.startsWith('### ')) {
-                children.push(new Paragraph({ text: line.slice(4).trim(), heading: HeadingLevel.HEADING_3 }));
-            } else if (line.startsWith('- ') || line.startsWith('* ')) {
-                children.push(new Paragraph({ text: line.slice(2).trim(), bullet: { level: 0 } }));
-            } else if (/^\d+\.\s/.test(line)) {
-                children.push(new Paragraph({ text: line.replace(/^\d+\.\s/, '').trim(), bullet: { level: 0 } }));
-            } else if (line.trim() === '') {
-                children.push(new Paragraph({ text: '' }));
-            } else {
-                children.push(new Paragraph({ children: this._parseMarkdownInline(line, TextRun) }));
-            }
-        }
-
-        const doc = new Document({ sections: [{ properties: {}, children }] });
-        return Packer.toBuffer(doc);
     }
 
     /** @private — Parse bold/italic inline Markdown into TextRun array. */
@@ -4041,28 +4011,6 @@ Responde de forma clara y constructiva.`;
                             const guideTitle = `Guia de desarrollo: ${task.title}`;
 
                             try {
-                                const pdfBuffer = await self._buildEducationalPdf(
-                                    guideTitle, `${task.topicName} - ${task.subjectName}`, content,
-                                );
-                                const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.pdf`;
-                                const pdfUrl = await storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
-                                await contentItemRepo.create({
-                                    taskId: task.id,
-                                    title: `${guideTitle} (PDF)`,
-                                    body: pdfUrl,
-                                    contentType: 'file',
-                                    fileUri: pdfUrl,
-                                    fileName: `guia_${safeName}.pdf`,
-                                    orderIndex: 0,
-                                    creatorUsuarioId: userId || null,
-                                    creatorUsername: username || null,
-                                });
-                                taskDocs++;
-                            } catch (pdfErr) {
-                                console.error(`[LLMDomainService] Task PDF failed task=${task.id}: ${pdfErr.message}`);
-                            }
-
-                            try {
                                 const docBuffer = await self._buildWordDocument(
                                     { title: guideTitle, subjectName: task.subjectName },
                                     content,
@@ -4075,17 +4023,39 @@ Responde de forma clara y constructiva.`;
                                 );
                                 await contentItemRepo.create({
                                     taskId: task.id,
-                                    title: guideTitle,
+                                    title: `${guideTitle} (Word)`,
                                     body: docUrl,
                                     contentType: 'file',
                                     fileUri: docUrl,
                                     fileName: `guia_${safeName}.docx`,
+                                    orderIndex: 0,
+                                    creatorUsuarioId: userId || null,
+                                    creatorUsername: username || null,
+                                });
+                                taskDocs++;
+                            } catch (docErr) {
+                                console.error(`[LLMDomainService] Task Word doc failed task=${task.id}: ${docErr.message}`);
+                            }
+
+                            try {
+                                const pdfBuffer = await self._buildEducationalPdf(
+                                    guideTitle, `${task.topicName} - ${task.subjectName}`, content,
+                                );
+                                const pdfKey = `courses/${courseId}/tasks/${task.id}/${Date.now()}_guia_${safeName}.pdf`;
+                                const pdfUrl = await storage.uploadFile(pdfBuffer, pdfKey, 'application/pdf', pdfBuffer.length);
+                                await contentItemRepo.create({
+                                    taskId: task.id,
+                                    title: `${guideTitle} (PDF)`,
+                                    body: pdfUrl,
+                                    contentType: 'file',
+                                    fileUri: pdfUrl,
+                                    fileName: `guia_${safeName}.pdf`,
                                     orderIndex: 1,
                                     creatorUsuarioId: userId || null,
                                     creatorUsername: username || null,
                                 });
-                            } catch (docErr) {
-                                console.error(`[LLMDomainService] Task Word doc failed task=${task.id}: ${docErr.message}`);
+                            } catch (pdfErr) {
+                                console.error(`[LLMDomainService] Task PDF failed task=${task.id}: ${pdfErr.message}`);
                             }
                         } catch (err) {
                             console.error(`[LLMDomainService] Task doc failed task=${task.id}: ${err.message}`);
@@ -4150,6 +4120,7 @@ Responde de forma clara y constructiva.`;
             '- Incluye preguntas guia para que el estudiante tome decisiones propias.',
             '- Si incluyes ejemplos, deben ser parciales, genericos o analogos; nunca deben ser una solucion directa de la tarea.',
             '- La rubrica debe estar explicada en lenguaje sencillo para que el estudiante sepa como mejorar.',
+            '- Cuando incluyas tablas, usa tablas Markdown validas con encabezado y filas claras para que el archivo Word las convierta en celdas reales.',
             '- No uses frases como "aqui esta la respuesta", "solucion final", "resultado final" o equivalentes.',
             '',
             'El documento debe incluir las siguientes secciones:',
