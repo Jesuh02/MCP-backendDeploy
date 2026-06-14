@@ -495,6 +495,42 @@ export class TaskDomainService {
         return Result.ok(updated);
     }
 
+    /** Actualiza solo el orden visual de un conjunto de tareas. */
+    async reorder(items, requesterId) {
+        const normalized = (items || [])
+            .map(item => ({ id: Number(item.id), orderIndex: Number(item.orderIndex) }))
+            .filter(item => Number.isInteger(item.id) && item.id > 0 && Number.isInteger(item.orderIndex) && item.orderIndex >= 0);
+
+        if (normalized.length === 0) return Result.ok([]);
+
+        const affected = [];
+        for (const item of normalized) {
+            const task = await this._getTask(item.id);
+            if (!task) return Result.fail(new NotFoundError('Tarea', item.id));
+
+            const topicId = task.topicId || task.topic_id;
+            const topic = topicId ? await this._getTopic(topicId) : null;
+            const subject = await this._getSubjectFromTopic(topic);
+
+            if (requesterId) {
+                const canManage = await this._canManageSubject(requesterId, subject);
+                if (!canManage) return Result.fail(new ForbiddenError('No tienes permiso para ordenar estas tareas'));
+            }
+
+            const subjectId = topic?.materia_id || topic?.subject_id || topic?.subjectId || null;
+            let courseId = topic?.course_id || topic?.courseId || null;
+            if (!courseId && topic) courseId = await this._getCourseIdFromTopic(topic);
+            affected.push({ taskId: item.id, topicId, subjectId, courseId });
+        }
+
+        const updated = await this.taskRepo.updateOrder(normalized);
+        for (const entry of affected) {
+            this._invalidateTaskCaches(entry);
+        }
+
+        return Result.ok(updated);
+    }
+
     /** Elimina una tarea por ID. */
     async delete(id, requesterId) {
         const task = await this._getTask(id);

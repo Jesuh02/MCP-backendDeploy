@@ -2,7 +2,7 @@
  * Task — Entidad de dominio para Tarea de un tema.
  *
  * Refleja exactamente las columnas de la tabla `tasks`:
- *   id, topic_id, title, description, due_date, time_limit_minutes, period_id, created_at
+ *   id, topic_id, title, description, due_date, time_limit_minutes, period_id, order_index, created_at
  *
  * Principio: la entidad de dominio usa camelCase; la capa de
  * infraestructura se encarga del mapeo snake_case ↔ camelCase.
@@ -17,9 +17,10 @@ export class Task {
      * @param {string|null}  props.dueDate
      * @param {number|null}  props.timeLimitMinutes
      * @param {number|null}  props.periodId  — ID del periodo activo al momento de creación
+     * @param {number}       props.orderIndex
      * @param {string|null}  props.createdAt
      */
-    constructor({ id = null, title, description = '', topicId, dueDate = null, timeLimitMinutes = null, periodId = null, createdAt = null } = {}) {
+    constructor({ id = null, title, description = '', topicId, dueDate = null, timeLimitMinutes = null, periodId = null, orderIndex = 0, createdAt = null } = {}) {
         this.id = id;
         this.title = title;
         this.description = description;
@@ -27,6 +28,7 @@ export class Task {
         this.dueDate = dueDate;
         this.timeLimitMinutes = timeLimitMinutes;
         this.periodId = periodId;
+        this.orderIndex = orderIndex;
         this.createdAt = createdAt;
     }
 
@@ -44,6 +46,7 @@ export class Task {
             dueDate: row.due_date ?? row.dueDate ?? null,
             timeLimitMinutes: row.time_limit_minutes ?? row.timeLimitMinutes ?? null,
             periodId: row.period_id ?? row.periodId ?? null,
+            orderIndex: row.order_index ?? row.orderIndex ?? 0,
             createdAt: row.created_at ?? row.createdAt ?? null,
         });
     }
@@ -66,6 +69,8 @@ export class Task {
             time_limit_minutes: this.timeLimitMinutes,
             periodId: this.periodId,
             period_id: this.periodId,
+            orderIndex: this.orderIndex,
+            order_index: this.orderIndex,
             createdAt: this.createdAt,
             created_at: this.createdAt,
         };
