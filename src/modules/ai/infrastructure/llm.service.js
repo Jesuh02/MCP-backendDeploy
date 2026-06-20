@@ -56,6 +56,20 @@ function isBlankModelContent(content) {
     return text.length === 0;
 }
 
+function isAuthenticationError(error) {
+    const status = Number(error?.status || error?.response?.status || error?.code);
+    const message = String(error?.message || error?.error?.message || error?.response?.data?.error?.message || '').toLowerCase();
+    const lcCode = String(error?.lc_error_code || error?.response?.data?.error?.code || '').toLowerCase();
+    return status === 401 ||
+        status === 403 ||
+        lcCode.includes('model_authentication') ||
+        message.includes('user not found') ||
+        message.includes('authentication') ||
+        message.includes('unauthorized') ||
+        message.includes('invalid api key') ||
+        message.includes('incorrect api key');
+}
+
 export class LLMService {
     static instance = null;
 
@@ -244,6 +258,7 @@ export class LLMService {
                 console.log(`✅ RESPONDIÓ: Qwen3.6 Plus (${primaryModelName}) vía OpenRouter en ${elapsed}s`);
                 return result;
             } catch (primaryErr) {
+                const primaryAuthFailed = isAuthenticationError(primaryErr);
                 console.warn(`⚠️ Qwen3.6 Plus (${primaryModelName}) FALLÓ: ${primaryErr.message}. Cambiando a DeepSeek (${fallbackModelName})...`);
                 try {
                     const startTime = Date.now();
@@ -254,13 +269,16 @@ export class LLMService {
                 } catch (fallbackErr) {
                     // DeepSeek also failed (e.g. 402 Insufficient Balance, 5xx, timeout)
                     console.warn(`⚠️ DeepSeek (${fallbackModelName}) FALLÓ: ${fallbackErr.message}.`);
-                    if (this.tertiaryModel) {
+                    if (this.tertiaryModel && !primaryAuthFailed) {
                         console.warn(`⚠️ Intentando modelo terciario OpenRouter (${tertiaryModelName})...`);
                         const startTime = Date.now();
                         const result = await invokeFn(this.tertiaryModel);
                         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
                         console.log(`✅ RESPONDIÓ: OpenRouter fallback (${tertiaryModelName}) en ${elapsed}s (tertiary)`);
                         return result;
+                    }
+                    if (primaryAuthFailed) {
+                        console.warn('⚠️ OpenRouter devolvio autenticacion invalida; se omite el modelo terciario porque usa la misma credencial.');
                     }
                     throw fallbackErr;
                 }
@@ -281,6 +299,10 @@ export class LLMService {
                 console.log(`✅ RESPONDIÓ: ${primaryModelName} vía OpenRouter en ${elapsed}s`);
                 return result;
             } catch (err) {
+                if (isAuthenticationError(err)) {
+                    console.warn(`⚠️ ${primaryModelName} devolvio autenticacion invalida; se omite el modelo terciario porque usa la misma credencial.`);
+                    throw err;
+                }
                 console.warn(`⚠️ ${primaryModelName} FALLÓ: ${err.message}. Intentando modelo terciario (${tertiaryModelName})...`);
                 const startTime = Date.now();
                 const result = await invokeFn(this.tertiaryModel);
