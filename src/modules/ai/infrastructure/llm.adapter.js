@@ -10,10 +10,34 @@
 
 import axios from 'axios';
 
+function isAuthenticationError(error) {
+    const status = Number(error?.status || error?.response?.status || error?.code);
+    const message = String(error?.message || error?.error?.message || error?.response?.data?.error?.message || '').toLowerCase();
+    const lcCode = String(error?.lc_error_code || error?.response?.data?.error?.code || '').toLowerCase();
+    return status === 401 ||
+        status === 403 ||
+        lcCode.includes('model_authentication') ||
+        message.includes('user not found') ||
+        message.includes('authentication') ||
+        message.includes('unauthorized') ||
+        message.includes('invalid api key') ||
+        message.includes('incorrect api key');
+}
+
+function inferAuthProvider(error, fallback = 'unknown') {
+    const message = String(error?.message || error?.response?.data?.error?.message || '').toLowerCase();
+    const url = String(error?.response?.config?.url || error?.config?.url || '').toLowerCase();
+    const baseUrl = String(error?.response?.config?.baseURL || error?.config?.baseURL || '').toLowerCase();
+    if (url.includes('openrouter') || baseUrl.includes('openrouter') || message.includes('user not found')) return 'openrouter';
+    if (url.includes('deepseek') || baseUrl.includes('deepseek')) return 'deepseek';
+    return fallback;
+}
+
 export class LLMAdapter {
     constructor() {
         this._llmService = null;
         this._provider = 'none';
+        this._authBlockedProviders = new Set();
         this._init();
     }
 
@@ -40,6 +64,8 @@ export class LLMAdapter {
          * @returns {Promise<{ content: string, model: string, usage?: Object }>}
          */
     async chat(systemPrompt, userPrompt, options = {}) {
+        let lastError = null;
+
         // Try LLMService first
         if (this._llmService) {
             try {
@@ -73,20 +99,49 @@ export class LLMAdapter {
                     raw: response,
                 };
             } catch (err) {
-                console.warn(`[LLMAdapter] LLMService falló, intentando fallback remoto: ${err.message}`);
+                lastError = err;
+                if (isAuthenticationError(err)) {
+                    const provider = inferAuthProvider(err, this._provider);
+                    this._authBlockedProviders.add(provider);
+                    this._llmService = null;
+                    this._provider = 'none';
+                    console.warn(`[LLMAdapter] LLMService authentication failed (${provider}); avoiding duplicated remote retry: ${err.message}`);
+                } else {
+                    console.warn(`[LLMAdapter] LLMService falló, intentando fallback remoto: ${err.message}`);
+                }
             }
         }
 
         // Fallback: OpenRouter API
-        if (process.env.OPENROUTER_API_KEY) {
-            return this._callOpenRouter(systemPrompt, userPrompt, options.model);
+        if (process.env.OPENROUTER_API_KEY && !this._authBlockedProviders.has('openrouter')) {
+            try {
+                return await this._callOpenRouter(systemPrompt, userPrompt, options.model);
+            } catch (err) {
+                lastError = err;
+                if (isAuthenticationError(err)) {
+                    this._authBlockedProviders.add('openrouter');
+                    console.warn(`[LLMAdapter] OpenRouter authentication failed; provider disabled until restart: ${err.message}`);
+                } else {
+                    console.warn(`[LLMAdapter] OpenRouter fallback failed: ${err.message}`);
+                }
+            }
         }
 
         // Fallback: DeepSeek HTTP directo
-        if (process.env.DEEPSEEK_API_KEY) {
-            return this._callDeepSeekDirect(systemPrompt, userPrompt);
+        if (process.env.DEEPSEEK_API_KEY && !this._authBlockedProviders.has('deepseek')) {
+            try {
+                return await this._callDeepSeekDirect(systemPrompt, userPrompt);
+            } catch (err) {
+                lastError = err;
+                if (isAuthenticationError(err)) {
+                    this._authBlockedProviders.add('deepseek');
+                    console.warn(`[LLMAdapter] DeepSeek authentication failed; provider disabled until restart: ${err.message}`);
+                }
+                throw err;
+            }
         }
 
+        if (lastError) throw lastError;
         throw new Error('No hay proveedor LLM disponible. Configure DEEPSEEK_API_KEY u OPENROUTER_API_KEY.');
     }
 
