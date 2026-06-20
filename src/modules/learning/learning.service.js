@@ -226,22 +226,20 @@ export class LearningDomainService {
    * Calls OpenRouter image-capable model and returns a data URL (or '' on failure).
    * Frontend already handles empty imageUrl with a placeholder.
    */
-  async _renderImageSafely(prompt) {
+  async _renderImageSafely(prompt, visualContext = {}) {
     try {
-      return await this._renderImage(prompt);
+      return await this._renderImage(prompt, visualContext);
     } catch (err) {
       console.warn('[LearningService] image render failed:', err?.message || err);
       return '';
     }
   }
 
-  async _renderImage(prompt) {
+  async _renderImage(prompt, visualContext = {}) {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) return '';
 
-    const fullPrompt =
-      `${prompt}. Style: friendly cartoon illustration, vibrant colors, soft shading, ` +
-      `cinematic composition, 4:3 aspect ratio, no text, no watermarks.`;
+    const fullPrompt = buildAnalogyVisualPrompt(prompt, visualContext);
 
     const resp = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
