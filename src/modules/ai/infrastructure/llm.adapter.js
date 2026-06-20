@@ -10,10 +10,34 @@
 
 import axios from 'axios';
 
+function isAuthenticationError(error) {
+    const status = Number(error?.status || error?.response?.status || error?.code);
+    const message = String(error?.message || error?.error?.message || error?.response?.data?.error?.message || '').toLowerCase();
+    const lcCode = String(error?.lc_error_code || error?.response?.data?.error?.code || '').toLowerCase();
+    return status === 401 ||
+        status === 403 ||
+        lcCode.includes('model_authentication') ||
+        message.includes('user not found') ||
+        message.includes('authentication') ||
+        message.includes('unauthorized') ||
+        message.includes('invalid api key') ||
+        message.includes('incorrect api key');
+}
+
+function inferAuthProvider(error, fallback = 'unknown') {
+    const message = String(error?.message || error?.response?.data?.error?.message || '').toLowerCase();
+    const url = String(error?.response?.config?.url || error?.config?.url || '').toLowerCase();
+    const baseUrl = String(error?.response?.config?.baseURL || error?.config?.baseURL || '').toLowerCase();
+    if (url.includes('openrouter') || baseUrl.includes('openrouter') || message.includes('user not found')) return 'openrouter';
+    if (url.includes('deepseek') || baseUrl.includes('deepseek')) return 'deepseek';
+    return fallback;
+}
+
 export class LLMAdapter {
     constructor() {
         this._llmService = null;
         this._provider = 'none';
+        this._authBlockedProviders = new Set();
         this._init();
     }
 
