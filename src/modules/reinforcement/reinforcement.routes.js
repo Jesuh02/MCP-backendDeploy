@@ -9,6 +9,7 @@ export function reinforcementRoutes({ reinforcementController }) {
 
     // ═══ Unified server-side generation (replaces 3-step client flow) ═══
     router.post('/generate-questions', reinforcementController.generateQuestions);
+    router.post('/coach', reinforcementController.coachConversation);
 
     // ═══ Polling-based generation (avoids long HTTP connections) ═══
     router.post('/start-generation', reinforcementController.startGeneration);

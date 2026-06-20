@@ -87,6 +87,25 @@ const saveQuestionsSchema = Joi.object({
     ).required(),
 }).options({ allowUnknown: true });
 
+const coachConversationSchema = Joi.object({
+    userId: Joi.number().integer().optional(),
+    user_id: Joi.number().integer().optional(),
+    courseId: Joi.number().integer().optional(),
+    course_id: Joi.number().integer().optional(),
+    topicId: Joi.number().integer().allow(null).optional(),
+    topic_id: Joi.number().integer().allow(null).optional(),
+    taskId: Joi.number().integer().allow(null).optional(),
+    task_id: Joi.number().integer().allow(null).optional(),
+    difficulty: Joi.string().valid('EASY', 'INTERMEDIATE', 'HARD').default('HARD'),
+    message: Joi.string().trim().min(2).max(4000).required(),
+    history: Joi.array().items(Joi.object({
+        role: Joi.string().valid('user', 'assistant').required(),
+        content: Joi.string().allow('').max(4000).required(),
+        stance: Joi.string().allow('', null).optional(),
+        question: Joi.string().allow('', null).optional(),
+    }).unknown(true)).max(12).default([]),
+}).options({ allowUnknown: true });
+
 export class ReinforcementController {
     /**
      * @param {object} deps
@@ -360,6 +379,38 @@ export class ReinforcementController {
             if (!courseId) return next(new ValidationError('courseId is required'));
 
             const result = await this.reinforcementService.getExistingQuestions(userId, courseId, topicId, taskId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    coachConversation = async(req, res, next) => {
+        try {
+            const { error, value } = coachConversationSchema.validate(req.body);
+            if (error) return next(error);
+
+            const parseNullableId = (v) => {
+                const n = parseInt(v);
+                return Number.isFinite(n) ? n : null;
+            };
+
+            const userId = req.user?.userId || req.user?.id || value.userId || value.user_id || null;
+            const courseId = parseNullableId(value.courseId || value.course_id);
+            const topicId = parseNullableId(value.topicId || value.topic_id);
+            const taskId = parseNullableId(value.taskId || value.task_id);
+
+            if (!courseId) return next(new ValidationError('courseId is required'));
+
+            const result = await this.reinforcementService.coachConversation({
+                userId,
+                courseId,
+                topicId,
+                taskId,
+                difficulty: value.difficulty,
+                message: value.message,
+                history: value.history || [],
+            });
+
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

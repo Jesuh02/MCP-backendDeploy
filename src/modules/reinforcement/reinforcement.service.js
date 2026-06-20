@@ -469,6 +469,166 @@ export class ReinforcementDomainService {
         }
     }
 
+    async coachConversation({ userId = null, courseId, topicId = null, taskId = null, difficulty = 'HARD', message, history = [] }) {
+        try {
+            if (!this.llmPort || !this.learningContextService) {
+                return Result.fail('LLM or LearningContextService not available for reinforcement coach');
+            }
+
+            const contextResult = await this.learningContextService.buildLearningContext({
+                courseId,
+                topicId,
+                taskId,
+                userId,
+                query: message,
+                retrievalMode: 'hybrid',
+            });
+
+            if (contextResult.isFail()) {
+                return Result.fail(contextResult.getError());
+            }
+
+            const ctx = contextResult.getValue();
+            const topicName = ctx.topic?.name || '';
+            const taskName = ctx.task?.title || '';
+            const ragContent = String(ctx.ragContent || '').slice(0, 14000);
+            const contextBlock = this._buildContextBlock(
+                topicName,
+                ctx.topic?.description,
+                taskName,
+                ctx.task?.description,
+                ragContent,
+                ctx.ragFiles || []
+            );
+
+            const compactHistory = this._compactCoachHistory(history);
+            const systemPrompt = this._buildCoachSystemPrompt(difficulty);
+            const userPrompt = this._buildCoachUserPrompt({
+                contextBlock,
+                message,
+                history: compactHistory,
+                topicName,
+                taskName,
+            });
+
+            const response = await withLlmSlot(() =>
+                this.llmPort.chat(systemPrompt, userPrompt, {
+                    temperature: 0.55,
+                    maxTokens: 1600,
+                })
+            );
+
+            const parsed = this._parseCoachResponse(response?.content || '');
+            const sourceFiles = Array.isArray(ctx.ragFiles) ? ctx.ragFiles.slice(0, 5) : [];
+
+            return Result.ok({
+                ...parsed,
+                sourceFiles,
+                context: {
+                    topicName,
+                    taskName,
+                    ragChunks: ctx.ragChunks || 0,
+                    retrievalMode: ctx.retrievalMode || 'hybrid',
+                    contentItems: ctx.contentItems?.length || 0,
+                },
+            });
+        } catch (error) {
+            console.error('[ReinforcementService] coachConversation error:', error.message);
+            return Result.fail(error.message || 'Coach conversation failed');
+        }
+    }
+
+    _compactCoachHistory(history = []) {
+        return (Array.isArray(history) ? history : [])
+            .slice(-8)
+            .map(item => ({
+                role: item.role === 'assistant' ? 'assistant' : 'user',
+                content: String(item.content || '').slice(0, 1000),
+                stance: item.stance ? String(item.stance).slice(0, 24) : undefined,
+                question: item.question ? String(item.question).slice(0, 500) : undefined,
+            }))
+            .filter(item => item.content.trim().length > 0);
+    }
+
+    _buildCoachSystemPrompt(difficulty = 'HARD') {
+        return `Eres un coach socratico de refuerzo academico en espanol.
+Tu personalidad: profesional, critico, agudo y con humor breve. No insultas, no ridiculizas y no inventas.
+
+Reglas pedagogicas:
+- Te alimentas SOLO del material de referencia, tema y tarea proporcionados.
+- Si la postura del estudiante contradice el material, es vaga, tiene saltos logicos o no esta sustentada, marca stance="incorrect".
+- Usa stance="partial" solo cuando hay una idea rescatable pero incompleta.
+- Usa stance="reasonable" solo cuando la postura esta bien sustentada por el material.
+- No hagas preguntas de opcion multiple ni menciones A, B, C o D.
+- Siempre haz UNA pregunta puntual, abierta y dificil de evadir.
+- Si corriges, explica por que esta mal o incompleto con base en el material.
+- El humor debe ser corto, tipo comentario ironico ligero, sin perder rigor.
+- No entregues respuestas finales largas: guia, cuestiona y obliga a pensar.
+- Nivel de exigencia actual: ${String(difficulty || 'HARD').toUpperCase()}.
+
+Devuelve SOLO JSON valido con esta forma:
+{
+  "stance": "incorrect" | "partial" | "reasonable",
+  "reply": "respuesta conversacional breve",
+  "critique": "explicacion critica basada en el material",
+  "question": "pregunta puntual abierta, no multiple choice",
+  "confidence": 0.0
+}`;
+    }
+
+    _buildCoachUserPrompt({ contextBlock, message, history, topicName, taskName }) {
+        const historyBlock = history.length
+            ? history.map(item => `${item.role.toUpperCase()}: ${item.content}${item.question ? `\nPREGUNTA_PREVIA: ${item.question}` : ''}`).join('\n\n')
+            : 'Sin historial previo.';
+
+        return `${contextBlock || 'No hay material RAG disponible. Usa solo tema/tarea si existen y reconoce limites.'}
+
+CONTEXTO DE SESION:
+Tema: ${topicName || 'No especificado'}
+Tarea: ${taskName || 'No especificada'}
+
+HISTORIAL RECIENTE:
+${historyBlock}
+
+POSTURA O RESPUESTA DEL ESTUDIANTE:
+${String(message || '').trim()}
+
+TAREA:
+Evalua criticamente la postura del estudiante. Si es incorrecta, dilo claramente con stance="incorrect" y explica el problema.
+Despues haz una pregunta puntual que obligue al estudiante a justificar, comparar, aplicar o corregir su postura.
+No uses opciones multiples. No uses listas largas. No salgas del material proporcionado.`;
+    }
+
+    _parseCoachResponse(content) {
+        const raw = String(content || '').trim();
+        const fallback = {
+            stance: 'incorrect',
+            reply: raw || 'Tu postura necesita mas soporte. Suena decidida, pero una idea con casco no sustituye evidencia.',
+            critique: 'No pude estructurar la respuesta del modelo, asi que no la tomo como veredicto confiable.',
+            question: 'Que parte exacta del material sostiene tu postura y cual la podria contradecir?',
+            confidence: 0.35,
+        };
+
+        const start = raw.indexOf('{');
+        const end = raw.lastIndexOf('}');
+        if (start === -1 || end === -1 || start >= end) return fallback;
+
+        try {
+            const parsed = JSON.parse(raw.substring(start, end + 1));
+            const allowed = new Set(['incorrect', 'partial', 'reasonable']);
+            const stance = allowed.has(parsed.stance) ? parsed.stance : 'incorrect';
+            return {
+                stance,
+                reply: String(parsed.reply || fallback.reply).slice(0, 1200),
+                critique: String(parsed.critique || fallback.critique).slice(0, 1200),
+                question: String(parsed.question || fallback.question).slice(0, 600),
+                confidence: Number.isFinite(Number(parsed.confidence)) ? Math.max(0, Math.min(1, Number(parsed.confidence))) : 0.5,
+            };
+        } catch (_) {
+            return fallback;
+        }
+    }
+
     /**
      * Get cached questions if available (instant response).
      */
