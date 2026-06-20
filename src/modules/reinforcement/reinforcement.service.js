@@ -701,8 +701,8 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
             }
         }
 
-        if (!this.llmPort || !this.learningContextService) {
-            return Result.fail('LLM or LearningContextService not available for server-side generation');
+        if (!this.learningContextService) {
+            return Result.fail('LearningContextService not available for server-side generation');
         }
 
         // 2. Dedup: si ya hay un LLM call en vuelo para esta misma clave, reutilizar
@@ -733,11 +733,15 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
             if (questions.length < 8) {
                 console.warn(`⚠️ [ReinforcementService] Only ${questions.length} questions generated (below ideal 8). Returning anyway — clients will pad.`);
             }
+            const hasFallbackQuestions = questions.some(q => q?._fallback);
+            const source = hasFallbackQuestions
+                ? (questions.every(q => q?._fallback) ? 'local_fallback' : 'llm_with_local_fallback')
+                : 'llm';
             console.log(`\n═══ preguntas enviadas al cliente (${questions.length}) ═══`);
             questions.forEach((q, i) => console.log(`  [${i + 1}] type=${q.type} | ${q.question?.substring(0, 100)}`));
             console.log(`═══════════════════════════════════════════════════\n`);
             this._backgroundSave(userId, courseId, topicId, taskId, questions).catch(() => {});
-            return Result.ok({ questions, count: questions.length, source: 'llm' });
+            return Result.ok({ questions, count: questions.length, source });
         } catch (error) {
             console.error('[ReinforcementService] generateQuestions error:', error.message);
             return Result.fail(error.message || 'Question generation failed');
@@ -826,11 +830,27 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
             ? `\n\n⚠️⚠️⚠️ NIVEL HARD — COMPLEJIDAD MÁXIMA NO NEGOCIABLE ⚠️⚠️⚠️\n\nPASO 1: El dominio YA FUE DETERMINADO: ${domain}. NO cambies de dominio.\nPASO 2: Lleva ese dominio a su EXPRESIÓN PRÁCTICA MÁS AVANZADA Y COMPLEJA posible.\nPASO 3: Genera CADA ejercicio al nivel que desafiaría a un profesional o estudiante avanzado del dominio ${domain}.\n\nREGLAS INQUEBRANTABLES PARA DOMINIO ${domain}:\n${isMathDomain ? '- SUMAS: genera sumas de 7+ dígitos (ej: 1,023,232 + 12,213,456 + 987,654 = ___), sumas encadenadas de 4+ operandos, sumas con decimales extensos, sumatorias Σ, sumas de matrices, series aritméticas/geométricas. NUNCA sumas de 1-3 dígitos. NUNCA algoritmos de programación (Kahan, etc.).' : ''}\n${isMathDomain ? '- ÁLGEBRA: ecuaciones cuadráticas, sistemas de ecuaciones, derivadas, integrales definidas. NUNCA ecuaciones lineales de un solo paso.' : ''}\n${domain === 'SQL' ? '- JOINs múltiples (≥2 tablas), subconsultas correlacionadas, funciones de ventana (OVER, PARTITION BY, RANK, ROW_NUMBER), CTEs (WITH), GROUP BY con HAVING. NUNCA SELECT simple sin JOIN.' : ''}\n${domain === 'PROGRAMMING' ? '- Algoritmos con análisis de complejidad O(n log n), recursión con memoización, programación dinámica, grafos. NUNCA sintaxis básica ni Hello World.' : ''}\n${!isMathContent && domain !== 'SQL' && domain !== 'PROGRAMMING' ? `- DOMINIO ${domain}: Genera ejercicios que evalúen EXCLUSIVAMENTE conocimientos de ${domain}. PROHIBIDO incluir problemas matemáticos puros, cálculos aritméticos, ecuaciones o fórmulas que no pertenezcan directamente a ${domain}.` : ''}\n- CUALQUIER DOMINIO: identifica el concepto central y llévalo a su versión más compleja y profesional.\n${antiMathBlock}\n\nTEST DE COMPLEJIDAD: Si un ejercicio se resuelve en <30 segundos de pensamiento activo → DESCÁRTALO y genera uno más complejo.`
             : (antiMathBlock || '');
 
+        if (!this.llmPort) {
+            const fallbackQuestions = this._buildLocalFallbackQuestions({
+                targetCount,
+                topicName,
+                taskName,
+                topicDesc: ctx.topic?.description,
+                taskDesc: ctx.task?.description,
+                ragContent,
+                diffLabel,
+                domain,
+            });
+            console.warn(`[ReinforcementService] LLM port unavailable; returning ${fallbackQuestions.length} local fallback questions.`);
+            return fallbackQuestions;
+        }
+
         // Accumulate unique questions across iterations
         const accumulated = [];
         const allExcludedTexts = [...existingQuestions];
 
         let consecutiveZero = 0; // Track consecutive iterations yielding 0 new questions
+        let llmUnavailable = false;
 
         // ── PARALLEL FIRST BATCH ─────────────────────────────────────────────────
         // On iteration 0: fire 2 concurrent LLM calls to frontload generation speed.
@@ -900,7 +920,18 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
             ]);
             console.log(`🤖 [ReinforcementService] Parallel first batch (3 calls) in ${Date.now() - batchStart}ms`);
 
-            for (const resp of [resp1, resp2, resp3]) {
+            const firstResults = [resp1, resp2, resp3];
+            if (firstResults.every(resp => resp.status === 'rejected')) {
+                const reasons = firstResults
+                    .map(resp => resp.reason?.message || String(resp.reason || 'unknown error'))
+                    .join(' | ');
+                if (/authentication|user not found|circuit breaker|no hay proveedor|llm disabled|unauthorized/i.test(reasons)) {
+                    llmUnavailable = true;
+                    console.warn(`[ReinforcementService] LLM unavailable after first batch; skipping fill retries: ${reasons}`);
+                }
+            }
+
+            for (const resp of firstResults) {
                 if (resp.status !== 'fulfilled') continue;
                 const qs = this._parseQuestionsJson(resp.value?.content || '');
                 const filtered = applyFilters(qs, allExcludedTexts);
@@ -917,7 +948,7 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
         // Fire 2 concurrent LLM calls per iteration (like the first batch) to
         // cut wall-clock time roughly in half versus sequential single calls.
         // Only run if parallel batch didn't reach targetCount.
-        for (let iteration = 0; iteration < MAX_ITERATIONS && accumulated.length < targetCount; iteration++) {
+        for (let iteration = 0; iteration < MAX_ITERATIONS && accumulated.length < targetCount && !llmUnavailable; iteration++) {
             const remaining = targetCount - accumulated.length;
 
             // Stop early only if we meet MIN_ACCEPTABLE AND iterations are clearly unproductive
@@ -970,6 +1001,32 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
             consecutiveZero = newlyAdded === 0 ? consecutiveZero + 1 : 0;
         }
 
+        if (accumulated.length < MIN_ACCEPTABLE) {
+            const beforeFallback = accumulated.length;
+            const fallbackQuestions = this._buildLocalFallbackQuestions({
+                targetCount,
+                topicName,
+                taskName,
+                topicDesc: ctx.topic?.description,
+                taskDesc: ctx.task?.description,
+                ragContent,
+                diffLabel,
+                domain,
+            });
+            const seenFallbackTexts = new Set(
+                allExcludedTexts.map(text => String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim())
+            );
+            for (const q of fallbackQuestions) {
+                if (accumulated.length >= targetCount) break;
+                const key = String(q.question || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+                if (!key || seenFallbackTexts.has(key)) continue;
+                seenFallbackTexts.add(key);
+                accumulated.push(q);
+                allExcludedTexts.push(q.question);
+            }
+            console.warn(`[ReinforcementService] Added ${accumulated.length - beforeFallback} local fallback questions after LLM produced ${beforeFallback}/${targetCount}.`);
+        }
+
         console.log(`✅ [ReinforcementService] Final: ${accumulated.length}/${targetCount} unique questions (min acceptable: ${MIN_ACCEPTABLE}, total ${Date.now() - startMs}ms)`);
 
         // Log questions that will be shown in the UI
@@ -1006,6 +1063,111 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
             if (ragFiles.length > 0) block += `Archivos fuente: ${ragFiles.join(', ')}\n`;
         }
         return block;
+    }
+
+    _buildLocalFallbackQuestions({ targetCount = 10, topicName = '', taskName = '', topicDesc = '', taskDesc = '', ragContent = '', diffLabel = 'HARD', domain = 'GENERAL' } = {}) {
+        const scope = this._fallbackScope(topicName, taskName);
+        const concepts = this._extractFallbackConcepts([topicName, taskName, topicDesc, taskDesc, ragContent].join(' '));
+        const sentences = this._extractFallbackSentences([topicDesc, taskDesc, ragContent].join('\n'), scope);
+        const angles = ['evidencia', 'aplicacion', 'objecion', 'criterio', 'conclusion', 'riesgo', 'comparacion', 'secuencia', 'justificacion', 'transferencia'];
+        const questions = [];
+        const target = Math.max(1, Number(targetCount) || 10);
+
+        for (let i = 0; questions.length < target && i < target * 3; i++) {
+            const concept = concepts[i % concepts.length] || scope;
+            const angle = angles[i % angles.length];
+            const evidence = sentences[i % sentences.length] || `El material de referencia sobre ${scope}.`;
+            const type = i % 3;
+
+            if (type === 0) {
+                questions.push({
+                    type: 'multiple_choice',
+                    question: `Segun el material, que accion demuestra mejor dominio de "${concept}" al analizar ${angle} en ${scope}?`,
+                    options: [
+                        'Usar evidencia del material para justificar una decision concreta',
+                        'Repetir una definicion aislada sin conectarla con el caso',
+                        'Elegir una respuesta intuitiva sin revisar el contexto dado',
+                        'Cambiar de tema para evitar explicar el concepto solicitado',
+                    ],
+                    correctIndex: 0,
+                    explanation: `La opcion correcta exige conectar "${concept}" con evidencia del material: ${evidence}`,
+                });
+            } else if (type === 1) {
+                questions.push({
+                    type: 'fill_in_blank',
+                    question: `Completa la idea central: En ${scope}, "${concept}" aplicado a ${angle} debe explicarse a partir de ___.`,
+                    correctAnswer: 'el material de referencia',
+                    hint: 'No respondas por intuicion; usa la fuente del curso.',
+                    explanation: 'El refuerzo debe apoyarse en el material cargado para el tema o tarea, no en una respuesta generica.',
+                });
+            } else {
+                questions.push({
+                    type: 'ordering',
+                    question: `Ordena el proceso para resolver una pregunta dificil sobre "${concept}" enfocada en ${angle} en ${scope}.`,
+                    items: [
+                        `Identificar el concepto central relacionado con ${concept}`,
+                        'Localizar en el material la evidencia que lo sustenta',
+                        'Aplicar esa evidencia al caso o tarea propuesta',
+                        'Comparar la respuesta con una posible objecion',
+                        'Cerrar con una justificacion verificable',
+                    ],
+                    correctOrder: [0, 1, 2, 3, 4],
+                    explanation: 'La secuencia obliga a justificar la respuesta desde el material antes de concluir.',
+                });
+            }
+        }
+
+        return questions.slice(0, target).map((q, index) => ({
+            ...q,
+            explanation: `${q.explanation} Respaldo local activado por indisponibilidad del LLM. Nivel: ${diffLabel}. Dominio: ${domain}.`,
+            _fallback: true,
+            _fallbackIndex: index,
+        }));
+    }
+
+    _fallbackScope(topicName = '', taskName = '') {
+        const topic = String(topicName || '').trim();
+        const task = String(taskName || '').trim();
+        const scope = [topic, task].filter(Boolean).join(' / ');
+        return (scope || 'el tema seleccionado').replace(/\s+/g, ' ').slice(0, 140);
+    }
+
+    _extractFallbackConcepts(text = '') {
+        const stop = new Set([
+            'para', 'como', 'este', 'esta', 'estos', 'estas', 'desde', 'donde', 'sobre',
+            'tema', 'tarea', 'curso', 'material', 'referencia', 'contenido', 'actividad',
+            'estudiante', 'aprendizaje', 'pregunta', 'respuesta', 'segun', 'debe', 'deben',
+            'puede', 'pueden', 'hacer', 'tener', 'entre', 'cuando', 'porque', 'cual',
+        ]);
+        const counts = new Map();
+        const words = String(text || '').toLowerCase().match(/[a-z0-9]{4,}/g) || [];
+        for (const word of words) {
+            if (stop.has(word)) continue;
+            counts.set(word, (counts.get(word) || 0) + 1);
+        }
+        const ranked = [...counts.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([word]) => word)
+            .slice(0, 8);
+        return ranked.length ? ranked : ['concepto central', 'evidencia', 'aplicacion', 'justificacion'];
+    }
+
+    _extractFallbackSentences(text = '', scope = 'el tema seleccionado') {
+        const cleaned = String(text || '')
+            .replace(/\s+/g, ' ')
+            .replace(/[|*_#>`]+/g, ' ')
+            .trim();
+        const sentences = cleaned
+            .split(/[.!?\n]+/)
+            .map(s => s.trim())
+            .filter(s => s.length >= 40 && s.length <= 260)
+            .slice(0, 8);
+        if (sentences.length) return sentences;
+        return [
+            `El material se centra en ${scope} y debe usarse como fuente principal.`,
+            'La respuesta debe relacionar conceptos, evidencia y aplicacion practica.',
+            'Una solucion completa justifica cada paso con informacion verificable.',
+        ];
     }
 
     /**
