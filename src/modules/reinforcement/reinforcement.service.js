@@ -475,12 +475,15 @@ export class ReinforcementDomainService {
                 return Result.fail('LLM or LearningContextService not available for reinforcement coach');
             }
 
+            const rawMessage = String(message || '').trim();
+            const isVoiceStarter = rawMessage === '__VOICE_START__';
+
             const contextResult = await this.learningContextService.buildLearningContext({
                 courseId,
                 topicId,
                 taskId,
                 userId,
-                query: message,
+                query: isVoiceStarter ? null : rawMessage,
                 retrievalMode: 'hybrid',
             });
 
@@ -502,13 +505,14 @@ export class ReinforcementDomainService {
             );
 
             const compactHistory = this._compactCoachHistory(history);
-            const systemPrompt = this._buildCoachSystemPrompt(difficulty);
+            const systemPrompt = this._buildCoachSystemPrompt(difficulty, isVoiceStarter);
             const userPrompt = this._buildCoachUserPrompt({
                 contextBlock,
-                message,
+                message: rawMessage,
                 history: compactHistory,
                 topicName,
                 taskName,
+                isVoiceStarter,
             });
 
             const response = await withLlmSlot(() =>
@@ -550,20 +554,22 @@ export class ReinforcementDomainService {
             .filter(item => item.content.trim().length > 0);
     }
 
-    _buildCoachSystemPrompt(difficulty = 'HARD') {
+    _buildCoachSystemPrompt(difficulty = 'HARD', isVoiceStarter = false) {
         return `Eres un coach socratico de refuerzo academico en espanol.
-Tu personalidad: profesional, critico, agudo y con humor breve. No insultas, no ridiculizas y no inventas.
+Tu personalidad: profesional, critico, agudo y con humor breve. Puedes burlarte suavemente de una idea floja, nunca de la persona. No insultas, no humillas y no inventas.
 
 Reglas pedagogicas:
 - Te alimentas SOLO del material de referencia, tema y tarea proporcionados.
 - Si la postura del estudiante contradice el material, es vaga, tiene saltos logicos o no esta sustentada, marca stance="incorrect".
 - Usa stance="partial" solo cuando hay una idea rescatable pero incompleta.
 - Usa stance="reasonable" solo cuando la postura esta bien sustentada por el material.
-- No hagas preguntas de opcion multiple ni menciones A, B, C o D.
+- No hagas preguntas de opcion multiple. Prohibido usar opciones, letras A/B/C/D, "elige", "selecciona" o "cual de las siguientes".
 - Siempre haz UNA pregunta puntual, abierta y dificil de evadir.
 - Si corriges, explica por que esta mal o incompleto con base en el material.
 - El humor debe ser corto, tipo comentario ironico ligero, sin perder rigor.
 - No entregues respuestas finales largas: guia, cuestiona y obliga a pensar.
+- El campo "question" debe sonar como conversacion oral, por ejemplo: "Que es una variable segun tu y donde la ves en este caso?".
+- ${isVoiceStarter ? 'Estas iniciando el modo voz: no evalues al estudiante todavia; formula la primera pregunta automaticamente usando tema, tarea y documentos.' : 'Estas respondiendo a lo que dijo el estudiante; critica su respuesta y deja una nueva pregunta abierta.'}
 - Nivel de exigencia actual: ${String(difficulty || 'HARD').toUpperCase()}.
 
 Devuelve SOLO JSON valido con esta forma:
@@ -576,7 +582,7 @@ Devuelve SOLO JSON valido con esta forma:
 }`;
     }
 
-    _buildCoachUserPrompt({ contextBlock, message, history, topicName, taskName }) {
+    _buildCoachUserPrompt({ contextBlock, message, history, topicName, taskName, isVoiceStarter = false }) {
         const historyBlock = history.length
             ? history.map(item => `${item.role.toUpperCase()}: ${item.content}${item.question ? `\nPREGUNTA_PREVIA: ${item.question}` : ''}`).join('\n\n')
             : 'Sin historial previo.';
@@ -590,28 +596,65 @@ Tarea: ${taskName || 'No especificada'}
 HISTORIAL RECIENTE:
 ${historyBlock}
 
-POSTURA O RESPUESTA DEL ESTUDIANTE:
-${String(message || '').trim()}
+${isVoiceStarter ? 'MODO: INICIO AUTOMATICO DE CONVERSACION POR VOZ' : `POSTURA O RESPUESTA DEL ESTUDIANTE:\n${String(message || '').trim()}`}
 
 TAREA:
-Evalua criticamente la postura del estudiante. Si es incorrecta, dilo claramente con stance="incorrect" y explica el problema.
-Despues haz una pregunta puntual que obligue al estudiante a justificar, comparar, aplicar o corregir su postura.
-No uses opciones multiples. No uses listas largas. No salgas del material proporcionado.`;
+${isVoiceStarter
+    ? 'Genera la primera intervencion oral del coach. En "reply" saluda en una frase breve con humor ligero. En "critique" deja una cadena vacia. En "question" haz UNA pregunta abierta basada en el tema, la tarea y el material; debe invitar al estudiante a explicar con sus palabras. No evalues porque el estudiante aun no ha respondido.'
+    : 'Evalua criticamente la postura del estudiante. Si es incorrecta, dilo claramente con stance="incorrect" y explica el problema. Despues haz una pregunta puntual que obligue al estudiante a justificar, comparar, aplicar o corregir su postura.'}
+No uses opciones multiples. No uses listas largas. No uses letras A/B/C/D. No salgas del material proporcionado.`;
+    }
+
+    _isMultipleChoiceText(text = '') {
+        const value = String(text || '');
+        return /(^|\n)\s*[A-D]\s*[\).:-]/i.test(value) ||
+            /\b(opcion|opción)\s+[A-D]\b/i.test(value) ||
+            /\b[A-D]\s*[\).:-]\s+\S/i.test(value) ||
+            /\b(cual|cu[aá]l)\s+de\s+las\s+siguientes\b/i.test(value) ||
+            /\b(elige|selecciona|escoge)\s+(la\s+)?(opcion|opción|respuesta)\b/i.test(value);
+    }
+
+    _sanitizeCoachText(text = '', fallback = '') {
+        const cleaned = String(text || '')
+            .replace(/```[\s\S]*?```/g, ' ')
+            .split(/\n+/)
+            .filter(line => !this._isMultipleChoiceText(line))
+            .join(' ')
+            .replace(/\b(opcion|opción)\s+[A-D]\b/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return cleaned || fallback;
+    }
+
+    _sanitizeOpenCoachQuestion(question = '', fallback = '') {
+        let cleaned = this._sanitizeCoachText(question, '')
+            .replace(/^(pregunta|ahora dime|dime|responde)\s*[:.-]\s*/i, '')
+            .trim();
+        if (!cleaned || this._isMultipleChoiceText(cleaned)) cleaned = fallback;
+        return String(cleaned || fallback || 'Que entiendes del tema y que ejemplo concreto puedes dar?')
+            .replace(/\s+/g, ' ')
+            .slice(0, 600);
     }
 
     _parseCoachResponse(content) {
         const raw = String(content || '').trim();
         const fallback = {
             stance: 'incorrect',
-            reply: raw || 'Tu postura necesita mas soporte. Suena decidida, pero una idea con casco no sustituye evidencia.',
+            reply: 'Tu postura necesita mas soporte. Suena decidida, pero una idea con casco no sustituye evidencia.',
             critique: 'No pude estructurar la respuesta del modelo, asi que no la tomo como veredicto confiable.',
-            question: 'Que parte exacta del material sostiene tu postura y cual la podria contradecir?',
+            question: 'Que entiendes del tema con tus palabras y que parte del material sostiene esa idea?',
             confidence: 0.35,
         };
 
         const start = raw.indexOf('{');
         const end = raw.lastIndexOf('}');
-        if (start === -1 || end === -1 || start >= end) return fallback;
+        if (start === -1 || end === -1 || start >= end) {
+            return {
+                ...fallback,
+                reply: this._sanitizeCoachText(raw, fallback.reply).slice(0, 1200),
+                question: this._sanitizeOpenCoachQuestion('', fallback.question),
+            };
+        }
 
         try {
             const parsed = JSON.parse(raw.substring(start, end + 1));
@@ -619,13 +662,17 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
             const stance = allowed.has(parsed.stance) ? parsed.stance : 'incorrect';
             return {
                 stance,
-                reply: String(parsed.reply || fallback.reply).slice(0, 1200),
-                critique: String(parsed.critique || fallback.critique).slice(0, 1200),
-                question: String(parsed.question || fallback.question).slice(0, 600),
+                reply: this._sanitizeCoachText(parsed.reply, fallback.reply).slice(0, 1200),
+                critique: this._sanitizeCoachText(parsed.critique, fallback.critique).slice(0, 1200),
+                question: this._sanitizeOpenCoachQuestion(parsed.question, fallback.question),
                 confidence: Number.isFinite(Number(parsed.confidence)) ? Math.max(0, Math.min(1, Number(parsed.confidence))) : 0.5,
             };
         } catch (_) {
-            return fallback;
+            return {
+                ...fallback,
+                reply: this._sanitizeCoachText(raw, fallback.reply).slice(0, 1200),
+                question: this._sanitizeOpenCoachQuestion('', fallback.question),
+            };
         }
     }
 
@@ -831,6 +878,21 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
         const allExcludedTexts = [...existingQuestions];
 
         let consecutiveZero = 0; // Track consecutive iterations yielding 0 new questions
+        let llmUnavailable = false;
+        const rememberLlmFailures = (results, stage) => {
+            const failures = results.filter(resp => resp.status === 'rejected');
+            if (failures.length !== results.length) return;
+            const sample = failures
+                .map(resp => resp.reason?.message || String(resp.reason || 'LLM request failed'))
+                .filter(Boolean)
+                .slice(0, 2)
+                .join(' | ');
+            if (/(401|authentication|unauthorized|user not found|api key|invalid key|circuit)/i.test(sample)) {
+                throw new Error(`El proveedor LLM rechazo la generacion durante ${stage}. Revisa OPENROUTER_API_KEY, DEEPSEEK_API_KEY u OPENAI_API_KEY. Detalle: ${sample || 'fallo de autenticacion/configuracion'}`);
+            }
+            console.warn(`[ReinforcementService] All LLM calls failed during ${stage}; switching to local fallback. ${sample}`);
+            llmUnavailable = true;
+        };
 
         // ── PARALLEL FIRST BATCH ─────────────────────────────────────────────────
         // On iteration 0: fire 2 concurrent LLM calls to frontload generation speed.
@@ -899,6 +961,7 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
                 callLLM(0.7, firstReqCount, firstExclusionBlock),
             ]);
             console.log(`🤖 [ReinforcementService] Parallel first batch (3 calls) in ${Date.now() - batchStart}ms`);
+            rememberLlmFailures([resp1, resp2, resp3], 'first batch');
 
             for (const resp of [resp1, resp2, resp3]) {
                 if (resp.status !== 'fulfilled') continue;
@@ -918,6 +981,7 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
         // cut wall-clock time roughly in half versus sequential single calls.
         // Only run if parallel batch didn't reach targetCount.
         for (let iteration = 0; iteration < MAX_ITERATIONS && accumulated.length < targetCount; iteration++) {
+            if (llmUnavailable && accumulated.length === 0) break;
             const remaining = targetCount - accumulated.length;
 
             // Stop early only if we meet MIN_ACCEPTABLE AND iterations are clearly unproductive
@@ -945,6 +1009,7 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
                 callLLM(temp2, requestCount, existingBlock),
             ]);
             console.log(`🤖 [ReinforcementService] Parallel fill batch in ${Date.now() - llmStartMs}ms (fill iteration ${iteration + 1})`);
+            rememberLlmFailures(fillResults, `fill iteration ${iteration + 1}`);
 
             const prevAccumulated = accumulated.length;
             let anyParsed = false;
@@ -968,6 +1033,31 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
             console.log(`🔄 [ReinforcementService] Fill it.${iteration + 1}: newlyAdded=${newlyAdded}, accumulated=${accumulated.length}/${targetCount}`);
 
             consecutiveZero = newlyAdded === 0 ? consecutiveZero + 1 : 0;
+            if (llmUnavailable && accumulated.length === 0) break;
+        }
+
+        if (accumulated.length < targetCount) {
+            const fallbackQuestions = this._buildDeterministicFallbackQuestions({
+                targetCount: targetCount - accumulated.length,
+                topicName,
+                topicDesc: ctx.topic?.description,
+                taskName,
+                taskDesc: ctx.task?.description,
+                ragContent,
+                existingTexts: allExcludedTexts,
+                difficulty: diffLabel,
+                domain,
+            });
+
+            for (const q of fallbackQuestions) {
+                if (accumulated.length >= targetCount) break;
+                accumulated.push(q);
+                allExcludedTexts.push(q.question);
+            }
+
+            if (fallbackQuestions.length > 0) {
+                console.warn(`[ReinforcementService] Local fallback added ${fallbackQuestions.length} questions; accumulated=${accumulated.length}/${targetCount}`);
+            }
         }
 
         console.log(`✅ [ReinforcementService] Final: ${accumulated.length}/${targetCount} unique questions (min acceptable: ${MIN_ACCEPTABLE}, total ${Date.now() - startMs}ms)`);
@@ -1006,6 +1096,132 @@ No uses opciones multiples. No uses listas largas. No salgas del material propor
             if (ragFiles.length > 0) block += `Archivos fuente: ${ragFiles.join(', ')}\n`;
         }
         return block;
+    }
+
+    /** @private Build usable questions when every LLM provider fails. */
+    _buildDeterministicFallbackQuestions({
+        targetCount = 10,
+        topicName = '',
+        topicDesc = '',
+        taskName = '',
+        taskDesc = '',
+        ragContent = '',
+        existingTexts = [],
+        difficulty = 'HARD',
+        domain = 'GENERAL',
+    } = {}) {
+        const desired = Math.max(Number(targetCount) || 0, 0);
+        if (desired <= 0) return [];
+
+        const domainLabels = {
+            MATH: 'matematicas',
+            SQL: 'bases de datos',
+            PROGRAMMING: 'programacion',
+            PHYSICS: 'fisica',
+            CHEMISTRY: 'quimica',
+            LANGUAGE: 'lenguaje',
+            HISTORY: 'historia',
+            ACCOUNTING: 'contabilidad',
+            BIOLOGY: 'biologia',
+            GENERAL: 'el contenido',
+        };
+        const domainLabel = domainLabels[domain] || 'el contenido';
+        const contextLabel = [topicName, taskName].filter(Boolean).join(' / ') || domainLabel;
+        const seeds = this._extractFallbackQuestionSeeds({ topicName, topicDesc, taskName, taskDesc, ragContent });
+        const usedTexts = [...existingTexts];
+        const questions = [];
+
+        const baseOptions = [
+            'Relacionarlo con el objetivo de la tarea y respaldarlo con evidencia del material.',
+            'Tratarlo como dato aislado sin conectarlo con el objetivo de la tarea.',
+            'Cambiarlo por una idea externa que no aparece sustentada en el material.',
+            'Memorizarlo de forma literal sin explicar su funcion dentro del tema.',
+        ];
+
+        const maxAttempts = Math.max(desired * 8, 16);
+        for (let attempt = 0; questions.length < desired && attempt < maxAttempts; attempt++) {
+            const seed = this._shortenFallbackText(seeds[attempt % seeds.length] || contextLabel, 150);
+            const promptTemplates = [
+                `Caso ${attempt + 1}: segun el material, que accion demuestra mejor comprension de ${domainLabel} a partir de "${seed}"?`,
+                `Caso ${attempt + 1}: al trabajar ${contextLabel}, cual es el uso mas adecuado del fragmento "${seed}"?`,
+                `Caso ${attempt + 1}: que criterio permite aplicar correctamente esta idea del material: "${seed}"?`,
+                `Caso ${attempt + 1}: cual decision mantiene la respuesta mas alineada con el material sobre ${contextLabel}?`,
+            ];
+            const questionText = promptTemplates[attempt % promptTemplates.length];
+            const rotateBy = attempt % baseOptions.length;
+            const options = baseOptions.slice(rotateBy).concat(baseOptions.slice(0, rotateBy));
+            const correctIndex = (baseOptions.length - rotateBy) % baseOptions.length;
+            const normalized = this._normalizeQuestion({
+                type: 'multiple_choice',
+                question: questionText,
+                options,
+                correctIndex,
+                explanation: `La opcion correcta mantiene la respuesta anclada al material de ${contextLabel} y exige justificarla con evidencia, no con datos externos.`,
+            });
+
+            if (!normalized) continue;
+            if (difficulty === 'HARD' && this._isExerciseTrivialForHard(normalized, domain, false)) {
+                normalized.question = `Caso avanzado ${attempt + 1}: ${normalized.question}`;
+            }
+
+            const unique = this._localDedup([normalized], usedTexts);
+            if (unique.length === 0) continue;
+            questions.push(unique[0]);
+            usedTexts.push(unique[0].question);
+        }
+
+        return questions;
+    }
+
+    /** @private Extract compact, material-grounded snippets for local fallback questions. */
+    _extractFallbackQuestionSeeds({ topicName = '', topicDesc = '', taskName = '', taskDesc = '', ragContent = '' } = {}) {
+        const source = [ragContent, taskDesc, topicDesc, taskName, topicName].filter(Boolean).join('\n');
+        const fallbackTopic = topicName || taskName || 'el contenido del curso';
+        const candidates = source
+            .replace(/\r/g, ' ')
+            .split(/[.!?]\s+|\n+/)
+            .map(text => this._cleanFallbackSeed(text))
+            .filter(text => text.length >= 35 && text.length <= 260)
+            .filter(text => !/^(tema|tarea|descripcion|material de referencia|archivos fuente)\b/i.test(text))
+            .filter(text => !/^[-=]{3,}$/.test(text));
+
+        const unique = [];
+        const seen = new Set();
+        for (const candidate of candidates) {
+            const key = candidate.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            unique.push(candidate);
+            if (unique.length >= 16) break;
+        }
+
+        const defaults = [
+            `El tema central es ${fallbackTopic} y debe conectarse con la tarea activa.`,
+            `La respuesta debe usar evidencia del material antes de formular una conclusion.`,
+            `El estudiante debe distinguir ideas del material frente a afirmaciones externas.`,
+            `La aplicacion correcta exige explicar la relacion entre concepto, tarea y contexto.`,
+        ];
+
+        return unique.length > 0 ? unique.concat(defaults) : defaults;
+    }
+
+    /** @private */
+    _cleanFallbackSeed(text) {
+        return String(text || '')
+            .replace(/[`*_#>]+/g, ' ')
+            .replace(/[{}\[\]()]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /** @private */
+    _shortenFallbackText(text, maxLength = 150) {
+        const cleaned = this._cleanFallbackSeed(text);
+        if (cleaned.length <= maxLength) return cleaned;
+        const cut = cleaned.slice(0, maxLength);
+        const lastSpace = cut.lastIndexOf(' ');
+        const end = lastSpace > Math.floor(maxLength * 0.55) ? lastSpace : maxLength;
+        return `${cut.slice(0, end).trim()}...`;
     }
 
     /**

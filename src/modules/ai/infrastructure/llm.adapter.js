@@ -40,6 +40,8 @@ export class LLMAdapter {
          * @returns {Promise<{ content: string, model: string, usage?: Object }>}
          */
     async chat(systemPrompt, userPrompt, options = {}) {
+        const providerErrors = [];
+
         // Try LLMService first
         if (this._llmService) {
             try {
@@ -74,20 +76,32 @@ export class LLMAdapter {
                 };
             } catch (err) {
                 console.warn(`[LLMAdapter] LLMService falló, intentando fallback remoto: ${err.message}`);
+                providerErrors.push(`LLMService: ${err.message}`);
             }
         }
 
         // Fallback: OpenRouter API
         if (process.env.OPENROUTER_API_KEY) {
-            return this._callOpenRouter(systemPrompt, userPrompt, options.model);
+            try {
+                return await this._callOpenRouter(systemPrompt, userPrompt, options.model);
+            } catch (err) {
+                console.warn(`[LLMAdapter] OpenRouter directo falló: ${err.message}`);
+                providerErrors.push(`OpenRouter: ${err.message}`);
+            }
         }
 
         // Fallback: DeepSeek HTTP directo
         if (process.env.DEEPSEEK_API_KEY) {
-            return this._callDeepSeekDirect(systemPrompt, userPrompt);
+            try {
+                return await this._callDeepSeekDirect(systemPrompt, userPrompt);
+            } catch (err) {
+                console.warn(`[LLMAdapter] DeepSeek directo falló: ${err.message}`);
+                providerErrors.push(`DeepSeek: ${err.message}`);
+            }
         }
 
-        throw new Error('No hay proveedor LLM disponible. Configure DEEPSEEK_API_KEY u OPENROUTER_API_KEY.');
+        const detail = providerErrors.length ? ` Detalle: ${providerErrors.join(' | ')}` : '';
+        throw new Error(`No hay proveedor LLM disponible o todos fallaron. Configure DEEPSEEK_API_KEY u OPENROUTER_API_KEY.${detail}`);
     }
 
     /**
@@ -166,7 +180,7 @@ export class LLMAdapter {
     /** @private */
     async _callOpenRouter(systemPrompt, userPrompt, model) {
         const apiKey = process.env.OPENROUTER_API_KEY;
-        const chatModel = model || process.env.OPENROUTER_CHAT_MODEL || 'qwen/qwen-2.5-72b-instruct';
+        const chatModel = model || process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL || 'qwen/qwen-2.5-72b-instruct';
 
         const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
             model: chatModel,
