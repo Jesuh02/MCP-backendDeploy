@@ -64,7 +64,7 @@ export class LLMAdapter {
          * @returns {Promise<{ content: string, model: string, usage?: Object }>}
          */
     async chat(systemPrompt, userPrompt, options = {}) {
-        let lastError = null;
+        const providerErrors = [];
 
         // Try LLMService first
         if (this._llmService) {
@@ -99,50 +99,33 @@ export class LLMAdapter {
                     raw: response,
                 };
             } catch (err) {
-                lastError = err;
-                if (isAuthenticationError(err)) {
-                    const provider = inferAuthProvider(err, this._provider);
-                    this._authBlockedProviders.add(provider);
-                    this._llmService = null;
-                    this._provider = 'none';
-                    console.warn(`[LLMAdapter] LLMService authentication failed (${provider}); avoiding duplicated remote retry: ${err.message}`);
-                } else {
-                    console.warn(`[LLMAdapter] LLMService falló, intentando fallback remoto: ${err.message}`);
-                }
+                console.warn(`[LLMAdapter] LLMService falló, intentando fallback remoto: ${err.message}`);
+                providerErrors.push(`LLMService: ${err.message}`);
             }
         }
 
         // Fallback: OpenRouter API
-        if (process.env.OPENROUTER_API_KEY && !this._authBlockedProviders.has('openrouter')) {
+        if (process.env.OPENROUTER_API_KEY) {
             try {
                 return await this._callOpenRouter(systemPrompt, userPrompt, options.model);
             } catch (err) {
-                lastError = err;
-                if (isAuthenticationError(err)) {
-                    this._authBlockedProviders.add('openrouter');
-                    console.warn(`[LLMAdapter] OpenRouter authentication failed; provider disabled until restart: ${err.message}`);
-                } else {
-                    console.warn(`[LLMAdapter] OpenRouter fallback failed: ${err.message}`);
-                }
+                console.warn(`[LLMAdapter] OpenRouter directo falló: ${err.message}`);
+                providerErrors.push(`OpenRouter: ${err.message}`);
             }
         }
 
         // Fallback: DeepSeek HTTP directo
-        if (process.env.DEEPSEEK_API_KEY && !this._authBlockedProviders.has('deepseek')) {
+        if (process.env.DEEPSEEK_API_KEY) {
             try {
                 return await this._callDeepSeekDirect(systemPrompt, userPrompt);
             } catch (err) {
-                lastError = err;
-                if (isAuthenticationError(err)) {
-                    this._authBlockedProviders.add('deepseek');
-                    console.warn(`[LLMAdapter] DeepSeek authentication failed; provider disabled until restart: ${err.message}`);
-                }
-                throw err;
+                console.warn(`[LLMAdapter] DeepSeek directo falló: ${err.message}`);
+                providerErrors.push(`DeepSeek: ${err.message}`);
             }
         }
 
-        if (lastError) throw lastError;
-        throw new Error('No hay proveedor LLM disponible. Configure DEEPSEEK_API_KEY u OPENROUTER_API_KEY.');
+        const detail = providerErrors.length ? ` Detalle: ${providerErrors.join(' | ')}` : '';
+        throw new Error(`No hay proveedor LLM disponible o todos fallaron. Configure DEEPSEEK_API_KEY u OPENROUTER_API_KEY.${detail}`);
     }
 
     /**
@@ -221,7 +204,7 @@ export class LLMAdapter {
     /** @private */
     async _callOpenRouter(systemPrompt, userPrompt, model) {
         const apiKey = process.env.OPENROUTER_API_KEY;
-        const chatModel = model || process.env.OPENROUTER_CHAT_MODEL || 'qwen/qwen-2.5-72b-instruct';
+        const chatModel = model || process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL || 'qwen/qwen-2.5-72b-instruct';
 
         const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
             model: chatModel,
