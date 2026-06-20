@@ -59,6 +59,7 @@ export class ReinforcementDomainService {
         this.questionCache = QuestionCacheService.getInstance();
         // In-flight promises: evita llamadas LLM duplicadas para la misma clave
         this._inFlight = new Map();
+        this._coachLlmUnavailableUntil = 0;
     }
 
     /** Setter for late injection (avoids circular constructor deps) */
@@ -515,18 +516,44 @@ export class ReinforcementDomainService {
                 isVoiceStarter,
             });
 
-            const response = await withLlmSlot(() =>
-                this.llmPort.chat(systemPrompt, userPrompt, {
-                    temperature: 0.55,
-                    maxTokens: 1600,
-                })
-            );
-
-            const parsed = this._parseCoachResponse(response?.content || '');
+            let parsed;
+            let fallbackMode = false;
+            let providerError = null;
+            try {
+                if (Date.now() < this._coachLlmUnavailableUntil) {
+                    throw new Error('Coach LLM temporarily disabled after provider authentication/balance failure');
+                }
+                const response = await withLlmSlot(() =>
+                    this.llmPort.chat(systemPrompt, userPrompt, {
+                        temperature: 0.55,
+                        maxTokens: 1600,
+                    })
+                );
+                parsed = this._parseCoachResponse(response?.content || '');
+            } catch (llmError) {
+                providerError = llmError?.message || 'LLM provider unavailable';
+                fallbackMode = true;
+                if (this._isProviderConfigOrBillingError(providerError)) {
+                    this._coachLlmUnavailableUntil = Date.now() + 5 * 60 * 1000;
+                }
+                console.warn('[ReinforcementService] coachConversation LLM unavailable; using local fallback:', providerError);
+                parsed = this._buildCoachFallbackResponse({
+                    isVoiceStarter,
+                    message: rawMessage,
+                    history: compactHistory,
+                    topicName,
+                    topicDesc: ctx.topic?.description,
+                    taskName,
+                    taskDesc: ctx.task?.description,
+                    ragContent,
+                });
+            }
             const sourceFiles = Array.isArray(ctx.ragFiles) ? ctx.ragFiles.slice(0, 5) : [];
 
             return Result.ok({
                 ...parsed,
+                fallbackMode,
+                providerError: fallbackMode ? providerError : undefined,
                 sourceFiles,
                 context: {
                     topicName,
@@ -540,6 +567,62 @@ export class ReinforcementDomainService {
             console.error('[ReinforcementService] coachConversation error:', error.message);
             return Result.fail(error.message || 'Coach conversation failed');
         }
+    }
+
+    _isProviderConfigOrBillingError(message = '') {
+        return /(401|402|authentication|unauthorized|user not found|insufficient balance|api key|invalid key|billing|saldo|balance|circuit)/i.test(String(message || ''));
+    }
+
+    _buildCoachFallbackResponse({
+        isVoiceStarter = false,
+        message = '',
+        history = [],
+        topicName = '',
+        topicDesc = '',
+        taskName = '',
+        taskDesc = '',
+        ragContent = '',
+    } = {}) {
+        const subject = [topicName, taskName].filter(Boolean).join(' / ') || 'este tema';
+        const seed = this._pickCoachFallbackSeed({ topicName, topicDesc, taskName, taskDesc, ragContent });
+        const previousQuestion = [...history].reverse().find(item => item.question)?.question || '';
+
+        if (isVoiceStarter) {
+            return {
+                stance: 'partial',
+                reply: `Listo, modo voz activo. Arranquemos sin examen de letras, que eso ya parecia formulario de banco.`,
+                critique: '',
+                question: this._sanitizeOpenCoachQuestion(
+                    `Segun tu, que significa ${subject} y como conectarias esta idea con "${seed}"?`,
+                    `Que entiendes de ${subject} con tus palabras?`
+                ),
+                confidence: 0.25,
+            };
+        }
+
+        const normalizedMessage = String(message || '').trim();
+        const shortAnswer = normalizedMessage
+            ? this._shortenFallbackText(normalizedMessage, 180)
+            : 'lo que acabas de responder';
+        const followUp = previousQuestion && !this._isMultipleChoiceText(previousQuestion)
+            ? `Antes te pregunte: "${this._shortenFallbackText(previousQuestion, 140)}".`
+            : `El material apunta a "${seed}".`;
+
+        return {
+            stance: 'partial',
+            reply: `Te sigo, pero esa respuesta todavia esta flaca de evidencia. Tiene actitud, le falta gimnasio academico.`,
+            critique: `${followUp} Tu idea sobre "${shortAnswer}" necesita amarrarse mejor al material de ${subject}, no quedarse en intuicion suelta.`,
+            question: this._sanitizeOpenCoachQuestion(
+                `Que parte concreta del material respalda tu respuesta y que ejemplo podrias dar para que no quede en puro humo elegante?`,
+                `Que parte concreta del material respalda tu respuesta?`
+            ),
+            confidence: 0.25,
+        };
+    }
+
+    _pickCoachFallbackSeed({ topicName = '', topicDesc = '', taskName = '', taskDesc = '', ragContent = '' } = {}) {
+        const seeds = this._extractFallbackQuestionSeeds({ topicName, topicDesc, taskName, taskDesc, ragContent });
+        return this._shortenFallbackText(seeds[0] || taskDesc || topicDesc || taskName || topicName || 'el material del curso', 150);
     }
 
     _compactCoachHistory(history = []) {
@@ -887,9 +970,6 @@ No uses opciones multiples. No uses listas largas. No uses letras A/B/C/D. No sa
                 .filter(Boolean)
                 .slice(0, 2)
                 .join(' | ');
-            if (/(401|authentication|unauthorized|user not found|api key|invalid key|circuit)/i.test(sample)) {
-                throw new Error(`El proveedor LLM rechazo la generacion durante ${stage}. Revisa OPENROUTER_API_KEY, DEEPSEEK_API_KEY u OPENAI_API_KEY. Detalle: ${sample || 'fallo de autenticacion/configuracion'}`);
-            }
             console.warn(`[ReinforcementService] All LLM calls failed during ${stage}; switching to local fallback. ${sample}`);
             llmUnavailable = true;
         };
