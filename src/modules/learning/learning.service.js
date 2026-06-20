@@ -420,13 +420,16 @@ export class LearningDomainService {
   }
 
   /** Generates one image per scene and returns a slides array as a fallback when video is unavailable. */
-  async _buildSlideshow(script) {
+  async _buildSlideshow(script, sourceContext = '') {
     const scenes = script.scenes.slice(0, 8);
     const perScene = Math.max(5, Math.round((script.scenes.length * 10) / scenes.length));
     return await Promise.all(
       scenes.map(async (scene) => ({
         narration: String(scene.narration || ''),
-        imageUrl: await this._renderImageSafely(String(scene.imagePrompt || scene.narration || '')),
+        imageUrl: await this._renderImageSafely(
+          String(scene.imagePrompt || scene.narration || ''),
+          { title: script.title, sourceContext, medium: 'video slide illustration' }
+        ),
         duration: perScene,
       }))
     );
@@ -444,15 +447,18 @@ export class LearningDomainService {
     return job;
   }
 
-  async _renderVideo(script) {
+  async _renderVideo(script, sourceContext = '') {
     const apiKey = process.env.OPENROUTER_API_KEY;
 
     // Build a concise text-to-video prompt from the script scenes
     const sceneSummary = script.scenes
       .slice(0, 4)
-      .map((s, i) => `Scene ${i + 1}: ${s.imagePrompt}`)
+      .map((s, i) => `Scene ${i + 1}: ${s.imagePrompt || s.narration || ''}`)
       .join('. ');
-    const prompt = `Educational video about "${script.title}". ${sceneSummary}`;
+    const prompt = buildAnalogyVisualPrompt(
+      `${script.summary || ''}. ${sceneSummary}. Smooth camera movement, coherent continuity between scenes, no on-screen text.`,
+      { title: script.title, sourceContext, medium: 'short educational video' }
+    );
 
     // Step 1: Submit video generation job to OpenRouter /api/v1/videos
     const genResp = await axios.post(
