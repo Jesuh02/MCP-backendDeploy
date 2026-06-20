@@ -18,6 +18,44 @@ import axios from 'axios';
 
 const DEFAULT_PANEL_COUNT = 6;
 
+const ANALOGY_EXAMPLES = [
+  {
+    test: /(database|base de datos|sql|tabla|registro|consulta|query|relacion|indice|index)/i,
+    text: 'databases as a labeled warehouse shelf with boxes, drawers, index cards, and people retrieving exact items',
+  },
+  {
+    test: /(api|endpoint|http|request|response|fetch|rest|graphql|servicio|microservicio)/i,
+    text: 'API consumption as a restaurant: customers place orders, a waiter carries requests, the kitchen prepares data, and plates return as responses',
+  },
+  {
+    test: /(auth|login|autenticacion|autorizacion|token|jwt|password|permiso|rol)/i,
+    text: 'authentication and permissions as a building entrance with badges, guards, keys, and restricted doors',
+  },
+  {
+    test: /(algorithm|algoritmo|procedimiento|flujo|secuencia|condicional|loop|bucle|iteracion)/i,
+    text: 'algorithms as a cooking recipe, assembly line, or checklist followed step by step',
+  },
+  {
+    test: /(queue|cola|stack|pila|array|lista|estructura de datos|data structure)/i,
+    text: 'data structures as real lines of people, stacked trays, sorted folders, or labeled containers',
+  },
+  {
+    test: /(cloud|nube|servidor|deploy|hosting|infraestructura|contenedor|docker)/i,
+    text: 'cloud infrastructure as a utility control room, shipping hub, or modular factory with connected stations',
+  },
+  {
+    test: /(network|red|internet|socket|websocket|paquete|protocol|protocolo)/i,
+    text: 'networks as roads, postal routes, traffic lights, mail carriers, and dispatch centers moving parcels',
+  },
+  {
+    test: /(variable|funcion|function|metodo|clase|objeto|component|componente)/i,
+    text: 'programming concepts as labeled containers, reusable workshop machines, tool benches, and modular building blocks',
+  },
+];
+
+const DEFAULT_ANALOGY =
+  'choose one concrete everyday place such as a restaurant, workshop, library, warehouse, classroom, post office, clinic, or kitchen, and make the lesson visible through physical objects and human actions';
+
 // In-process async job store for video generation.
 // Single-instance deployments (Railway) are fine; for multi-instance add Redis.
 const videoJobs = new Map(); // jobId -> { status, title, posterUrl, videoUrl?, slides?, durationSeconds, error?, createdAt }
@@ -37,6 +75,9 @@ Devuelves SIEMPRE un único objeto JSON válido (sin Markdown, sin texto fuera d
 }
 Reglas:
 - Genera entre 4 y 8 paneles que cuenten una historia con principio, desarrollo y cierre.
+- Cada panel debe explicar el concepto con una analogia visual de la vida real, no con pantallas genericas ni codigo flotante.
+- Para software usa metaforas fisicas: bases de datos como estantes con cajas, APIs como restaurante con mesero/cocina, autenticacion como puertas con llaves, algoritmos como recetas o lineas de trabajo.
+- En "imagePrompt": incluye explicitamente la analogia concreta, el lugar cotidiano, los objetos y la accion que explican el concepto.
 - Apóyate ESTRICTAMENTE en los materiales (tema, tarea, fragmentos RAG) suministrados.
 - Si los materiales son escasos, complementa con conocimiento general del tema, sin inventar datos contradictorios.
 - En "imagePrompt": describe escena, personajes, paleta, composición; evita texto incrustado.`;
@@ -50,7 +91,9 @@ Devuelves SIEMPRE un único objeto JSON válido (sin Markdown), con la forma:
     { "narration": "Texto que narra la voz en off", "imagePrompt": "Escena visual en INGLÉS, estilo cartoon educativo, colores vivos, sin texto" }
   ]
 }
-Entre 5 y 8 escenas. Apóyate en los materiales aportados.`;
+Entre 5 y 8 escenas. Apóyate en los materiales aportados.
+Cada escena debe convertir el concepto en una analogia de la vida real con objetos, personas y acciones cotidianas.
+Para software evita pantallas genericas: APIs como restaurante, bases de datos como estantes con cajas, algoritmos como recetas, redes como rutas de correo, autenticacion como control de acceso.`;
 
 function safeParseJson(text) {
   if (!text) return null;
@@ -78,6 +121,35 @@ function buildSourceContext(ctx) {
   }
   if (!lines.length) lines.push('(Sin contenido extra disponible; usa conocimiento general apropiado al nivel.)');
   return lines.join('\n');
+}
+
+function pickAnalogyHints(text) {
+  const source = String(text || '');
+  const matches = ANALOGY_EXAMPLES
+    .filter((item) => item.test.test(source))
+    .map((item) => item.text);
+  return matches.length ? matches.slice(0, 3) : [DEFAULT_ANALOGY];
+}
+
+function compactText(text, maxLen = 900) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, maxLen);
+}
+
+function buildAnalogyVisualPrompt(prompt, { title = '', sourceContext = '', medium = 'image' } = {}) {
+  const subject = compactText([title, sourceContext, prompt].filter(Boolean).join(' '), 1400);
+  const hints = pickAnalogyHints(subject).join('; ');
+  const contextHint = compactText(sourceContext, 650);
+
+  return [
+    `Create a ${medium} for an educational lesson.`,
+    title ? `Lesson title: ${title}.` : '',
+    contextHint ? `Relevant context: ${contextHint}.` : '',
+    `Core scene request: ${compactText(prompt, 700)}.`,
+    `Use a concrete real-life analogy: ${hints}.`,
+    'Make the abstract idea visible through physical objects, people interacting, clear cause-and-effect, and a single focused environment.',
+    'Avoid generic laptop screens, floating code, abstract icons, UI screenshots, repeated headings, written titles, labels, captions, logos, and watermarks.',
+    'Style: polished educational illustration, warm realistic details, vibrant but restrained colors, cinematic composition, 4:3 aspect ratio unless video provider requires otherwise.',
+  ].filter(Boolean).join('\n');
 }
 
 export class LearningDomainService {
@@ -126,8 +198,14 @@ export class LearningDomainService {
     const panels = script.panels.slice(0, 8);
     const renderedPanels = await Promise.all(
       panels.map(async (p) => {
+        const panelPrompt = [
+          p.imagePrompt,
+          p.caption ? `Caption context: ${p.caption}` : '',
+          p.dialogue ? `Dialogue context: ${p.dialogue}` : '',
+        ].filter(Boolean).join('\n');
         const imageUrl = await this._renderImageSafely(
-          String(p.imagePrompt || p.caption || title)
+          String(panelPrompt || title),
+          { title, sourceContext, medium: 'comic panel illustration' }
         );
         return {
           caption: String(p.caption || '').slice(0, 320),
@@ -148,22 +226,20 @@ export class LearningDomainService {
    * Calls OpenRouter image-capable model and returns a data URL (or '' on failure).
    * Frontend already handles empty imageUrl with a placeholder.
    */
-  async _renderImageSafely(prompt) {
+  async _renderImageSafely(prompt, visualContext = {}) {
     try {
-      return await this._renderImage(prompt);
+      return await this._renderImage(prompt, visualContext);
     } catch (err) {
       console.warn('[LearningService] image render failed:', err?.message || err);
       return '';
     }
   }
 
-  async _renderImage(prompt) {
+  async _renderImage(prompt, visualContext = {}) {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) return '';
 
-    const fullPrompt =
-      `${prompt}. Style: friendly cartoon illustration, vibrant colors, soft shading, ` +
-      `cinematic composition, 4:3 aspect ratio, no text, no watermarks.`;
+    const fullPrompt = buildAnalogyVisualPrompt(prompt, visualContext);
 
     const resp = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
@@ -282,7 +358,7 @@ export class LearningDomainService {
         createdAt: Date.now(),
       });
       // Start background job — do NOT await so the HTTP response is sent immediately.
-      this._startVideoJob(jobId, script).catch((err) =>
+      this._startVideoJob(jobId, script, sourceContext).catch((err) =>
         console.error('[LearningService] Unhandled background video job error:', err?.message)
       );
       return { jobId, status: 'processing', title, posterUrl: '', durationSeconds };
@@ -295,19 +371,22 @@ export class LearningDomainService {
   /** Polls OpenRouter in the background, then uploads the video to R2 for permanent storage.
    * If video rendering fails (e.g. 402 insufficient credits, model unavailable) the job
    * automatically falls back to a narrated slideshow so the user always gets something. */
-  async _startVideoJob(jobId, script) {
+  async _startVideoJob(jobId, script, sourceContext = '') {
     const job = () => videoJobs.get(jobId);
     try {
       // Generate poster image in the background (non-blocking update to the job).
       const firstScene = script.scenes?.[0] || {};
-      this._renderImageSafely(String(firstScene.imagePrompt || script.title || '')).then((posterUrl) => {
+      this._renderImageSafely(
+        String(firstScene.imagePrompt || script.title || ''),
+        { title: script.title, sourceContext, medium: 'video poster illustration' }
+      ).then((posterUrl) => {
         const current = videoJobs.get(jobId);
         if (current) videoJobs.set(jobId, { ...current, posterUrl });
       });
 
       let videoUrl = null;
       try {
-        const cdnUrl = await this._renderVideo(script);
+        const cdnUrl = await this._renderVideo(script, sourceContext);
         videoUrl = cdnUrl;
         // Download from Kling CDN and upload to Cloudflare R2 for a permanent, CORS-safe URL.
         if (this.fileStoragePort) {
@@ -330,7 +409,7 @@ export class LearningDomainService {
         const httpStatus = videoErr?.response?.status;
         const insufficientCredits = httpStatus === 402;
         console.warn(`[LearningService] Video render failed for job ${jobId} (HTTP ${httpStatus || videoErr?.message}), falling back to slideshow. insufficientCredits=${insufficientCredits}`);
-        const slides = await this._buildSlideshow(script);
+        const slides = await this._buildSlideshow(script, sourceContext);
         videoJobs.set(jobId, { ...job(), status: 'completed', slides, insufficientCredits });
         console.info(`[LearningService] Video job ${jobId} completed as slideshow (${slides.length} slides).`);
       }
@@ -341,13 +420,16 @@ export class LearningDomainService {
   }
 
   /** Generates one image per scene and returns a slides array as a fallback when video is unavailable. */
-  async _buildSlideshow(script) {
+  async _buildSlideshow(script, sourceContext = '') {
     const scenes = script.scenes.slice(0, 8);
     const perScene = Math.max(5, Math.round((script.scenes.length * 10) / scenes.length));
     return await Promise.all(
       scenes.map(async (scene) => ({
         narration: String(scene.narration || ''),
-        imageUrl: await this._renderImageSafely(String(scene.imagePrompt || scene.narration || '')),
+        imageUrl: await this._renderImageSafely(
+          String(scene.imagePrompt || scene.narration || ''),
+          { title: script.title, sourceContext, medium: 'video slide illustration' }
+        ),
         duration: perScene,
       }))
     );
@@ -365,15 +447,18 @@ export class LearningDomainService {
     return job;
   }
 
-  async _renderVideo(script) {
+  async _renderVideo(script, sourceContext = '') {
     const apiKey = process.env.OPENROUTER_API_KEY;
 
     // Build a concise text-to-video prompt from the script scenes
     const sceneSummary = script.scenes
       .slice(0, 4)
-      .map((s, i) => `Scene ${i + 1}: ${s.imagePrompt}`)
+      .map((s, i) => `Scene ${i + 1}: ${s.imagePrompt || s.narration || ''}`)
       .join('. ');
-    const prompt = `Educational video about "${script.title}". ${sceneSummary}`;
+    const prompt = buildAnalogyVisualPrompt(
+      `${script.summary || ''}. ${sceneSummary}. Smooth camera movement, coherent continuity between scenes, no on-screen text.`,
+      { title: script.title, sourceContext, medium: 'short educational video' }
+    );
 
     // Step 1: Submit video generation job to OpenRouter /api/v1/videos
     const genResp = await axios.post(
