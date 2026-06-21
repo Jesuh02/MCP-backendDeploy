@@ -23,7 +23,8 @@ export const HF_MODEL_ID = 'prithivMLmods/Alphabet-Sign-Language-Detection';
 
 const DEFAULT_MODEL_DIR = path.resolve(__dirname, '../../../models/sign-language');
 const MODEL_DIR = process.env.SIGN_LANGUAGE_MODEL_DIR || DEFAULT_MODEL_DIR;
-const HF_REPO = (process.env.SIGN_LANGUAGE_HF_REPO || '').trim();
+// Usar el modelo por defecto de HuggingFace si no se especifica otro
+const HF_REPO = (process.env.SIGN_LANGUAGE_HF_REPO || '').trim() || HF_MODEL_ID;
 const CACHE_DIR = process.env.SIGN_LANGUAGE_CACHE_DIR || '/tmp/transformers-cache';
 
 let classifierPromise = null;
@@ -37,12 +38,12 @@ export async function getLetterClassifier() {
         const hasLocal = ['config.json', 'preprocessor_config.json', 'onnx/model.onnx']
             .every((rel) => fs.existsSync(path.join(MODEL_DIR, rel)));
 
-        if (!hasLocal && !HF_REPO) {
+        // HF_REPO siempre tendrá un valor (el default o el configurado)
+        // así que este check solo es necesario si se deshabilitó explícitamente
+        if (!hasLocal && HF_REPO === 'disabled') {
             throw new Error(
-                `Falta config.json en ${MODEL_DIR} y SIGN_LANGUAGE_HF_REPO no está definido. ` +
-                `Sube el ONNX a un repo HuggingFace tuyo y exporta ` +
-                `SIGN_LANGUAGE_HF_REPO=tu_usuario/Alphabet-Sign-Language-ONNX, o bien ` +
-                `bundlea los pesos en ${MODEL_DIR}.`,
+                `Modelo de lengua de señas deshabilitado. Configure SIGN_LANGUAGE_HF_REPO ` +
+                `o bundlee los pesos en ${MODEL_DIR}.`,
             );
         }
 

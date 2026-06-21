@@ -98,17 +98,17 @@ export const paymentRateLimiter = rateLimit({
 });
 
 /**
- * Sign-language inference — 200 req/min por usuario
- * El frontend captura a ~350ms/frame (≈171 req/min); se deja margen para
- * picos y para que dos usuarios en el mismo dispositivo no se bloqueen.
+ * Sign-language inference — 400 req/min por usuario
+ * El frontend captura a ~250ms/frame (≈240 req/min); se deja margen amplio
+ * para picos, reconexiones y para que múltiples usuarios no se bloqueen.
  */
 export const signLanguageRateLimiter = rateLimit({
     windowMs: 60000,
-    max: 200,
+    max: 400,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: userKeyGenerator('sign-lang'),
-    handler: createHandler('SignLanguage', 60000, 200),
+    handler: createHandler('SignLanguage', 60000, 400),
 });
 
 export default {
