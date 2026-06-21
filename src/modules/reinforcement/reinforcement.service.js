@@ -470,7 +470,7 @@ export class ReinforcementDomainService {
         }
     }
 
-    async coachConversation({ userId = null, courseId, topicId = null, taskId = null, difficulty = 'HARD', message, history = [] }) {
+    async coachConversation({ userId = null, courseId, topicId = null, taskId = null, difficulty = 'HARD', message, history = [], conversational = true, voiceMode = false, personality = 'playful_critic' }) {
         try {
             if (!this.llmPort || !this.learningContextService) {
                 return Result.fail('LLM or LearningContextService not available for reinforcement coach');
@@ -506,7 +506,7 @@ export class ReinforcementDomainService {
             );
 
             const compactHistory = this._compactCoachHistory(history);
-            const systemPrompt = this._buildCoachSystemPrompt(difficulty, isVoiceStarter);
+            const systemPrompt = this._buildCoachSystemPrompt(difficulty, isVoiceStarter, { conversational, voiceMode, personality });
             const userPrompt = this._buildCoachUserPrompt({
                 contextBlock,
                 message: rawMessage,
@@ -514,6 +514,7 @@ export class ReinforcementDomainService {
                 topicName,
                 taskName,
                 isVoiceStarter,
+                voiceMode,
             });
 
             let parsed;
@@ -587,13 +588,20 @@ export class ReinforcementDomainService {
         const seed = this._pickCoachFallbackSeed({ topicName, topicDesc, taskName, taskDesc, ragContent });
         const previousQuestion = [...history].reverse().find(item => item.question)?.question || '';
 
+        const playfulStarters = [
+            '¡Hola! Vamos a aprender algo cool hoy.',
+            '¡Buenas! Listo para activar esas neuronas?',
+            '¡Ey! Preparate que vamos a pensar un poco.',
+            '¡Hola! Modo aprendizaje activado.',
+        ];
+
         if (isVoiceStarter) {
             return {
                 stance: 'partial',
-                reply: `Listo, modo voz activo. Arranquemos sin examen de letras, que eso ya parecia formulario de banco.`,
+                reply: playfulStarters[Math.floor(Math.random() * playfulStarters.length)],
                 critique: '',
                 question: this._sanitizeOpenCoachQuestion(
-                    `Segun tu, que significa ${subject} y como conectarias esta idea con "${seed}"?`,
+                    `Empecemos facil: que es ${subject} segun tu? Explicamelo como si yo no supiera nada.`,
                     `Que entiendes de ${subject} con tus palabras?`
                 ),
                 confidence: 0.25,
@@ -603,18 +611,28 @@ export class ReinforcementDomainService {
         const normalizedMessage = String(message || '').trim();
         const shortAnswer = normalizedMessage
             ? this._shortenFallbackText(normalizedMessage, 180)
-            : 'lo que acabas de responder';
-        const followUp = previousQuestion && !this._isMultipleChoiceText(previousQuestion)
-            ? `Antes te pregunte: "${this._shortenFallbackText(previousQuestion, 140)}".`
-            : `El material apunta a "${seed}".`;
+            : 'lo que acabas de decir';
+
+        const playfulReplies = [
+            `Mmm, veo por donde vas con eso de "${shortAnswer}", pero creo que hay algo que se te esta escapando.`,
+            `Interesante lo que dices sobre "${shortAnswer}". No esta mal, pero le falta un poquito mas.`,
+            `Ok, entiendo tu punto sobre "${shortAnswer}". Pero dejame preguntarte algo para que lo pienses mejor.`,
+            `Vas bien encaminado con eso de "${shortAnswer}", aunque hay un detalle que podrias pulir.`,
+        ];
+
+        const playfulCritiques = [
+            `Lo que mencionas tiene sentido, pero seria mas fuerte si lo conectas con un ejemplo concreto de ${subject}.`,
+            `Tu idea va por buen camino. El tema es: ¿como lo aplicarias en una situacion real?`,
+            `Eso que dices es un buen inicio. Ahora, ¿podrias explicar por que funciona asi?`,
+        ];
 
         return {
             stance: 'partial',
-            reply: `Te sigo, pero esa respuesta todavia esta flaca de evidencia. Tiene actitud, le falta gimnasio academico.`,
-            critique: `${followUp} Tu idea sobre "${shortAnswer}" necesita amarrarse mejor al material de ${subject}, no quedarse en intuicion suelta.`,
+            reply: playfulReplies[Math.floor(Math.random() * playfulReplies.length)],
+            critique: playfulCritiques[Math.floor(Math.random() * playfulCritiques.length)],
             question: this._sanitizeOpenCoachQuestion(
-                `Que parte concreta del material respalda tu respuesta y que ejemplo podrias dar para que no quede en puro humo elegante?`,
-                `Que parte concreta del material respalda tu respuesta?`
+                `Dame un ejemplo de la vida real donde veas esto de ${subject} en accion. ¿Donde lo usarias?`,
+                `¿Podrias darme un ejemplo practico de esto?`
             ),
             confidence: 0.25,
         };
@@ -637,35 +655,74 @@ export class ReinforcementDomainService {
             .filter(item => item.content.trim().length > 0);
     }
 
-    _buildCoachSystemPrompt(difficulty = 'HARD', isVoiceStarter = false) {
-        return `Eres un coach socratico de refuerzo academico en espanol.
-Tu personalidad: profesional, critico, agudo y con humor breve. Puedes burlarte suavemente de una idea floja, nunca de la persona. No insultas, no humillas y no inventas.
+    _buildCoachSystemPrompt(difficulty = 'HARD', isVoiceStarter = false, options = {}) {
+        const { conversational = true, voiceMode = false, personality = 'playful_critic' } = options;
 
-Reglas pedagogicas:
-- Te alimentas SOLO del material de referencia, tema y tarea proporcionados.
-- Si la postura del estudiante contradice el material, es vaga, tiene saltos logicos o no esta sustentada, marca stance="incorrect".
-- Usa stance="partial" solo cuando hay una idea rescatable pero incompleta.
-- Usa stance="reasonable" solo cuando la postura esta bien sustentada por el material.
-- No hagas preguntas de opcion multiple. Prohibido usar opciones, letras A/B/C/D, "elige", "selecciona" o "cual de las siguientes".
-- Siempre haz UNA pregunta puntual, abierta y dificil de evadir.
-- Si corriges, explica por que esta mal o incompleto con base en el material.
-- El humor debe ser corto, tipo comentario ironico ligero, sin perder rigor.
-- No entregues respuestas finales largas: guia, cuestiona y obliga a pensar.
-- El campo "question" debe sonar como conversacion oral, por ejemplo: "Que es una variable segun tu y donde la ves en este caso?".
-- ${isVoiceStarter ? 'Estas iniciando el modo voz: no evalues al estudiante todavia; formula la primera pregunta automaticamente usando tema, tarea y documentos.' : 'Estas respondiendo a lo que dijo el estudiante; critica su respuesta y deja una nueva pregunta abierta.'}
-- Nivel de exigencia actual: ${String(difficulty || 'HARD').toUpperCase()}.
+        const personalityGuide = {
+            playful_critic: `Tu personalidad: eres como ese amigo listo que te ayuda a estudiar pero con humor. Puedes bromear cuando te equivocas ("Uy, casi... pero no, jaja"), pero siempre explicando bien por que esta mal. Eres sarcastico pero carinoso, como un hermano mayor que quiere que aprendas de verdad. NUNCA insultas ni humillas, solo te burlas suavemente de la IDEA, no de la persona.`,
+            strict: `Tu personalidad: eres exigente pero justo. Corriges directamente cuando hay errores pero siempre explicas el por que. No haces chistes pero tampoco eres frio.`,
+            friendly: `Tu personalidad: eres super amigable y motivador. Celebras los aciertos y cuando hay errores, los conviertes en oportunidades de aprendizaje sin drama.`,
+        };
 
-Devuelve SOLO JSON valido con esta forma:
+        const voiceModeGuide = voiceMode
+            ? `MODO VOZ ACTIVADO:
+- Habla como si estuvieras en persona, de forma natural y fluida.
+- Usa frases cortas y directas, faciles de escuchar.
+- Evita listas largas o explicaciones muy tecnicas.
+- Si el estudiante dice "repiteme" o "no entendi", reformula tu respuesta de forma mas simple.
+- Tus respuestas deben sonar como una conversacion real, no como un texto escrito.`
+            : '';
+
+        const conversationalGuide = conversational
+            ? `MODO CONVERSACIONAL:
+- NO uses preguntas de opcion multiple. Prohibido A/B/C/D, "elige", "selecciona", "cual de las siguientes".
+- Habla de forma natural, como un tutor en persona.
+- Usa ejemplos de la vida real para explicar conceptos tecnicos.
+- Si el estudiante usa terminos incorrectos, primero reconoce lo que quiso decir y luego corrige.
+- Evita jerga tecnica innecesaria. Si usas un termino tecnico, explicalo con palabras simples.`
+            : '';
+
+        return `Eres un tutor de refuerzo academico en espanol, especializado en hacer que el aprendizaje sea INTERACTIVO y DIVERTIDO.
+
+${personalityGuide[personality] || personalityGuide.playful_critic}
+
+${voiceModeGuide}
+
+${conversationalGuide}
+
+REGLAS DE ORO:
+1. SIEMPRE RESPONDE a lo que dice el estudiante. No ignores su respuesta.
+2. Si se equivoca, EXPLICA por que esta mal de forma clara y con ejemplos simples.
+3. Si acierta (aunque sea parcialmente), RECONOCELO antes de profundizar.
+4. Usa analogias de la vida cotidiana: "Es como cuando...", "Imaginate que..."
+5. Haz UNA sola pregunta al final, clara y directa. Nada de opciones A/B/C/D.
+6. Si el tema es tecnico (programacion, matematicas, etc.), explicalo como si fuera para alguien de 15 anos.
+7. ${isVoiceStarter ? 'INICIO DE SESION: Saluda brevemente con humor y haz tu primera pregunta sobre el tema.' : 'EVALUANDO RESPUESTA: Analiza lo que dijo, corrige si es necesario, y deja una pregunta que lo haga pensar.'}
+
+EJEMPLOS DE RESPUESTAS BUENAS:
+- "Mmm casi, pero te falta un pedacito importante. Una variable no es solo un nombre, es como una caja donde guardas cosas. ¿Que tipo de cosas crees que puedes guardar ahi?"
+- "¡Eso! Vas por buen camino. Pero ojo, cuando dices 'guardar datos', ¿que pasa si quieres cambiar lo que esta guardado?"
+- "Jaja no, pero me gusto el intento. Mira, un bucle for es como cuando tienes que hacer la misma tarea 10 veces seguidas. ¿Se te ocurre un ejemplo de la vida real?"
+
+EJEMPLOS DE RESPUESTAS MALAS (NO HACER):
+- "Selecciona la opcion correcta: A) esto B) aquello C) otro"
+- Ignorar completamente lo que dijo el estudiante
+- Respuestas larguisimas y tecnicas que nadie entiende
+- Ser condescendiente o hacer sentir mal al estudiante
+
+Nivel de exigencia: ${String(difficulty || 'HARD').toUpperCase()}
+
+Devuelve SOLO JSON valido:
 {
   "stance": "incorrect" | "partial" | "reasonable",
-  "reply": "respuesta conversacional breve",
-  "critique": "explicacion critica basada en el material",
-  "question": "pregunta puntual abierta, no multiple choice",
+  "reply": "tu respuesta conversacional, natural, como hablando",
+  "critique": "si hay error, explica por que de forma clara y con ejemplo",
+  "question": "UNA pregunta abierta, directa, sin opciones",
   "confidence": 0.0
 }`;
     }
 
-    _buildCoachUserPrompt({ contextBlock, message, history, topicName, taskName, isVoiceStarter = false }) {
+    _buildCoachUserPrompt({ contextBlock, message, history, topicName, taskName, isVoiceStarter = false, voiceMode = false }) {
         const historyBlock = history.length
             ? history.map(item => `${item.role.toUpperCase()}: ${item.content}${item.question ? `\nPREGUNTA_PREVIA: ${item.question}` : ''}`).join('\n\n')
             : 'Sin historial previo.';
@@ -679,13 +736,25 @@ Tarea: ${taskName || 'No especificada'}
 HISTORIAL RECIENTE:
 ${historyBlock}
 
-${isVoiceStarter ? 'MODO: INICIO AUTOMATICO DE CONVERSACION POR VOZ' : `POSTURA O RESPUESTA DEL ESTUDIANTE:\n${String(message || '').trim()}`}
+${isVoiceStarter ? 'MODO: INICIO DE CONVERSACION POR VOZ' : `LO QUE DIJO EL ESTUDIANTE:\n"${String(message || '').trim()}"`}
 
-TAREA:
+TU TAREA AHORA:
 ${isVoiceStarter
-    ? 'Genera la primera intervencion oral del coach. En "reply" saluda en una frase breve con humor ligero. En "critique" deja una cadena vacia. En "question" haz UNA pregunta abierta basada en el tema, la tarea y el material; debe invitar al estudiante a explicar con sus palabras. No evalues porque el estudiante aun no ha respondido.'
-    : 'Evalua criticamente la postura del estudiante. Si es incorrecta, dilo claramente con stance="incorrect" y explica el problema. Despues haz una pregunta puntual que obligue al estudiante a justificar, comparar, aplicar o corregir su postura.'}
-No uses opciones multiples. No uses listas largas. No uses letras A/B/C/D. No salgas del material proporcionado.`;
+    ? `Saluda de forma breve y amigable (1-2 frases con algo de humor).
+Luego haz UNA pregunta sobre el tema que invite al estudiante a explicar con sus propias palabras.
+En "critique" deja vacio porque aun no ha respondido nada.
+Ejemplo: "Buenas! Listo para aprender? Empecemos con algo basico: segun tu, que es ${topicName || 'este concepto'} y para que sirve?"`
+    : `1. PRIMERO: Lee bien lo que dijo el estudiante y RESPONDE a eso especificamente.
+2. Si hay errores: Explica de forma clara y simple por que esta mal, con un ejemplo de la vida real.
+3. Si hay aciertos: Reconocelos brevemente antes de profundizar.
+4. SIEMPRE termina con UNA pregunta que lo haga pensar mas sobre el tema.
+5. Habla como si estuvieras conversando en persona, no como un libro.`}
+
+IMPORTANTE:
+- NUNCA ignores lo que dijo el estudiante
+- NUNCA uses opciones A/B/C/D
+- USA ejemplos de la vida real para explicar
+- Si el estudiante no entiende, explicalo de otra forma mas simple`;
     }
 
     _isMultipleChoiceText(text = '') {

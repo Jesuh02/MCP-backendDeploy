@@ -104,6 +104,10 @@ const coachConversationSchema = Joi.object({
         stance: Joi.string().allow('', null).optional(),
         question: Joi.string().allow('', null).optional(),
     }).unknown(true)).max(12).default([]),
+    // Nuevos parámetros para modo conversacional por voz
+    conversational: Joi.boolean().default(true),
+    voiceMode: Joi.boolean().default(false),
+    personality: Joi.string().valid('playful_critic', 'strict', 'friendly').default('playful_critic'),
 }).options({ allowUnknown: true });
 
 export class ReinforcementController {
@@ -409,6 +413,9 @@ export class ReinforcementController {
                 difficulty: value.difficulty,
                 message: value.message,
                 history: value.history || [],
+                conversational: value.conversational !== false,
+                voiceMode: value.voiceMode === true,
+                personality: value.personality || 'playful_critic',
             });
 
             if (result.isFail()) return next(result.getError());
