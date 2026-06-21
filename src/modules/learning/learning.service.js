@@ -96,25 +96,39 @@ Devuelves SIEMPRE un único objeto JSON válido (sin Markdown, sin texto fuera d
   "title": "Título corto y atractivo",
   "panels": [
     {
-      "caption": "Explicacion de la situacion que ocurre en el panel en 1-2 frases (max 260 caracteres). En espanol.",
+      "caption": "Explicacion detallada de la situacion que ocurre en el panel y como representa el concepto tecnico. Debe conectar la alegoria visual con el contenido real del tema (max 300 caracteres). En espanol.",
       "dialogue": "Diálogo opcional entre personajes, breve (puede omitirse).",
-      "technicalDetail": "Codigo, formula, endpoint, tabla, comando, diagrama o dato concreto que debe mostrarse en el panel lateral derecho, nunca dentro de la imagen (max 420 caracteres).",
-      "imagePrompt": "Descripcion visual en INGLES, estilo cartoon educativo, colores vivos, con analogia de vida real, SIN texto visible, SIN codigo, SIN letras, SIN etiquetas, 4:3."
+      "technicalDetail": "OBLIGATORIO: Codigo real, formula, endpoint, query SQL, JSON, tabla, comando, diagrama ASCII o dato concreto del tema. Este contenido aparece en un panel lateral derecho, NUNCA dentro de la imagen. Debe ser codigo o contenido tecnico REAL y FUNCIONAL relacionado con el tema (max 500 caracteres).",
+      "imagePrompt": "Visual description in ENGLISH: educational cartoon style, vibrant colors, real-life analogy scene. CRITICAL: NO text, NO code, NO letters, NO numbers, NO labels, NO speech bubbles, NO screens with text, NO signs, NO writing of any kind visible in the image. Only show physical objects, people, actions, and environments. 4:3 aspect ratio."
     }
   ]
 }
-Reglas:
-- Genera entre 4 y 8 paneles que cuenten una historia con principio, desarrollo y cierre.
-- Cada panel debe explicar el concepto con una analogia visual de la vida real, pero sin ocultar el contenido real del tema.
-- REGLA PRIORITARIA: la imagen NO debe contener texto visible, codigo, formulas, numeros, letras, etiquetas, carteles, bocadillos de dialogo, subtitulos ni pantallas con texto.
-- Si el material habla de programacion, codigo, SQL, API, formulas, datos, arquitectura, comandos, procesos o interfaces, "technicalDetail" es OBLIGATORIO y debe contener el artefacto real que se mostrara en la parte derecha de la imagen.
-- Para software no basta la metafora fisica: la historia debe ser una alegoria de vida real y el "technicalDetail" debe traer fragmentos de codigo, endpoints, JSON, consultas, diagramas, tablas o comandos especificos.
-- Para software usa metaforas fisicas: bases de datos como estantes con cajas, APIs como restaurante con mesero/cocina, autenticacion como puertas con llaves, algoritmos como recetas o lineas de trabajo.
-- En "caption": explica claramente que situacion ocurre en el comic y como esa situacion representa el concepto.
-- En "imagePrompt": incluye explicitamente la analogia concreta, el lugar cotidiano, los objetos y la accion; NO incluyas texto legible ni contenido tecnico escrito dentro de la imagen.
-- Apóyate ESTRICTAMENTE en los materiales (tema, tarea, fragmentos RAG) suministrados.
-- Si los materiales son escasos, complementa con conocimiento general del tema, sin inventar datos contradictorios.
-- Todo texto, codigo o contenido tecnico debe ir en "technicalDetail" para la UI lateral, no dentro de la imagen.`;
+
+REGLAS CRITICAS:
+1. IMAGEN SIN TEXTO: La imagen generada NO debe contener NINGUN texto visible. Los modelos de IA escriben mal el texto en imagenes. Todo texto/codigo va en "technicalDetail".
+
+2. TECHNICALDETAIL OBLIGATORIO: Si el tema trata de programacion, codigo, SQL, API, formulas, datos, arquitectura, comandos, variables, funciones, clases, algoritmos, estructuras de datos, redes, bases de datos, etc., el campo "technicalDetail" es OBLIGATORIO en CADA panel y debe contener:
+   - Fragmentos de codigo REALES y FUNCIONALES
+   - Queries SQL completas
+   - Endpoints con metodo HTTP y ejemplo de request/response
+   - JSON de ejemplo
+   - Comandos de terminal
+   - Formulas matematicas
+   - Diagramas ASCII simples
+
+3. ALEGORIA + CONTENIDO REAL: La historia debe ser una alegoria de la vida real (restaurante, biblioteca, fabrica, cocina, oficina de correos, etc.) PERO el "technicalDetail" debe traer el contenido tecnico REAL que esa alegoria representa.
+
+4. CAPTION EXPLICATIVO: El "caption" debe explicar claramente:
+   - Que situacion ocurre en la imagen
+   - Como esa situacion de la vida real representa el concepto tecnico
+   - La conexion entre la alegoria visual y el codigo/contenido en technicalDetail
+
+5. IMAGEPROMPT SIN TEXTO: Describe solo objetos fisicos, personas, acciones, lugares. Ejemplos:
+   - CORRECTO: "A chef in a busy kitchen receiving order tickets and preparing dishes"
+   - INCORRECTO: "A chef with a sign that says 'API REQUEST'"
+
+6. Genera entre 4 y 8 paneles con principio, desarrollo y cierre.
+7. Apoyate en los materiales proporcionados. Si son escasos, complementa con conocimiento general.`;
 
 const VIDEO_SYSTEM_PROMPT = `Eres un guionista pedagógico de video corto (60-90 s).
 Devuelves SIEMPRE un único objeto JSON válido (sin Markdown), con la forma:
@@ -122,14 +136,32 @@ Devuelves SIEMPRE un único objeto JSON válido (sin Markdown), con la forma:
   "title": "Título atractivo",
   "summary": "Resumen del video en 1-2 frases",
   "scenes": [
-    { "narration": "Texto que explica la situacion que ocurre en la escena y como representa el concepto", "technicalDetail": "Codigo, formula, endpoint, tabla, comando, diagrama o dato concreto que debe mostrarse fuera del video/imagen, en el panel lateral", "imagePrompt": "Escena visual en INGLES, estilo cartoon educativo, colores vivos, con analogia de vida real, SIN texto visible, SIN codigo, SIN letras, SIN etiquetas" }
+    {
+      "narration": "Explicacion detallada de la situacion que ocurre en la escena y como representa el concepto tecnico. Conecta la alegoria visual con el contenido real (max 300 caracteres).",
+      "technicalDetail": "OBLIGATORIO: Codigo real, formula, endpoint, query SQL, JSON, tabla, comando o diagrama ASCII del tema. Aparece en panel lateral, NUNCA en la imagen/video (max 500 caracteres).",
+      "imagePrompt": "Visual description in ENGLISH: educational cartoon style, vibrant colors, real-life analogy scene. CRITICAL: NO text, NO code, NO letters, NO numbers, NO labels, NO speech bubbles, NO screens with text. Only physical objects, people, actions. 4:3 aspect ratio."
+    }
   ]
 }
-Entre 5 y 8 escenas. Apóyate en los materiales aportados.
-Cada escena debe convertir el concepto en una analogia de la vida real con objetos, personas y acciones cotidianas, pero el contenido real que envuelve esa historia debe ir en "technicalDetail" para la UI lateral.
-REGLA PRIORITARIA: la imagen o video NO debe contener texto visible, codigo, formulas, numeros, letras, etiquetas, carteles, subtitulos ni pantallas con texto.
-Si el material habla de programacion, codigo, SQL, API, formulas, datos, arquitectura, comandos, procesos o interfaces, "technicalDetail" es OBLIGATORIO.
-Para software evita pantallas genericas: APIs como restaurante, bases de datos como estantes con cajas, algoritmos como recetas, redes como rutas de correo, autenticacion como control de acceso. Integra ademas codigo, endpoints, JSON, consultas, diagramas, tablas o comandos especificos en "technicalDetail", nunca como texto dentro de la imagen o video.`;
+
+REGLAS CRITICAS:
+1. VIDEO/IMAGEN SIN TEXTO: NO debe contener NINGUN texto visible. Los modelos de IA escriben mal el texto. Todo texto/codigo va en "technicalDetail".
+
+2. TECHNICALDETAIL OBLIGATORIO: Si el tema trata de programacion, codigo, SQL, API, formulas, datos, arquitectura, etc., "technicalDetail" es OBLIGATORIO en CADA escena con:
+   - Fragmentos de codigo REALES
+   - Queries SQL completas
+   - Endpoints con HTTP method y ejemplo
+   - JSON de ejemplo
+   - Comandos de terminal
+   - Formulas o diagramas ASCII
+
+3. ALEGORIA + CONTENIDO REAL: La historia es alegoria de vida real PERO "technicalDetail" trae el contenido tecnico REAL.
+
+4. NARRATION EXPLICATIVO: Explica que ocurre en la escena y como representa el concepto tecnico.
+
+5. IMAGEPROMPT SIN TEXTO: Solo objetos fisicos, personas, acciones, lugares.
+
+6. Entre 5 y 8 escenas con principio, desarrollo y cierre.`;
 
 function safeParseJson(text) {
   if (!text) return null;
@@ -195,6 +227,31 @@ function getTechnicalDetail(item) {
   );
 }
 
+function sanitizeTextFreeVisualIdea(text) {
+  return compactText(text, 900)
+    .replace(/```[\s\S]*?```/g, ' blank prop ')
+    .replace(/`[^`]+`/g, ' blank prop ')
+    .replace(/\b(?:function|const|let|var|class|def|return|console\.log|print)\b[^.;]*/gi, 'blank prop')
+    .replace(/\b(?:GET|POST|PUT|PATCH|DELETE)\s+\/\S+/gi, 'blank prop')
+    .replace(/\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN)\b[^.;]*/gi, 'blank prop')
+    .replace(/\b(?:code|codigo|text|letters|label|formula|endpoint|json|sql|caption|subtitle|speech bubble)\b[^.;]*/gi, 'blank prop')
+    .replace(/\b(screen|whiteboard|blackboard|sign|book|document|paper)\s+(?:with|showing|saying|displaying)\b[^.;]*/gi, '$1 as a blank unreadable prop')
+    .replace(/[{}[\]<>_=+*/\\|~^`]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildTextFreeComicImageRequest(panel) {
+  const visualIdea = sanitizeTextFreeVisualIdea(panel?.imagePrompt || panel?.caption || '').slice(0, 700);
+  return [
+    'TEXT-FREE COMIC PANEL ONLY.',
+    visualIdea ? `Visual idea to reinterpret without text: ${visualIdea}.` : '',
+    'Illustrate only the real-life analogy through people, objects, gestures, spaces, and cause-effect actions.',
+    'If the idea mentions code, formulas, screens, books, documents, labels, signs, charts, tables, endpoints, numbers, or speech bubbles, show them only as blank unreadable props or abstract shapes with no glyphs.',
+    'No written characters of any kind may appear in the image: no letters, no numbers, no code, no labels, no formulas, no subtitles, no UI text, no speech bubbles, no logos, no watermarks.',
+  ].filter(Boolean).join('\n');
+}
+
 function collectTechnicalHighlights(script) {
   const items = Array.isArray(script?.panels) ? script.panels : Array.isArray(script?.scenes) ? script.scenes : [];
   const seen = new Set();
@@ -222,9 +279,10 @@ function collectSceneNotes(script) {
 }
 
 function buildAnalogyVisualPrompt(prompt, { title = '', sourceContext = '', medium = 'image' } = {}) {
+  const isTextFree = /text-free/i.test(medium);
   const subject = compactText([title, sourceContext, prompt].filter(Boolean).join(' '), 1400);
   const hints = pickAnalogyHints(subject).join('; ');
-  const technicalHints = pickTechnicalVisualHints(subject).join('; ');
+  const technicalHints = isTextFree ? '' : pickTechnicalVisualHints(subject).join('; ');
   const contextHint = compactText(sourceContext, 650);
 
   return [
@@ -233,9 +291,10 @@ function buildAnalogyVisualPrompt(prompt, { title = '', sourceContext = '', medi
     contextHint ? `Relevant context: ${contextHint}.` : '',
     `Core scene request: ${compactText(prompt, 700)}.`,
     `Use a concrete real-life analogy: ${hints}.`,
-    `External side-panel technical requirement: ${technicalHints}. The story must remain an analogy, and the actual code/data/formula/endpoint must be displayed by the UI outside the image.`,
+    technicalHints ? `External side-panel technical requirement: ${technicalHints}. The story must remain an analogy, and the actual code/data/formula/endpoint must be displayed by the UI outside the image.` : '',
     'Make the abstract idea visible through physical objects, people interacting, clear cause-and-effect, and a single focused environment.',
     'Do not render any readable text inside the image or video: no code, letters, numbers, formulas, table text, endpoint paths, JSON keys, commands, diagram labels, captions, speech bubbles, logos, or watermarks.',
+    isTextFree ? 'For this comic panel, every surface must be blank, pictorial, or abstract: blank screens, blank papers, blank signs, blank books, blank labels, and no glyph-like marks.' : '',
     'Avoid generic blank laptop screens, unrelated floating code, abstract icons, full UI screenshots, repeated headings, decorative labels, captions, logos, and watermarks.',
     'Style: polished educational illustration, warm realistic details, vibrant but restrained colors, cinematic composition, 4:3 aspect ratio unless video provider requires otherwise.',
   ].filter(Boolean).join('\n');
@@ -288,15 +347,10 @@ export class LearningDomainService {
     const renderedPanels = await Promise.all(
       panels.map(async (p) => {
         const technicalDetail = getTechnicalDetail(p);
-        const panelPrompt = [
-          p.imagePrompt,
-          technicalDetail ? `External side-panel technical detail, do not render as image text: ${technicalDetail}` : '',
-          p.caption ? `Caption context: ${p.caption}` : '',
-          p.dialogue ? `Dialogue context: ${p.dialogue}` : '',
-        ].filter(Boolean).join('\n');
+        const panelPrompt = buildTextFreeComicImageRequest(p);
         const imageUrl = await this._renderImageSafely(
           String(panelPrompt || title),
-          { title, sourceContext, medium: 'comic panel illustration' }
+          { title: '', sourceContext: '', medium: 'text-free comic panel illustration' }
         );
         return {
           caption: String(p.caption || '').slice(0, 320),

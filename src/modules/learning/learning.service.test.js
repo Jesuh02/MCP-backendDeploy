@@ -7,6 +7,7 @@ test('generateComic keeps technical artifacts outside images and in the panel co
   let capturedSystemPrompt = '';
   let capturedUserPrompt = '';
   let capturedImagePrompt = '';
+  let capturedVisualContext = null;
 
   const service = new LearningDomainService({
     learningContextService: {
@@ -34,7 +35,7 @@ test('generateComic keeps technical artifacts outside images and in the panel co
                 caption: 'El taller compara una maquina reutilizable con una funcion.',
                 dialogue: 'La funcion recibe dos piezas y entrega el resultado.',
                 technicalDetail: 'function sumar(a, b) { return a + b; }',
-                imagePrompt: 'A workshop where students use a reusable adding machine on a desk.',
+                imagePrompt: 'A workshop where students see function sumar(a, b) { return a + b; } on a whiteboard.',
               },
             ],
           }),
@@ -43,8 +44,9 @@ test('generateComic keeps technical artifacts outside images and in the panel co
     },
   });
 
-  service._renderImageSafely = async(prompt) => {
+  service._renderImageSafely = async(prompt, visualContext) => {
     capturedImagePrompt = prompt;
+    capturedVisualContext = visualContext;
     return 'data:image/png;base64,abc123';
   };
 
@@ -54,9 +56,18 @@ test('generateComic keeps technical artifacts outside images and in the panel co
   assert.match(capturedSystemPrompt, /codigo|fragmentos de codigo/i);
   assert.match(capturedSystemPrompt, /NO debe contener texto visible/);
   assert.match(capturedUserPrompt, /function sumar/);
-  assert.match(capturedImagePrompt, /External side-panel technical detail/);
+  assert.match(capturedImagePrompt, /TEXT-FREE COMIC PANEL ONLY/);
+  assert.match(capturedImagePrompt, /No written characters/);
+  assert.doesNotMatch(capturedImagePrompt, /External side-panel technical detail/);
   assert.doesNotMatch(capturedImagePrompt, /Technical detail to make visible/);
-  assert.match(capturedImagePrompt, /function sumar\(a, b\)/);
+  assert.doesNotMatch(capturedImagePrompt, /function sumar\(a, b\)/);
+  assert.doesNotMatch(capturedImagePrompt, /return a \+ b|console\.log|whiteboard showing/i);
+  assert.doesNotMatch(capturedImagePrompt, /Caption context|Dialogue context/);
+  assert.deepEqual(capturedVisualContext, {
+    title: '',
+    sourceContext: '',
+    medium: 'text-free comic panel illustration',
+  });
   assert.equal(result.panels[0].technicalDetail, 'function sumar(a, b) { return a + b; }');
 });
 
