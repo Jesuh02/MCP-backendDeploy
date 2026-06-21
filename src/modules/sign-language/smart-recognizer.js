@@ -295,9 +295,20 @@ function eventFromStaticCandidate(source, candidate) {
     };
 }
 
-function shouldUseStaticVlm(candidate, state, now) {
+function shouldUseStaticVlm(candidate, state, now, language) {
     if (STATIC_VLM_MODE === 'off') return false;
     if (STATIC_VLM_MODE === 'always') return true;
+
+    // Para LSC (Lengua de Señas Colombiana), SIEMPRE usar VLM porque el modelo
+    // ONNX está entrenado en ASL, no en LSC. El VLM con los prompts LSC dará
+    // mejores resultados para el alfabeto dactilológico colombiano.
+    const lang = String(language || '').toLowerCase();
+    if (['lsc', 'es', 'es-co', 'spanish', 'colombian', 'colombia'].includes(lang)) {
+        // Pequeña espera entre llamadas VLM para no saturar
+        if (now - state.lastStaticVlmAt < 800) return false;
+        return true;
+    }
+
     if (!candidate) return true;
 
     const confidence = Number(candidate.confidence) || 0;
@@ -600,7 +611,8 @@ async function ingestFrameNow(safeId, frameBuffer, opts = {}) {
                     console.warn('[SmartRecognizer] ONNX letter falló:', err?.message || err);
                 }
 
-                if (allowVlmLetterFallback && shouldUseStaticVlm(candidate, state, triggerAt)) {
+                const userLanguage = typeof opts.language === 'string' ? opts.language : undefined;
+                if (allowVlmLetterFallback && shouldUseStaticVlm(candidate, state, triggerAt, userLanguage)) {
                     try {
                         state.lastStaticVlmAt = triggerAt;
                         const previousText = getSessionDraft(safeId)?.draft || '';
@@ -608,7 +620,7 @@ async function ingestFrameNow(safeId, frameBuffer, opts = {}) {
                             context: typeof opts.context === 'string' ? opts.context : undefined,
                             previousText: previousText || undefined,
                             model: typeof opts.model === 'string' ? opts.model : undefined,
-                            language: typeof opts.language === 'string' ? opts.language : undefined,
+                            language: userLanguage,
                             mode: 'static',
                         });
                         if (
@@ -617,7 +629,13 @@ async function ingestFrameNow(safeId, frameBuffer, opts = {}) {
                             (vlm.kind === 'letter' || vlm.kind === 'number') &&
                             vlm.confidence >= minPhraseConf
                         ) {
+                            // Para LSC, siempre preferir VLM sobre ONNX porque el modelo
+                            // ONNX está entrenado en ASL, no en el alfabeto colombiano
+                            const isLsc = ['lsc', 'es', 'es-co', 'spanish', 'colombian', 'colombia'].includes(
+                                String(userLanguage || '').toLowerCase()
+                            );
                             const vlmWins =
+                                isLsc ||
                                 vlm.kind === 'number' ||
                                 STATIC_VLM_MODE === 'always' ||
                                 !candidate ||
