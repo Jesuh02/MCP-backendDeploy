@@ -19,15 +19,17 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export const HF_MODEL_ID = 'prithivMLmods/Alphabet-Sign-Language-Detection';
+// ONNX deshabilitado: no hay modelo ONNX precompilado para LSC (lengua de señas colombiana).
+// El reconocimiento usa VLM (Vision Language Model) que es más preciso para LSC.
+// Para habilitar ONNX en el futuro, configurar SIGN_LANGUAGE_HF_REPO con un modelo
+// que tenga archivos ONNX (ej: Xenova/vit-base-patch16-224 con fine-tuning).
+export const HF_MODEL_ID = null; // Deshabilitado
 
 const DEFAULT_MODEL_DIR = path.resolve(__dirname, '../../../models/sign-language');
 const MODEL_DIR = process.env.SIGN_LANGUAGE_MODEL_DIR || DEFAULT_MODEL_DIR;
-// Usar el modelo por defecto de HuggingFace si no se especifica otro
-// Ignorar placeholders como "tu_usuario/..." que son ejemplos de la documentación
 const envRepo = (process.env.SIGN_LANGUAGE_HF_REPO || '').trim();
 const isPlaceholder = !envRepo || envRepo.includes('tu_usuario') || envRepo.includes('your_username');
-const HF_REPO = isPlaceholder ? HF_MODEL_ID : envRepo;
+const HF_REPO = isPlaceholder ? null : envRepo; // null = deshabilitado
 const CACHE_DIR = process.env.SIGN_LANGUAGE_CACHE_DIR || '/tmp/transformers-cache';
 
 let classifierPromise = null;
@@ -41,13 +43,11 @@ export async function getLetterClassifier() {
         const hasLocal = ['config.json', 'preprocessor_config.json', 'onnx/model.onnx']
             .every((rel) => fs.existsSync(path.join(MODEL_DIR, rel)));
 
-        // HF_REPO siempre tendrá un valor (el default o el configurado)
-        // así que este check solo es necesario si se deshabilitó explícitamente
-        if (!hasLocal && HF_REPO === 'disabled') {
-            throw new Error(
-                `Modelo de lengua de señas deshabilitado. Configure SIGN_LANGUAGE_HF_REPO ` +
-                `o bundlee los pesos en ${MODEL_DIR}.`,
-            );
+        // Si no hay modelo local y HF_REPO está deshabilitado (null), usar VLM
+        if (!hasLocal && !HF_REPO) {
+            const err = new Error('ONNX deshabilitado: el reconocimiento usará VLM.');
+            err.code = 'ONNX_DISABLED';
+            throw err;
         }
 
         const { pipeline, env } = await import('@huggingface/transformers');
