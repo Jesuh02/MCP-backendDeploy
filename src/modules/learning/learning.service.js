@@ -128,7 +128,20 @@ REGLAS CRITICAS:
    - INCORRECTO: "A chef with a sign that says 'API REQUEST'"
 
 6. Genera entre 4 y 8 paneles con principio, desarrollo y cierre.
-7. Apoyate en los materiales proporcionados. Si son escasos, complementa con conocimiento general.`;
+
+7. CODIGO PROGRESIVO: El codigo en "technicalDetail" debe PROGRESAR con la historia:
+   - Panel 1: Muestra el problema o concepto inicial (ej: definicion de variable, importacion)
+   - Panel 2-3: Desarrollo del codigo paso a paso (ej: funciones, logica)
+   - Panel 4+: Codigo completo o resultado final
+   Cada panel debe mostrar una PARTE DIFERENTE del codigo que se relaciona con esa escena especifica.
+
+8. EJEMPLOS DE TECHNICALDETAIL POR PANEL (si el tema es Python):
+   Panel 1 (problema): "# El usuario quiere saludar\\nname = input('Tu nombre: ')"
+   Panel 2 (solucion): "def greet(name):\\n    return f'Hola, {name}!'"
+   Panel 3 (uso): "result = greet(name)\\nprint(result)"
+   Panel 4 (completo): "# Programa completo\\ndef greet(name):\\n    return f'Hola, {name}!'\\n\\nname = input('Tu nombre: ')\\nprint(greet(name))"
+
+9. Apoyate en los materiales proporcionados. Si son escasos, complementa con conocimiento general.`;
 
 const VIDEO_SYSTEM_PROMPT = `Eres un guionista pedagógico de video corto (60-90 s).
 Devuelves SIEMPRE un único objeto JSON válido (sin Markdown), con la forma:
@@ -161,7 +174,9 @@ REGLAS CRITICAS:
 
 5. IMAGEPROMPT SIN TEXTO: Solo objetos fisicos, personas, acciones, lugares.
 
-6. Entre 5 y 8 escenas con principio, desarrollo y cierre.`;
+6. Entre 5 y 8 escenas con principio, desarrollo y cierre.
+
+7. CODIGO PROGRESIVO: El codigo en "technicalDetail" debe PROGRESAR con la historia. Cada escena muestra una parte diferente del codigo que se relaciona con esa situacion especifica.`;
 
 function safeParseJson(text) {
   if (!text) return null;
