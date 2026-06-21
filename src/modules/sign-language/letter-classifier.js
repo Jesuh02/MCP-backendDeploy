@@ -24,7 +24,10 @@ export const HF_MODEL_ID = 'prithivMLmods/Alphabet-Sign-Language-Detection';
 const DEFAULT_MODEL_DIR = path.resolve(__dirname, '../../../models/sign-language');
 const MODEL_DIR = process.env.SIGN_LANGUAGE_MODEL_DIR || DEFAULT_MODEL_DIR;
 // Usar el modelo por defecto de HuggingFace si no se especifica otro
-const HF_REPO = (process.env.SIGN_LANGUAGE_HF_REPO || '').trim() || HF_MODEL_ID;
+// Ignorar placeholders como "tu_usuario/..." que son ejemplos de la documentación
+const envRepo = (process.env.SIGN_LANGUAGE_HF_REPO || '').trim();
+const isPlaceholder = !envRepo || envRepo.includes('tu_usuario') || envRepo.includes('your_username');
+const HF_REPO = isPlaceholder ? HF_MODEL_ID : envRepo;
 const CACHE_DIR = process.env.SIGN_LANGUAGE_CACHE_DIR || '/tmp/transformers-cache';
 
 let classifierPromise = null;
