@@ -608,7 +608,10 @@ async function ingestFrameNow(safeId, frameBuffer, opts = {}) {
                         };
                     }
                 } catch (err) {
-                    console.warn('[SmartRecognizer] ONNX letter falló:', err?.message || err);
+                    // No mostrar warning si ONNX está deshabilitado intencionalmente
+                    if (err?.code !== 'ONNX_DISABLED') {
+                        console.warn('[SmartRecognizer] ONNX letter falló:', err?.message || err);
+                    }
                 }
 
                 const userLanguage = typeof opts.language === 'string' ? opts.language : undefined;
