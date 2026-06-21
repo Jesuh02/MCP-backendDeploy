@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { LearningDomainService } from './learning.service.js';
 import { Result } from '../../shared/Result.js';
 
-test('generateComic keeps technical artifacts visible in the generated panel contract', async() => {
+test('generateComic keeps technical artifacts outside images and in the panel contract', async() => {
   let capturedSystemPrompt = '';
   let capturedUserPrompt = '';
   let capturedImagePrompt = '';
@@ -52,13 +52,15 @@ test('generateComic keeps technical artifacts visible in the generated panel con
 
   assert.match(capturedSystemPrompt, /technicalDetail/);
   assert.match(capturedSystemPrompt, /codigo|fragmentos de codigo/i);
+  assert.match(capturedSystemPrompt, /NO debe contener texto visible/);
   assert.match(capturedUserPrompt, /function sumar/);
-  assert.match(capturedImagePrompt, /Technical detail to make visible/);
+  assert.match(capturedImagePrompt, /External side-panel technical detail/);
+  assert.doesNotMatch(capturedImagePrompt, /Technical detail to make visible/);
   assert.match(capturedImagePrompt, /function sumar\(a, b\)/);
   assert.equal(result.panels[0].technicalDetail, 'function sumar(a, b) { return a + b; }');
 });
 
-test('slideshow scenes pass technical details into visual prompts and response slides', async() => {
+test('slideshow scenes keep technical details in the side-panel contract', async() => {
   let capturedImagePrompt = '';
   const service = new LearningDomainService({
     learningContextService: { buildLearningContext: async() => Result.ok({}) },
@@ -82,6 +84,7 @@ test('slideshow scenes pass technical details into visual prompts and response s
   }, 'Tema: consumo de API REST');
 
   assert.equal(slides[0].technicalDetail, 'GET /users/42 -> 200 { "name": "Ana" }');
-  assert.match(capturedImagePrompt, /Technical detail to make visible/);
+  assert.match(capturedImagePrompt, /External side-panel technical detail/);
+  assert.doesNotMatch(capturedImagePrompt, /Technical detail to make visible/);
   assert.match(capturedImagePrompt, /GET \/users\/42/);
 });
