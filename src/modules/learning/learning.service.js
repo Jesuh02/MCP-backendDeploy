@@ -56,38 +56,38 @@ const ANALOGY_EXAMPLES = [
 const TECHNICAL_VISUAL_EXAMPLES = [
   {
     test: /(codigo|code|programa|programacion|python|javascript|typescript|java|c\+\+|html|css|script|funcion|function|metodo|class|clase|variable|if|for|while|return|const|let|def|print|console\.log)/i,
-    text: 'include a readable 3-5 line code snippet connected to the lesson, shown on a whiteboard, editor, notebook, or printed card',
+    text: 'prepare a readable 3-5 line code snippet for the side explanation panel; the image itself must only show the real-life analogy without readable text',
   },
   {
     test: /(database|base de datos|sql|tabla|registro|consulta|query|join|select|insert|update|where|indice|index)/i,
-    text: 'include a small SQL query, table rows, column names, keys, or an index card that makes the database operation visible',
+    text: 'prepare a small SQL query, table rows, column names, keys, or index example for the side explanation panel; the image itself must stay text-free',
   },
   {
     test: /(api|endpoint|http|request|response|fetch|rest|graphql|json|servicio|microservicio)/i,
-    text: 'include a visible endpoint, HTTP method, request card, response JSON, or data contract inside the scene',
+    text: 'prepare an endpoint, HTTP method, request/response JSON, or data contract for the side explanation panel; the image itself must not contain readable text',
   },
   {
     test: /(algoritmo|algorithm|diagrama|flujo|flowchart|secuencia|condicional|loop|bucle|iteracion)/i,
-    text: 'include a small flowchart, numbered steps, condition branch, or loop marker beside the real-life analogy',
+    text: 'prepare numbered steps, a condition branch, or loop explanation for the side panel; the image should show the process through action without labels',
   },
   {
     test: /(formula|ecuacion|equation|matematica|calculo|grafica|chart|dataset|datos|csv|estadistica|modelo|ml|machine learning)/i,
-    text: 'include the formula, dataset sample, chart, notebook cell, or model diagram needed to understand the lesson',
+    text: 'prepare the formula, dataset sample, chart reading, notebook cell, or model explanation for the side panel; keep the image free of readable symbols and text',
   },
   {
     test: /(docker|contenedor|deploy|cloud|nube|servidor|arquitectura|architecture|red|network|socket|websocket)/i,
-    text: 'include an architecture sketch, command, service boxes, ports, packets, or deployment diagram tied to the story',
+    text: 'prepare an architecture note, command, service boxes, ports, packets, or deployment detail for the side panel; the image should use unlabeled objects and actions',
   },
 ];
 
 const DEFAULT_ANALOGY =
   'choose one concrete everyday place such as a restaurant, workshop, library, warehouse, classroom, post office, clinic, or kitchen, and make the lesson visible through physical objects and human actions';
 const DEFAULT_TECHNICAL_VISUAL =
-  'when the lesson has concrete artifacts, include one specific code snippet, formula, table, endpoint, diagram, command, dataset, interface state, or domain object inside the scene';
+  'when the lesson has concrete artifacts, prepare one specific code snippet, formula, table, endpoint, diagram note, command, dataset, interface state, or domain object for the side explanation panel';
 
 // In-process async job store for video generation.
 // Single-instance deployments (Railway) are fine; for multi-instance add Redis.
-const videoJobs = new Map(); // jobId -> { status, title, posterUrl, videoUrl?, slides?, durationSeconds, error?, createdAt }
+const videoJobs = new Map(); // jobId -> { status, title, summary?, posterUrl, videoUrl?, slides?, sceneNotes?, durationSeconds, error?, createdAt }
 const VIDEO_JOB_TTL_MS = 30 * 60 * 1000; // 30 min
 
 const COMIC_SYSTEM_PROMPT = `Eres un guionista pedagógico que transforma material de estudio en una historieta (cómic) didáctica.
@@ -96,23 +96,25 @@ Devuelves SIEMPRE un único objeto JSON válido (sin Markdown, sin texto fuera d
   "title": "Título corto y atractivo",
   "panels": [
     {
-      "caption": "Narración del panel en 1-2 frases (max 220 caracteres). En español.",
+      "caption": "Explicacion de la situacion que ocurre en el panel en 1-2 frases (max 260 caracteres). En espanol.",
       "dialogue": "Diálogo opcional entre personajes, breve (puede omitirse).",
-      "technicalDetail": "Codigo, formula, endpoint, tabla, comando, diagrama o dato concreto que debe verse en la escena si aplica (max 260 caracteres).",
-      "imagePrompt": "Descripción visual en INGLÉS, estilo cartoon educativo, colores vivos, con artefacto tecnico visible si aplica, sin texto decorativo, 4:3."
+      "technicalDetail": "Codigo, formula, endpoint, tabla, comando, diagrama o dato concreto que debe mostrarse en el panel lateral derecho, nunca dentro de la imagen (max 420 caracteres).",
+      "imagePrompt": "Descripcion visual en INGLES, estilo cartoon educativo, colores vivos, con analogia de vida real, SIN texto visible, SIN codigo, SIN letras, SIN etiquetas, 4:3."
     }
   ]
 }
 Reglas:
 - Genera entre 4 y 8 paneles que cuenten una historia con principio, desarrollo y cierre.
 - Cada panel debe explicar el concepto con una analogia visual de la vida real, pero sin ocultar el contenido real del tema.
-- Si el material habla de programacion, codigo, SQL, API, formulas, datos, arquitectura, comandos, procesos o interfaces, "technicalDetail" es OBLIGATORIO.
-- Para software no basta la metafora fisica: integra fragmentos de codigo, endpoints, JSON, consultas, diagramas, tablas o comandos especificos dentro de la escena.
+- REGLA PRIORITARIA: la imagen NO debe contener texto visible, codigo, formulas, numeros, letras, etiquetas, carteles, bocadillos de dialogo, subtitulos ni pantallas con texto.
+- Si el material habla de programacion, codigo, SQL, API, formulas, datos, arquitectura, comandos, procesos o interfaces, "technicalDetail" es OBLIGATORIO y debe contener el artefacto real que se mostrara en la parte derecha de la imagen.
+- Para software no basta la metafora fisica: la historia debe ser una alegoria de vida real y el "technicalDetail" debe traer fragmentos de codigo, endpoints, JSON, consultas, diagramas, tablas o comandos especificos.
 - Para software usa metaforas fisicas: bases de datos como estantes con cajas, APIs como restaurante con mesero/cocina, autenticacion como puertas con llaves, algoritmos como recetas o lineas de trabajo.
-- En "imagePrompt": incluye explicitamente la analogia concreta, el lugar cotidiano, los objetos, la accion y el artefacto tecnico que debe observarse.
+- En "caption": explica claramente que situacion ocurre en el comic y como esa situacion representa el concepto.
+- En "imagePrompt": incluye explicitamente la analogia concreta, el lugar cotidiano, los objetos y la accion; NO incluyas texto legible ni contenido tecnico escrito dentro de la imagen.
 - Apóyate ESTRICTAMENTE en los materiales (tema, tarea, fragmentos RAG) suministrados.
 - Si los materiales son escasos, complementa con conocimiento general del tema, sin inventar datos contradictorios.
-- El texto visible dentro de la imagen debe limitarse al artefacto didactico necesario: codigo corto, formula, tabla, endpoint, comando o etiquetas de diagrama. Evita titulos, subtitulos, logos y texto decorativo.`;
+- Todo texto, codigo o contenido tecnico debe ir en "technicalDetail" para la UI lateral, no dentro de la imagen.`;
 
 const VIDEO_SYSTEM_PROMPT = `Eres un guionista pedagógico de video corto (60-90 s).
 Devuelves SIEMPRE un único objeto JSON válido (sin Markdown), con la forma:
@@ -120,13 +122,14 @@ Devuelves SIEMPRE un único objeto JSON válido (sin Markdown), con la forma:
   "title": "Título atractivo",
   "summary": "Resumen del video en 1-2 frases",
   "scenes": [
-    { "narration": "Texto que narra la voz en off", "technicalDetail": "Codigo, formula, endpoint, tabla, comando, diagrama o dato concreto que debe verse en la escena si aplica", "imagePrompt": "Escena visual en INGLÉS, estilo cartoon educativo, colores vivos, con artefacto tecnico visible si aplica, sin texto decorativo" }
+    { "narration": "Texto que explica la situacion que ocurre en la escena y como representa el concepto", "technicalDetail": "Codigo, formula, endpoint, tabla, comando, diagrama o dato concreto que debe mostrarse fuera del video/imagen, en el panel lateral", "imagePrompt": "Escena visual en INGLES, estilo cartoon educativo, colores vivos, con analogia de vida real, SIN texto visible, SIN codigo, SIN letras, SIN etiquetas" }
   ]
 }
 Entre 5 y 8 escenas. Apóyate en los materiales aportados.
-Cada escena debe convertir el concepto en una analogia de la vida real con objetos, personas y acciones cotidianas, pero tambien debe mostrar el contenido real que envuelve esa historia.
+Cada escena debe convertir el concepto en una analogia de la vida real con objetos, personas y acciones cotidianas, pero el contenido real que envuelve esa historia debe ir en "technicalDetail" para la UI lateral.
+REGLA PRIORITARIA: la imagen o video NO debe contener texto visible, codigo, formulas, numeros, letras, etiquetas, carteles, subtitulos ni pantallas con texto.
 Si el material habla de programacion, codigo, SQL, API, formulas, datos, arquitectura, comandos, procesos o interfaces, "technicalDetail" es OBLIGATORIO.
-Para software evita pantallas genericas: APIs como restaurante, bases de datos como estantes con cajas, algoritmos como recetas, redes como rutas de correo, autenticacion como control de acceso. Integra ademas codigo, endpoints, JSON, consultas, diagramas, tablas o comandos especificos.`;
+Para software evita pantallas genericas: APIs como restaurante, bases de datos como estantes con cajas, algoritmos como recetas, redes como rutas de correo, autenticacion como control de acceso. Integra ademas codigo, endpoints, JSON, consultas, diagramas, tablas o comandos especificos en "technicalDetail", nunca como texto dentro de la imagen o video.`;
 
 function safeParseJson(text) {
   if (!text) return null;
@@ -206,6 +209,18 @@ function collectTechnicalHighlights(script) {
   return highlights;
 }
 
+function collectSceneNotes(script) {
+  const scenes = Array.isArray(script?.scenes) ? script.scenes : [];
+  return scenes.slice(0, 8).map((scene) => {
+    const note = {
+      narration: String(scene?.narration || '').slice(0, 420),
+    };
+    const technicalDetail = getTechnicalDetail(scene);
+    if (technicalDetail) note.technicalDetail = technicalDetail;
+    return note;
+  }).filter((scene) => scene.narration || scene.technicalDetail);
+}
+
 function buildAnalogyVisualPrompt(prompt, { title = '', sourceContext = '', medium = 'image' } = {}) {
   const subject = compactText([title, sourceContext, prompt].filter(Boolean).join(' '), 1400);
   const hints = pickAnalogyHints(subject).join('; ');
@@ -218,9 +233,9 @@ function buildAnalogyVisualPrompt(prompt, { title = '', sourceContext = '', medi
     contextHint ? `Relevant context: ${contextHint}.` : '',
     `Core scene request: ${compactText(prompt, 700)}.`,
     `Use a concrete real-life analogy: ${hints}.`,
-    `Technical artifact requirement: ${technicalHints}. The story must remain an analogy, but the actual artifact being taught must also be visible.`,
+    `External side-panel technical requirement: ${technicalHints}. The story must remain an analogy, and the actual code/data/formula/endpoint must be displayed by the UI outside the image.`,
     'Make the abstract idea visible through physical objects, people interacting, clear cause-and-effect, and a single focused environment.',
-    'Allowed visible text: short code snippets, formulas, table headers, endpoint paths, JSON keys, commands, or diagram labels required for learning. Keep it concise and readable.',
+    'Do not render any readable text inside the image or video: no code, letters, numbers, formulas, table text, endpoint paths, JSON keys, commands, diagram labels, captions, speech bubbles, logos, or watermarks.',
     'Avoid generic blank laptop screens, unrelated floating code, abstract icons, full UI screenshots, repeated headings, decorative labels, captions, logos, and watermarks.',
     'Style: polished educational illustration, warm realistic details, vibrant but restrained colors, cinematic composition, 4:3 aspect ratio unless video provider requires otherwise.',
   ].filter(Boolean).join('\n');
@@ -275,7 +290,7 @@ export class LearningDomainService {
         const technicalDetail = getTechnicalDetail(p);
         const panelPrompt = [
           p.imagePrompt,
-          technicalDetail ? `Technical detail to make visible in the scene: ${technicalDetail}` : '',
+          technicalDetail ? `External side-panel technical detail, do not render as image text: ${technicalDetail}` : '',
           p.caption ? `Caption context: ${p.caption}` : '',
           p.dialogue ? `Dialogue context: ${p.dialogue}` : '',
         ].filter(Boolean).join('\n');
@@ -420,8 +435,10 @@ export class LearningDomainService {
     }
 
     const title = String(script.title || ctx?.topic?.name || 'Video educativo');
+    const summary = String(script.summary || '').slice(0, 520);
     const durationSeconds = Math.max(45, Math.min(120, script.scenes.length * 10));
     const technicalHighlights = collectTechnicalHighlights(script);
+    const sceneNotes = collectSceneNotes(script);
 
     // ── Async path: video model configured ──────────────────
     // Return immediately after script generation so the HTTP connection is never
@@ -431,16 +448,18 @@ export class LearningDomainService {
       videoJobs.set(jobId, {
         status: 'processing',
         title,
+        summary,
         posterUrl: '',
         durationSeconds,
         technicalHighlights,
+        sceneNotes,
         createdAt: Date.now(),
       });
       // Start background job — do NOT await so the HTTP response is sent immediately.
       this._startVideoJob(jobId, script, sourceContext).catch((err) =>
         console.error('[LearningService] Unhandled background video job error:', err?.message)
       );
-      return { jobId, status: 'processing', title, posterUrl: '', durationSeconds, technicalHighlights };
+      return { jobId, status: 'processing', title, summary, posterUrl: '', durationSeconds, technicalHighlights, sceneNotes };
     }
 
     // No video model configured — surface an error so the UI shows a clear message.
@@ -459,7 +478,7 @@ export class LearningDomainService {
       this._renderImageSafely(
         [
           String(firstScene.imagePrompt || script.title || ''),
-          firstTechnicalDetail ? `Technical detail to make visible in the scene: ${firstTechnicalDetail}` : '',
+          firstTechnicalDetail ? `External side-panel technical detail, do not render as image text: ${firstTechnicalDetail}` : '',
         ].filter(Boolean).join('\n'),
         { title: script.title, sourceContext, medium: 'video poster illustration' }
       ).then((posterUrl) => {
@@ -515,7 +534,7 @@ export class LearningDomainService {
           imageUrl: await this._renderImageSafely(
             [
               String(scene.imagePrompt || scene.narration || ''),
-              technicalDetail ? `Technical detail to make visible in the scene: ${technicalDetail}` : '',
+              technicalDetail ? `External side-panel technical detail, do not render as image text: ${technicalDetail}` : '',
             ].filter(Boolean).join('\n'),
             { title: script.title, sourceContext, medium: 'video slide illustration' }
           ),
@@ -547,7 +566,7 @@ export class LearningDomainService {
         const technicalDetail = getTechnicalDetail(s);
         return [
           `Scene ${i + 1}: ${s.imagePrompt || s.narration || ''}`,
-          technicalDetail ? `Visible technical artifact: ${technicalDetail}` : '',
+          technicalDetail ? `External side-panel technical content: ${technicalDetail}` : '',
         ].filter(Boolean).join('. ');
       })
       .join('. ');
@@ -556,8 +575,8 @@ export class LearningDomainService {
       [
         script.summary || '',
         sceneSummary,
-        technicalSummary ? `Visible technical artifacts across the video: ${technicalSummary}.` : '',
-        'Smooth camera movement, coherent continuity between scenes, no decorative on-screen text; allow the specified short code, formulas, tables, endpoints, commands, or diagram labels.',
+        technicalSummary ? `External technical content shown beside the video: ${technicalSummary}.` : '',
+        'Smooth camera movement, coherent continuity between scenes, no decorative on-screen text; do not render code, formulas, tables, endpoints, commands, labels, captions, or any readable text inside the video.',
       ].filter(Boolean).join('. '),
       { title: script.title, sourceContext, medium: 'short educational video' }
     );
