@@ -47,17 +47,70 @@ const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 1500
 const MAX_FRAMES = 14;
 const MIN_FRAMES = 1;
 const STREAM_DEFAULT_FRAME_INTERVAL_MS = 250;
-const STREAM_MOTION_HIGH = 0.030;
-const STREAM_MOTION_LOW = 0.010;
-const STREAM_SETTLE_MS = 350;
-const STREAM_MIN_MOTION_MS = 450;
-const STREAM_MIN_STATIC_MS = 900;
+
+// Umbrales de detección de movimiento calibrados para LSC:
+// - MOTION_HIGH (0.025): umbral para detectar movimiento dinámico (palabras/frases)
+//   Valores más bajos = más sensible al movimiento
+// - MOTION_LOW (0.008): umbral para detectar quietud (letras/números)
+//   Por debajo de este valor, la mano se considera estática
+const STREAM_MOTION_HIGH = 0.025;  // Reducido de 0.030 para detectar mejor movimientos sutiles
+const STREAM_MOTION_LOW = 0.008;   // Reducido de 0.010 para ser más preciso con señas estáticas
+
+const STREAM_SETTLE_MS = 300;      // Tiempo para que la mano se "asiente" después de moverse
+const STREAM_MIN_MOTION_MS = 400;  // Mínimo tiempo de movimiento para considerar seña dinámica
+const STREAM_MIN_STATIC_MS = 700;  // Mínimo tiempo quieto para considerar letra/número (reducido de 900)
 const STREAM_PRE_ROLL_MS = 200;
 const STREAM_POST_ROLL_MS = 200;
 const STREAM_MAX_SEGMENT_FRAMES = 16;
 const TIMELINE_WINDOW_MS = 30_000;
 const TIMELINE_MAX_FRAMES_PER_WINDOW = 18;
 const TIMELINE_MIN_GAP_DUPLICATE_MS = 3_000;
+
+// Alfabeto dactilológico colombiano (LSC) - configuraciones de mano
+const LSC_ALPHABET = {
+    'A': 'puño cerrado con pulgar al lado (no sobre los dedos)',
+    'B': 'mano plana vertical, dedos juntos extendidos, pulgar cruzado sobre la palma',
+    'C': 'mano en forma de C, dedos curvados como agarrando un cilindro',
+    'D': 'índice extendido hacia arriba, otros dedos forman círculo con pulgar',
+    'E': 'dedos curvados hacia la palma, pulgar cruzado debajo',
+    'F': 'pulgar e índice forman círculo, otros tres dedos extendidos',
+    'G': 'índice y pulgar extendidos horizontalmente, otros dedos cerrados',
+    'H': 'índice y medio extendidos horizontalmente juntos, otros cerrados',
+    'I': 'meñique extendido hacia arriba, otros dedos en puño',
+    'J': 'meñique extendido, movimiento de gancho hacia abajo',
+    'K': 'índice y medio extendidos en V, pulgar entre ellos',
+    'L': 'índice y pulgar extendidos en ángulo recto (forma de L)',
+    'M': 'tres dedos (índice, medio, anular) sobre el pulgar, meñique cerrado',
+    'N': 'dos dedos (índice, medio) sobre el pulgar, otros cerrados',
+    'Ñ': 'igual que N pero con movimiento ondulado',
+    'O': 'dedos curvados formando círculo/óvalo con el pulgar',
+    'P': 'índice y medio extendidos hacia abajo, pulgar extendido lateral',
+    'Q': 'índice y pulgar hacia abajo, otros dedos cerrados',
+    'R': 'índice y medio cruzados, otros dedos cerrados',
+    'S': 'puño cerrado con pulgar sobre los dedos (diferente de A)',
+    'T': 'pulgar entre índice y medio, en puño',
+    'U': 'índice y medio juntos extendidos hacia arriba, otros cerrados',
+    'V': 'índice y medio separados en V hacia arriba, otros cerrados',
+    'W': 'índice, medio y anular extendidos separados, meñique y pulgar cerrados',
+    'X': 'índice doblado como gancho, otros dedos cerrados',
+    'Y': 'pulgar y meñique extendidos, otros tres dedos cerrados',
+    'Z': 'índice extendido dibujando Z en el aire',
+};
+
+// Números en LSC - configuraciones de mano
+const LSC_NUMBERS = {
+    '0': 'mano en forma de O, todos los dedos curvados tocando el pulgar',
+    '1': 'índice extendido hacia arriba, otros dedos en puño',
+    '2': 'índice y medio extendidos separados (V), otros en puño',
+    '3': 'pulgar, índice y medio extendidos, anular y meñique cerrados',
+    '4': 'cuatro dedos extendidos (sin pulgar), pulgar cruzado sobre palma',
+    '5': 'mano abierta, cinco dedos extendidos y separados',
+    '6': 'meñique y pulgar extendidos, otros tres dedos cerrados (como Y pero diferente posición)',
+    '7': 'pulgar, índice y meñique extendidos, medio y anular cerrados',
+    '8': 'pulgar, índice y medio extendidos, anular y meñique cerrados (como 3 pero diferente orientación)',
+    '9': 'índice curvado como gancho, otros dedos extendidos',
+    '10': 'puño con pulgar hacia arriba, movimiento de sacudida',
+};
 
 const LSC_BASIC_VOCABULARY = [
     'Sordo',
@@ -88,47 +141,110 @@ const LSC_BASIC_VOCABULARY = [
     'Feliz',
     'Feliz cumpleaños',
     'Feliz Navidad',
+    'Sí',
+    'No',
+    'Te amo',
+    'Ayuda',
+    'Agua',
+    'Comer',
+    'Casa',
+    'Escuela',
+    'Trabajo',
+    'Familia',
+    'Amigo',
+    'Nombre',
 ];
 
 const LSC_REFERENCE_PROMPT = [
     'OBJETIVO PRINCIPAL: Lengua de Señas Colombiana (LSC), español de Colombia.',
     'Usa LSE/ASL solo como respaldo secundario y NUNCA cuando contradigan una glosa LSC.',
+    '',
+    '═══════════════════════════════════════════════════════════════════════════',
+    'ALFABETO DACTILOLÓGICO COLOMBIANO (LSC) - LETRAS ESTÁTICAS:',
+    'Cuando la mano permanece QUIETA sin movimiento significativo, es una LETRA.',
+    '═══════════════════════════════════════════════════════════════════════════',
+    '  A: puño cerrado con pulgar AL LADO (no sobre los dedos)',
+    '  B: mano plana vertical, dedos juntos, pulgar cruzado sobre palma',
+    '  C: mano en forma de C, dedos curvados como agarrando cilindro',
+    '  D: índice extendido arriba, otros dedos forman círculo con pulgar',
+    '  E: dedos curvados hacia palma, pulgar cruzado debajo',
+    '  F: pulgar e índice forman círculo, otros tres dedos extendidos',
+    '  G: índice y pulgar extendidos horizontalmente, otros cerrados',
+    '  H: índice y medio extendidos horizontalmente juntos, otros cerrados',
+    '  I: meñique extendido arriba, otros dedos en puño',
+    '  J: meñique extendido con movimiento de gancho hacia abajo',
+    '  K: índice y medio en V, pulgar entre ellos',
+    '  L: índice y pulgar en ángulo recto (forma de L)',
+    '  M: tres dedos (índice, medio, anular) sobre el pulgar',
+    '  N: dos dedos (índice, medio) sobre el pulgar',
+    '  Ñ: igual que N pero con movimiento ondulado',
+    '  O: dedos curvados formando círculo/óvalo con pulgar',
+    '  P: índice y medio hacia abajo, pulgar extendido lateral',
+    '  Q: índice y pulgar hacia abajo, otros cerrados',
+    '  R: índice y medio cruzados, otros cerrados',
+    '  S: puño cerrado con pulgar SOBRE los dedos (diferente de A)',
+    '  T: pulgar entre índice y medio, en puño',
+    '  U: índice y medio juntos extendidos arriba, otros cerrados',
+    '  V: índice y medio separados en V arriba, otros cerrados',
+    '  W: índice, medio y anular extendidos separados',
+    '  X: índice doblado como gancho, otros cerrados',
+    '  Y: pulgar y meñique extendidos, otros tres cerrados',
+    '  Z: índice extendido dibujando Z en el aire',
+    '',
+    '═══════════════════════════════════════════════════════════════════════════',
+    'NÚMEROS EN LSC (0-10) - SEÑAS ESTÁTICAS O CON MOVIMIENTO MÍNIMO:',
+    '═══════════════════════════════════════════════════════════════════════════',
+    '  0: mano en forma de O, dedos curvados tocando pulgar',
+    '  1: índice extendido arriba, otros en puño',
+    '  2: índice y medio extendidos separados (V), otros en puño',
+    '  3: pulgar, índice y medio extendidos, anular y meñique cerrados',
+    '  4: cuatro dedos extendidos (sin pulgar), pulgar sobre palma',
+    '  5: mano abierta, cinco dedos extendidos y separados',
+    '  6: meñique y pulgar extendidos, otros tres cerrados',
+    '  7: pulgar, índice y meñique extendidos, medio y anular cerrados',
+    '  8: pulgar, índice y medio extendidos (similar a 3)',
+    '  9: índice curvado como gancho, otros dedos extendidos',
+    '  10: puño con pulgar arriba, movimiento de sacudida',
+    '',
+    '═══════════════════════════════════════════════════════════════════════════',
+    'REGLA CRÍTICA: SEÑAS ESTÁTICAS vs DINÁMICAS',
+    '═══════════════════════════════════════════════════════════════════════════',
+    '  • Si los frames son CASI IDÉNTICOS (mano quieta ~1 segundo):',
+    '    → Es una LETRA (A-Z, Ñ) o un NÚMERO (0-9)',
+    '    → Usa kind="letter" para letras, kind="number" para números',
+    '    → Analiza la CONFIGURACIÓN de la mano para identificar cuál es',
+    '',
+    '  • Si hay MOVIMIENTO SIGNIFICATIVO entre frames:',
+    '    → Es una PALABRA, FRASE u ORACIÓN',
+    '    → Analiza trayectoria, contacto, expresión facial',
+    '    → Usa kind="word", kind="phrase" o kind="sentence"',
+    '',
+    '  • DELETREO MANUAL: Si ves varias letras estáticas en secuencia',
+    '    (pausas entre cada letra), el usuario está DELETREANDO.',
+    '    Reporta cada letra individual, no intentes formar palabras.',
+    '',
+    '═══════════════════════════════════════════════════════════════════════════',
+    'VOCABULARIO LSC - PALABRAS Y FRASES DINÁMICAS:',
+    '═══════════════════════════════════════════════════════════════════════════',
     'Glosas LSC prioritarias del DBLSC para fórmulas de cortesía y saludos:',
-    '  - DECIR-HOLA -> "Hola"',
-    '  - ¿CÓMO-ESTAR? -> "¿Cómo estás?"',
-    '  - AGRADECER / DECIR-GRACIAS / GRACIAS-A -> "Gracias"',
+    '  - DECIR-HOLA -> "Hola" (mano abierta lateral cerca de sien)',
+    '  - ¿CÓMO-ESTAR? -> "¿Cómo estás?" (requiere cejas levantadas)',
+    '  - AGRADECER -> "Gracias" (mano desde mentón/labios hacia afuera)',
     '  - BUENAS-TARDES -> "Buenas tardes"',
     '  - BUENOS-DÍAS -> "Buenos días"',
     '  - BUENAS-NOCHES -> "Buenas noches"',
     '  - DECIR-ADIÓS -> "Adiós"',
-    '  - COMO / PREGUNTAR-COMO -> "¿Cómo?"',
-    '  - CUANDO / PREGUNTAR-CUANDO -> "¿Cuándo?"',
-    '  - DONDE / PREGUNTAR-DONDE -> "¿Dónde?"',
-    '  - POR-QUE / PREGUNTAR-POR-QUE -> "¿Por qué?"',
-    '  - QUE / PREGUNTAR-QUE -> "¿Qué?"',
-    '  - QUIEN / PREGUNTAR-QUIEN -> "¿Quién?"',
-    '  - BIEN -> "Bien" o, en respuesta a una pregunta, "Estoy bien"',
-    '  - BUENO -> "Bueno"',
-    '  - MALO -> "Malo"',
-    '  - POR-FAVOR -> "Por favor"',
-    '  - CON-GUSTO -> "Con gusto"',
-    '  - BIENVENIDO / BIENVENIDOS -> "Bienvenido"',
-    '  - PERDONAR / PEDIR-PERDÓN -> "Perdón"',
-    '  - PERMISO -> "Permiso"',
-    '  - LO-SIENTO -> "Lo siento"',
-    '  - FELIZ -> "Feliz"',
-    '  - FELIZ-CUMPLEAÑOS -> "Feliz cumpleaños"',
-    '  - FELIZ-NAVIDAD -> "Feliz Navidad"',
+    '  - SÍ -> "Sí" (puño asintiendo)',
+    '  - NO -> "No" (índice+medio cerrándose contra pulgar)',
+    '  - TE-AMO -> "Te amo" (configuración ILY: pulgar+índice+meñique)',
     '',
     'ERRORES CRÍTICOS QUE DEBES EVITAR EN LSC:',
-    '  - No confundas DECIR-HOLA con ¿CÓMO-ESTAR?: hola es saludo; ¿cómo estás?',
-    '    requiere intención interrogativa, rasgos no manuales de pregunta y flujo de pregunta.',
-    '  - No conviertas preguntas aisladas (¿Cómo?, ¿Cuándo?, ¿Dónde?, ¿Por qué?,',
-    '    ¿Qué?, ¿Quién?) en saludos u oraciones completas. Si el clip muestra',
-    '    una sola palabra interrogativa, responde esa palabra exacta.',
-    '  - No confundas BIEN / ESTOY BIEN con GRACIAS: gracias pertenece a la familia',
-    '    AGRADECER/DECIR-GRACIAS/GRACIAS-A; si ves configuración o contacto propio',
-    '    de BIEN y no un acto de agradecer, responde "Estoy bien" o "Bien".',
+    '  - NO confundas letras con palabras: si la mano está QUIETA, es LETRA.',
+    '  - NO confundas números con letras: cuenta los dedos extendidos.',
+    '  - NO confundas DECIR-HOLA con ¿CÓMO-ESTAR?: hola es saludo simple;',
+    '    ¿cómo estás? requiere cejas levantadas e intención interrogativa.',
+    '  - NO conviertas preguntas aisladas en oraciones completas.',
+    '  - NO confundas BIEN con GRACIAS: gracias mueve desde la cara hacia afuera.',
     '  - No confundas ¿CÓMO-ESTAR? con TE AMO: "Te amo" requiere una configuración',
     '    manual claramente amor/ILY/corazón/afecto; si hay pregunta, cejas levantadas',
     '    o saludo conversacional, NO respondas "Te amo".',
@@ -210,6 +326,69 @@ const LSC_TEXT_NORMALIZATIONS = new Map([
     ['feliz navidad', 'Feliz Navidad'],
     ['feliz-navidad', 'Feliz Navidad'],
     ['te amo', 'Te amo'],
+    ['si', 'Sí'],
+    ['sí', 'Sí'],
+    ['no', 'No'],
+    ['ayuda', 'Ayuda'],
+    ['agua', 'Agua'],
+    ['comer', 'Comer'],
+    ['casa', 'Casa'],
+    ['escuela', 'Escuela'],
+    ['trabajo', 'Trabajo'],
+    ['familia', 'Familia'],
+    ['amigo', 'Amigo'],
+    ['nombre', 'Nombre'],
+    // Normalizaciones para letras (variantes comunes del VLM)
+    ['letra a', 'A'],
+    ['letra b', 'B'],
+    ['letra c', 'C'],
+    ['letra d', 'D'],
+    ['letra e', 'E'],
+    ['letra f', 'F'],
+    ['letra g', 'G'],
+    ['letra h', 'H'],
+    ['letra i', 'I'],
+    ['letra j', 'J'],
+    ['letra k', 'K'],
+    ['letra l', 'L'],
+    ['letra m', 'M'],
+    ['letra n', 'N'],
+    ['letra ñ', 'Ñ'],
+    ['letra o', 'O'],
+    ['letra p', 'P'],
+    ['letra q', 'Q'],
+    ['letra r', 'R'],
+    ['letra s', 'S'],
+    ['letra t', 'T'],
+    ['letra u', 'U'],
+    ['letra v', 'V'],
+    ['letra w', 'W'],
+    ['letra x', 'X'],
+    ['letra y', 'Y'],
+    ['letra z', 'Z'],
+    // Normalizaciones para números (variantes del VLM en español)
+    ['cero', '0'],
+    ['uno', '1'],
+    ['dos', '2'],
+    ['tres', '3'],
+    ['cuatro', '4'],
+    ['cinco', '5'],
+    ['seis', '6'],
+    ['siete', '7'],
+    ['ocho', '8'],
+    ['nueve', '9'],
+    ['diez', '10'],
+    ['numero 0', '0'],
+    ['numero 1', '1'],
+    ['numero 2', '2'],
+    ['numero 3', '3'],
+    ['numero 4', '4'],
+    ['numero 5', '5'],
+    ['numero 6', '6'],
+    ['numero 7', '7'],
+    ['numero 8', '8'],
+    ['numero 9', '9'],
+    ['numero 10', '10'],
 ]);
 
 const ASL_BASIC_VOCABULARY = [
@@ -907,6 +1086,40 @@ export function reconcileKind(rawText, rawKind) {
 function normalizeLscText(rawText) {
     const text = String(rawText || '').trim();
     if (!text) return '';
+
+    // 1. Detectar letra única (A-Z, Ñ) - prioridad más alta
+    const singleLetter = text.match(/^[A-ZÑÁÉÍÓÚ]$/i);
+    if (singleLetter) {
+        return singleLetter[0].toLocaleUpperCase('es');
+    }
+
+    // 2. Detectar número puro (0-9, 10, etc.)
+    if (/^\d+$/.test(text)) {
+        return text;
+    }
+
+    // 3. Detectar patrones de "letra X" o "número X"
+    const letterPattern = text.match(/^(?:letra|letter)\s+([a-zñáéíóú])$/i);
+    if (letterPattern) {
+        return letterPattern[1].toLocaleUpperCase('es');
+    }
+
+    const numberPattern = text.match(/^(?:número|numero|number)\s+(\d+)$/i);
+    if (numberPattern) {
+        return numberPattern[1];
+    }
+
+    // 4. Números en palabras (español)
+    const numberWords = new Map([
+        ['cero', '0'], ['uno', '1'], ['dos', '2'], ['tres', '3'],
+        ['cuatro', '4'], ['cinco', '5'], ['seis', '6'], ['siete', '7'],
+        ['ocho', '8'], ['nueve', '9'], ['diez', '10'],
+    ]);
+    const lowerText = text.toLocaleLowerCase('es');
+    if (numberWords.has(lowerText)) {
+        return numberWords.get(lowerText);
+    }
+
     const key = text
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
@@ -1920,25 +2133,66 @@ function buildModeInstruction(mode, language) {
 
     if (mode === 'static') {
         return [
-            'Modo de captura: ESTÁTICO. El servidor envió este frame porque la mano',
-            'permaneció quieta cerca de 1 segundo. Prioriza kind="letter" o',
-            'kind="number"; solo devuelve word/phrase/sentence si hay evidencia visual',
-            'muy clara de una seña léxica estática de LSC.',
+            '═══════════════════════════════════════════════════════════════════════',
+            'MODO DE CAPTURA: ESTÁTICO (mano quieta ~1 segundo)',
+            '═══════════════════════════════════════════════════════════════════════',
+            'El servidor detectó que la mano NO SE MOVIÓ durante aproximadamente 1 segundo.',
+            'Esto indica que el usuario está mostrando una LETRA o un NÚMERO, no una palabra.',
+            '',
+            'PROCEDIMIENTO OBLIGATORIO:',
+            '1. Analiza la CONFIGURACIÓN EXACTA de la mano:',
+            '   - ¿Cuántos dedos están extendidos? (para números)',
+            '   - ¿Qué forma tiene la mano? (para letras del alfabeto)',
+            '   - ¿El pulgar está al lado o sobre los dedos?',
+            '   - ¿Hay dedos cruzados?',
+            '',
+            '2. Compara con el ALFABETO DACTILOLÓGICO LSC:',
+            '   - A: puño con pulgar al lado',
+            '   - E: dedos curvados, pulgar debajo',
+            '   - I: solo meñique extendido',
+            '   - O: dedos en forma de círculo',
+            '   - U: índice y medio juntos arriba',
+            '   - V: índice y medio separados (V)',
+            '   - L: índice y pulgar en L',
+            '   - Y: pulgar y meñique extendidos',
+            '',
+            '3. Compara con NÚMEROS LSC:',
+            '   - 1: solo índice arriba',
+            '   - 2: índice y medio (V)',
+            '   - 3: pulgar, índice, medio',
+            '   - 4: cuatro dedos sin pulgar',
+            '   - 5: mano abierta completa',
+            '',
+            'REGLA: Si la mano está QUIETA, SIEMPRE usa kind="letter" o kind="number".',
+            'Solo devuelve word/phrase/sentence si hay EVIDENCIA CLARA de movimiento.',
         ].join('\n');
     }
     if (mode === 'sentence') {
         return [
-            'Modo de captura: ORACIÓN EN MOVIMIENTO. El usuario siguió moviendo las',
-            'manos sin pausa clara; analiza el flujo completo y transcribe la unidad',
-            'comunicativa completa en LSC. Si contiene varias señas encadenadas, usa',
-            'kind="sentence" cuando corresponda.',
+            '═══════════════════════════════════════════════════════════════════════',
+            'MODO DE CAPTURA: ORACIÓN EN MOVIMIENTO',
+            '═══════════════════════════════════════════════════════════════════════',
+            'El usuario siguió moviendo las manos sin pausa clara durante varios segundos.',
+            'Analiza el flujo completo y transcribe la unidad comunicativa en LSC.',
+            'Si contiene varias señas encadenadas, usa kind="sentence".',
+            'Incluye la oración completa con puntuación correcta.',
         ].join('\n');
     }
     if (mode === 'dynamic') {
         return [
-            'Modo de captura: DINÁMICO. El servidor detectó movimiento sostenido y',
-            'luego una pausa. Reconoce la palabra, frase u oración completa de LSC;',
-            'no lo reduzcas a una sola letra salvo que sea claramente deletreo.',
+            '═══════════════════════════════════════════════════════════════════════',
+            'MODO DE CAPTURA: DINÁMICO (movimiento + pausa)',
+            '═══════════════════════════════════════════════════════════════════════',
+            'El servidor detectó MOVIMIENTO SOSTENIDO seguido de una pausa.',
+            'Esto indica que el usuario hizo una PALABRA, FRASE u ORACIÓN.',
+            '',
+            'Reconoce la seña completa de LSC analizando:',
+            '- Trayectoria del movimiento',
+            '- Contacto con cara, cuerpo u otra mano',
+            '- Expresión facial (cejas, boca)',
+            '- Configuración inicial y final de las manos',
+            '',
+            'NO lo reduzcas a una sola letra salvo que sea claramente deletreo.',
         ].join('\n');
     }
     return null;
