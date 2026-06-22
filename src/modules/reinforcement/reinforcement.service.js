@@ -67,6 +67,300 @@ export class ReinforcementDomainService {
         this.learningContextService = svc;
     }
 
+    // ─── Cognitive Analytics Dashboard ────────────────────────────────────────────
+
+    /**
+     * Gets comprehensive cognitive analytics for all students in a course.
+     * Returns student profiles with learning patterns, performance trends, and cognitive insights.
+     */
+    async getCognitiveAnalytics(courseId, options = {}) {
+        try {
+            const { limit = 50, offset = 0, sortBy = 'recent_activity' } = options;
+            const supabase = SupabaseService.getInstance();
+
+            // 1. Get all reinforcement results for the course with user data
+            const { data: resultsData, error: resultsError } = await supabase.client
+                .from('reinforcement_results')
+                .select(`
+                    id,
+                    user_id,
+                    total_questions,
+                    correct_answers,
+                    incorrect_answers,
+                    grade,
+                    difficulty,
+                    duration_seconds,
+                    created_at,
+                    topic_id,
+                    task_id
+                `)
+                .eq('course_id', courseId)
+                .order('created_at', { ascending: false });
+
+            if (resultsError) {
+                console.error('[CognitiveAnalytics] Error fetching results:', resultsError.message);
+                return Result.fail(resultsError.message);
+            }
+
+            if (!resultsData || resultsData.length === 0) {
+                return Result.ok({ students: [], totalStudents: 0, courseStats: null });
+            }
+
+            // 2. Group results by user
+            const userResultsMap = new Map();
+            for (const result of resultsData) {
+                if (!userResultsMap.has(result.user_id)) {
+                    userResultsMap.set(result.user_id, []);
+                }
+                userResultsMap.get(result.user_id).push(result);
+            }
+
+            // 3. Get user details for all users
+            const userIds = Array.from(userResultsMap.keys());
+            const { data: usersData, error: usersError } = await supabase.client
+                .from('usuarios')
+                .select(`
+                    id,
+                    username,
+                    email,
+                    avatar,
+                    persona_id,
+                    personas (
+                        nombres,
+                        apellidos
+                    )
+                `)
+                .in('id', userIds);
+
+            if (usersError) {
+                console.error('[CognitiveAnalytics] Error fetching users:', usersError.message);
+            }
+
+            const usersMap = new Map();
+            for (const user of usersData || []) {
+                usersMap.set(user.id, user);
+            }
+
+            // 4. Build cognitive profiles for each student
+            const studentProfiles = [];
+            for (const [userId, results] of userResultsMap) {
+                const user = usersMap.get(userId);
+                if (!user) continue;
+
+                const profile = this._buildCognitiveProfile(user, results);
+                studentProfiles.push(profile);
+            }
+
+            // 5. Sort profiles
+            if (sortBy === 'recent_activity') {
+                studentProfiles.sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
+            } else if (sortBy === 'performance') {
+                studentProfiles.sort((a, b) => b.performance.accuracy - a.performance.accuracy);
+            } else if (sortBy === 'sessions') {
+                studentProfiles.sort((a, b) => b.totalSessions - a.totalSessions);
+            } else if (sortBy === 'improvement') {
+                studentProfiles.sort((a, b) => b.cognitiveInsights.improvementRate - a.cognitiveInsights.improvementRate);
+            }
+
+            // 6. Apply pagination
+            const paginatedProfiles = studentProfiles.slice(offset, offset + limit);
+
+            // 7. Calculate course-level stats
+            const courseStats = this._calculateCourseStats(studentProfiles);
+
+            return Result.ok({
+                students: paginatedProfiles,
+                totalStudents: studentProfiles.length,
+                courseStats,
+            });
+        } catch (error) {
+            console.error('[CognitiveAnalytics] Error:', error.message);
+            return Result.fail(error.message);
+        }
+    }
+
+    /**
+     * Builds a cognitive profile for a student based on their reinforcement history.
+     */
+    _buildCognitiveProfile(user, results) {
+        const sortedResults = [...results].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+        // Basic stats
+        const totalSessions = results.length;
+        const totalQuestions = results.reduce((sum, r) => sum + (r.total_questions || 0), 0);
+        const totalCorrect = results.reduce((sum, r) => sum + (r.correct_answers || 0), 0);
+        const totalIncorrect = results.reduce((sum, r) => sum + (r.incorrect_answers || 0), 0);
+        const totalDuration = results.reduce((sum, r) => sum + (r.duration_seconds || 0), 0);
+        const accuracy = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+
+        // Calculate grades
+        const grades = results.map(r => parseFloat(r.grade || 0)).filter(g => !isNaN(g));
+        const avgGrade = grades.length > 0
+            ? Math.round(grades.reduce((a, b) => a + b, 0) / grades.length * 10) / 10
+            : 0;
+
+        // Performance trend (comparing recent 5 vs previous 5)
+        let trend = 'stable';
+        let improvementRate = 0;
+        if (grades.length >= 6) {
+            const recentGrades = grades.slice(-5);
+            const previousGrades = grades.slice(-10, -5);
+            const recentAvg = recentGrades.reduce((a, b) => a + b, 0) / recentGrades.length;
+            const previousAvg = previousGrades.reduce((a, b) => a + b, 0) / previousGrades.length;
+            improvementRate = Math.round((recentAvg - previousAvg) * 10) / 10;
+
+            if (improvementRate > 5) trend = 'improving';
+            else if (improvementRate < -5) trend = 'declining';
+        }
+
+        // Skill level
+        let skillLevel = 'beginner';
+        let skillColor = '#FF6B6B';
+        if (accuracy >= 85) { skillLevel = 'advanced'; skillColor = '#51CF66'; }
+        else if (accuracy >= 70) { skillLevel = 'intermediate'; skillColor = '#339AF0'; }
+        else if (accuracy >= 50) { skillLevel = 'developing'; skillColor = '#FAB005'; }
+
+        // Study patterns
+        const studyHours = results.map(r => new Date(r.created_at).getHours());
+        const hourCounts = {};
+        studyHours.forEach(h => { hourCounts[h] = (hourCounts[h] || 0) + 1; });
+        const preferredHour = Object.entries(hourCounts)
+            .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+        // Difficulty preference
+        const difficultyStats = {};
+        results.forEach(r => {
+            const diff = r.difficulty || 'HARD';
+            if (!difficultyStats[diff]) difficultyStats[diff] = { total: 0, correct: 0 };
+            difficultyStats[diff].total += r.total_questions || 0;
+            difficultyStats[diff].correct += r.correct_answers || 0;
+        });
+
+        // Average response time per question
+        const avgTimePerQuestion = totalQuestions > 0
+            ? Math.round(totalDuration / totalQuestions)
+            : 0;
+
+        // Consistency score (standard deviation of grades)
+        let consistency = 100;
+        if (grades.length >= 3) {
+            const mean = grades.reduce((a, b) => a + b, 0) / grades.length;
+            const variance = grades.reduce((sum, g) => sum + Math.pow(g - mean, 2), 0) / grades.length;
+            const stdDev = Math.sqrt(variance);
+            consistency = Math.max(0, Math.round(100 - stdDev * 2));
+        }
+
+        // Engagement score
+        const daysSinceLastActivity = Math.floor(
+            (Date.now() - new Date(results[0]?.created_at || Date.now()).getTime()) / (1000 * 60 * 60 * 24)
+        );
+        let engagementLevel = 'high';
+        if (daysSinceLastActivity > 14) engagementLevel = 'low';
+        else if (daysSinceLastActivity > 7) engagementLevel = 'medium';
+
+        // Build history for chart (last 10 sessions)
+        const recentHistory = sortedResults.slice(-10).map(r => ({
+            date: r.created_at,
+            grade: parseFloat(r.grade || 0),
+            accuracy: r.total_questions > 0
+                ? Math.round((r.correct_answers / r.total_questions) * 100)
+                : 0,
+            questions: r.total_questions || 0,
+        }));
+
+        return {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            avatar: user.avatar,
+            fullName: user.personas
+                ? `${user.personas.nombres || ''} ${user.personas.apellidos || ''}`.trim()
+                : user.username,
+            firstName: user.personas?.nombres || user.username,
+            lastName: user.personas?.apellidos || '',
+
+            // Performance metrics
+            performance: {
+                accuracy,
+                avgGrade,
+                totalQuestions,
+                totalCorrect,
+                totalIncorrect,
+                totalSessions,
+                totalDuration,
+                avgTimePerQuestion,
+            },
+
+            // Cognitive insights
+            cognitiveInsights: {
+                skillLevel,
+                skillColor,
+                trend,
+                improvementRate,
+                consistency,
+                engagementLevel,
+                preferredStudyHour: preferredHour ? parseInt(preferredHour) : null,
+                difficultyStats,
+            },
+
+            // Activity data
+            lastActivity: results[0]?.created_at || null,
+            daysSinceLastActivity,
+            recentHistory,
+
+            // Metadata
+            firstSession: sortedResults[0]?.created_at || null,
+        };
+    }
+
+    /**
+     * Calculates course-level statistics from all student profiles.
+     */
+    _calculateCourseStats(profiles) {
+        if (profiles.length === 0) return null;
+
+        const totalStudents = profiles.length;
+        const avgAccuracy = Math.round(
+            profiles.reduce((sum, p) => sum + p.performance.accuracy, 0) / totalStudents
+        );
+        const avgGrade = Math.round(
+            profiles.reduce((sum, p) => sum + p.performance.avgGrade, 0) / totalStudents * 10
+        ) / 10;
+
+        const skillDistribution = {
+            advanced: profiles.filter(p => p.cognitiveInsights.skillLevel === 'advanced').length,
+            intermediate: profiles.filter(p => p.cognitiveInsights.skillLevel === 'intermediate').length,
+            developing: profiles.filter(p => p.cognitiveInsights.skillLevel === 'developing').length,
+            beginner: profiles.filter(p => p.cognitiveInsights.skillLevel === 'beginner').length,
+        };
+
+        const trendDistribution = {
+            improving: profiles.filter(p => p.cognitiveInsights.trend === 'improving').length,
+            stable: profiles.filter(p => p.cognitiveInsights.trend === 'stable').length,
+            declining: profiles.filter(p => p.cognitiveInsights.trend === 'declining').length,
+        };
+
+        const engagementDistribution = {
+            high: profiles.filter(p => p.cognitiveInsights.engagementLevel === 'high').length,
+            medium: profiles.filter(p => p.cognitiveInsights.engagementLevel === 'medium').length,
+            low: profiles.filter(p => p.cognitiveInsights.engagementLevel === 'low').length,
+        };
+
+        const totalQuestions = profiles.reduce((sum, p) => sum + p.performance.totalQuestions, 0);
+        const totalSessions = profiles.reduce((sum, p) => sum + p.performance.totalSessions, 0);
+
+        return {
+            totalStudents,
+            avgAccuracy,
+            avgGrade,
+            totalQuestions,
+            totalSessions,
+            skillDistribution,
+            trendDistribution,
+            engagementDistribution,
+        };
+    }
+
     logQuestionBatch(label, questions, context = {}) {
         if (!Array.isArray(questions)) {
             console.log(`[ReinforcementDomainService] ${label}: questions payload is not an array`);
