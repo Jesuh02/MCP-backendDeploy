@@ -7,6 +7,7 @@
  *   - question_sessions + questions_history + question_options tables
  */
 import { Result } from '../../shared/Result.js';
+import { ForbiddenError } from '../../shared/errors/index.js';
 import { QuizMathValidator } from '../../shared/math/QuizMathValidator.js';
 import { OrderingQuestionValidator } from '../../shared/math/OrderingQuestionValidator.js';
 import { AnswerVerificationGate } from '../../shared/math/AnswerVerificationGate.js';
@@ -51,10 +52,12 @@ function _drainLlmQueue() {
 }
 
 export class ReinforcementDomainService {
-    constructor({ reinforcementRepository, llmPort = null, learningContextService = null }) {
+    constructor({ reinforcementRepository, llmPort = null, learningContextService = null, subjectRepository = null, collaboratorRepository = null }) {
         this.reinforcementRepo = reinforcementRepository;
         this.llmPort = llmPort;
         this.learningContextService = learningContextService;
+        this.subjectRepo = subjectRepository;
+        this.collaboratorRepo = collaboratorRepository;
         this.REQUIRED_QUESTION_COUNT = 10;
         this.questionCache = QuestionCacheService.getInstance();
         // In-flight promises: evita llamadas LLM duplicadas para la misma clave
@@ -67,6 +70,208 @@ export class ReinforcementDomainService {
         this.learningContextService = svc;
     }
 
+    _normalizeRoleIds(roles = []) {
+        return [...new Set((roles || [])
+            .map(role => Number(role?.id ?? role))
+            .filter(roleId => Number.isInteger(roleId) && roleId > 0))];
+    }
+
+    _uniquePositiveIntegers(values = []) {
+        return [...new Set((values || [])
+            .map(value => Number(value))
+            .filter(value => Number.isInteger(value) && value > 0))];
+    }
+
+    _isAdminRole(roleIds) {
+        return roleIds.includes(3) || roleIds.includes(4);
+    }
+
+    _isTeacherRole(roleIds) {
+        return roleIds.includes(2);
+    }
+
+    async _getTeacherSubjectLinks(supabase, requesterId, courseId = null) {
+        const numericRequesterId = Number(requesterId);
+        if (!Number.isInteger(numericRequesterId) || numericRequesterId <= 0) {
+            return { subjectIds: [], courseIds: [], subjects: [], courses: [] };
+        }
+
+        const { data: collaboratorRows, error: collaboratorError } = await supabase.client
+            .from('subject_collaborators')
+            .select('subject_id')
+            .eq('user_id', numericRequesterId);
+
+        if (collaboratorError) throw new Error(collaboratorError.message);
+
+        const invitedSubjectIds = this._uniquePositiveIntegers((collaboratorRows || []).map(row => row.subject_id));
+        if (invitedSubjectIds.length === 0) {
+            return { subjectIds: [], courseIds: [], subjects: [], courses: [] };
+        }
+
+        let subjectQuery = supabase.client
+            .from('subjects')
+            .select('id, name, course_id')
+            .in('id', invitedSubjectIds);
+
+        const numericCourseId = Number(courseId);
+        if (Number.isInteger(numericCourseId) && numericCourseId > 0) {
+            subjectQuery = subjectQuery.eq('course_id', numericCourseId);
+        }
+
+        const { data: subjectRows, error: subjectsError } = await subjectQuery;
+        if (subjectsError) throw new Error(subjectsError.message);
+
+        const subjects = (subjectRows || [])
+            .map(subject => ({
+                id: Number(subject.id),
+                name: subject.name || `Materia #${subject.id}`,
+                courseId: Number(subject.course_id),
+            }))
+            .filter(subject => Number.isInteger(subject.id) && subject.id > 0 && Number.isInteger(subject.courseId) && subject.courseId > 0);
+
+        const courseIds = this._uniquePositiveIntegers(subjects.map(subject => subject.courseId));
+        let courses = [];
+        if (courseIds.length > 0) {
+            const { data: courseRows, error: coursesError } = await supabase.client
+                .from('courses')
+                .select('id, title')
+                .in('id', courseIds);
+            if (coursesError) throw new Error(coursesError.message);
+            courses = (courseRows || [])
+                .map(course => ({
+                    id: Number(course.id),
+                    title: course.title || `Curso #${course.id}`,
+                }))
+                .filter(course => Number.isInteger(course.id) && course.id > 0);
+        }
+
+        return {
+            subjectIds: this._uniquePositiveIntegers(subjects.map(subject => subject.id)),
+            courseIds,
+            subjects,
+            courses,
+        };
+    }
+
+    async _getCourseSubjectIds(supabase, courseId) {
+        const { data, error } = await supabase.client
+            .from('subjects')
+            .select('id')
+            .eq('course_id', courseId);
+
+        if (error) throw new Error(error.message);
+        return this._uniquePositiveIntegers((data || []).map(row => row.id));
+    }
+
+    async _getTopicTaskScope(supabase, courseId, subjectIds = null) {
+        const scopedSubjectIds = Array.isArray(subjectIds) && subjectIds.length > 0
+            ? this._uniquePositiveIntegers(subjectIds)
+            : await this._getCourseSubjectIds(supabase, courseId);
+
+        if (scopedSubjectIds.length === 0) {
+            return { subjectIds: [], topicIds: [], taskIds: [] };
+        }
+
+        const inList = `(${scopedSubjectIds.join(',')})`;
+        const { data: topicRows, error: topicsError } = await supabase.client
+            .from('topics')
+            .select('id, materia_id, subject_id')
+            .or(`materia_id.in.${inList},subject_id.in.${inList}`);
+
+        if (topicsError) throw new Error(topicsError.message);
+
+        const topicIds = this._uniquePositiveIntegers((topicRows || []).map(row => row.id));
+        if (topicIds.length === 0) {
+            return { subjectIds: scopedSubjectIds, topicIds: [], taskIds: [] };
+        }
+
+        const { data: taskRows, error: tasksError } = await supabase.client
+            .from('tasks')
+            .select('id, topic_id')
+            .in('topic_id', topicIds);
+
+        if (tasksError) throw new Error(tasksError.message);
+
+        return {
+            subjectIds: scopedSubjectIds,
+            topicIds,
+            taskIds: this._uniquePositiveIntegers((taskRows || []).map(row => row.id)),
+        };
+    }
+
+    async _getRegisteredStudentIdsForSubjects(supabase, courseId, subjectIds) {
+        const scopedSubjectIds = this._uniquePositiveIntegers(subjectIds);
+        if (scopedSubjectIds.length === 0) return new Set();
+
+        let query = supabase.client
+            .from('progreso_materia')
+            .select('usuario_estudiante')
+            .in('materia_id', scopedSubjectIds);
+
+        const numericCourseId = Number(courseId);
+        if (Number.isInteger(numericCourseId) && numericCourseId > 0) {
+            query = query.eq('curso_id', numericCourseId);
+        }
+
+        const { data, error } = await query;
+        if (error) throw new Error(error.message);
+
+        return new Set(this._uniquePositiveIntegers((data || []).map(row => row.usuario_estudiante)));
+    }
+
+    async _getGradedStudentIdsForTasks(supabase, taskIds) {
+        const scopedTaskIds = this._uniquePositiveIntegers(taskIds);
+        if (scopedTaskIds.length === 0) return new Set();
+
+        const { data, error } = await supabase.client
+            .from('task_submissions')
+            .select('student_id, task_id, grade')
+            .in('task_id', scopedTaskIds)
+            .not('grade', 'is', null);
+
+        if (error) throw new Error(error.message);
+
+        return new Set(this._uniquePositiveIntegers((data || []).map(row => row.student_id)));
+    }
+
+    async getCognitiveAccess(requesterId, requesterRoles = []) {
+        try {
+            const roleIds = this._normalizeRoleIds(requesterRoles);
+            if (this._isAdminRole(roleIds)) {
+                return Result.ok({
+                    canView: true,
+                    scope: 'all',
+                    courseIds: [],
+                    subjectIds: [],
+                    courses: [],
+                    subjects: [],
+                });
+            }
+
+            if (!this._isTeacherRole(roleIds)) {
+                return Result.ok({
+                    canView: false,
+                    scope: 'none',
+                    courseIds: [],
+                    subjectIds: [],
+                    courses: [],
+                    subjects: [],
+                });
+            }
+
+            const supabase = SupabaseService.getInstance();
+            const links = await this._getTeacherSubjectLinks(supabase, requesterId);
+            return Result.ok({
+                canView: links.subjectIds.length > 0,
+                scope: links.subjectIds.length > 0 ? 'subject_collaborator' : 'none',
+                ...links,
+            });
+        } catch (error) {
+            console.error('[CognitiveAnalytics] Access error:', error.message);
+            return Result.fail(error.message);
+        }
+    }
+
     // ─── Cognitive Analytics Dashboard ────────────────────────────────────────────
 
     /**
@@ -75,8 +280,40 @@ export class ReinforcementDomainService {
      */
     async getCognitiveAnalytics(courseId, options = {}) {
         try {
-            const { limit = 50, offset = 0, sortBy = 'recent_activity' } = options;
+            const { limit = 50, offset = 0, sortBy = 'recent_activity', requesterId = null, requesterRoles = [] } = options;
+            const roleIds = this._normalizeRoleIds(requesterRoles);
+            const isAdmin = this._isAdminRole(roleIds);
+            const isTeacher = this._isTeacherRole(roleIds);
+
+            if (!isAdmin && !isTeacher) {
+                return Result.fail(new ForbiddenError('No tienes permiso para ver el gemelo cognitivo'));
+            }
+
             const supabase = SupabaseService.getInstance();
+            let allowedSubjectIds = null;
+            if (!isAdmin) {
+                const links = await this._getTeacherSubjectLinks(supabase, requesterId, courseId);
+                allowedSubjectIds = links.subjectIds;
+                if (allowedSubjectIds.length === 0) {
+                    return Result.ok({ students: [], totalStudents: 0, courseStats: null });
+                }
+            }
+
+            const scope = await this._getTopicTaskScope(supabase, courseId, allowedSubjectIds);
+            if (scope.topicIds.length === 0 || scope.taskIds.length === 0) {
+                return Result.ok({ students: [], totalStudents: 0, courseStats: null });
+            }
+
+            const topicIdSet = new Set(scope.topicIds);
+            const taskIdSet = new Set(scope.taskIds);
+            const gradedStudentIds = await this._getGradedStudentIdsForTasks(supabase, scope.taskIds);
+            if (gradedStudentIds.size === 0) {
+                return Result.ok({ students: [], totalStudents: 0, courseStats: null });
+            }
+
+            const registeredStudentIds = !isAdmin
+                ? await this._getRegisteredStudentIdsForSubjects(supabase, courseId, scope.subjectIds)
+                : null;
 
             // 1. Get all reinforcement results for the course with user data
             const { data: resultsData, error: resultsError } = await supabase.client
@@ -106,9 +343,26 @@ export class ReinforcementDomainService {
                 return Result.ok({ students: [], totalStudents: 0, courseStats: null });
             }
 
+            const eligibleResults = resultsData.filter(result => {
+                const userId = Number(result.user_id);
+                const topicId = Number(result.topic_id);
+                const taskId = Number(result.task_id);
+
+                if (!Number.isInteger(userId) || userId <= 0) return false;
+                if (!gradedStudentIds.has(userId)) return false;
+                if (!Number.isInteger(topicId) || topicId <= 0 || !topicIdSet.has(topicId)) return false;
+                if (Number.isInteger(taskId) && taskId > 0 && !taskIdSet.has(taskId)) return false;
+                if (registeredStudentIds && !registeredStudentIds.has(userId)) return false;
+                return true;
+            });
+
+            if (eligibleResults.length === 0) {
+                return Result.ok({ students: [], totalStudents: 0, courseStats: null });
+            }
+
             // 2. Group results by user
             const userResultsMap = new Map();
-            for (const result of resultsData) {
+            for (const result of eligibleResults) {
                 if (!userResultsMap.has(result.user_id)) {
                     userResultsMap.set(result.user_id, []);
                 }

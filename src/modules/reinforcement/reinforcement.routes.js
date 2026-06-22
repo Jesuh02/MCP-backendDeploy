@@ -26,6 +26,7 @@ export function reinforcementRoutes({ reinforcementController }) {
     router.get('/history', reinforcementController.getMySessions);
 
     // ═══ Cognitive Analytics Dashboard ═══
+    router.get('/cognitive-access', reinforcementController.getCognitiveAccess);
     router.get('/cognitive-analytics', reinforcementController.getCognitiveAnalytics);
 
     // ═══ Stealth Assessment (Evaluación Invisible) ═══

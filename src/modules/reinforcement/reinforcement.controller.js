@@ -525,9 +525,20 @@ export class ReinforcementController {
                 limit: parseInt(req.query.limit) || 50,
                 offset: parseInt(req.query.offset) || 0,
                 sortBy: req.query.sortBy || 'recent_activity',
+                requesterId: req.user?.userId || req.user?.id || null,
+                requesterRoles: req.user?.roles || [],
             };
 
             const result = await this.reinforcementService.getCognitiveAnalytics(courseId, options);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    getCognitiveAccess = async(req, res, next) => {
+        try {
+            const requesterId = req.user?.userId || req.user?.id || null;
+            const result = await this.reinforcementService.getCognitiveAccess(requesterId, req.user?.roles || []);
             if (result.isFail()) return next(result.getError());
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }

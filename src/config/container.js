@@ -349,7 +349,12 @@ export function createContainer() {
     const personaService = new PersonaDomainService({ personaRepository: personaRepo });
     const rolService = new RolDomainService({ rolRepository: rolRepo, courseRepository: courseRepo });
     const fileContextService = new FileContextDomainService({ fileContextRepository: fileContextRepo });
-    const reinforcementService = new ReinforcementDomainService({ reinforcementRepository: reinforcementRepo, llmPort: llmAdapter });
+    const reinforcementService = new ReinforcementDomainService({
+        reinforcementRepository: reinforcementRepo,
+        llmPort: llmAdapter,
+        subjectRepository: subjectRepo,
+        collaboratorRepository: collaboratorRepo,
+    });
     const reinforcementResultService = new ReinforcementResultService({ reinforcementResultRepository: reinforcementResultRepo });
 
     const chatMessageService = new ChatMessageDomainService({ chatMessageRepository: chatMessageRepo });
