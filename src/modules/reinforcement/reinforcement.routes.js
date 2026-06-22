@@ -35,6 +35,10 @@ export function reinforcementRoutes({ reinforcementController }) {
     router.get('/stealth-assessment/xray', reinforcementController.getComprehensionXRay);
     router.get('/stealth-assessment/course-analytics', reinforcementController.getCourseStealthAnalytics);
 
+    // ═══ Intelligent Recommendations ═══
+    router.get('/recommendations', reinforcementController.getRecommendations);
+    router.post('/recommendations/:recommendationId/complete', reinforcementController.completeRecommendation);
+
     return router;
 }
 export default reinforcementRoutes;

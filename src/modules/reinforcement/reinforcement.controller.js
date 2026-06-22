@@ -679,6 +679,72 @@ export class ReinforcementController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INTELLIGENT RECOMMENDATIONS ENDPOINTS
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * GET /recommendations
+     * Gets personalized learning recommendations for the authenticated user.
+     * Analyzes performance data to detect weaknesses and suggest interventions.
+     *
+     * Query params:
+     *   - limit: Max recommendations to return (default 5)
+     *
+     * Returns:
+     *   - recommendations: Array of recommendation objects with:
+     *     - problem: description, topicId, topicName, courseId, courseName
+     *     - before: accuracy, avgGrade, totalSessions
+     *     - intervention: type, description, questionCount, difficulty
+     *     - actions: reinforcement and learning paths with query params
+     */
+    getRecommendations = async(req, res, next) => {
+        try {
+            const userId = req.user?.userId || req.user?.id;
+            if (!userId) {
+                return next(new ValidationError('Authentication required'));
+            }
+
+            const options = {
+                limit: parseInt(req.query.limit) || 5,
+            };
+
+            const result = await this.reinforcementService.getStudentRecommendations(userId, options);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * POST /recommendations/:recommendationId/complete
+     * Marks a recommendation as completed and calculates after-metrics.
+     *
+     * Body:
+     *   - topicId: number (the topic that was reinforced)
+     *
+     * Returns:
+     *   - completed: boolean
+     *   - after: { accuracy, avgGrade, totalSessions, totalQuestions }
+     */
+    completeRecommendation = async(req, res, next) => {
+        try {
+            const userId = req.user?.userId || req.user?.id;
+            const recommendationId = req.params.recommendationId;
+            const topicId = parseInt(req.body.topicId || req.body.topic_id);
+
+            if (!userId) {
+                return next(new ValidationError('Authentication required'));
+            }
+            if (!topicId) {
+                return next(new ValidationError('topicId is required'));
+            }
+
+            const result = await this.reinforcementService.completeRecommendation(userId, recommendationId, topicId);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ReinforcementController;
 
