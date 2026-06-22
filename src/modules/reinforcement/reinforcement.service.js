@@ -299,23 +299,25 @@ export class ReinforcementDomainService {
                 }
             }
 
-            const scope = await this._getTopicTaskScope(supabase, courseId, allowedSubjectIds);
-            if (scope.topicIds.length === 0 || scope.taskIds.length === 0) {
-                return Result.ok({ students: [], totalStudents: 0, courseStats: null });
+            // For admins: Get ALL reinforcement results without scope filtering
+            // For teachers: Filter by their subjects
+            let topicIdSet = new Set();
+            let taskIdSet = new Set();
+            let gradedStudentIds = new Set();
+            let registeredStudentIds = null;
+
+            if (!isAdmin) {
+                // Teacher flow: strict filtering by their subjects
+                const scope = await this._getTopicTaskScope(supabase, courseId, allowedSubjectIds);
+                if (scope.topicIds.length === 0) {
+                    return Result.ok({ students: [], totalStudents: 0, courseStats: null });
+                }
+                topicIdSet = new Set(scope.topicIds);
+                taskIdSet = new Set(scope.taskIds);
+                registeredStudentIds = await this._getRegisteredStudentIdsForSubjects(supabase, courseId, scope.subjectIds);
             }
 
-            const topicIdSet = new Set(scope.topicIds);
-            const taskIdSet = new Set(scope.taskIds);
-            const gradedStudentIds = await this._getGradedStudentIdsForTasks(supabase, scope.taskIds);
-            if (gradedStudentIds.size === 0) {
-                return Result.ok({ students: [], totalStudents: 0, courseStats: null });
-            }
-
-            const registeredStudentIds = !isAdmin
-                ? await this._getRegisteredStudentIdsForSubjects(supabase, courseId, scope.subjectIds)
-                : null;
-
-            // 1. Get all reinforcement results for the course with user data
+            // 1. Get all reinforcement results for the course
             const { data: resultsData, error: resultsError } = await supabase.client
                 .from('reinforcement_results')
                 .select(`
@@ -348,11 +350,18 @@ export class ReinforcementDomainService {
                 const topicId = Number(result.topic_id);
                 const taskId = Number(result.task_id);
 
+                // Basic validation
                 if (!Number.isInteger(userId) || userId <= 0) return false;
-                if (!gradedStudentIds.has(userId)) return false;
+
+                // For admins: include ALL students who have reinforced
+                if (isAdmin) {
+                    return true;
+                }
+
+                // For teachers: filter by their subjects and registered students
                 if (!Number.isInteger(topicId) || topicId <= 0 || !topicIdSet.has(topicId)) return false;
-                if (Number.isInteger(taskId) && taskId > 0 && !taskIdSet.has(taskId)) return false;
-                if (registeredStudentIds && !registeredStudentIds.has(userId)) return false;
+                if (Number.isInteger(taskId) && taskId > 0 && taskIdSet.size > 0 && !taskIdSet.has(taskId)) return false;
+                if (registeredStudentIds && registeredStudentIds.size > 0 && !registeredStudentIds.has(userId)) return false;
                 return true;
             });
 
@@ -3841,6 +3850,323 @@ Responde en español, con un tono profesional pero accesible.`;
         if (!arr || arr.length === 0) return 0;
         const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
         return arr.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / arr.length;
+    }
+
+    // ─── Intelligent Recommendations System ────────────────────────────────────────
+
+    /**
+     * Gets personalized learning recommendations for a student based on their performance.
+     * Uses AI to detect weaknesses and suggest interventions.
+     */
+    async getStudentRecommendations(userId, options = {}) {
+        try {
+            const { limit = 5 } = options;
+            const supabase = SupabaseService.getInstance();
+
+            // 1. Get all reinforcement results for this user
+            const { data: resultsData, error: resultsError } = await supabase.client
+                .from('reinforcement_results')
+                .select(`
+                    id,
+                    user_id,
+                    course_id,
+                    topic_id,
+                    task_id,
+                    total_questions,
+                    correct_answers,
+                    incorrect_answers,
+                    grade,
+                    difficulty,
+                    duration_seconds,
+                    created_at
+                `)
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false })
+                .limit(100);
+
+            if (resultsError) {
+                console.error('[Recommendations] Error fetching results:', resultsError.message);
+                return Result.fail(resultsError.message);
+            }
+
+            if (!resultsData || resultsData.length === 0) {
+                return Result.ok({ recommendations: [], hasData: false });
+            }
+
+            // 2. Group results by topic and calculate performance
+            const topicPerformance = new Map();
+            for (const result of resultsData) {
+                const topicId = result.topic_id;
+                if (!topicId) continue;
+
+                if (!topicPerformance.has(topicId)) {
+                    topicPerformance.set(topicId, {
+                        topicId,
+                        courseId: result.course_id,
+                        sessions: [],
+                        totalQuestions: 0,
+                        totalCorrect: 0,
+                        totalIncorrect: 0,
+                        grades: [],
+                    });
+                }
+
+                const perf = topicPerformance.get(topicId);
+                perf.sessions.push(result);
+                perf.totalQuestions += result.total_questions || 0;
+                perf.totalCorrect += result.correct_answers || 0;
+                perf.totalIncorrect += result.incorrect_answers || 0;
+                if (result.grade) perf.grades.push(parseFloat(result.grade));
+            }
+
+            // 3. Calculate accuracy for each topic and identify weaknesses
+            const weakTopics = [];
+            for (const [topicId, perf] of topicPerformance) {
+                const accuracy = perf.totalQuestions > 0
+                    ? Math.round((perf.totalCorrect / perf.totalQuestions) * 100)
+                    : 0;
+                const avgGrade = perf.grades.length > 0
+                    ? Math.round(perf.grades.reduce((a, b) => a + b, 0) / perf.grades.length * 10) / 10
+                    : 0;
+
+                // Calculate trend (recent vs older sessions)
+                let trend = 'stable';
+                if (perf.sessions.length >= 2) {
+                    const recentSessions = perf.sessions.slice(0, Math.ceil(perf.sessions.length / 2));
+                    const olderSessions = perf.sessions.slice(Math.ceil(perf.sessions.length / 2));
+
+                    const recentAccuracy = recentSessions.reduce((sum, s) => {
+                        const acc = s.total_questions > 0 ? (s.correct_answers / s.total_questions) * 100 : 0;
+                        return sum + acc;
+                    }, 0) / recentSessions.length;
+
+                    const olderAccuracy = olderSessions.reduce((sum, s) => {
+                        const acc = s.total_questions > 0 ? (s.correct_answers / s.total_questions) * 100 : 0;
+                        return sum + acc;
+                    }, 0) / olderSessions.length;
+
+                    if (recentAccuracy > olderAccuracy + 5) trend = 'improving';
+                    else if (recentAccuracy < olderAccuracy - 5) trend = 'declining';
+                }
+
+                // Only include topics with low performance (accuracy < 70%)
+                if (accuracy < 70 || avgGrade < 7) {
+                    weakTopics.push({
+                        topicId,
+                        courseId: perf.courseId,
+                        accuracy,
+                        avgGrade,
+                        totalSessions: perf.sessions.length,
+                        totalQuestions: perf.totalQuestions,
+                        trend,
+                        lastSessionDate: perf.sessions[0]?.created_at,
+                    });
+                }
+            }
+
+            // Sort by accuracy (lowest first) and limit
+            weakTopics.sort((a, b) => a.accuracy - b.accuracy);
+            const topWeakTopics = weakTopics.slice(0, limit);
+
+            if (topWeakTopics.length === 0) {
+                return Result.ok({ recommendations: [], hasData: true, message: 'No se detectaron debilidades significativas.' });
+            }
+
+            // 4. Get topic and course details
+            const topicIds = topWeakTopics.map(t => t.topicId);
+            const courseIds = [...new Set(topWeakTopics.map(t => t.courseId))];
+
+            const [topicsResult, coursesResult] = await Promise.all([
+                supabase.client.from('topics').select('id, nombre, description, materia_id').in('id', topicIds),
+                supabase.client.from('courses').select('id, title').in('id', courseIds),
+            ]);
+
+            const topicsMap = new Map();
+            const coursesMap = new Map();
+
+            for (const topic of topicsResult.data || []) {
+                topicsMap.set(topic.id, topic);
+            }
+            for (const course of coursesResult.data || []) {
+                coursesMap.set(course.id, course);
+            }
+
+            // 5. Get subject details for topics
+            const subjectIds = [...new Set((topicsResult.data || []).map(t => t.materia_id).filter(Boolean))];
+            let subjectsMap = new Map();
+            if (subjectIds.length > 0) {
+                const { data: subjectsData } = await supabase.client
+                    .from('subjects')
+                    .select('id, name')
+                    .in('id', subjectIds);
+                for (const subject of subjectsData || []) {
+                    subjectsMap.set(subject.id, subject);
+                }
+            }
+
+            // 6. Build recommendations
+            const recommendations = topWeakTopics.map(weak => {
+                const topic = topicsMap.get(weak.topicId) || {};
+                const course = coursesMap.get(weak.courseId) || {};
+                const subject = subjectsMap.get(topic.materia_id) || {};
+
+                const problemDescription = this._buildProblemDescription(weak, topic, subject);
+                const interventionType = this._determineInterventionType(weak);
+
+                return {
+                    id: `rec_${weak.topicId}_${Date.now()}`,
+                    type: interventionType,
+                    status: 'pending',
+                    priority: weak.accuracy < 50 ? 'high' : weak.accuracy < 60 ? 'medium' : 'low',
+
+                    // Problem details
+                    problem: {
+                        description: problemDescription,
+                        topicId: weak.topicId,
+                        topicName: topic.nombre || `Tema #${weak.topicId}`,
+                        courseId: weak.courseId,
+                        courseName: course.title || `Curso #${weak.courseId}`,
+                        subjectId: topic.materia_id || null,
+                        subjectName: subject.name || null,
+                    },
+
+                    // Performance metrics (before)
+                    before: {
+                        accuracy: weak.accuracy,
+                        avgGrade: weak.avgGrade,
+                        totalSessions: weak.totalSessions,
+                        totalQuestions: weak.totalQuestions,
+                        trend: weak.trend,
+                    },
+
+                    // Intervention details
+                    intervention: {
+                        type: interventionType,
+                        description: this._buildInterventionDescription(interventionType, topic),
+                        questionCount: 10,
+                        difficulty: 'EASY',
+                        estimatedMinutes: 15,
+                    },
+
+                    // Links for actions
+                    actions: {
+                        reinforcement: {
+                            path: `/reinforcement/${weak.courseId}`,
+                            query: {
+                                topicId: weak.topicId,
+                                topicName: topic.nombre || '',
+                                difficulty: 'EASY',
+                                autoStart: 'true',
+                                fromRecommendation: 'true',
+                            },
+                        },
+                        learning: {
+                            path: '/learning/course-selection',
+                            query: {
+                                courseId: weak.courseId,
+                                topicId: weak.topicId,
+                                subjectId: topic.materia_id || '',
+                                topicName: topic.nombre || '',
+                                fromRecommendation: 'true',
+                            },
+                        },
+                    },
+
+                    createdAt: new Date().toISOString(),
+                };
+            });
+
+            return Result.ok({
+                recommendations,
+                hasData: true,
+                totalWeakAreas: weakTopics.length,
+                analyzedSessions: resultsData.length,
+            });
+        } catch (error) {
+            console.error('[Recommendations] Error:', error.message);
+            return Result.fail(error.message);
+        }
+    }
+
+    /**
+     * Marks a recommendation as completed and calculates the after metrics.
+     */
+    async completeRecommendation(userId, recommendationId, topicId) {
+        try {
+            const supabase = SupabaseService.getInstance();
+
+            // Get latest results for this topic after the recommendation was started
+            const { data: recentResults, error } = await supabase.client
+                .from('reinforcement_results')
+                .select('*')
+                .eq('user_id', userId)
+                .eq('topic_id', topicId)
+                .order('created_at', { ascending: false })
+                .limit(5);
+
+            if (error) return Result.fail(error.message);
+
+            if (!recentResults || recentResults.length === 0) {
+                return Result.ok({ completed: false, message: 'No hay sesiones recientes para evaluar.' });
+            }
+
+            // Calculate new performance metrics
+            const totalQuestions = recentResults.reduce((sum, r) => sum + (r.total_questions || 0), 0);
+            const totalCorrect = recentResults.reduce((sum, r) => sum + (r.correct_answers || 0), 0);
+            const accuracy = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+            const avgGrade = recentResults.length > 0
+                ? Math.round(recentResults.reduce((sum, r) => sum + parseFloat(r.grade || 0), 0) / recentResults.length * 10) / 10
+                : 0;
+
+            return Result.ok({
+                completed: true,
+                after: {
+                    accuracy,
+                    avgGrade,
+                    totalSessions: recentResults.length,
+                    totalQuestions,
+                },
+                lastSessionDate: recentResults[0]?.created_at,
+            });
+        } catch (error) {
+            console.error('[Recommendations] completeRecommendation error:', error.message);
+            return Result.fail(error.message);
+        }
+    }
+
+    _buildProblemDescription(weak, topic, subject) {
+        const topicName = topic.nombre || `Tema #${weak.topicId}`;
+        const subjectName = subject.name ? ` en ${subject.name}` : '';
+
+        if (weak.accuracy < 40) {
+            return `El estudiante muestra dificultades significativas en ${topicName}${subjectName} con solo ${weak.accuracy}% de precisión.`;
+        } else if (weak.accuracy < 55) {
+            return `El estudiante necesita reforzar ${topicName}${subjectName}. Su dominio actual es del ${weak.accuracy}%.`;
+        } else {
+            return `El estudiante tiene un desempeño moderado en ${topicName}${subjectName} (${weak.accuracy}% de precisión) que puede mejorar.`;
+        }
+    }
+
+    _determineInterventionType(weak) {
+        if (weak.accuracy < 40) return 'intensive_reinforcement';
+        if (weak.accuracy < 55) return 'targeted_reinforcement';
+        if (weak.trend === 'declining') return 'review_reinforcement';
+        return 'practice_reinforcement';
+    }
+
+    _buildInterventionDescription(type, topic) {
+        const topicName = topic.nombre || 'el tema';
+
+        switch (type) {
+            case 'intensive_reinforcement':
+                return `Refuerzo intensivo: 10 preguntas progresivas en ${topicName} comenzando desde nivel fácil para construir confianza.`;
+            case 'targeted_reinforcement':
+                return `Refuerzo dirigido: 10 preguntas enfocadas en los conceptos clave de ${topicName} que necesitan práctica.`;
+            case 'review_reinforcement':
+                return `Repaso guiado: 10 preguntas de revisión en ${topicName} para recuperar el nivel anterior.`;
+            default:
+                return `Práctica adicional: 10 preguntas para fortalecer el dominio de ${topicName}.`;
+        }
     }
 }
 export default ReinforcementDomainService;
