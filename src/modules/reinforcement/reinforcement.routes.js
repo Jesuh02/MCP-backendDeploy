@@ -25,6 +25,9 @@ export function reinforcementRoutes({ reinforcementController }) {
     router.get('/history/user/:userId/course/:courseId', reinforcementController.getHistory);
     router.get('/history', reinforcementController.getMySessions);
 
+    // ═══ Cognitive Analytics Dashboard ═══
+    router.get('/cognitive-analytics', reinforcementController.getCognitiveAnalytics);
+
     return router;
 }
 export default reinforcementRoutes;

@@ -500,6 +500,38 @@ export class ReinforcementController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    /**
+     * GET /cognitive-analytics?courseId=X
+     *
+     * Returns comprehensive cognitive analytics for all students in a course.
+     * Includes: student profiles, performance metrics, learning patterns,
+     * cognitive insights, and course-level statistics.
+     *
+     * Query params:
+     *   - courseId (required): Course to analyze
+     *   - limit: Max students to return (default 50)
+     *   - offset: Pagination offset (default 0)
+     *   - sortBy: 'recent_activity' | 'performance' | 'sessions' | 'improvement'
+     */
+    getCognitiveAnalytics = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.query.courseId || req.query.course_id);
+            if (!courseId) {
+                return next(new ValidationError('courseId is required'));
+            }
+
+            const options = {
+                limit: parseInt(req.query.limit) || 50,
+                offset: parseInt(req.query.offset) || 0,
+                sortBy: req.query.sortBy || 'recent_activity',
+            };
+
+            const result = await this.reinforcementService.getCognitiveAnalytics(courseId, options);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ReinforcementController;
 
