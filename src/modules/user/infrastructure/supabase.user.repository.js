@@ -235,14 +235,66 @@ export class SupabaseUserRepository {
     }
     async update(id, data) {
         const updatePayload = {};
-        if (data.username !== undefined) updatePayload.username = data.username;
+        if (data.username !== undefined) updatePayload.username = String(data.username).trim();
         if (data.email !== undefined) updatePayload.email = normalizeEmail(data.email);
         if (data.avatar !== undefined) updatePayload.avatar = data.avatar;
         if (data.password !== undefined) updatePayload.contrasena = data.password;
         if (data.is_active !== undefined) updatePayload.is_active = data.is_active;
-        const { data: updated, error } = await this.client.from('usuarios').update(updatePayload).eq('id', id).select().single();
-        if (error) throw new Error(`Error actualizando usuario: ${error.message}`);
-        return this._mapUser(updated);
+
+        const personaInput = { ...(data.persona || {}) };
+        if (data.nombres !== undefined || data.nombre !== undefined) personaInput.nombres = data.nombres ?? data.nombre;
+        if (data.apellidos !== undefined || data.apellido !== undefined) personaInput.apellidos = data.apellidos ?? data.apellido;
+        if (data.telefono !== undefined) personaInput.telefono = data.telefono;
+
+        const personaPayload = {};
+        if (personaInput.nombres !== undefined) personaPayload.nombres = String(personaInput.nombres ?? '').trim();
+        if (personaInput.apellidos !== undefined) personaPayload.apellidos = String(personaInput.apellidos ?? '').trim();
+        if (personaInput.telefono !== undefined) personaPayload.telefono = String(personaInput.telefono ?? '').trim();
+
+        if (Object.keys(personaPayload).length > 0) {
+            const { data: currentUser, error: currentError } = await this.client
+                .from('usuarios')
+                .select('id, username, persona_id')
+                .eq('id', id)
+                .maybeSingle();
+
+            if (currentError || !currentUser) {
+                throw new Error(`Error obteniendo usuario para actualizar persona: ${currentError?.message || 'usuario no encontrado'}`);
+            }
+
+            if (currentUser.persona_id) {
+                const { error: personaError } = await this.client
+                    .from('personas')
+                    .update(personaPayload)
+                    .eq('id', currentUser.persona_id);
+                if (personaError) throw new Error(`Error actualizando persona: ${personaError.message}`);
+            } else {
+                const insertPayload = {
+                    nombres: personaPayload.nombres ?? currentUser.username ?? 'Usuario',
+                    apellidos: personaPayload.apellidos ?? '',
+                    telefono: personaPayload.telefono ?? null,
+                };
+                const { data: createdPersona, error: personaError } = await this.client
+                    .from('personas')
+                    .insert(insertPayload)
+                    .select('id')
+                    .single();
+                if (personaError) throw new Error(`Error creando persona: ${personaError.message}`);
+                updatePayload.persona_id = createdPersona.id;
+            }
+        }
+
+        if (Object.keys(updatePayload).length > 0) {
+            const { error } = await this.client
+                .from('usuarios')
+                .update(updatePayload)
+                .eq('id', id)
+                .select()
+                .single();
+            if (error) throw new Error(`Error actualizando usuario: ${error.message}`);
+        }
+
+        return this.findById(id);
     }
     async findAll({ limit = 100, offset = 0 } = {}) {
         const { data, error } = await this.client

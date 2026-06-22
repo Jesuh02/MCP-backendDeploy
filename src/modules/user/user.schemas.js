@@ -4,9 +4,19 @@
 import Joi from 'joi';
 
 export const updateProfileSchema = Joi.object({
-    username: Joi.string().min(3).max(30).optional(),
-    email: Joi.string().email().optional(),
+    username: Joi.string().trim().min(3).max(30).optional(),
+    email: Joi.string().trim().email().optional(),
     avatar: Joi.string().uri().allow(null, '').optional(),
+    nombre: Joi.string().trim().max(120).allow('').optional(),
+    apellido: Joi.string().trim().max(120).allow('').optional(),
+    nombres: Joi.string().trim().max(120).allow('').optional(),
+    apellidos: Joi.string().trim().max(120).allow('').optional(),
+    telefono: Joi.string().trim().max(40).allow('').optional(),
+    persona: Joi.object({
+        nombres: Joi.string().trim().max(120).allow('').optional(),
+        apellidos: Joi.string().trim().max(120).allow('').optional(),
+        telefono: Joi.string().trim().max(40).allow('').optional(),
+    }).optional(),
 }).min(1).messages({
     'object.min': 'Debes enviar al menos un campo para actualizar',
 });

@@ -2661,6 +2661,933 @@ FORMATO: JSON array con los campos según el type de cada ejercicio.`;
         if (b64Lines.length > 3) return true;
         return false;
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // ███████╗████████╗███████╗ █████╗ ██╗  ████████╗██╗  ██╗
+    // ██╔════╝╚══██╔══╝██╔════╝██╔══██╗██║  ╚══██╔══╝██║  ██║
+    // ███████╗   ██║   █████╗  ███████║██║     ██║   ███████║
+    // ╚════██║   ██║   ██╔══╝  ██╔══██║██║     ██║   ██╔══██║
+    // ███████║   ██║   ███████╗██║  ██║███████╗██║   ██║  ██║
+    // ╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝  ╚═╝
+    //  █████╗ ███████╗███████╗███████╗███████╗███████╗███╗   ███╗███████╗███╗   ██╗████████╗
+    // ██╔══██╗██╔════╝██╔════╝██╔════╝██╔════╝██╔════╝████╗ ████║██╔════╝████╗  ██║╚══██╔══╝
+    // ███████║███████╗███████╗█████╗  ███████╗███████╗██╔████╔██║█████╗  ██╔██╗ ██║   ██║
+    // ██╔══██║╚════██║╚════██║██╔══╝  ╚════██║╚════██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║   ██║
+    // ██║  ██║███████║███████║███████╗███████║███████║██║ ╚═╝ ██║███████╗██║ ╚████║   ██║
+    // ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚══════╝╚══════╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝
+    //
+    // Stealth Assessment System (Evaluación Invisible)
+    // Paper de referencia: Stealth Assessment in Digital Games (Valerie Shute, 2011)
+    //
+    // El estudiante NO sabe que está siendo evaluado. La IA analiza constantemente:
+    // - Tiempo de respuesta por pregunta
+    // - Patrones de error (qué tipo de preguntas falla más)
+    // - Cambios de mente (si cambia su respuesta)
+    // - Nivel de confianza (velocidad + patrones)
+    // - Comportamiento bajo presión
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Saves detailed interaction data for stealth assessment.
+     * Called by the client after each question is answered (invisibly to the student).
+     *
+     * @param {Object} data - Stealth assessment data
+     * @param {number} data.userId - User ID
+     * @param {number} data.courseId - Course ID
+     * @param {number} [data.topicId] - Topic ID
+     * @param {number} [data.taskId] - Task ID
+     * @param {string} data.sessionId - Unique session identifier
+     * @param {Array<Object>} data.interactions - Array of interaction data per question
+     * @param {string} data.interactions[].questionId - Unique question identifier
+     * @param {string} data.interactions[].questionType - 'multiple_choice' | 'fill_in_blank' | 'ordering'
+     * @param {string} data.interactions[].questionCategory - Category/topic of the question
+     * @param {number} data.interactions[].timeToFirstClick - Time until first interaction (ms)
+     * @param {number} data.interactions[].timeToSubmit - Total time until submit (ms)
+     * @param {number} data.interactions[].answerChanges - Number of times answer was changed
+     * @param {Array<Object>} data.interactions[].changeHistory - History of answer changes with timestamps
+     * @param {boolean} data.interactions[].isCorrect - Whether final answer was correct
+     * @param {number} data.interactions[].difficulty - Question difficulty (1-5)
+     * @param {number} [data.interactions[].hintUsed] - Whether hint was used (0/1)
+     * @param {number} [data.interactions[].scrollEvents] - Number of scroll events (reading behavior)
+     * @param {number} [data.interactions[].focusLostCount] - Times the user left the question
+     */
+    async saveStealthAssessment(data) {
+        try {
+            const { userId, courseId, topicId, taskId, sessionId, interactions } = data;
+
+            if (!Array.isArray(interactions) || interactions.length === 0) {
+                return Result.fail('No interactions data provided');
+            }
+
+            const supabase = SupabaseService.getInstance();
+
+            // Prepare batch insert for stealth_assessment_interactions
+            const interactionRecords = interactions.map((interaction, index) => ({
+                user_id: userId,
+                course_id: courseId,
+                topic_id: topicId || null,
+                task_id: taskId || null,
+                session_id: sessionId,
+                question_index: index,
+                question_id: interaction.questionId || `q_${index}`,
+                question_type: interaction.questionType || 'multiple_choice',
+                question_category: interaction.questionCategory || 'general',
+                difficulty: interaction.difficulty || 3,
+                time_to_first_click_ms: interaction.timeToFirstClick || 0,
+                time_to_submit_ms: interaction.timeToSubmit || 0,
+                answer_changes: interaction.answerChanges || 0,
+                change_history: JSON.stringify(interaction.changeHistory || []),
+                is_correct: interaction.isCorrect || false,
+                hint_used: interaction.hintUsed || false,
+                scroll_events: interaction.scrollEvents || 0,
+                focus_lost_count: interaction.focusLostCount || 0,
+                created_at: new Date().toISOString(),
+            }));
+
+            // Insert all interactions
+            const { data: savedInteractions, error: insertError } = await supabase.client
+                .from('stealth_assessment_interactions')
+                .insert(interactionRecords)
+                .select();
+
+            if (insertError) {
+                console.error('[StealthAssessment] Error saving interactions:', insertError.message);
+                // Continue even if save fails - we still want to analyze
+            }
+
+            // Analyze the interactions and generate the comprehension X-ray
+            const analysis = await this.analyzeStealthMetrics(userId, courseId, interactions, {
+                topicId,
+                taskId,
+                sessionId,
+            });
+
+            // Save the analysis summary
+            const { error: summaryError } = await supabase.client
+                .from('stealth_assessment_summaries')
+                .upsert({
+                    user_id: userId,
+                    course_id: courseId,
+                    topic_id: topicId || null,
+                    task_id: taskId || null,
+                    session_id: sessionId,
+                    ...analysis.metrics,
+                    cognitive_profile: JSON.stringify(analysis.cognitiveProfile),
+                    weak_areas: JSON.stringify(analysis.weakAreas),
+                    strong_areas: JSON.stringify(analysis.strongAreas),
+                    behavioral_patterns: JSON.stringify(analysis.behavioralPatterns),
+                    recommendations: JSON.stringify(analysis.recommendations),
+                    comprehension_score: analysis.comprehensionScore,
+                    confidence_index: analysis.confidenceIndex,
+                    updated_at: new Date().toISOString(),
+                }, {
+                    onConflict: 'user_id,course_id,session_id',
+                });
+
+            if (summaryError) {
+                console.error('[StealthAssessment] Error saving summary:', summaryError.message);
+            }
+
+            console.log(`🔬 [StealthAssessment] Saved ${interactions.length} interactions for user ${userId}, session ${sessionId}`);
+            console.log(`📊 [StealthAssessment] Comprehension Score: ${analysis.comprehensionScore}%, Confidence Index: ${analysis.confidenceIndex}%`);
+
+            return Result.ok({
+                saved: savedInteractions?.length || interactions.length,
+                analysis,
+            });
+        } catch (error) {
+            console.error('[StealthAssessment] saveStealthAssessment error:', error.message);
+            return Result.fail(error.message);
+        }
+    }
+
+    /**
+     * Analyzes stealth assessment metrics to generate cognitive insights.
+     * This is the core of the invisible evaluation system.
+     *
+     * @param {number} userId
+     * @param {number} courseId
+     * @param {Array<Object>} interactions - Current session interactions
+     * @param {Object} context - Additional context (topicId, taskId, sessionId)
+     * @returns {Object} Analysis results with metrics and insights
+     */
+    async analyzeStealthMetrics(userId, courseId, interactions, context = {}) {
+        const totalQuestions = interactions.length;
+        const correctCount = interactions.filter(i => i.isCorrect).length;
+        const accuracy = totalQuestions > 0 ? (correctCount / totalQuestions) * 100 : 0;
+
+        // ─── Time Analysis ─────────────────────────────────────────────────────────
+        const responseTimes = interactions.map(i => i.timeToSubmit || 0);
+        const avgResponseTime = responseTimes.reduce((a, b) => a + b, 0) / totalQuestions || 0;
+        const medianResponseTime = this._calculateMedian(responseTimes);
+        const responseTimeVariance = this._calculateVariance(responseTimes);
+
+        // Detect rushing (too fast) or overthinking (too slow)
+        const rushingThreshold = 3000; // < 3 seconds = probably guessing
+        const overthinkingThreshold = 60000; // > 60 seconds = struggling
+        const rushingCount = responseTimes.filter(t => t < rushingThreshold && t > 0).length;
+        const overthinkingCount = responseTimes.filter(t => t > overthinkingThreshold).length;
+
+        // ─── Confidence Analysis ───────────────────────────────────────────────────
+        const totalAnswerChanges = interactions.reduce((sum, i) => sum + (i.answerChanges || 0), 0);
+        const questionsWithChanges = interactions.filter(i => (i.answerChanges || 0) > 0).length;
+        const avgChangesPerQuestion = totalAnswerChanges / totalQuestions || 0;
+
+        // High changes + wrong answer = low confidence & confusion
+        // No changes + fast time + correct = high confidence
+        const confidenceSignals = interactions.map(i => {
+            let signal = 50; // base confidence
+
+            // Time-based confidence
+            if (i.timeToSubmit < rushingThreshold) signal -= 20; // too fast = guessing
+            else if (i.timeToSubmit > overthinkingThreshold) signal -= 15; // too slow = struggling
+            else if (i.timeToSubmit >= 5000 && i.timeToSubmit <= 30000) signal += 10; // optimal range
+
+            // Change-based confidence
+            if (i.answerChanges === 0 && i.isCorrect) signal += 20; // confident and correct
+            else if (i.answerChanges > 2) signal -= 15; // too many changes = uncertain
+            else if (i.answerChanges === 1 && i.isCorrect) signal += 5; // reconsidered and got it right
+
+            // Correctness bonus
+            if (i.isCorrect) signal += 15;
+            else signal -= 10;
+
+            // Focus loss penalty
+            if ((i.focusLostCount || 0) > 2) signal -= 10;
+
+            return Math.max(0, Math.min(100, signal));
+        });
+        const confidenceIndex = Math.round(confidenceSignals.reduce((a, b) => a + b, 0) / totalQuestions || 0);
+
+        // ─── Error Pattern Analysis ────────────────────────────────────────────────
+        const errorsByCategory = {};
+        const errorsByType = {};
+        const errorsByDifficulty = {};
+
+        interactions.filter(i => !i.isCorrect).forEach(i => {
+            const category = i.questionCategory || 'general';
+            const type = i.questionType || 'multiple_choice';
+            const difficulty = i.difficulty || 3;
+
+            errorsByCategory[category] = (errorsByCategory[category] || 0) + 1;
+            errorsByType[type] = (errorsByType[type] || 0) + 1;
+            errorsByDifficulty[difficulty] = (errorsByDifficulty[difficulty] || 0) + 1;
+        });
+
+        // Find weak areas (categories with > 50% error rate)
+        const categoryStats = {};
+        interactions.forEach(i => {
+            const category = i.questionCategory || 'general';
+            if (!categoryStats[category]) {
+                categoryStats[category] = { total: 0, errors: 0 };
+            }
+            categoryStats[category].total++;
+            if (!i.isCorrect) categoryStats[category].errors++;
+        });
+
+        const weakAreas = Object.entries(categoryStats)
+            .filter(([, stats]) => stats.total >= 2 && (stats.errors / stats.total) > 0.5)
+            .map(([category, stats]) => ({
+                category,
+                errorRate: Math.round((stats.errors / stats.total) * 100),
+                totalQuestions: stats.total,
+                errors: stats.errors,
+            }))
+            .sort((a, b) => b.errorRate - a.errorRate);
+
+        const strongAreas = Object.entries(categoryStats)
+            .filter(([, stats]) => stats.total >= 2 && (stats.errors / stats.total) < 0.3)
+            .map(([category, stats]) => ({
+                category,
+                successRate: Math.round(((stats.total - stats.errors) / stats.total) * 100),
+                totalQuestions: stats.total,
+                correct: stats.total - stats.errors,
+            }))
+            .sort((a, b) => b.successRate - a.successRate);
+
+        // ─── Behavioral Patterns ───────────────────────────────────────────────────
+        const behavioralPatterns = {
+            // Guessing pattern: fast response + wrong answer + no changes
+            guessing: interactions.filter(i =>
+                i.timeToSubmit < rushingThreshold &&
+                !i.isCorrect &&
+                (i.answerChanges || 0) === 0
+            ).length,
+
+            // Deliberate pattern: moderate time + correct + 0-1 changes
+            deliberate: interactions.filter(i =>
+                i.timeToSubmit >= 5000 &&
+                i.timeToSubmit <= 45000 &&
+                i.isCorrect
+            ).length,
+
+            // Struggling pattern: long time + wrong answer + multiple changes
+            struggling: interactions.filter(i =>
+                i.timeToSubmit > overthinkingThreshold &&
+                !i.isCorrect
+            ).length,
+
+            // Second-guessing pattern: changed answer and got it wrong (was probably right first)
+            secondGuessing: interactions.filter(i =>
+                (i.answerChanges || 0) >= 1 &&
+                !i.isCorrect
+            ).length,
+
+            // Distracted pattern: multiple focus losses
+            distracted: interactions.filter(i =>
+                (i.focusLostCount || 0) > 2
+            ).length,
+
+            // Hint dependency: used hint
+            hintDependency: interactions.filter(i => i.hintUsed).length,
+        };
+
+        // ─── Cognitive Profile ─────────────────────────────────────────────────────
+        const cognitiveProfile = this._buildStealthCognitiveProfile({
+            accuracy,
+            confidenceIndex,
+            avgResponseTime,
+            responseTimeVariance,
+            behavioralPatterns,
+            weakAreas,
+            totalQuestions,
+        });
+
+        // ─── Comprehension Score (0-100) ───────────────────────────────────────────
+        // Weighted formula considering multiple factors
+        const comprehensionScore = Math.round(
+            (accuracy * 0.40) + // 40% weight on correctness
+            (confidenceIndex * 0.25) + // 25% weight on confidence
+            (cognitiveProfile.consistencyScore * 0.20) + // 20% weight on consistency
+            (cognitiveProfile.engagementScore * 0.15) // 15% weight on engagement
+        );
+
+        // ─── Generate Recommendations ──────────────────────────────────────────────
+        const recommendations = this._generateStealthRecommendations({
+            comprehensionScore,
+            confidenceIndex,
+            behavioralPatterns,
+            weakAreas,
+            cognitiveProfile,
+            avgResponseTime,
+        });
+
+        return {
+            // Core metrics
+            metrics: {
+                total_questions: totalQuestions,
+                correct_count: correctCount,
+                accuracy: Math.round(accuracy * 100) / 100,
+                avg_response_time_ms: Math.round(avgResponseTime),
+                median_response_time_ms: Math.round(medianResponseTime),
+                response_time_variance: Math.round(responseTimeVariance),
+                total_answer_changes: totalAnswerChanges,
+                questions_with_changes: questionsWithChanges,
+                rushing_count: rushingCount,
+                overthinking_count: overthinkingCount,
+            },
+
+            // Scores
+            comprehensionScore,
+            confidenceIndex,
+
+            // Detailed analysis
+            cognitiveProfile,
+            weakAreas,
+            strongAreas,
+            behavioralPatterns,
+            errorsByCategory,
+            errorsByType,
+            errorsByDifficulty,
+
+            // Actionable insights
+            recommendations,
+
+            // Metadata
+            analyzedAt: new Date().toISOString(),
+            sessionId: context.sessionId,
+        };
+    }
+
+    /**
+     * Builds a cognitive profile based on stealth assessment data.
+     */
+    _buildStealthCognitiveProfile({
+        accuracy,
+        confidenceIndex,
+        avgResponseTime,
+        responseTimeVariance,
+        behavioralPatterns,
+        weakAreas,
+        totalQuestions,
+    }) {
+        // Learning style inference
+        let learningStyle = 'balanced';
+        if (avgResponseTime < 10000 && accuracy > 70) {
+            learningStyle = 'quick_intuitive'; // Fast and accurate
+        } else if (avgResponseTime > 30000 && accuracy > 70) {
+            learningStyle = 'methodical_analytical'; // Slow but accurate
+        } else if (behavioralPatterns.guessing > totalQuestions * 0.3) {
+            learningStyle = 'impulsive_guesser'; // Too many guesses
+        } else if (behavioralPatterns.secondGuessing > totalQuestions * 0.2) {
+            learningStyle = 'second_guesser'; // Changes mind too much
+        }
+
+        // Consistency score (inverse of variance, normalized)
+        const maxExpectedVariance = 900000000; // 30 seconds squared
+        const consistencyScore = Math.max(0, Math.min(100,
+            100 - (responseTimeVariance / maxExpectedVariance) * 100
+        ));
+
+        // Engagement score based on behavioral signals
+        const totalBehavioralIssues =
+            behavioralPatterns.guessing +
+            behavioralPatterns.distracted +
+            behavioralPatterns.struggling;
+        const engagementScore = Math.max(0, Math.min(100,
+            100 - (totalBehavioralIssues / totalQuestions) * 50
+        ));
+
+        // Mastery level
+        let masteryLevel = 'novice';
+        let masteryColor = '#FF6B6B';
+        if (accuracy >= 90 && confidenceIndex >= 75) {
+            masteryLevel = 'expert';
+            masteryColor = '#51CF66';
+        } else if (accuracy >= 75 && confidenceIndex >= 60) {
+            masteryLevel = 'proficient';
+            masteryColor = '#339AF0';
+        } else if (accuracy >= 60 && confidenceIndex >= 45) {
+            masteryLevel = 'competent';
+            masteryColor = '#FAB005';
+        } else if (accuracy >= 40) {
+            masteryLevel = 'developing';
+            masteryColor = '#FF922B';
+        }
+
+        // Stress indicator (high variance + low confidence + many changes)
+        const stressIndicator = Math.min(100, Math.round(
+            (responseTimeVariance > 500000000 ? 30 : 0) +
+            (confidenceIndex < 40 ? 30 : 0) +
+            (behavioralPatterns.secondGuessing > 2 ? 20 : 0) +
+            (behavioralPatterns.struggling > 2 ? 20 : 0)
+        ));
+
+        // Knowledge retention prediction (based on patterns)
+        const retentionPrediction = Math.round(
+            (accuracy * 0.5) +
+            (confidenceIndex * 0.3) +
+            (behavioralPatterns.deliberate / totalQuestions * 100 * 0.2)
+        );
+
+        return {
+            learningStyle,
+            consistencyScore: Math.round(consistencyScore),
+            engagementScore: Math.round(engagementScore),
+            masteryLevel,
+            masteryColor,
+            stressIndicator,
+            retentionPrediction: Math.min(100, retentionPrediction),
+            needsSupport: weakAreas.length > 0 || accuracy < 50 || confidenceIndex < 40,
+            readyForAdvanced: accuracy >= 80 && confidenceIndex >= 70 && behavioralPatterns.deliberate > totalQuestions * 0.5,
+        };
+    }
+
+    /**
+     * Generates personalized recommendations based on stealth assessment analysis.
+     */
+    _generateStealthRecommendations({
+        comprehensionScore,
+        confidenceIndex,
+        behavioralPatterns,
+        weakAreas,
+        cognitiveProfile,
+        avgResponseTime,
+    }) {
+        const recommendations = [];
+
+        // Based on comprehension score
+        if (comprehensionScore < 40) {
+            recommendations.push({
+                priority: 'high',
+                type: 'review_fundamentals',
+                message: 'Se recomienda revisar los conceptos básicos del tema antes de continuar.',
+                action: 'Repasar el material de la lección desde el inicio.',
+            });
+        } else if (comprehensionScore < 60) {
+            recommendations.push({
+                priority: 'medium',
+                type: 'targeted_practice',
+                message: 'Hay áreas específicas que requieren más práctica.',
+                action: 'Enfocarse en ejercicios de las áreas identificadas como débiles.',
+            });
+        }
+
+        // Based on confidence
+        if (confidenceIndex < 40) {
+            recommendations.push({
+                priority: 'medium',
+                type: 'build_confidence',
+                message: 'Se detecta inseguridad en las respuestas.',
+                action: 'Practicar con ejercicios de menor dificultad para construir confianza.',
+            });
+        }
+
+        // Based on behavioral patterns
+        if (behavioralPatterns.guessing > 3) {
+            recommendations.push({
+                priority: 'high',
+                type: 'slow_down',
+                message: 'Se detecta un patrón de respuestas apresuradas.',
+                action: 'Tomar más tiempo para leer y analizar cada pregunta antes de responder.',
+            });
+        }
+
+        if (behavioralPatterns.secondGuessing > 2) {
+            recommendations.push({
+                priority: 'medium',
+                type: 'trust_instincts',
+                message: 'Se observa tendencia a cambiar respuestas correctas.',
+                action: 'Confiar más en la primera respuesta instintiva cuando hay seguridad.',
+            });
+        }
+
+        if (behavioralPatterns.overthinking > 2) {
+            recommendations.push({
+                priority: 'low',
+                type: 'time_management',
+                message: 'Algunas preguntas toman demasiado tiempo.',
+                action: 'Practicar técnicas de gestión del tiempo en exámenes.',
+            });
+        }
+
+        if (behavioralPatterns.distracted > 2) {
+            recommendations.push({
+                priority: 'medium',
+                type: 'focus',
+                message: 'Se detectan interrupciones frecuentes durante el quiz.',
+                action: 'Buscar un ambiente más tranquilo y libre de distracciones.',
+            });
+        }
+
+        // Based on weak areas
+        if (weakAreas.length > 0) {
+            const topWeak = weakAreas.slice(0, 3).map(w => w.category).join(', ');
+            recommendations.push({
+                priority: 'high',
+                type: 'focus_areas',
+                message: `Áreas que necesitan refuerzo: ${topWeak}`,
+                action: 'Dedicar tiempo adicional a estudiar estos temas específicos.',
+                details: weakAreas.slice(0, 3),
+            });
+        }
+
+        // Based on cognitive profile
+        if (cognitiveProfile.stressIndicator > 60) {
+            recommendations.push({
+                priority: 'medium',
+                type: 'stress_management',
+                message: 'Se detectan señales de estrés durante la evaluación.',
+                action: 'Practicar técnicas de relajación y tomar descansos entre sesiones de estudio.',
+            });
+        }
+
+        if (cognitiveProfile.readyForAdvanced) {
+            recommendations.push({
+                priority: 'low',
+                type: 'advance',
+                message: '¡Excelente dominio del tema!',
+                action: 'Listo para avanzar a contenido de mayor dificultad.',
+            });
+        }
+
+        // Sort by priority
+        const priorityOrder = { high: 0, medium: 1, low: 2 };
+        recommendations.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+
+        return recommendations;
+    }
+
+    /**
+     * Gets the comprehension X-ray (radiografía de comprensión) for a student.
+     * This is the visible output for teachers/admins only.
+     *
+     * @param {number} userId
+     * @param {number} courseId
+     * @param {Object} options - Filter options (topicId, taskId, limit)
+     */
+    async getComprehensionXRay(userId, courseId, options = {}) {
+        try {
+            const { topicId, taskId, limit = 10 } = options;
+            const supabase = SupabaseService.getInstance();
+
+            // Get recent stealth assessment summaries
+            let query = supabase.client
+                .from('stealth_assessment_summaries')
+                .select('*')
+                .eq('user_id', userId)
+                .eq('course_id', courseId)
+                .order('updated_at', { ascending: false })
+                .limit(limit);
+
+            if (topicId) query = query.eq('topic_id', topicId);
+            if (taskId) query = query.eq('task_id', taskId);
+
+            const { data: summaries, error } = await query;
+
+            if (error) {
+                console.error('[StealthAssessment] Error fetching X-ray:', error.message);
+                return Result.fail(error.message);
+            }
+
+            if (!summaries || summaries.length === 0) {
+                return Result.ok({
+                    hasData: false,
+                    message: 'No hay datos de evaluación invisible disponibles para este estudiante.',
+                });
+            }
+
+            // Aggregate data across sessions
+            const aggregated = this._aggregateXRayData(summaries);
+
+            // Generate AI-powered insights if LLM is available
+            let aiInsights = null;
+            if (this.llmPort) {
+                aiInsights = await this._generateAIInsights(aggregated);
+            }
+
+            return Result.ok({
+                hasData: true,
+                studentId: userId,
+                courseId,
+                sessionsAnalyzed: summaries.length,
+                latestSession: summaries[0]?.updated_at,
+
+                // Aggregated scores
+                overallComprehension: aggregated.avgComprehension,
+                overallConfidence: aggregated.avgConfidence,
+
+                // Trends
+                comprehensionTrend: aggregated.comprehensionTrend,
+                confidenceTrend: aggregated.confidenceTrend,
+
+                // Patterns
+                consistentWeakAreas: aggregated.consistentWeakAreas,
+                consistentStrongAreas: aggregated.consistentStrongAreas,
+                dominantBehavioralPatterns: aggregated.dominantPatterns,
+
+                // Cognitive profile evolution
+                currentCognitiveProfile: aggregated.latestProfile,
+                profileEvolution: aggregated.profileEvolution,
+
+                // Recommendations (prioritized)
+                recommendations: aggregated.recommendations,
+
+                // AI-generated insights (if available)
+                aiInsights,
+
+                // Raw session data for detailed view
+                sessions: summaries.map(s => ({
+                    sessionId: s.session_id,
+                    date: s.updated_at,
+                    comprehensionScore: s.comprehension_score,
+                    confidenceIndex: s.confidence_index,
+                    totalQuestions: s.total_questions,
+                    accuracy: s.accuracy,
+                })),
+            });
+        } catch (error) {
+            console.error('[StealthAssessment] getComprehensionXRay error:', error.message);
+            return Result.fail(error.message);
+        }
+    }
+
+    /**
+     * Aggregates X-ray data from multiple sessions.
+     */
+    _aggregateXRayData(summaries) {
+        const comprehensionScores = summaries.map(s => s.comprehension_score || 0);
+        const confidenceScores = summaries.map(s => s.confidence_index || 0);
+
+        // Calculate averages
+        const avgComprehension = Math.round(
+            comprehensionScores.reduce((a, b) => a + b, 0) / summaries.length
+        );
+        const avgConfidence = Math.round(
+            confidenceScores.reduce((a, b) => a + b, 0) / summaries.length
+        );
+
+        // Calculate trends (comparing recent vs older)
+        let comprehensionTrend = 'stable';
+        let confidenceTrend = 'stable';
+
+        if (summaries.length >= 3) {
+            const recentComp = comprehensionScores.slice(0, Math.ceil(summaries.length / 2));
+            const olderComp = comprehensionScores.slice(Math.ceil(summaries.length / 2));
+            const recentAvg = recentComp.reduce((a, b) => a + b, 0) / recentComp.length;
+            const olderAvg = olderComp.reduce((a, b) => a + b, 0) / olderComp.length;
+
+            if (recentAvg > olderAvg + 5) comprehensionTrend = 'improving';
+            else if (recentAvg < olderAvg - 5) comprehensionTrend = 'declining';
+
+            const recentConf = confidenceScores.slice(0, Math.ceil(summaries.length / 2));
+            const olderConf = confidenceScores.slice(Math.ceil(summaries.length / 2));
+            const recentConfAvg = recentConf.reduce((a, b) => a + b, 0) / recentConf.length;
+            const olderConfAvg = olderConf.reduce((a, b) => a + b, 0) / olderConf.length;
+
+            if (recentConfAvg > olderConfAvg + 5) confidenceTrend = 'improving';
+            else if (recentConfAvg < olderConfAvg - 5) confidenceTrend = 'declining';
+        }
+
+        // Aggregate weak areas (appears in > 50% of sessions)
+        const weakAreaCounts = {};
+        summaries.forEach(s => {
+            const weakAreas = JSON.parse(s.weak_areas || '[]');
+            weakAreas.forEach(w => {
+                weakAreaCounts[w.category] = (weakAreaCounts[w.category] || 0) + 1;
+            });
+        });
+        const consistentWeakAreas = Object.entries(weakAreaCounts)
+            .filter(([, count]) => count >= summaries.length * 0.5)
+            .map(([category, count]) => ({ category, occurrences: count }))
+            .sort((a, b) => b.occurrences - a.occurrences);
+
+        // Aggregate strong areas
+        const strongAreaCounts = {};
+        summaries.forEach(s => {
+            const strongAreas = JSON.parse(s.strong_areas || '[]');
+            strongAreas.forEach(w => {
+                strongAreaCounts[w.category] = (strongAreaCounts[w.category] || 0) + 1;
+            });
+        });
+        const consistentStrongAreas = Object.entries(strongAreaCounts)
+            .filter(([, count]) => count >= summaries.length * 0.5)
+            .map(([category, count]) => ({ category, occurrences: count }))
+            .sort((a, b) => b.occurrences - a.occurrences);
+
+        // Aggregate behavioral patterns
+        const patternTotals = {
+            guessing: 0,
+            deliberate: 0,
+            struggling: 0,
+            secondGuessing: 0,
+            distracted: 0,
+        };
+        summaries.forEach(s => {
+            const patterns = JSON.parse(s.behavioral_patterns || '{}');
+            Object.keys(patternTotals).forEach(key => {
+                patternTotals[key] += patterns[key] || 0;
+            });
+        });
+        const dominantPatterns = Object.entries(patternTotals)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([pattern, count]) => ({ pattern, totalOccurrences: count }));
+
+        // Latest cognitive profile
+        const latestProfile = JSON.parse(summaries[0]?.cognitive_profile || '{}');
+
+        // Profile evolution (simplified)
+        const profileEvolution = summaries.slice(0, 5).map(s => ({
+            date: s.updated_at,
+            masteryLevel: JSON.parse(s.cognitive_profile || '{}').masteryLevel || 'unknown',
+            comprehension: s.comprehension_score,
+        }));
+
+        // Aggregate recommendations (most frequent high-priority ones)
+        const recommendationCounts = {};
+        summaries.forEach(s => {
+            const recs = JSON.parse(s.recommendations || '[]');
+            recs.filter(r => r.priority === 'high').forEach(r => {
+                recommendationCounts[r.type] = recommendationCounts[r.type] || { ...r, count: 0 };
+                recommendationCounts[r.type].count++;
+            });
+        });
+        const recommendations = Object.values(recommendationCounts)
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 5);
+
+        return {
+            avgComprehension,
+            avgConfidence,
+            comprehensionTrend,
+            confidenceTrend,
+            consistentWeakAreas,
+            consistentStrongAreas,
+            dominantPatterns,
+            latestProfile,
+            profileEvolution,
+            recommendations,
+        };
+    }
+
+    /**
+     * Generates AI-powered insights from aggregated stealth assessment data.
+     */
+    async _generateAIInsights(aggregatedData) {
+        try {
+            const prompt = `Eres un experto en pedagogía y neurociencia del aprendizaje. Analiza los siguientes datos de evaluación invisible (stealth assessment) de un estudiante y genera insights accionables.
+
+DATOS DEL ESTUDIANTE:
+- Comprensión promedio: ${aggregatedData.avgComprehension}%
+- Confianza promedio: ${aggregatedData.avgConfidence}%
+- Tendencia de comprensión: ${aggregatedData.comprehensionTrend}
+- Tendencia de confianza: ${aggregatedData.confidenceTrend}
+- Nivel de maestría actual: ${aggregatedData.latestProfile.masteryLevel || 'desconocido'}
+- Estilo de aprendizaje detectado: ${aggregatedData.latestProfile.learningStyle || 'no determinado'}
+- Indicador de estrés: ${aggregatedData.latestProfile.stressIndicator || 0}%
+- Áreas débiles consistentes: ${aggregatedData.consistentWeakAreas.map(w => w.category).join(', ') || 'ninguna identificada'}
+- Áreas fuertes consistentes: ${aggregatedData.consistentStrongAreas.map(s => s.category).join(', ') || 'ninguna identificada'}
+- Patrones de comportamiento dominantes: ${aggregatedData.dominantPatterns.map(p => p.pattern).join(', ')}
+
+Genera un análisis breve (máximo 3 párrafos) que incluya:
+1. Una evaluación del estado actual del estudiante
+2. Las fortalezas y oportunidades de mejora más importantes
+3. Una recomendación específica y accionable para el docente
+
+Responde en español, con un tono profesional pero accesible.`;
+
+            const response = await this.llmPort.chat(
+                'Eres un analista educativo experto en evaluación formativa y neurociencia del aprendizaje.',
+                prompt,
+                { temperature: 0.3, maxTokens: 500 }
+            );
+
+            return response?.content || null;
+        } catch (error) {
+            console.error('[StealthAssessment] Error generating AI insights:', error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Gets stealth assessment analytics for an entire course.
+     * For teachers/admins to see class-level patterns.
+     */
+    async getCourseStealthAnalytics(courseId, options = {}) {
+        try {
+            const { limit = 100 } = options;
+            const supabase = SupabaseService.getInstance();
+
+            // Get all recent summaries for the course
+            const { data: summaries, error } = await supabase.client
+                .from('stealth_assessment_summaries')
+                .select('*')
+                .eq('course_id', courseId)
+                .order('updated_at', { ascending: false })
+                .limit(limit);
+
+            if (error) {
+                return Result.fail(error.message);
+            }
+
+            if (!summaries || summaries.length === 0) {
+                return Result.ok({
+                    hasData: false,
+                    message: 'No hay datos de evaluación invisible para este curso.',
+                });
+            }
+
+            // Group by user
+            const userGroups = {};
+            summaries.forEach(s => {
+                if (!userGroups[s.user_id]) {
+                    userGroups[s.user_id] = [];
+                }
+                userGroups[s.user_id].push(s);
+            });
+
+            // Calculate per-student stats
+            const studentStats = Object.entries(userGroups).map(([userId, userSummaries]) => {
+                const avgComp = userSummaries.reduce((a, s) => a + (s.comprehension_score || 0), 0) / userSummaries.length;
+                const avgConf = userSummaries.reduce((a, s) => a + (s.confidence_index || 0), 0) / userSummaries.length;
+                const latestProfile = JSON.parse(userSummaries[0]?.cognitive_profile || '{}');
+
+                return {
+                    userId: parseInt(userId),
+                    sessionsCount: userSummaries.length,
+                    avgComprehension: Math.round(avgComp),
+                    avgConfidence: Math.round(avgConf),
+                    masteryLevel: latestProfile.masteryLevel || 'unknown',
+                    needsSupport: latestProfile.needsSupport || avgComp < 50,
+                    lastActivity: userSummaries[0]?.updated_at,
+                };
+            });
+
+            // Course-level aggregations
+            const totalStudents = studentStats.length;
+            const avgCourseComprehension = Math.round(
+                studentStats.reduce((a, s) => a + s.avgComprehension, 0) / totalStudents
+            );
+            const avgCourseConfidence = Math.round(
+                studentStats.reduce((a, s) => a + s.avgConfidence, 0) / totalStudents
+            );
+
+            const studentsNeedingSupport = studentStats.filter(s => s.needsSupport).length;
+
+            const masteryDistribution = {
+                expert: studentStats.filter(s => s.masteryLevel === 'expert').length,
+                proficient: studentStats.filter(s => s.masteryLevel === 'proficient').length,
+                competent: studentStats.filter(s => s.masteryLevel === 'competent').length,
+                developing: studentStats.filter(s => s.masteryLevel === 'developing').length,
+                novice: studentStats.filter(s => s.masteryLevel === 'novice').length,
+            };
+
+            // Aggregate weak areas across all students
+            const courseWeakAreas = {};
+            summaries.forEach(s => {
+                const weakAreas = JSON.parse(s.weak_areas || '[]');
+                weakAreas.forEach(w => {
+                    courseWeakAreas[w.category] = (courseWeakAreas[w.category] || 0) + 1;
+                });
+            });
+            const topCourseWeakAreas = Object.entries(courseWeakAreas)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([category, count]) => ({ category, studentCount: count }));
+
+            return Result.ok({
+                hasData: true,
+                courseId,
+                analyzedAt: new Date().toISOString(),
+
+                // Overview
+                totalStudents,
+                totalSessions: summaries.length,
+                avgCourseComprehension,
+                avgCourseConfidence,
+                studentsNeedingSupport,
+                supportPercentage: Math.round((studentsNeedingSupport / totalStudents) * 100),
+
+                // Distributions
+                masteryDistribution,
+
+                // Problem areas
+                topCourseWeakAreas,
+
+                // Student details (sorted by need for support)
+                students: studentStats.sort((a, b) => a.avgComprehension - b.avgComprehension),
+            });
+        } catch (error) {
+            console.error('[StealthAssessment] getCourseStealthAnalytics error:', error.message);
+            return Result.fail(error.message);
+        }
+    }
+
+    // ─── Helper Methods ────────────────────────────────────────────────────────────
+
+    _calculateMedian(arr) {
+        if (!arr || arr.length === 0) return 0;
+        const sorted = [...arr].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    _calculateVariance(arr) {
+        if (!arr || arr.length === 0) return 0;
+        const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+        return arr.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / arr.length;
+    }
 }
 export default ReinforcementDomainService;
 
