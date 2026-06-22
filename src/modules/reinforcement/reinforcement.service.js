@@ -157,7 +157,7 @@ export class ReinforcementDomainService {
             } else if (sortBy === 'performance') {
                 studentProfiles.sort((a, b) => b.performance.accuracy - a.performance.accuracy);
             } else if (sortBy === 'sessions') {
-                studentProfiles.sort((a, b) => b.totalSessions - a.totalSessions);
+                studentProfiles.sort((a, b) => b.performance.totalSessions - a.performance.totalSessions);
             } else if (sortBy === 'improvement') {
                 studentProfiles.sort((a, b) => b.cognitiveInsights.improvementRate - a.cognitiveInsights.improvementRate);
             }
@@ -193,8 +193,8 @@ export class ReinforcementDomainService {
         const totalDuration = results.reduce((sum, r) => sum + (r.duration_seconds || 0), 0);
         const accuracy = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
 
-        // Calculate grades
-        const grades = results.map(r => parseFloat(r.grade || 0)).filter(g => !isNaN(g));
+        // Calculate grades in chronological order so recent-vs-previous trends are real.
+        const grades = sortedResults.map(r => parseFloat(r.grade || 0)).filter(g => !isNaN(g));
         const avgGrade = grades.length > 0
             ? Math.round(grades.reduce((a, b) => a + b, 0) / grades.length * 10) / 10
             : 0;
@@ -209,8 +209,8 @@ export class ReinforcementDomainService {
             const previousAvg = previousGrades.reduce((a, b) => a + b, 0) / previousGrades.length;
             improvementRate = Math.round((recentAvg - previousAvg) * 10) / 10;
 
-            if (improvementRate > 5) trend = 'improving';
-            else if (improvementRate < -5) trend = 'declining';
+            if (improvementRate > 0.5) trend = 'improving';
+            else if (improvementRate < -0.5) trend = 'declining';
         }
 
         // Skill level
@@ -221,7 +221,7 @@ export class ReinforcementDomainService {
         else if (accuracy >= 50) { skillLevel = 'developing'; skillColor = '#FAB005'; }
 
         // Study patterns
-        const studyHours = results.map(r => new Date(r.created_at).getHours());
+        const studyHours = sortedResults.map(r => new Date(r.created_at).getHours());
         const hourCounts = {};
         studyHours.forEach(h => { hourCounts[h] = (hourCounts[h] || 0) + 1; });
         const preferredHour = Object.entries(hourCounts)
@@ -241,6 +241,13 @@ export class ReinforcementDomainService {
             ? Math.round(totalDuration / totalQuestions)
             : 0;
 
+        const errorRate = totalQuestions > 0
+            ? Math.round((totalIncorrect / totalQuestions) * 100)
+            : 0;
+
+        const preferredDifficulty = Object.entries(difficultyStats)
+            .sort((a, b) => b[1].total - a[1].total)[0]?.[0] || null;
+
         // Consistency score (standard deviation of grades)
         let consistency = 100;
         if (grades.length >= 3) {
@@ -257,6 +264,32 @@ export class ReinforcementDomainService {
         let engagementLevel = 'high';
         if (daysSinceLastActivity > 14) engagementLevel = 'low';
         else if (daysSinceLastActivity > 7) engagementLevel = 'medium';
+
+        const lateSessions = studyHours.filter(h => h >= 21 || h < 6).length;
+        const lateSessionRatio = studyHours.length > 0 ? lateSessions / studyHours.length : 0;
+        const fatigueRiskScore = Math.min(100, Math.round(
+            (lateSessionRatio * 42) +
+            (avgTimePerQuestion > 75 ? 28 : avgTimePerQuestion > 45 ? 16 : 4) +
+            (trend === 'declining' ? 22 : trend === 'stable' ? 8 : 0) +
+            (errorRate > 45 ? 16 : errorRate > 30 ? 8 : 0)
+        ));
+        const fatigueLevel = fatigueRiskScore >= 68 ? 'high' : fatigueRiskScore >= 38 ? 'medium' : 'low';
+
+        let performanceStatus = 'steady';
+        if (accuracy >= 80 && avgGrade >= 8 && trend !== 'declining') {
+            performanceStatus = 'strong';
+        } else if (accuracy < 60 || avgGrade < 6 || trend === 'declining') {
+            performanceStatus = 'needs_support';
+        }
+
+        const recommendedAction = this._buildCognitiveRecommendation({
+            performanceStatus,
+            fatigueLevel,
+            preferredHour: preferredHour ? parseInt(preferredHour) : null,
+            preferredDifficulty,
+            avgTimePerQuestion,
+            errorRate,
+        });
 
         // Build history for chart (last 10 sessions)
         const recentHistory = sortedResults.slice(-10).map(r => ({
@@ -301,6 +334,12 @@ export class ReinforcementDomainService {
                 engagementLevel,
                 preferredStudyHour: preferredHour ? parseInt(preferredHour) : null,
                 difficultyStats,
+                errorRate,
+                preferredDifficulty,
+                fatigueRiskScore,
+                fatigueLevel,
+                performanceStatus,
+                recommendedAction,
             },
 
             // Activity data
@@ -311,6 +350,38 @@ export class ReinforcementDomainService {
             // Metadata
             firstSession: sortedResults[0]?.created_at || null,
         };
+    }
+
+    _buildCognitiveRecommendation({
+        performanceStatus,
+        fatigueLevel,
+        preferredHour,
+        preferredDifficulty,
+        avgTimePerQuestion,
+        errorRate,
+    }) {
+        const hourText = Number.isInteger(preferredHour)
+            ? `${String(preferredHour).padStart(2, '0')}:00`
+            : 'su horario de mayor actividad';
+        const difficultyText = preferredDifficulty ? String(preferredDifficulty).toLowerCase() : 'su nivel actual';
+
+        if (performanceStatus === 'strong') {
+            return `Va bien: mantener retos ${difficultyText} cerca de ${hourText} y subir complejidad de forma gradual.`;
+        }
+
+        if (fatigueLevel === 'high') {
+            return `Riesgo de fatiga: dividir sesiones, bajar carga textual y reforzar con ejemplos visuales cerca de ${hourText}.`;
+        }
+
+        if (errorRate >= 45) {
+            return `Necesita apoyo: revisar patrones de error antes de aumentar dificultad y usar retroalimentacion paso a paso.`;
+        }
+
+        if (avgTimePerQuestion >= 75) {
+            return `Respuesta lenta: priorizar ejercicios cortos, pistas tempranas y pausas entre bloques.`;
+        }
+
+        return `En progreso: mantener practica guiada en ${difficultyText} y observar la proxima tendencia.`;
     }
 
     /**
@@ -346,6 +417,18 @@ export class ReinforcementDomainService {
             low: profiles.filter(p => p.cognitiveInsights.engagementLevel === 'low').length,
         };
 
+        const performanceStatusDistribution = {
+            strong: profiles.filter(p => p.cognitiveInsights.performanceStatus === 'strong').length,
+            steady: profiles.filter(p => p.cognitiveInsights.performanceStatus === 'steady').length,
+            needs_support: profiles.filter(p => p.cognitiveInsights.performanceStatus === 'needs_support').length,
+        };
+
+        const fatigueDistribution = {
+            high: profiles.filter(p => p.cognitiveInsights.fatigueLevel === 'high').length,
+            medium: profiles.filter(p => p.cognitiveInsights.fatigueLevel === 'medium').length,
+            low: profiles.filter(p => p.cognitiveInsights.fatigueLevel === 'low').length,
+        };
+
         const totalQuestions = profiles.reduce((sum, p) => sum + p.performance.totalQuestions, 0);
         const totalSessions = profiles.reduce((sum, p) => sum + p.performance.totalSessions, 0);
 
@@ -358,6 +441,8 @@ export class ReinforcementDomainService {
             skillDistribution,
             trendDistribution,
             engagementDistribution,
+            performanceStatusDistribution,
+            fatigueDistribution,
         };
     }
 
