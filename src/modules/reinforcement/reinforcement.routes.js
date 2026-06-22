@@ -28,6 +28,12 @@ export function reinforcementRoutes({ reinforcementController }) {
     // ═══ Cognitive Analytics Dashboard ═══
     router.get('/cognitive-analytics', reinforcementController.getCognitiveAnalytics);
 
+    // ═══ Stealth Assessment (Evaluación Invisible) ═══
+    // Paper: Stealth Assessment in Digital Games (Valerie Shute, 2011)
+    router.post('/stealth-assessment', reinforcementController.saveStealthAssessment);
+    router.get('/stealth-assessment/xray', reinforcementController.getComprehensionXRay);
+    router.get('/stealth-assessment/course-analytics', reinforcementController.getCourseStealthAnalytics);
+
     return router;
 }
 export default reinforcementRoutes;

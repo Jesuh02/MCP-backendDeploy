@@ -532,6 +532,142 @@ export class ReinforcementController {
             res.json({ success: true, data: result.getValue() });
         } catch (err) { next(err); }
     };
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // STEALTH ASSESSMENT ENDPOINTS (Evaluación Invisible)
+    // Paper: Stealth Assessment in Digital Games (Valerie Shute, 2011)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * POST /stealth-assessment
+     * Saves detailed interaction data for stealth assessment.
+     * Called invisibly by the client after each quiz question is answered.
+     *
+     * Body:
+     *   - userId: number
+     *   - courseId: number
+     *   - topicId?: number
+     *   - taskId?: number
+     *   - sessionId: string (unique identifier for this quiz session)
+     *   - interactions: Array of interaction objects with timing/behavior data
+     *
+     * Each interaction contains:
+     *   - questionId: string
+     *   - questionType: 'multiple_choice' | 'fill_in_blank' | 'ordering'
+     *   - questionCategory: string (topic/category of the question)
+     *   - timeToFirstClick: number (ms until first interaction)
+     *   - timeToSubmit: number (total ms until submit)
+     *   - answerChanges: number (times answer was changed)
+     *   - changeHistory: Array (history of changes with timestamps)
+     *   - isCorrect: boolean
+     *   - difficulty: number (1-5)
+     *   - hintUsed?: boolean
+     *   - scrollEvents?: number
+     *   - focusLostCount?: number
+     */
+    saveStealthAssessment = async(req, res, next) => {
+        try {
+            const userId = req.user?.userId || req.user?.id || parseInt(req.body.userId || req.body.user_id);
+            const courseId = parseInt(req.body.courseId || req.body.course_id);
+            const topicId = req.body.topicId || req.body.topic_id ? parseInt(req.body.topicId || req.body.topic_id) : null;
+            const taskId = req.body.taskId || req.body.task_id ? parseInt(req.body.taskId || req.body.task_id) : null;
+            const sessionId = req.body.sessionId || req.body.session_id;
+            const interactions = req.body.interactions;
+
+            if (!userId) return next(new ValidationError('userId is required'));
+            if (!courseId) return next(new ValidationError('courseId is required'));
+            if (!sessionId) return next(new ValidationError('sessionId is required'));
+            if (!Array.isArray(interactions) || interactions.length === 0) {
+                return next(new ValidationError('interactions array is required'));
+            }
+
+            console.log(`🔬 [StealthAssessment] Receiving ${interactions.length} interactions for user ${userId}, session ${sessionId}`);
+
+            const result = await this.reinforcementService.saveStealthAssessment({
+                userId,
+                courseId,
+                topicId,
+                taskId,
+                sessionId,
+                interactions,
+            });
+
+            if (result.isFail()) return next(result.getError());
+            res.status(201).json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * GET /stealth-assessment/xray
+     * Gets the "Comprehension X-Ray" (Radiografía de Comprensión) for a student.
+     * This is the main output of the stealth assessment system.
+     *
+     * Query params:
+     *   - userId (required): Student to analyze
+     *   - courseId (required): Course context
+     *   - topicId?: Filter by topic
+     *   - taskId?: Filter by task
+     *   - limit?: Number of sessions to analyze (default 10)
+     *
+     * Returns:
+     *   - Overall comprehension and confidence scores
+     *   - Trends (improving/stable/declining)
+     *   - Consistent weak/strong areas
+     *   - Behavioral patterns
+     *   - Cognitive profile
+     *   - AI-generated insights
+     *   - Recommendations
+     */
+    getComprehensionXRay = async(req, res, next) => {
+        try {
+            const userId = parseInt(req.query.userId || req.query.user_id);
+            const courseId = parseInt(req.query.courseId || req.query.course_id);
+
+            if (!userId) return next(new ValidationError('userId is required'));
+            if (!courseId) return next(new ValidationError('courseId is required'));
+
+            const options = {
+                topicId: req.query.topicId ? parseInt(req.query.topicId) : null,
+                taskId: req.query.taskId ? parseInt(req.query.taskId) : null,
+                limit: parseInt(req.query.limit) || 10,
+            };
+
+            const result = await this.reinforcementService.getComprehensionXRay(userId, courseId, options);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
+
+    /**
+     * GET /stealth-assessment/course-analytics
+     * Gets stealth assessment analytics for an entire course.
+     * For teachers/admins to see class-level patterns.
+     *
+     * Query params:
+     *   - courseId (required): Course to analyze
+     *   - limit?: Max sessions to process (default 100)
+     *
+     * Returns:
+     *   - Course-level comprehension/confidence averages
+     *   - Mastery distribution
+     *   - Students needing support (sorted)
+     *   - Top weak areas across the course
+     */
+    getCourseStealthAnalytics = async(req, res, next) => {
+        try {
+            const courseId = parseInt(req.query.courseId || req.query.course_id);
+
+            if (!courseId) return next(new ValidationError('courseId is required'));
+
+            const options = {
+                limit: parseInt(req.query.limit) || 100,
+            };
+
+            const result = await this.reinforcementService.getCourseStealthAnalytics(courseId, options);
+            if (result.isFail()) return next(result.getError());
+            res.json({ success: true, data: result.getValue() });
+        } catch (err) { next(err); }
+    };
 }
 export default ReinforcementController;
 
