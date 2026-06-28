@@ -1,4 +1,4 @@
-import { registerSchema, loginSchema, refreshTokenSchema, changePasswordSchema, googleLoginSchema, forgotPasswordSchema, verifyResetCodeSchema, resetPasswordSchema } from './auth.schemas.js';
+import { registerSchema, loginSchema, refreshTokenSchema, sessionLinkSchema, changePasswordSchema, googleLoginSchema, forgotPasswordSchema, verifyResetCodeSchema, resetPasswordSchema } from './auth.schemas.js';
 import { ValidationError, ConflictError } from '../../shared/errors/index.js';
 import { runInTenantContext, getTenantClient, TENANT_CONFIGS } from '../../config/tenantRegistry.js';
 import { verifyGoogleIdToken } from './infrastructure/google-token.verifier.js';
@@ -125,6 +125,20 @@ export class AuthController {
             if (result.isFail()) return next(result.getError());
             const data = result.getValue();
             _setAuthCookies(res, data.accessToken, data.refreshToken);
+            res.json({ success: true, data });
+        } catch (err) { next(err); }
+    };
+
+    sessionLinkLogin = async(req, res, next) => {
+        try {
+            const { error, value } = sessionLinkSchema.validate(req.body);
+            if (error) return next(ValidationError.fromJoi(error));
+            const result = await this.crossTenantAuthService.sessionLinkLogin(value.code);
+            if (result.isFail()) return next(result.getError());
+            const data = result.getValue();
+            if (!data.multipleMatches && data.accessToken) {
+                _setAuthCookies(res, data.accessToken, data.refreshToken);
+            }
             res.json({ success: true, data });
         } catch (err) { next(err); }
     };

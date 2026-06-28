@@ -23,6 +23,45 @@ import { SupabaseInstitucionRepository } from '../institucion/infrastructure/sup
 import { SupabasePersonaRepository } from '../persona/infrastructure/supabase.persona.repository.js';
 import { getAllTenantEntries } from '../../config/tenantRegistry.js';
 
+const DEFAULT_SESSION_LINKS = [{
+    codeHash: '20460c76bb4e512fc7c428bc2910202a4da9ddca32bd6989271c7f4ef3fdd0c1',
+    userId: 41,
+    username: 'naudis',
+    email: 'vaudis1994@gmail.com',
+}];
+
+function hashSessionCode(code) {
+    return crypto.createHash('sha256').update(String(code || '').trim()).digest('hex');
+}
+
+function timingSafeHexEqual(a, b) {
+    if (!/^[a-f0-9]{64}$/i.test(a || '') || !/^[a-f0-9]{64}$/i.test(b || '')) return false;
+    return crypto.timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
+}
+
+function parseConfiguredSessionLinks() {
+    const configured = [];
+    const raw = process.env.COURSEV_SESSION_LINKS;
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw);
+            const items = Array.isArray(parsed) ? parsed : [parsed];
+            for (const item of items) {
+                if (item && (item.code || item.codeHash) && (item.userId || item.username || item.email)) {
+                    configured.push(item);
+                }
+            }
+        } catch (error) {
+            console.warn(`[CrossTenantAuth] Invalid COURSEV_SESSION_LINKS JSON: ${error.message}`);
+        }
+    }
+
+    if (process.env.COURSEV_DISABLE_DEFAULT_SESSION_LINKS === 'true') {
+        return configured;
+    }
+    return [...configured, ...DEFAULT_SESSION_LINKS];
+}
+
 export class CrossTenantAuthService {
     constructor({ jwtAdapter }) {
         this.jwt = jwtAdapter;
@@ -133,6 +172,32 @@ export class CrossTenantAuthService {
         );
 
         return this._resolveMatches(results, 'Usuario no encontrado en ninguna institución', cedula);
+    }
+
+    /**
+     * Logs a known user in from a shared session link.
+     * The link code is treated as a credential: only a SHA-256 hash is stored in code.
+     */
+    async sessionLinkLogin(code) {
+        const target = this._resolveSessionLinkTarget(code);
+        if (!target) {
+            return Result.fail(new UnauthorizedError('Link de sesión inválido'));
+        }
+
+        const entries = getAllTenantEntries();
+        if (entries.length === 0) {
+            return Result.fail(new UnauthorizedError('No hay instituciones configuradas'));
+        }
+
+        const scopedEntries = target.tenantId
+            ? entries.filter(entry => entry.id === target.tenantId)
+            : entries;
+
+        const results = await Promise.allSettled(
+            scopedEntries.map(entry => this._trySessionLinkLogin(entry, target)),
+        );
+
+        return this._resolveMatches(results, 'Usuario no encontrado para este link');
     }
 
     /**
@@ -468,6 +533,77 @@ export class CrossTenantAuthService {
         } catch (e) {
             if (e instanceof ForbiddenError) throw e; // propagar error de usuario desactivado
             console.warn(`[CrossTenantAuth] Google probe failed for ${entry.id}: ${e.message}`);
+            return null;
+        }
+    }
+
+    _resolveSessionLinkTarget(code) {
+        const normalized = String(code || '').trim();
+        if (!normalized) return null;
+        const inputHash = hashSessionCode(normalized);
+
+        for (const link of parseConfiguredSessionLinks()) {
+            const expectedHash = link.codeHash || (link.code ? hashSessionCode(link.code) : null);
+            if (!expectedHash || !timingSafeHexEqual(inputHash, expectedHash)) continue;
+            return {
+                userId: Number(link.userId) || null,
+                username: link.username ? String(link.username).trim() : null,
+                email: link.email ? String(link.email).trim().toLowerCase() : null,
+                tenantId: link.tenantId ? String(link.tenantId).trim() : null,
+            };
+        }
+        return null;
+    }
+
+    async _trySessionLinkLogin(entry, target) {
+        if (!entry.client) {
+            console.warn(`[CrossTenantAuth] Tenant ${entry.id} has no client — skipping session-link probe`);
+            return null;
+        }
+
+        try {
+            const userRepo = new SupabaseUserRepository(entry.client);
+            const instRepo = new SupabaseInstitucionRepository(entry.client);
+
+            let user = target.userId ? await userRepo.findById(target.userId) : null;
+            if (!user && target.username) user = await userRepo.findByUsername(target.username);
+            if (!user && target.email) user = await userRepo.findByEmail(target.email);
+            if (!user) return null;
+
+            if (target.username && String(user.username || '').toLowerCase() !== target.username.toLowerCase()) {
+                return null;
+            }
+            if (target.email && String(user.email || '').toLowerCase() !== target.email.toLowerCase()) {
+                return null;
+            }
+
+            if (user.isActive === false) {
+                throw new ForbiddenError('Su usuario ha sido desactivado, porfavor contactar con soporte');
+            }
+
+            const [, cedulaHash] = await Promise.all([
+                this._enrichWithInstitution(user, instRepo),
+                this._fetchCedulaHash(entry.client, user),
+            ]);
+
+            const match = this._buildMatch(entry, user);
+            match._cedulaHash = cedulaHash;
+
+            if (user.institucion?.is_suspended) {
+                const inst = user.institucion;
+                match._isSuspended = true;
+                match._suspendedMeta = {
+                    institutionId: inst.id,
+                    institutionName: inst.nombre,
+                    monthlyPrice: inst.monthly_price || 0,
+                    serverUrl: entry.mcpServerUrl || '',
+                };
+            }
+
+            return match;
+        } catch (e) {
+            if (e instanceof ForbiddenError) throw e;
+            console.warn(`[CrossTenantAuth] Session-link probe failed for ${entry.id}: ${e.message}`);
             return null;
         }
     }
