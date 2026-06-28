@@ -3857,13 +3857,14 @@ Responde en español, con un tono profesional pero accesible.`;
     /**
      * Gets personalized learning recommendations for a student based on their performance.
      * Uses AI to detect weaknesses and suggest interventions.
+     * Includes BOTH task submissions (graded tasks) AND reinforcement results.
      */
     async getStudentRecommendations(userId, options = {}) {
         try {
             const { limit = 5 } = options;
             const supabase = SupabaseService.getInstance();
 
-            // 1. Get all reinforcement results for this user
+            // 1. Get reinforcement results for this user
             const { data: resultsData, error: resultsError } = await supabase.client
                 .from('reinforcement_results')
                 .select(`
@@ -3885,17 +3886,57 @@ Responde en español, con un tono profesional pero accesible.`;
                 .limit(100);
 
             if (resultsError) {
-                console.error('[Recommendations] Error fetching results:', resultsError.message);
-                return Result.fail(resultsError.message);
+                console.error('[Recommendations] Error fetching reinforcement results:', resultsError.message);
             }
 
-            if (!resultsData || resultsData.length === 0) {
+            // 2. Get ALL graded task submissions for this user (IMPORTANT: includes all users who have submitted at least 1 task)
+            const { data: submissionsData, error: submissionsError } = await supabase.client
+                .from('task_submissions')
+                .select(`
+                    id,
+                    user_id,
+                    task_id,
+                    grade,
+                    feedback,
+                    created_at,
+                    tasks!inner (
+                        id,
+                        title,
+                        topic_id,
+                        topics!inner (
+                            id,
+                            nombre,
+                            materia_id,
+                            subjects!inner (
+                                id,
+                                name,
+                                course_id
+                            )
+                        )
+                    )
+                `)
+                .eq('user_id', userId)
+                .not('grade', 'is', null)
+                .order('created_at', { ascending: false })
+                .limit(100);
+
+            if (submissionsError) {
+                console.error('[Recommendations] Error fetching submissions:', submissionsError.message);
+            }
+
+            const hasReinforcementData = resultsData && resultsData.length > 0;
+            const hasSubmissionData = submissionsData && submissionsData.length > 0;
+
+            // If no data from either source, return empty
+            if (!hasReinforcementData && !hasSubmissionData) {
                 return Result.ok({ recommendations: [], hasData: false });
             }
 
-            // 2. Group results by topic and calculate performance
+            // 3. Group performance by topic from BOTH sources
             const topicPerformance = new Map();
-            for (const result of resultsData) {
+
+            // Process reinforcement results
+            for (const result of (resultsData || [])) {
                 const topicId = result.topic_id;
                 if (!topicId) continue;
 
@@ -3904,10 +3945,12 @@ Responde en español, con un tono profesional pero accesible.`;
                         topicId,
                         courseId: result.course_id,
                         sessions: [],
+                        submissions: [],
                         totalQuestions: 0,
                         totalCorrect: 0,
                         totalIncorrect: 0,
                         grades: [],
+                        source: 'reinforcement',
                     });
                 }
 
@@ -3919,7 +3962,57 @@ Responde en español, con un tono profesional pero accesible.`;
                 if (result.grade) perf.grades.push(parseFloat(result.grade));
             }
 
-            // 3. Calculate accuracy for each topic and identify weaknesses
+            // Process task submissions (graded tasks)
+            for (const submission of (submissionsData || [])) {
+                const task = submission.tasks;
+                if (!task || !task.topics) continue;
+
+                const topic = task.topics;
+                const subject = topic.subjects;
+                const topicId = topic.id;
+                const courseId = subject?.course_id;
+
+                if (!topicId || !courseId) continue;
+
+                if (!topicPerformance.has(topicId)) {
+                    topicPerformance.set(topicId, {
+                        topicId,
+                        courseId,
+                        sessions: [],
+                        submissions: [],
+                        totalQuestions: 0,
+                        totalCorrect: 0,
+                        totalIncorrect: 0,
+                        grades: [],
+                        source: 'submission',
+                        topicName: topic.nombre,
+                        subjectId: topic.materia_id,
+                        subjectName: subject?.name,
+                        taskName: task.title,
+                    });
+                }
+
+                const perf = topicPerformance.get(topicId);
+                perf.submissions.push(submission);
+
+                // Update topic metadata if not set
+                if (!perf.topicName) perf.topicName = topic.nombre;
+                if (!perf.subjectId) perf.subjectId = topic.materia_id;
+                if (!perf.subjectName) perf.subjectName = subject?.name;
+                if (!perf.taskName) perf.taskName = task.title;
+
+                // Convert grade (0-10 scale) to accuracy and add to grades
+                const grade = parseFloat(submission.grade);
+                if (!isNaN(grade)) {
+                    perf.grades.push(grade);
+                    // Simulate accuracy from grade (grade 5 = 50% accuracy)
+                    perf.totalQuestions += 10;
+                    perf.totalCorrect += Math.round(grade);
+                    perf.totalIncorrect += 10 - Math.round(grade);
+                }
+            }
+
+            // 4. Calculate accuracy for each topic and identify weaknesses
             const weakTopics = [];
             for (const [topicId, perf] of topicPerformance) {
                 const accuracy = perf.totalQuestions > 0
@@ -3929,37 +4022,54 @@ Responde en español, con un tono profesional pero accesible.`;
                     ? Math.round(perf.grades.reduce((a, b) => a + b, 0) / perf.grades.length * 10) / 10
                     : 0;
 
-                // Calculate trend (recent vs older sessions)
+                // Calculate trend (recent vs older)
                 let trend = 'stable';
-                if (perf.sessions.length >= 2) {
-                    const recentSessions = perf.sessions.slice(0, Math.ceil(perf.sessions.length / 2));
-                    const olderSessions = perf.sessions.slice(Math.ceil(perf.sessions.length / 2));
+                const allEntries = [...perf.sessions, ...perf.submissions].sort(
+                    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                );
 
-                    const recentAccuracy = recentSessions.reduce((sum, s) => {
-                        const acc = s.total_questions > 0 ? (s.correct_answers / s.total_questions) * 100 : 0;
-                        return sum + acc;
-                    }, 0) / recentSessions.length;
+                if (allEntries.length >= 2) {
+                    const recentEntries = allEntries.slice(0, Math.ceil(allEntries.length / 2));
+                    const olderEntries = allEntries.slice(Math.ceil(allEntries.length / 2));
 
-                    const olderAccuracy = olderSessions.reduce((sum, s) => {
-                        const acc = s.total_questions > 0 ? (s.correct_answers / s.total_questions) * 100 : 0;
-                        return sum + acc;
-                    }, 0) / olderSessions.length;
+                    const getEntryScore = (entry) => {
+                        if (entry.total_questions) {
+                            return entry.total_questions > 0 ? (entry.correct_answers / entry.total_questions) * 100 : 0;
+                        }
+                        return parseFloat(entry.grade || 0) * 10;
+                    };
 
-                    if (recentAccuracy > olderAccuracy + 5) trend = 'improving';
-                    else if (recentAccuracy < olderAccuracy - 5) trend = 'declining';
+                    const recentAvg = recentEntries.reduce((sum, e) => sum + getEntryScore(e), 0) / recentEntries.length;
+                    const olderAvg = olderEntries.reduce((sum, e) => sum + getEntryScore(e), 0) / olderEntries.length;
+
+                    if (recentAvg > olderAvg + 5) trend = 'improving';
+                    else if (recentAvg < olderAvg - 5) trend = 'declining';
                 }
 
-                // Only include topics with low performance (accuracy < 70%)
-                if (accuracy < 70 || avgGrade < 7) {
+                const totalActivities = perf.sessions.length + perf.submissions.length;
+                const lastActivityDate = allEntries[0]?.created_at;
+
+                // Include topics with low performance (accuracy < 80% or grade < 8)
+                // Also include topics where user only has submissions (to encourage reinforcement)
+                const needsReinforcement = accuracy < 80 || avgGrade < 8 || perf.sessions.length === 0;
+
+                if (needsReinforcement) {
                     weakTopics.push({
                         topicId,
                         courseId: perf.courseId,
                         accuracy,
                         avgGrade,
-                        totalSessions: perf.sessions.length,
+                        totalSessions: totalActivities,
                         totalQuestions: perf.totalQuestions,
                         trend,
-                        lastSessionDate: perf.sessions[0]?.created_at,
+                        lastSessionDate: lastActivityDate,
+                        source: perf.source,
+                        topicName: perf.topicName,
+                        subjectId: perf.subjectId,
+                        subjectName: perf.subjectName,
+                        taskName: perf.taskName,
+                        hasReinforcement: perf.sessions.length > 0,
+                        hasSubmissions: perf.submissions.length > 0,
                     });
                 }
             }
@@ -3972,12 +4082,14 @@ Responde en español, con un tono profesional pero accesible.`;
                 return Result.ok({ recommendations: [], hasData: true, message: 'No se detectaron debilidades significativas.' });
             }
 
-            // 4. Get topic and course details
-            const topicIds = topWeakTopics.map(t => t.topicId);
+            // 5. Get topic and course details (only for topics not already populated from submissions)
+            const topicIdsToFetch = topWeakTopics.filter(t => !t.topicName).map(t => t.topicId);
             const courseIds = [...new Set(topWeakTopics.map(t => t.courseId))];
 
             const [topicsResult, coursesResult] = await Promise.all([
-                supabase.client.from('topics').select('id, nombre, description, materia_id').in('id', topicIds),
+                topicIdsToFetch.length > 0
+                    ? supabase.client.from('topics').select('id, nombre, description, materia_id').in('id', topicIdsToFetch)
+                    : { data: [] },
                 supabase.client.from('courses').select('id, title').in('id', courseIds),
             ]);
 
@@ -3991,24 +4103,35 @@ Responde en español, con un tono profesional pero accesible.`;
                 coursesMap.set(course.id, course);
             }
 
-            // 5. Get subject details for topics
-            const subjectIds = [...new Set((topicsResult.data || []).map(t => t.materia_id).filter(Boolean))];
+            // 6. Get subject details for topics (only for those not already populated)
+            const subjectIdsToFetch = topWeakTopics
+                .filter(t => !t.subjectName && (topicsMap.get(t.topicId)?.materia_id || t.subjectId))
+                .map(t => topicsMap.get(t.topicId)?.materia_id || t.subjectId)
+                .filter(Boolean);
+
             let subjectsMap = new Map();
-            if (subjectIds.length > 0) {
+            if (subjectIdsToFetch.length > 0) {
                 const { data: subjectsData } = await supabase.client
                     .from('subjects')
                     .select('id, name')
-                    .in('id', subjectIds);
+                    .in('id', [...new Set(subjectIdsToFetch)]);
                 for (const subject of subjectsData || []) {
                     subjectsMap.set(subject.id, subject);
                 }
             }
 
-            // 6. Build recommendations
+            // 7. Build recommendations
             const recommendations = topWeakTopics.map(weak => {
-                const topic = topicsMap.get(weak.topicId) || {};
+                // Use data from submissions if available, otherwise from DB lookup
+                const topicFromDb = topicsMap.get(weak.topicId) || {};
+                const topic = {
+                    nombre: weak.topicName || topicFromDb.nombre,
+                    materia_id: weak.subjectId || topicFromDb.materia_id,
+                };
                 const course = coursesMap.get(weak.courseId) || {};
-                const subject = subjectsMap.get(topic.materia_id) || {};
+                const subject = {
+                    name: weak.subjectName || subjectsMap.get(topic.materia_id)?.name,
+                };
 
                 const problemDescription = this._buildProblemDescription(weak, topic, subject);
                 const interventionType = this._determineInterventionType(weak);
@@ -4080,7 +4203,8 @@ Responde en español, con un tono profesional pero accesible.`;
                 recommendations,
                 hasData: true,
                 totalWeakAreas: weakTopics.length,
-                analyzedSessions: resultsData.length,
+                analyzedSessions: (resultsData || []).length,
+                analyzedSubmissions: (submissionsData || []).length,
             });
         } catch (error) {
             console.error('[Recommendations] Error:', error.message);
@@ -4137,17 +4261,39 @@ Responde en español, con un tono profesional pero accesible.`;
     _buildProblemDescription(weak, topic, subject) {
         const topicName = topic.nombre || `Tema #${weak.topicId}`;
         const subjectName = subject.name ? ` en ${subject.name}` : '';
+        const taskInfo = weak.taskName ? ` (Tarea: ${weak.taskName})` : '';
 
+        // Special message for users who only have submissions (no reinforcement yet)
+        if (!weak.hasReinforcement && weak.hasSubmissions) {
+            if (weak.avgGrade < 6) {
+                return `Calificación de ${weak.avgGrade.toFixed(1)} en ${topicName}${subjectName}${taskInfo}. Reforzar ayudará a mejorar tu comprensión.`;
+            } else if (weak.avgGrade < 8) {
+                return `Nota de ${weak.avgGrade.toFixed(1)} en ${topicName}${subjectName}${taskInfo}. Puedes mejorar con práctica adicional.`;
+            } else {
+                return `Buen desempeño en ${topicName}${subjectName}${taskInfo}. Refuerza para dominar completamente el tema.`;
+            }
+        }
+
+        // Standard messages based on accuracy
         if (weak.accuracy < 40) {
             return `El estudiante muestra dificultades significativas en ${topicName}${subjectName} con solo ${weak.accuracy}% de precisión.`;
         } else if (weak.accuracy < 55) {
             return `El estudiante necesita reforzar ${topicName}${subjectName}. Su dominio actual es del ${weak.accuracy}%.`;
-        } else {
+        } else if (weak.accuracy < 70) {
             return `El estudiante tiene un desempeño moderado en ${topicName}${subjectName} (${weak.accuracy}% de precisión) que puede mejorar.`;
+        } else {
+            return `Buen progreso en ${topicName}${subjectName} (${weak.accuracy}%). Práctica adicional consolidará tu conocimiento.`;
         }
     }
 
     _determineInterventionType(weak) {
+        // Users with only submissions (no reinforcement) get targeted reinforcement
+        if (!weak.hasReinforcement && weak.hasSubmissions) {
+            if (weak.avgGrade < 6) return 'intensive_reinforcement';
+            if (weak.avgGrade < 8) return 'targeted_reinforcement';
+            return 'practice_reinforcement';
+        }
+
         if (weak.accuracy < 40) return 'intensive_reinforcement';
         if (weak.accuracy < 55) return 'targeted_reinforcement';
         if (weak.trend === 'declining') return 'review_reinforcement';
