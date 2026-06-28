@@ -15,8 +15,10 @@
  *   - One responsibility: orchestrate the AI pipeline for learning artifacts.
  */
 import axios from 'axios';
+import { getCurrentTenantId, getPrimaryTenantId } from '../../config/tenantRegistry.js';
 
 const DEFAULT_PANEL_COUNT = 6;
+const LEARNING_ARTIFACT_VERSION = 1;
 
 const ANALOGY_EXAMPLES = [
   {
@@ -88,6 +90,8 @@ const DEFAULT_TECHNICAL_VISUAL =
 // In-process async job store for video generation.
 // Single-instance deployments (Railway) are fine; for multi-instance add Redis.
 const videoJobs = new Map(); // jobId -> { status, title, summary?, posterUrl, videoUrl?, slides?, sceneNotes?, durationSeconds, error?, createdAt }
+const videoJobsByArtifactKey = new Map(); // artifact json key -> jobId
+const comicArtifactsInFlight = new Map(); // artifact json key -> Promise<ComicResult>
 const VIDEO_JOB_TTL_MS = 30 * 60 * 1000; // 30 min
 
 const COMIC_SYSTEM_PROMPT = `Eres un guionista pedagógico que transforma material de estudio en una historieta (cómic) didáctica.
@@ -140,6 +144,47 @@ REGLAS CRITICAS:
    Panel 2 (solucion): "def greet(name):\\n    return f'Hola, {name}!'"
    Panel 3 (uso): "result = greet(name)\\nprint(result)"
    Panel 4 (completo): "# Programa completo\\ndef greet(name):\\n    return f'Hola, {name}!'\\n\\nname = input('Tu nombre: ')\\nprint(greet(name))"
+
+9. Apoyate en los materiales proporcionados. Si son escasos, complementa con conocimiento general.`;
+
+const COMIC_DIALOGUE_SYSTEM_PROMPT = `Eres un guionista pedagogico que transforma material de estudio en una historieta educativa con personajes hablando.
+Devuelves SIEMPRE un unico objeto JSON valido (sin Markdown, sin texto fuera del JSON) con la forma exacta:
+{
+  "title": "Titulo corto y atractivo",
+  "panels": [
+    {
+      "caption": "Explicacion detallada de la situacion que ocurre en el panel y como representa el concepto tecnico. Debe conectar la alegoria visual con el contenido real del tema (max 300 caracteres). En espanol.",
+      "dialogue": "OBLIGATORIO: dialogo breve en espanol entre personajes, listo para aparecer como globo de texto dentro de la imagen (max 140 caracteres).",
+      "technicalDetail": "OBLIGATORIO: Codigo real, formula, endpoint, query SQL, JSON, tabla, comando, diagrama ASCII o dato concreto del tema. Este contenido aparece en un panel lateral derecho, NUNCA dentro de la imagen. Debe ser codigo o contenido tecnico REAL y FUNCIONAL relacionado con el tema (max 500 caracteres).",
+      "imagePrompt": "Visual description in ENGLISH: educational cartoon style, vibrant colors, real-life analogy scene with expressive characters talking. Include readable Spanish speech bubbles using the exact dialogue. CRITICAL: Only speech bubbles may contain text. NO code, NO formulas, NO labels, NO UI text, NO signs, NO watermarks. 4:3 aspect ratio."
+    }
+  ]
+}
+
+REGLAS CRITICAS:
+1. IMAGEN CON DIALOGO: Cada imagen debe parecer un panel de comic real con personajes hablando. Usa globos de dialogo legibles en espanol con el texto de "dialogue".
+
+2. DIALOGUE OBLIGATORIO: Cada panel debe tener 1 o 2 globos de dialogo cortos. El texto debe sonar natural, explicar una accion concreta y caber en la imagen.
+
+3. TECHNICALDETAIL OBLIGATORIO: Si el tema trata de programacion, codigo, SQL, API, formulas, datos, arquitectura, comandos, variables, funciones, clases, algoritmos, estructuras de datos, redes, bases de datos, etc., el campo "technicalDetail" es OBLIGATORIO en CADA panel y debe contener:
+   - Fragmentos de codigo REALES y FUNCIONALES
+   - Queries SQL completas
+   - Endpoints con metodo HTTP y ejemplo de request/response
+   - JSON de ejemplo
+   - Comandos de terminal
+   - Formulas matematicas
+   - Diagramas ASCII simples
+   Este contenido tecnico NO va dentro de la imagen; va en el panel lateral de la UI.
+
+4. ALEGORIA + CONTENIDO REAL: La historia debe ser una alegoria de la vida real (restaurante, biblioteca, fabrica, cocina, oficina de correos, etc.) PERO el "technicalDetail" debe traer el contenido tecnico REAL que esa alegoria representa.
+
+5. CAPTION EXPLICATIVO: El "caption" debe explicar que ocurre en la imagen, como representa el concepto tecnico y como conecta con el codigo/contenido en technicalDetail.
+
+6. IMAGEPROMPT CON GLOBOS DE DIALOGO: Describe objetos fisicos, personas, acciones, lugares y globos de dialogo. Solo los globos de dialogo pueden tener texto. No incluyas codigo, formulas, etiquetas, rotulos, marcas de agua ni pantallas con texto.
+
+7. Genera entre 4 y 8 paneles con principio, desarrollo y cierre.
+
+8. CODIGO PROGRESIVO: El codigo en "technicalDetail" debe PROGRESAR con la historia. Cada panel debe mostrar una PARTE DIFERENTE del codigo que se relaciona con esa escena especifica.
 
 9. Apoyate en los materiales proporcionados. Si son escasos, complementa con conocimiento general.`;
 
@@ -235,6 +280,83 @@ function compactTechnicalDetail(text, maxLen = 500) {
     .slice(0, maxLen);
 }
 
+function safePathSegment(value, fallback = '0') {
+  const text = String(value ?? fallback)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return text || fallback;
+}
+
+function normalizeIdForKey(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+}
+
+function extensionFromContentType(contentType, fallback = 'png') {
+  const ct = String(contentType || '').toLowerCase();
+  if (ct.includes('jpeg') || ct.includes('jpg')) return 'jpg';
+  if (ct.includes('png')) return 'png';
+  if (ct.includes('webp')) return 'webp';
+  if (ct.includes('gif')) return 'gif';
+  if (ct.includes('mp4')) return 'mp4';
+  if (ct.includes('webm')) return 'webm';
+  if (ct.includes('quicktime')) return 'mov';
+  if (ct.includes('json')) return 'json';
+  return fallback;
+}
+
+function extensionFromUrl(url, fallback = 'png') {
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(/\.([a-z0-9]{2,5})$/i);
+    if (match) return match[1].toLowerCase();
+  } catch (_) { /* ignore */ }
+  return fallback;
+}
+
+function parseDataUrl(dataUrl, fallbackExt = 'png') {
+  const match = String(dataUrl || '').match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
+  if (!match) return null;
+  const contentType = match[1] || 'application/octet-stream';
+  const isBase64 = Boolean(match[2]);
+  const raw = match[3] || '';
+  const buffer = isBase64
+    ? Buffer.from(raw, 'base64')
+    : Buffer.from(decodeURIComponent(raw), 'utf8');
+  return {
+    buffer,
+    contentType,
+    ext: extensionFromContentType(contentType, fallbackExt),
+  };
+}
+
+function parseStoredArtifact(file) {
+  const text = file?.content || (file?.buffer ? Buffer.from(file.buffer).toString('utf8') : '');
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed?.data || parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function stripRuntimeArtifactFields(value) {
+  const copy = JSON.parse(JSON.stringify(value || {}));
+  delete copy.cached;
+  delete copy.artifactKey;
+  delete copy.createdAt;
+  return copy;
+}
+
+function storageMiss(err) {
+  const status = err?.$metadata?.httpStatusCode || err?.statusCode || err?.response?.status;
+  return status === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey';
+}
+
 function getTechnicalDetail(item) {
   return compactTechnicalDetail(
     item?.technicalDetail || item?.visualArtifact || item?.codeSnippet || item?.artifactText || '',
@@ -267,6 +389,41 @@ function buildTextFreeComicImageRequest(panel) {
   ].filter(Boolean).join('\n');
 }
 
+function sanitizeDialogueComicScene(text) {
+  return compactText(text, 900)
+    .replace(/```[\s\S]*?```/g, 'technical content kept outside the image')
+    .replace(/`[^`]+`/g, 'technical content kept outside the image')
+    .replace(/\b(?:function|const|let|var|class|def|return|console\.log|print)\b[^.;]*/gi, 'technical content kept outside the image')
+    .replace(/\b(?:GET|POST|PUT|PATCH|DELETE)\s+\/\S+/gi, 'technical endpoint kept outside the image')
+    .replace(/\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN)\b[^.;]*/gi, 'technical query kept outside the image')
+    .replace(/\b(?:code|codigo|formula|endpoint|json|sql)\b[^.;]*/gi, 'technical detail kept outside the image')
+    .replace(/[{}[\]<>_=+*/\\|~^`]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeComicDialogue(text) {
+  const cleaned = compactText(text, 180)
+    .replace(/^["'“”]+|["'“”]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.slice(0, 160);
+}
+
+function buildDialogueComicImageRequest(panel) {
+  const visualIdea = sanitizeDialogueComicScene(panel?.imagePrompt || panel?.caption || '').slice(0, 760);
+  const dialogue = normalizeComicDialogue(panel?.dialogue || '');
+  return [
+    'COMIC PANEL WITH READABLE SPANISH SPEECH BUBBLES.',
+    dialogue ? `Characters must visibly speak in 1 or 2 speech bubbles. Exact speech bubble text: "${dialogue}".` : 'Add 1 short Spanish speech bubble where a character explains the action.',
+    visualIdea ? `Scene to draw: ${visualIdea}.` : '',
+    'Illustrate the real-life analogy through expressive characters, clear actions, physical objects, and a single focused environment.',
+    'Use clean comic lettering with high contrast, large enough to read on mobile.',
+    'Only the speech bubbles may contain readable text. Do not write code, formulas, endpoint paths, JSON, SQL, UI labels, signs, logos, subtitles, captions, or watermarks inside the image.',
+    'Educational cartoon style, polished composition, vibrant but restrained colors, 4:3 aspect ratio.',
+  ].filter(Boolean).join('\n');
+}
+
 function collectTechnicalHighlights(script) {
   const items = Array.isArray(script?.panels) ? script.panels : Array.isArray(script?.scenes) ? script.scenes : [];
   const seen = new Set();
@@ -293,22 +450,25 @@ function collectSceneNotes(script) {
   }).filter((scene) => scene.narration || scene.technicalDetail);
 }
 
-function buildAnalogyVisualPrompt(prompt, { title = '', sourceContext = '', medium = 'image' } = {}) {
+function buildAnalogyVisualPrompt(prompt, { title = '', sourceContext = '', medium = 'image', allowSpeechText = false } = {}) {
   const isTextFree = /text-free/i.test(medium);
+  const canRenderSpeechText = allowSpeechText || /speech|dialogue/i.test(medium);
   const subject = compactText([title, sourceContext, prompt].filter(Boolean).join(' '), 1400);
   const hints = pickAnalogyHints(subject).join('; ');
-  const technicalHints = isTextFree ? '' : pickTechnicalVisualHints(subject).join('; ');
+  const technicalHints = isTextFree || canRenderSpeechText ? '' : pickTechnicalVisualHints(subject).join('; ');
   const contextHint = compactText(sourceContext, 650);
 
   return [
     `Create a ${medium} for an educational lesson.`,
     title ? `Lesson title: ${title}.` : '',
     contextHint ? `Relevant context: ${contextHint}.` : '',
-    `Core scene request: ${compactText(prompt, 700)}.`,
+    `Core scene request: ${compactText(prompt, canRenderSpeechText ? 1100 : 700)}.`,
     `Use a concrete real-life analogy: ${hints}.`,
     technicalHints ? `External side-panel technical requirement: ${technicalHints}. The story must remain an analogy, and the actual code/data/formula/endpoint must be displayed by the UI outside the image.` : '',
     'Make the abstract idea visible through physical objects, people interacting, clear cause-and-effect, and a single focused environment.',
-    'Do not render any readable text inside the image or video: no code, letters, numbers, formulas, table text, endpoint paths, JSON keys, commands, diagram labels, captions, speech bubbles, logos, or watermarks.',
+    canRenderSpeechText
+      ? 'Readable text is allowed only inside the requested Spanish speech bubbles. Do not render code, formulas, table text, endpoint paths, JSON keys, commands, diagram labels, UI labels, signs, subtitles, captions, logos, or watermarks.'
+      : 'Do not render any readable text inside the image or video: no code, letters, numbers, formulas, table text, endpoint paths, JSON keys, commands, diagram labels, captions, speech bubbles, logos, or watermarks.',
     isTextFree ? 'For this comic panel, every surface must be blank, pictorial, or abstract: blank screens, blank papers, blank signs, blank books, blank labels, and no glyph-like marks.' : '',
     'Avoid generic blank laptop screens, unrelated floating code, abstract icons, full UI screenshots, repeated headings, decorative labels, captions, logos, and watermarks.',
     'Style: polished educational illustration, warm realistic details, vibrant but restrained colors, cinematic composition, 4:3 aspect ratio unless video provider requires otherwise.',
@@ -325,14 +485,172 @@ export class LearningDomainService {
     this.learningContextService = learningContextService;
     this.llmAdapter = llmAdapter;
     this.fileStoragePort = fileStoragePort;
-    // Best-in-class OpenRouter models, overridable by env
+    // Best-in-class OpenRouter models, overridable by env.
+    // Video generation is fixed to Seedance 2.0 so this flow uses one provider model.
     this.imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
+    this.comicImageModel = process.env.OPENROUTER_COMIC_IMAGE_MODEL || 'openai/gpt-image-2';
     this.textModel = process.env.OPENROUTER_LEARNING_MODEL || process.env.OPENROUTER_CHAT_MODEL || 'qwen/qwen-2.5-72b-instruct';
-    this.videoModel = process.env.OPENROUTER_VIDEO_MODEL || 'kwaivgi/kling-v3.0-pro';
+    this.videoModel = 'bytedance/seedance-2.0';
+  }
+
+  _storageAvailable() {
+    if (!this.fileStoragePort) return false;
+    if (typeof this.fileStoragePort.isAvailable === 'function') {
+      return this.fileStoragePort.isAvailable();
+    }
+    return true;
+  }
+
+  _artifactDescriptor(kind, { courseId, topicId, taskId }) {
+    const tenantId = safePathSegment(getCurrentTenantId() || getPrimaryTenantId() || 'default', 'default');
+    const course = normalizeIdForKey(courseId);
+    const topic = normalizeIdForKey(topicId);
+    const task = normalizeIdForKey(taskId);
+    const base = `learning/artifacts/${tenantId}/course_${course}/topic_${topic}/task_${task}`;
+    return {
+      kind,
+      tenantId,
+      courseId: course,
+      topicId: topic,
+      taskId: task,
+      cacheKey: `${base}/${kind}.json`,
+      mediaPrefix: `${base}/${kind}`,
+    };
+  }
+
+  async _readStoredArtifact(kind, descriptor) {
+    if (!descriptor) return null;
+    if (!this._storageAvailable() || typeof this.fileStoragePort.fetchFile !== 'function') return null;
+    try {
+      const file = await this.fileStoragePort.fetchFile(descriptor.cacheKey);
+      const data = parseStoredArtifact(file);
+      if (!data) return null;
+      const normalized = kind === 'video' ? { status: 'completed', ...data } : data;
+      return { ...normalized, cached: true };
+    } catch (err) {
+      if (!storageMiss(err)) {
+        console.warn(`[LearningService] Stored ${kind} lookup failed (${descriptor.cacheKey}): ${err?.message || err}`);
+      }
+      return null;
+    }
+  }
+
+  async _writeStoredArtifact(kind, descriptor, data) {
+    if (!descriptor) return false;
+    if (!this._storageAvailable() || typeof this.fileStoragePort.uploadFile !== 'function') return false;
+    const payload = {
+      version: LEARNING_ARTIFACT_VERSION,
+      kind,
+      tenantId: descriptor.tenantId,
+      courseId: descriptor.courseId,
+      topicId: descriptor.topicId,
+      taskId: descriptor.taskId,
+      generatedAt: new Date().toISOString(),
+      data: stripRuntimeArtifactFields(data),
+    };
+    const buffer = Buffer.from(JSON.stringify(payload), 'utf8');
+    await this.fileStoragePort.uploadFile(buffer, descriptor.cacheKey, 'application/json', buffer.length);
+    return true;
+  }
+
+  async _persistMediaSource(sourceUrl, objectKeyBase, fallbackExt = 'png') {
+    if (!sourceUrl || !this._storageAvailable() || typeof this.fileStoragePort.uploadFile !== 'function') {
+      return sourceUrl || '';
+    }
+    if (typeof this.fileStoragePort.isR2Url === 'function' && this.fileStoragePort.isR2Url(sourceUrl)) {
+      return sourceUrl;
+    }
+    if (this.fileStoragePort.publicUrl && String(sourceUrl).startsWith(String(this.fileStoragePort.publicUrl))) {
+      return sourceUrl;
+    }
+
+    try {
+      let buffer;
+      let contentType;
+      let ext;
+      const dataUrl = parseDataUrl(sourceUrl, fallbackExt);
+      if (dataUrl) {
+        ({ buffer, contentType, ext } = dataUrl);
+      } else if (/^https?:\/\//i.test(String(sourceUrl))) {
+        const resp = await axios.get(sourceUrl, {
+          responseType: 'arraybuffer',
+          timeout: 120_000,
+          headers: { 'User-Agent': 'CourseV-Server/1.0', Accept: '*/*' },
+        });
+        buffer = Buffer.from(resp.data);
+        contentType = resp.headers['content-type'] || 'application/octet-stream';
+        ext = extensionFromContentType(contentType, extensionFromUrl(sourceUrl, fallbackExt));
+      } else {
+        return sourceUrl;
+      }
+
+      const safeExt = safePathSegment(ext || fallbackExt, fallbackExt).replace(/^\.+/, '') || fallbackExt;
+      const key = `${objectKeyBase}.${safeExt}`;
+      return await this.fileStoragePort.uploadFile(buffer, key, contentType, buffer.length);
+    } catch (err) {
+      console.warn(`[LearningService] R2 media upload failed (${objectKeyBase}): ${err?.message || err}`);
+      return sourceUrl;
+    }
+  }
+
+  async _persistComicMedia(result, descriptor) {
+    if (!descriptor) return result;
+    if (!result?.panels?.length) return result;
+    const panels = await Promise.all(result.panels.map(async(panel, index) => ({
+      ...panel,
+      imageUrl: await this._persistMediaSource(
+        panel.imageUrl,
+        `${descriptor.mediaPrefix}/panel_${String(index + 1).padStart(2, '0')}`,
+        'png'
+      ),
+    })));
+    return { ...result, panels };
+  }
+
+  async _persistVideoMedia(result, descriptor) {
+    if (!descriptor) return result;
+    const next = { ...result };
+    if (next.posterUrl) {
+      next.posterUrl = await this._persistMediaSource(next.posterUrl, `${descriptor.mediaPrefix}/poster`, 'png');
+    }
+    if (next.videoUrl) {
+      next.videoUrl = await this._persistMediaSource(next.videoUrl, `${descriptor.mediaPrefix}/video`, 'mp4');
+    }
+    if (Array.isArray(next.slides)) {
+      next.slides = await Promise.all(next.slides.map(async(slide, index) => ({
+        ...slide,
+        imageUrl: await this._persistMediaSource(
+          slide.imageUrl,
+          `${descriptor.mediaPrefix}/slide_${String(index + 1).padStart(2, '0')}`,
+          'png'
+        ),
+      })));
+    }
+    return next;
   }
 
   // ───────────────────────── COMIC ─────────────────────────
   async generateComic({ courseId, topicId, taskId, userId }) {
+    const descriptor = this._artifactDescriptor('comic', { courseId, topicId, taskId });
+    const stored = await this._readStoredArtifact('comic', descriptor);
+    if (stored) return stored;
+
+    const inFlight = comicArtifactsInFlight.get(descriptor.cacheKey);
+    if (inFlight) return inFlight;
+
+    const promise = this._generateComicFresh({ courseId, topicId, taskId, userId })
+      .then(async(result) => {
+        const persisted = await this._persistComicMedia(result, descriptor);
+        await this._writeStoredArtifact('comic', descriptor, persisted);
+        return persisted;
+      })
+      .finally(() => comicArtifactsInFlight.delete(descriptor.cacheKey));
+
+    comicArtifactsInFlight.set(descriptor.cacheKey, promise);
+    return promise;
+  }
+
+  async _generateComicFresh({ courseId, topicId, taskId, userId }) {
     const ctxResult = await this.learningContextService.buildLearningContext({ courseId, topicId, taskId, userId });
     if (ctxResult.isFail && ctxResult.isFail()) {
       throw ctxResult.getError();
@@ -346,7 +664,7 @@ export class LearningDomainService {
       `Genera al menos ${DEFAULT_PANEL_COUNT} paneles.`;
 
     const llmResp = await this.llmAdapter.chat(
-      COMIC_SYSTEM_PROMPT,
+      COMIC_DIALOGUE_SYSTEM_PROMPT,
       userPrompt,
       { model: this.textModel, temperature: 0.4, maxTokens: 4096 }
     );
@@ -362,14 +680,21 @@ export class LearningDomainService {
     const renderedPanels = await Promise.all(
       panels.map(async (p) => {
         const technicalDetail = getTechnicalDetail(p);
-        const panelPrompt = buildTextFreeComicImageRequest(p);
+        const dialogue = normalizeComicDialogue(p.dialogue || '');
+        const panelPrompt = buildDialogueComicImageRequest({ ...p, dialogue });
         const imageUrl = await this._renderImageSafely(
           String(panelPrompt || title),
-          { title: '', sourceContext: '', medium: 'text-free comic panel illustration' }
+          {
+            title,
+            sourceContext,
+            medium: 'comic panel illustration with Spanish speech bubbles',
+            allowSpeechText: true,
+            model: this.comicImageModel,
+          }
         );
         return {
           caption: String(p.caption || '').slice(0, 320),
-          dialogue: p.dialogue ? String(p.dialogue).slice(0, 240) : undefined,
+          dialogue: dialogue || undefined,
           technicalDetail: technicalDetail || undefined,
           imageUrl,
         };
@@ -401,11 +726,12 @@ export class LearningDomainService {
     if (!apiKey) return '';
 
     const fullPrompt = buildAnalogyVisualPrompt(prompt, visualContext);
+    const model = visualContext?.model || this.imageModel;
 
     const resp = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: this.imageModel,
+        model,
         modalities: ['image', 'text'],
         messages: [{ role: 'user', content: fullPrompt }],
       },
@@ -472,7 +798,7 @@ export class LearningDomainService {
       if (dataUri) return dataUri[1];
     }
 
-    console.warn('[LearningService] _renderImage: no image found in response for model', this.imageModel);
+    console.warn('[LearningService] _renderImage: no image found in response for model', model);
     return '';
   }
 
@@ -488,6 +814,17 @@ export class LearningDomainService {
    * returned with status: 'completed'.
    */
   async generateVideo({ courseId, topicId, taskId, userId }) {
+    const descriptor = this._artifactDescriptor('video', { courseId, topicId, taskId });
+    const stored = await this._readStoredArtifact('video', descriptor);
+    if (stored) return stored;
+
+    const existingJobId = videoJobsByArtifactKey.get(descriptor.cacheKey);
+    if (existingJobId) {
+      const existingJob = this.getVideoStatus(existingJobId);
+      if (existingJob) return { jobId: existingJobId, ...existingJob };
+      videoJobsByArtifactKey.delete(descriptor.cacheKey);
+    }
+
     const ctxResult = await this.learningContextService.buildLearningContext({ courseId, topicId, taskId, userId });
     if (ctxResult.isFail && ctxResult.isFail()) throw ctxResult.getError();
     const ctx = ctxResult.getValue ? ctxResult.getValue() : ctxResult;
@@ -513,7 +850,7 @@ export class LearningDomainService {
     // Return immediately after script generation so the HTTP connection is never
     // held open longer than ~20 s. Poster + video generation happen in the background.
     if (this.videoModel && process.env.OPENROUTER_API_KEY) {
-      const jobId = `video_${Date.now()}`;
+      const jobId = `video_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       videoJobs.set(jobId, {
         status: 'processing',
         title,
@@ -522,10 +859,12 @@ export class LearningDomainService {
         durationSeconds,
         technicalHighlights,
         sceneNotes,
+        artifactKey: descriptor.cacheKey,
         createdAt: Date.now(),
       });
+      videoJobsByArtifactKey.set(descriptor.cacheKey, jobId);
       // Start background job — do NOT await so the HTTP response is sent immediately.
-      this._startVideoJob(jobId, script, sourceContext).catch((err) =>
+      this._startVideoJob(jobId, script, sourceContext, descriptor).catch((err) =>
         console.error('[LearningService] Unhandled background video job error:', err?.message)
       );
       return { jobId, status: 'processing', title, summary, posterUrl: '', durationSeconds, technicalHighlights, sceneNotes };
@@ -538,50 +877,56 @@ export class LearningDomainService {
   /** Polls OpenRouter in the background, then uploads the video to R2 for permanent storage.
    * If video rendering fails (e.g. 402 insufficient credits, model unavailable) the job
    * automatically falls back to a narrated slideshow so the user always gets something. */
-  async _startVideoJob(jobId, script, sourceContext = '') {
+  async _startVideoJob(jobId, script, sourceContext = '', artifactDescriptor = null) {
     const job = () => videoJobs.get(jobId);
     try {
       // Generate poster image in the background (non-blocking update to the job).
       const firstScene = script.scenes?.[0] || {};
       const firstTechnicalDetail = getTechnicalDetail(firstScene);
-      this._renderImageSafely(
+      const posterPromise = this._renderImageSafely(
         [
           String(firstScene.imagePrompt || script.title || ''),
           firstTechnicalDetail ? `External side-panel technical detail, do not render as image text: ${firstTechnicalDetail}` : '',
         ].filter(Boolean).join('\n'),
         { title: script.title, sourceContext, medium: 'video poster illustration' }
-      ).then((posterUrl) => {
+      ).then(async(posterUrl) => {
+        const storedPosterUrl = artifactDescriptor
+          ? await this._persistMediaSource(posterUrl, `${artifactDescriptor.mediaPrefix}/poster`, 'png')
+          : posterUrl;
         const current = videoJobs.get(jobId);
-        if (current) videoJobs.set(jobId, { ...current, posterUrl });
+        if (current) videoJobs.set(jobId, { ...current, posterUrl: storedPosterUrl });
+        return storedPosterUrl;
+      }).catch((err) => {
+        console.warn(`[LearningService] Poster generation failed for job ${jobId}: ${err?.message || err}`);
+        return '';
       });
 
       let videoUrl = null;
       try {
         const cdnUrl = await this._renderVideo(script, sourceContext);
         videoUrl = cdnUrl;
-        // Download from Kling CDN and upload to Cloudflare R2 for a permanent, CORS-safe URL.
-        if (this.fileStoragePort) {
-          try {
-            const dlResp = await axios.get(cdnUrl, { responseType: 'arraybuffer', timeout: 120_000 });
-            const buffer = Buffer.from(dlResp.data);
-            const contentType = dlResp.headers['content-type'] || 'video/mp4';
-            const { publicUrl } = await this.fileStoragePort.uploadBufferWithAutoKey(
-              buffer, `learning_${jobId}.mp4`, contentType, 'learning/videos'
-            );
+        // Download from the video provider CDN and upload to Cloudflare R2 for a permanent, CORS-safe URL.
+        if (artifactDescriptor) {
+          const publicUrl = await this._persistMediaSource(cdnUrl, `${artifactDescriptor.mediaPrefix}/video`, 'mp4');
+          if (publicUrl) {
             videoUrl = publicUrl;
-            console.info(`[LearningService] Video job ${jobId} uploaded to R2: ${publicUrl}`);
-          } catch (r2Err) {
-            console.warn(`[LearningService] R2 upload failed for job ${jobId}, falling back to CDN URL: ${r2Err?.message}`);
+            console.info(`[LearningService] Video job ${jobId} persisted: ${publicUrl}`);
           }
         }
-        videoJobs.set(jobId, { ...job(), status: 'completed', videoUrl });
+        const posterUrl = await posterPromise;
+        const completed = await this._persistVideoMedia({ ...job(), status: 'completed', posterUrl, videoUrl }, artifactDescriptor);
+        await this._writeStoredArtifact('video', artifactDescriptor, completed);
+        videoJobs.set(jobId, { ...completed, artifactKey: artifactDescriptor?.cacheKey, createdAt: job()?.createdAt || Date.now() });
         console.info(`[LearningService] Video job ${jobId} completed.`);
       } catch (videoErr) {
         const httpStatus = videoErr?.response?.status;
         const insufficientCredits = httpStatus === 402;
         console.warn(`[LearningService] Video render failed for job ${jobId} (HTTP ${httpStatus || videoErr?.message}), falling back to slideshow. insufficientCredits=${insufficientCredits}`);
-        const slides = await this._buildSlideshow(script, sourceContext);
-        videoJobs.set(jobId, { ...job(), status: 'completed', slides, insufficientCredits });
+        const slides = await this._buildSlideshow(script, sourceContext, artifactDescriptor);
+        const posterUrl = await posterPromise;
+        const completed = await this._persistVideoMedia({ ...job(), status: 'completed', posterUrl, slides, insufficientCredits }, artifactDescriptor);
+        await this._writeStoredArtifact('video', artifactDescriptor, completed);
+        videoJobs.set(jobId, { ...completed, artifactKey: artifactDescriptor?.cacheKey, createdAt: job()?.createdAt || Date.now() });
         console.info(`[LearningService] Video job ${jobId} completed as slideshow (${slides.length} slides).`);
       }
     } catch (err) {
@@ -591,22 +936,29 @@ export class LearningDomainService {
   }
 
   /** Generates one image per scene and returns a slides array as a fallback when video is unavailable. */
-  async _buildSlideshow(script, sourceContext = '') {
+  async _buildSlideshow(script, sourceContext = '', artifactDescriptor = null) {
     const scenes = script.scenes.slice(0, 8);
     const perScene = Math.max(5, Math.round((script.scenes.length * 10) / scenes.length));
     return await Promise.all(
-      scenes.map(async (scene) => {
+      scenes.map(async (scene, index) => {
         const technicalDetail = getTechnicalDetail(scene);
+        const renderedImageUrl = await this._renderImageSafely(
+          [
+            String(scene.imagePrompt || scene.narration || ''),
+            technicalDetail ? `External side-panel technical detail, do not render as image text: ${technicalDetail}` : '',
+          ].filter(Boolean).join('\n'),
+          { title: script.title, sourceContext, medium: 'video slide illustration' }
+        );
         return {
           narration: String(scene.narration || ''),
           technicalDetail: technicalDetail || undefined,
-          imageUrl: await this._renderImageSafely(
-            [
-              String(scene.imagePrompt || scene.narration || ''),
-              technicalDetail ? `External side-panel technical detail, do not render as image text: ${technicalDetail}` : '',
-            ].filter(Boolean).join('\n'),
-            { title: script.title, sourceContext, medium: 'video slide illustration' }
-          ),
+          imageUrl: artifactDescriptor
+            ? await this._persistMediaSource(
+              renderedImageUrl,
+              `${artifactDescriptor.mediaPrefix}/slide_${String(index + 1).padStart(2, '0')}`,
+              'png'
+            )
+            : renderedImageUrl,
           duration: perScene,
         };
       })
@@ -620,9 +972,11 @@ export class LearningDomainService {
     // Evict old finished jobs
     if (job.status !== 'processing' && Date.now() - job.createdAt > VIDEO_JOB_TTL_MS) {
       videoJobs.delete(jobId);
+      if (job.artifactKey) videoJobsByArtifactKey.delete(job.artifactKey);
       return null;
     }
-    return job;
+    const { artifactKey, ...clientJob } = job;
+    return clientJob;
   }
 
   async _renderVideo(script, sourceContext = '') {
@@ -673,7 +1027,7 @@ export class LearningDomainService {
     if (!pollingUrl) throw new Error('No se obtuvo polling_url del proveedor de video.');
 
     // Step 2: Poll until the video is ready.
-    // Kling v3.0 Pro typically takes 3-5 min. The frontend polls for ~8 min
+    // Seedance 2.0 can take several minutes. The frontend polls for ~8 min
     // (100 × 5 s) after receiving the initial response, so 5 min here is safe.
     const maxWaitMs = 5 * 60 * 1000; // 5 minutes
     const pollIntervalMs = 6_000;

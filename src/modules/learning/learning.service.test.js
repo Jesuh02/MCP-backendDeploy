@@ -3,7 +3,38 @@ import assert from 'node:assert/strict';
 import { LearningDomainService } from './learning.service.js';
 import { Result } from '../../shared/Result.js';
 
-test('generateComic keeps technical artifacts outside images and in the panel contract', async() => {
+function createMemoryStorage() {
+  const files = new Map();
+  return {
+    publicUrl: 'https://r2.test',
+    isAvailable: () => true,
+    isR2Url: (url) => String(url || '').startsWith('https://r2.test/'),
+    getPublicUrl: (key) => `https://r2.test/${key}`,
+    async uploadFile(content, key, contentType = 'application/octet-stream') {
+      const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
+      files.set(key, { buffer, contentType });
+      return `https://r2.test/${key}`;
+    },
+    async fetchFile(key) {
+      const file = files.get(key);
+      if (!file) {
+        const err = new Error('NotFound');
+        err.name = 'NoSuchKey';
+        err.$metadata = { httpStatusCode: 404 };
+        throw err;
+      }
+      const isText = /json|text|javascript|xml/i.test(file.contentType);
+      return {
+        buffer: file.buffer,
+        contentType: file.contentType,
+        content: isText ? file.buffer.toString('utf8') : file.buffer.toString('base64'),
+      };
+    },
+    files,
+  };
+}
+
+test('generateComic renders dialogue bubbles while keeping technical artifacts outside images', async() => {
   let capturedSystemPrompt = '';
   let capturedUserPrompt = '';
   let capturedImagePrompt = '';
@@ -54,20 +85,22 @@ test('generateComic keeps technical artifacts outside images and in the panel co
 
   assert.match(capturedSystemPrompt, /technicalDetail/);
   assert.match(capturedSystemPrompt, /codigo|fragmentos de codigo/i);
-  assert.match(capturedSystemPrompt, /NO debe contener texto visible/);
+  assert.match(capturedSystemPrompt, /Solo los globos de dialogo pueden tener texto/i);
   assert.match(capturedUserPrompt, /function sumar/);
-  assert.match(capturedImagePrompt, /TEXT-FREE COMIC PANEL ONLY/);
-  assert.match(capturedImagePrompt, /No written characters/);
+  assert.match(capturedImagePrompt, /COMIC PANEL WITH READABLE SPANISH SPEECH BUBBLES/);
+  assert.match(capturedImagePrompt, /Exact speech bubble text: "La funcion recibe dos piezas y entrega el resultado\."/);
+  assert.match(capturedImagePrompt, /Only the speech bubbles may contain readable text/);
   assert.doesNotMatch(capturedImagePrompt, /External side-panel technical detail/);
   assert.doesNotMatch(capturedImagePrompt, /Technical detail to make visible/);
   assert.doesNotMatch(capturedImagePrompt, /function sumar\(a, b\)/);
   assert.doesNotMatch(capturedImagePrompt, /return a \+ b|console\.log|whiteboard showing/i);
   assert.doesNotMatch(capturedImagePrompt, /Caption context|Dialogue context/);
-  assert.deepEqual(capturedVisualContext, {
-    title: '',
-    sourceContext: '',
-    medium: 'text-free comic panel illustration',
-  });
+  assert.equal(capturedVisualContext.title, 'La maquina de sumar');
+  assert.match(capturedVisualContext.sourceContext, /Funciones en JavaScript/);
+  assert.equal(capturedVisualContext.medium, 'comic panel illustration with Spanish speech bubbles');
+  assert.equal(capturedVisualContext.allowSpeechText, true);
+  assert.equal(capturedVisualContext.model, 'openai/gpt-image-2');
+  assert.equal(result.panels[0].dialogue, 'La funcion recibe dos piezas y entrega el resultado.');
   assert.equal(result.panels[0].technicalDetail, 'function sumar(a, b) { return a + b; }');
 });
 
@@ -98,4 +131,91 @@ test('slideshow scenes keep technical details in the side-panel contract', async
   assert.match(capturedImagePrompt, /External side-panel technical detail/);
   assert.doesNotMatch(capturedImagePrompt, /Technical detail to make visible/);
   assert.match(capturedImagePrompt, /GET \/users\/42/);
+});
+
+test('generateComic stores the rendered artifact in R2 and reuses it on the next request', async() => {
+  const storage = createMemoryStorage();
+  let llmCalls = 0;
+
+  const service = new LearningDomainService({
+    fileStoragePort: storage,
+    learningContextService: {
+      buildLearningContext: async() => Result.ok({
+        topic: { name: 'Bases de datos', description: 'Consultas SQL basicas.' },
+        task: { title: 'Consultar clientes', description: 'Usa SELECT y WHERE.' },
+        ragContent: 'SELECT id, name FROM customers WHERE active = true;',
+      }),
+    },
+    llmAdapter: {
+      chat: async() => {
+        llmCalls++;
+        return {
+          content: JSON.stringify({
+            title: 'El almacen de datos',
+            panels: [{
+              caption: 'Una persona busca una caja exacta en un estante.',
+              technicalDetail: 'SELECT id, name FROM customers WHERE active = true;',
+              imagePrompt: 'A warehouse shelf with unlabeled boxes and a worker finding one box.',
+            }],
+          }),
+        };
+      },
+    },
+  });
+
+  service._renderImageSafely = async() => 'data:image/png;base64,aGVsbG8=';
+
+  const first = await service.generateComic({ courseId: 10, topicId: 20, taskId: 30, userId: 1 });
+  const second = await service.generateComic({ courseId: 10, topicId: 20, taskId: 30, userId: 2 });
+
+  assert.equal(llmCalls, 1);
+  assert.equal(second.cached, true);
+  assert.equal(first.title, second.title);
+  assert.match(first.panels[0].imageUrl, /^https:\/\/r2\.test\/learning\/artifacts\//);
+  assert.match(second.panels[0].imageUrl, /^https:\/\/r2\.test\/learning\/artifacts\//);
+  assert.ok(storage.files.has('learning/artifacts/qa-develop/course_10/topic_20/task_30/comic.json'));
+});
+
+test('generateVideo returns a completed stored artifact without calling the LLM', async() => {
+  const storage = createMemoryStorage();
+  let llmCalls = 0;
+
+  const service = new LearningDomainService({
+    fileStoragePort: storage,
+    learningContextService: {
+      buildLearningContext: async() => {
+        throw new Error('context should not be built when artifact exists');
+      },
+    },
+    llmAdapter: {
+      chat: async() => {
+        llmCalls++;
+        return { content: '{}' };
+      },
+    },
+  });
+
+  const descriptor = service._artifactDescriptor('video', { courseId: 10, topicId: 20, taskId: 30 });
+  await storage.uploadFile(
+    Buffer.from(JSON.stringify({
+      version: 1,
+      kind: 'video',
+      data: {
+        title: 'Video guardado',
+        summary: 'Resumen persistido.',
+        status: 'completed',
+        videoUrl: 'https://r2.test/learning/artifacts/qa-develop/course_10/topic_20/task_30/video/video.mp4',
+        durationSeconds: 60,
+      },
+    })),
+    descriptor.cacheKey,
+    'application/json',
+  );
+
+  const result = await service.generateVideo({ courseId: 10, topicId: 20, taskId: 30, userId: 1 });
+
+  assert.equal(llmCalls, 0);
+  assert.equal(result.cached, true);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.videoUrl, 'https://r2.test/learning/artifacts/qa-develop/course_10/topic_20/task_30/video/video.mp4');
 });
