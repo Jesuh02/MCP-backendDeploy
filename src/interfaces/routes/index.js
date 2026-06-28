@@ -42,6 +42,7 @@ import { publicRegisterRoutes } from '../../modules/auth/public-register.routes.
 import { icfesRoutes } from '../../modules/icfes/icfes.routes.js';
 import { signLanguageRoutes } from '../../modules/sign-language/sign-language.routes.js';
 import { learningRoutes } from '../../modules/learning/learning.routes.js';
+import { interoperabilityRoutes } from '../../modules/interoperability/interoperability.routes.js';
 
 export function createRouter(deps) {
     const router = Router();
@@ -135,6 +136,10 @@ export function createRouter(deps) {
 
     if (deps.learningController) {
         router.use('/learning', learningRoutes(deps));
+    }
+
+    if (deps.interoperabilityController) {
+        router.use('/interoperability', interoperabilityRoutes({...deps, requireRoles }));
     }
 
     return router;
