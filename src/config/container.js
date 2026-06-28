@@ -167,6 +167,8 @@ import { PeriodController } from '../modules/period/period.controller.js';
 import { IcfesDomainService } from '../modules/icfes/icfes.service.js';
 import { SupabaseIcfesRepository } from '../modules/icfes/infrastructure/supabase.icfes.repository.js';
 import { IcfesController } from '../modules/icfes/icfes.controller.js';
+import { InteroperabilityDomainService } from '../modules/interoperability/interoperability.service.js';
+import { InteroperabilityController } from '../modules/interoperability/interoperability.controller.js';
 
 /**
  * Inicializa todo el grafo de dependencias y retorna un objeto con todos los
@@ -515,6 +517,8 @@ export function createContainer() {
     // Learning (AI comic + video) — depends on learningContextService for materials and on llmAdapter for chat
     const learningService = new LearningDomainService({ learningContextService, llmAdapter, fileStoragePort: storageAdapter });
     const learningController = new LearningController({ learningService });
+    const interoperabilityService = new InteroperabilityDomainService({ client });
+    const interoperabilityController = new InteroperabilityController({ interoperabilityService });
     const reinforcementResultController = new ReinforcementResultController({ reinforcementResultService });
     const chatMessageController = new ChatMessageController({ chatMessageService });
 
@@ -594,6 +598,7 @@ export function createContainer() {
         reinforcementResultController,
         chatMessageController,
         learningController,
+        interoperabilityController,
 
         ttsController,
         llmController,
@@ -645,6 +650,7 @@ export function createContainer() {
         institucionService,
         mcpServiceLegacy, // Injected for server.js legacy tools
         learningContextService,
+        interoperabilityService,
         whatsAppDomainService,
 
         // Adaptadores
