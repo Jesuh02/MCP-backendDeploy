@@ -17,10 +17,12 @@
 import axios from 'axios';
 import { getCurrentTenantId, getPrimaryTenantId } from '../../config/tenantRegistry.js';
 
-const DEFAULT_PANEL_COUNT = 6;
+const DEFAULT_PANEL_COUNT = 4;
 const LEARNING_ARTIFACT_VERSION = 1;
 const DEFAULT_OPENROUTER_IMAGE_MODEL = 'openai/gpt-image-2';
 const LEGACY_OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+const DEFAULT_OPENAI_IMAGE_TIMEOUT_MS = 180_000;
+const DEFAULT_IMAGE_TIMEOUT_MS = 90_000;
 
 const ANALOGY_EXAMPLES = [
   {
@@ -338,7 +340,19 @@ function uniqueModelList(models) {
 
 function isImageModelFallbackError(err) {
   const status = err?.response?.status || err?.statusCode;
-  return status === 400 || status === 404 || status === 422;
+  const code = String(err?.code || err?.cause?.code || '');
+  const message = String(err?.message || '');
+  return status === 400 ||
+    status === 404 ||
+    status === 408 ||
+    status === 422 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    code === 'ECONNABORTED' ||
+    /timeout/i.test(message);
 }
 
 function imageContentType(value, fallback = 'image/png') {
@@ -374,6 +388,26 @@ function extractImageRefFromImagesApiResponse(payload) {
   }
 
   return '';
+}
+
+function boundedNumber(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+
+function imageTimeoutForModel(model) {
+  const configured = process.env.OPENROUTER_IMAGE_TIMEOUT_MS;
+  if (configured) {
+    return boundedNumber(configured, DEFAULT_OPENAI_IMAGE_TIMEOUT_MS, 30_000, 300_000);
+  }
+  return String(model || '').startsWith('openai/')
+    ? DEFAULT_OPENAI_IMAGE_TIMEOUT_MS
+    : DEFAULT_IMAGE_TIMEOUT_MS;
+}
+
+function comicPanelLimit() {
+  return boundedNumber(process.env.OPENROUTER_COMIC_PANEL_LIMIT, DEFAULT_PANEL_COUNT, 1, 8);
 }
 
 function parseDataUrl(dataUrl, fallbackExt = 'png') {
@@ -766,7 +800,7 @@ export class LearningDomainService {
     const title = String(script.title || ctx?.topic?.name || 'Cómic educativo');
 
     // Generate images in parallel (small fanout to respect rate limits)
-    const panels = script.panels.slice(0, 8);
+    const panels = script.panels.slice(0, comicPanelLimit());
     const renderedPanels = await Promise.all(
       panels.map(async (p) => {
         const technicalDetail = getTechnicalDetail(p);
@@ -844,7 +878,7 @@ export class LearningDomainService {
     };
 
     if (String(model || '').startsWith('openai/')) {
-      body.quality = process.env.OPENROUTER_IMAGE_QUALITY || 'auto';
+      body.quality = process.env.OPENROUTER_IMAGE_QUALITY || 'low';
       body.background = process.env.OPENROUTER_IMAGE_BACKGROUND || 'opaque';
       const compression = Number(process.env.OPENROUTER_IMAGE_OUTPUT_COMPRESSION);
       if (Number.isFinite(compression)) {
@@ -864,7 +898,7 @@ export class LearningDomainService {
           'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://coursev.app',
           'X-Title': 'CourseV Learning',
         },
-        timeout: 90_000,
+        timeout: imageTimeoutForModel(model),
       }
     );
 
