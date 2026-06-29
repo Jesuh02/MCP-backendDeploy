@@ -16,6 +16,7 @@ RUN apt-get update \
         ffmpeg \
         libreoffice-writer \
         libreoffice-impress \
+        libreoffice-calc \
         fonts-dejavu \
         fonts-liberation \
     && rm -rf /var/lib/apt/lists/*

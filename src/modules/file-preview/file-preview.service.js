@@ -3,7 +3,7 @@ import path from 'path';
 import { Result } from '../../shared/Result.js';
 import { AppError, ValidationError, NotFoundError } from '../../shared/errors/index.js';
 
-const OFFICE_EXTENSIONS = new Set(['.doc', '.docx', '.ppt', '.pptx']);
+const OFFICE_EXTENSIONS = new Set(['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx']);
 const MAX_PREVIEW_SOURCE_BYTES = Number(process.env.FILE_PREVIEW_MAX_BYTES || 80 * 1024 * 1024);
 
 export class FilePreviewDomainService {
@@ -22,7 +22,7 @@ export class FilePreviewDomainService {
 
         const extension = path.extname(fileName || fileUri).toLowerCase();
         if (!OFFICE_EXTENSIONS.has(extension)) {
-            return Result.fail(new ValidationError('Solo se soportan archivos Word o PowerPoint para conversion PDF'));
+            return Result.fail(new ValidationError('Solo se soportan archivos Word, PowerPoint o Excel para conversion PDF'));
         }
 
         const sourceKey = this._resolveStorageKey(fileUri);
