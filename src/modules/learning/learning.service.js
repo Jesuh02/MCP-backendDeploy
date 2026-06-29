@@ -19,6 +19,8 @@ import { getCurrentTenantId, getPrimaryTenantId } from '../../config/tenantRegis
 
 const DEFAULT_PANEL_COUNT = 6;
 const LEARNING_ARTIFACT_VERSION = 1;
+const DEFAULT_OPENROUTER_IMAGE_MODEL = 'openai/gpt-image-2';
+const LEGACY_OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
 
 const ANALOGY_EXAMPLES = [
   {
@@ -317,6 +319,63 @@ function extensionFromUrl(url, fallback = 'png') {
   return fallback;
 }
 
+function parseModelList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueModelList(models) {
+  const seen = new Set();
+  return models.filter((model) => {
+    const key = String(model || '').trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isImageModelFallbackError(err) {
+  const status = err?.response?.status || err?.statusCode;
+  return status === 400 || status === 404 || status === 422;
+}
+
+function imageContentType(value, fallback = 'image/png') {
+  const text = String(value || '').trim().toLowerCase();
+  return text.startsWith('image/') ? text : fallback;
+}
+
+function imageDataUrl(value, contentType = 'image/png') {
+  const data = String(value || '').trim();
+  if (!data) return '';
+  if (/^data:image\//i.test(data)) return data;
+  return `data:${imageContentType(contentType)};base64,${data}`;
+}
+
+function extractImageRefFromImagesApiResponse(payload) {
+  const candidates = [];
+  if (Array.isArray(payload?.data)) candidates.push(...payload.data);
+  if (Array.isArray(payload?.images)) candidates.push(...payload.images);
+  if (Array.isArray(payload?.output)) candidates.push(...payload.output);
+
+  for (const item of candidates) {
+    const contentType = imageContentType(
+      item?.mime_type || item?.mimeType || item?.content_type || item?.contentType
+    );
+    if (item?.b64_json) return imageDataUrl(item.b64_json, contentType);
+    if (item?.base64_json) return imageDataUrl(item.base64_json, contentType);
+    if (item?.image_base64) return imageDataUrl(item.image_base64, contentType);
+    if (item?.data && typeof item.data === 'string') return imageDataUrl(item.data, contentType);
+    if (item?.url) return item.url;
+    if (item?.image_url?.url) return item.image_url.url;
+    if (item?.image?.b64_json) return imageDataUrl(item.image.b64_json, contentType);
+    if (item?.image?.url) return item.image.url;
+  }
+
+  return '';
+}
+
 function parseDataUrl(dataUrl, fallbackExt = 'png') {
   const match = String(dataUrl || '').match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
   if (!match) return null;
@@ -355,6 +414,25 @@ function stripRuntimeArtifactFields(value) {
 function storageMiss(err) {
   const status = err?.$metadata?.httpStatusCode || err?.statusCode || err?.response?.status;
   return status === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey';
+}
+
+function hasMediaRef(value) {
+  return Boolean(String(value || '').trim());
+}
+
+function hasUsableArtifactMedia(kind, data) {
+  if (kind === 'comic') {
+    return Array.isArray(data?.panels) &&
+      data.panels.length > 0 &&
+      data.panels.every((panel) => hasMediaRef(panel?.imageUrl));
+  }
+  if (kind === 'video') {
+    return hasMediaRef(data?.videoUrl) ||
+      (Array.isArray(data?.slides) &&
+        data.slides.length > 0 &&
+        data.slides.every((slide) => hasMediaRef(slide?.imageUrl)));
+  }
+  return true;
 }
 
 function getTechnicalDetail(item) {
@@ -487,8 +565,13 @@ export class LearningDomainService {
     this.fileStoragePort = fileStoragePort;
     // Best-in-class OpenRouter models, overridable by env.
     // Video generation is fixed to Seedance 2.0 so this flow uses one provider model.
-    this.imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
-    this.comicImageModel = process.env.OPENROUTER_COMIC_IMAGE_MODEL || 'openai/gpt-image-2';
+    this.imageModel = process.env.OPENROUTER_IMAGE_MODEL || DEFAULT_OPENROUTER_IMAGE_MODEL;
+    this.comicImageModel = process.env.OPENROUTER_COMIC_IMAGE_MODEL || this.imageModel;
+    this.imageFallbackModels = uniqueModelList([
+      ...parseModelList(process.env.OPENROUTER_IMAGE_FALLBACK_MODELS),
+      this.imageModel,
+      LEGACY_OPENROUTER_IMAGE_MODEL,
+    ]);
     this.textModel = process.env.OPENROUTER_LEARNING_MODEL || process.env.OPENROUTER_CHAT_MODEL || 'qwen/qwen-2.5-72b-instruct';
     this.videoModel = 'bytedance/seedance-2.0';
   }
@@ -525,6 +608,10 @@ export class LearningDomainService {
       const file = await this.fileStoragePort.fetchFile(descriptor.cacheKey);
       const data = parseStoredArtifact(file);
       if (!data) return null;
+      if (!hasUsableArtifactMedia(kind, data)) {
+        console.warn(`[LearningService] Stored ${kind} artifact has no media; regenerating (${descriptor.cacheKey})`);
+        return null;
+      }
       const normalized = kind === 'video' ? { status: 'completed', ...data } : data;
       return { ...normalized, cached: true };
     } catch (err) {
@@ -641,6 +728,9 @@ export class LearningDomainService {
     const promise = this._generateComicFresh({ courseId, topicId, taskId, userId })
       .then(async(result) => {
         const persisted = await this._persistComicMedia(result, descriptor);
+        if (!hasUsableArtifactMedia('comic', persisted)) {
+          throw new Error('No se pudieron renderizar imagenes para el comic. Revisa el modelo de imagen de OpenRouter.');
+        }
         await this._writeStoredArtifact('comic', descriptor, persisted);
         return persisted;
       })
@@ -726,15 +816,47 @@ export class LearningDomainService {
     if (!apiKey) return '';
 
     const fullPrompt = buildAnalogyVisualPrompt(prompt, visualContext);
-    const model = visualContext?.model || this.imageModel;
+    const requestedModel = visualContext?.model || this.imageModel;
+    const candidateModels = uniqueModelList([requestedModel, ...this.imageFallbackModels]);
+    let lastError = null;
+
+    for (const model of candidateModels) {
+      try {
+        const imageRef = await this._renderImageWithModel({ apiKey, model, fullPrompt });
+        if (imageRef) return imageRef;
+        console.warn(`[LearningService] _renderImage: no image found in response for model ${model}`);
+      } catch (err) {
+        lastError = err;
+        if (!isImageModelFallbackError(err)) throw err;
+        console.warn(`[LearningService] image model ${model} failed (${err?.response?.status || err?.message}); trying fallback.`);
+      }
+    }
+
+    if (lastError) throw lastError;
+    return '';
+  }
+
+  async _renderImageWithModel({ apiKey, model, fullPrompt }) {
+    const body = {
+      model,
+      prompt: fullPrompt,
+      n: 1,
+    };
+
+    if (String(model || '').startsWith('openai/')) {
+      body.quality = process.env.OPENROUTER_IMAGE_QUALITY || 'auto';
+      body.background = process.env.OPENROUTER_IMAGE_BACKGROUND || 'opaque';
+      const compression = Number(process.env.OPENROUTER_IMAGE_OUTPUT_COMPRESSION);
+      if (Number.isFinite(compression)) {
+        body.output_compression = Math.max(0, Math.min(100, Math.round(compression)));
+      }
+    } else if (String(model || '').startsWith('google/')) {
+      body.aspect_ratio = process.env.OPENROUTER_IMAGE_ASPECT_RATIO || '4:3';
+    }
 
     const resp = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model,
-        modalities: ['image', 'text'],
-        messages: [{ role: 'user', content: fullPrompt }],
-      },
+      'https://openrouter.ai/api/v1/images',
+      body,
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -746,11 +868,23 @@ export class LearningDomainService {
       }
     );
 
+    const imageFromImagesApi = extractImageRefFromImagesApiResponse(resp?.data);
+    if (imageFromImagesApi) return imageFromImagesApi;
+
     const message = resp?.data?.choices?.[0]?.message;
 
     // Debug: log response shape without dumping large base64 blobs
     try {
       const shape = {
+        model,
+        endpoint: '/api/v1/images',
+        dataItems: Array.isArray(resp?.data?.data)
+          ? resp.data.data.map((item) => ({
+            hasB64: Boolean(item?.b64_json || item?.base64_json || item?.image_base64),
+            hasUrl: Boolean(item?.url || item?.image_url?.url),
+            mimeType: item?.mime_type || item?.mimeType || item?.content_type || item?.contentType,
+          }))
+          : undefined,
         messageKeys: message ? Object.keys(message) : null,
         contentType: Array.isArray(message?.content) ? 'array' : typeof message?.content,
         contentLen: Array.isArray(message?.content) ? message.content.length : undefined,
@@ -798,7 +932,6 @@ export class LearningDomainService {
       if (dataUri) return dataUri[1];
     }
 
-    console.warn('[LearningService] _renderImage: no image found in response for model', model);
     return '';
   }
 
@@ -915,6 +1048,9 @@ export class LearningDomainService {
         }
         const posterUrl = await posterPromise;
         const completed = await this._persistVideoMedia({ ...job(), status: 'completed', posterUrl, videoUrl }, artifactDescriptor);
+        if (!hasUsableArtifactMedia('video', completed)) {
+          throw new Error('No se pudo persistir el video ni una presentacion con imagenes.');
+        }
         await this._writeStoredArtifact('video', artifactDescriptor, completed);
         videoJobs.set(jobId, { ...completed, artifactKey: artifactDescriptor?.cacheKey, createdAt: job()?.createdAt || Date.now() });
         console.info(`[LearningService] Video job ${jobId} completed.`);
@@ -925,6 +1061,9 @@ export class LearningDomainService {
         const slides = await this._buildSlideshow(script, sourceContext, artifactDescriptor);
         const posterUrl = await posterPromise;
         const completed = await this._persistVideoMedia({ ...job(), status: 'completed', posterUrl, slides, insufficientCredits }, artifactDescriptor);
+        if (!hasUsableArtifactMedia('video', completed)) {
+          throw new Error('No se pudo persistir el video ni una presentacion con imagenes.');
+        }
         await this._writeStoredArtifact('video', artifactDescriptor, completed);
         videoJobs.set(jobId, { ...completed, artifactKey: artifactDescriptor?.cacheKey, createdAt: job()?.createdAt || Date.now() });
         console.info(`[LearningService] Video job ${jobId} completed as slideshow (${slides.length} slides).`);

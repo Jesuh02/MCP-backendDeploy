@@ -1470,14 +1470,21 @@ export class MCPDomainService {
         const apiKey = process.env.OPENROUTER_API_KEY;
         if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured for image generation');
 
-        const imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
+        const imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'openai/gpt-image-2';
         const prompt = [
             `Professional, photorealistic educational subject thumbnail: ${String(description || '').slice(0, 240)}.`,
             'Realistic academic setting, relevant objects for the subject, natural light, high detail,',
             'clean 16:9 composition, no text overlays, no logos, no watermarks.',
         ].join(' ');
+        const body = { model: imageModel, prompt, n: 1 };
+        if (String(imageModel).startsWith('openai/')) {
+            body.quality = process.env.OPENROUTER_IMAGE_QUALITY || 'auto';
+            body.background = process.env.OPENROUTER_IMAGE_BACKGROUND || 'opaque';
+        } else if (String(imageModel).startsWith('google/')) {
+            body.aspect_ratio = process.env.OPENROUTER_IMAGE_ASPECT_RATIO || '16:9';
+        }
 
-        const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const resp = await fetch('https://openrouter.ai/api/v1/images', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${apiKey}`,
@@ -1485,11 +1492,7 @@ export class MCPDomainService {
                 'HTTP-Referer': process.env.OPENROUTER_REFERER || process.env.SITE_URL || 'https://coursev.app',
                 'X-Title': 'CourseV',
             },
-            body: JSON.stringify({
-                model: imageModel,
-                modalities: ['image', 'text'],
-                messages: [{ role: 'user', content: prompt }],
-            }),
+            body: JSON.stringify(body),
             signal: AbortSignal.timeout(90_000),
         });
         if (!resp.ok) {
@@ -1498,9 +1501,28 @@ export class MCPDomainService {
         }
 
         const json = await resp.json();
-        const imageRef = this._extractImageRef(json?.choices?.[0]?.message);
+        const imageRef = this._extractImageRefFromImagesApi(json) ||
+            this._extractImageRef(json?.choices?.[0]?.message);
         if (!imageRef) throw new Error(`OpenRouter image generation returned no image for model ${imageModel}`);
         return this._imageRefToBuffer(imageRef);
+    }
+
+    _extractImageRefFromImagesApi(payload) {
+        const candidates = [];
+        if (Array.isArray(payload?.data)) candidates.push(...payload.data);
+        if (Array.isArray(payload?.images)) candidates.push(...payload.images);
+        if (Array.isArray(payload?.output)) candidates.push(...payload.output);
+
+        for (const item of candidates) {
+            const contentType = item?.mime_type || item?.mimeType || item?.content_type || item?.contentType || 'image/png';
+            const b64 = item?.b64_json || item?.base64_json || item?.image_base64 || (typeof item?.data === 'string' ? item.data : '');
+            if (b64) return /^data:image\//i.test(b64) ? b64 : `data:${contentType};base64,${b64}`;
+            if (item?.url) return item.url;
+            if (item?.image_url?.url) return item.image_url.url;
+            if (item?.image?.b64_json) return `data:${contentType};base64,${item.image.b64_json}`;
+            if (item?.image?.url) return item.image.url;
+        }
+        return '';
     }
 
     _extractImageRef(message) {

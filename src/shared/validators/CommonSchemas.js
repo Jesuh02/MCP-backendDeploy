@@ -338,7 +338,7 @@ export const initiatePaymentSchema = Joi.object({
 export const getUploadUrlSchema = Joi.object({
     key: Joi.string().min(1).max(500).required(),
     contentType: Joi.string().max(100).default('application/octet-stream'),
-    prefix: Joi.string().valid('videos', 'thumbnails', 'avatars', 'submissions', 'content', 'courses', 'images').default('content'),
+    prefix: Joi.string().valid('videos', 'thumbnails', 'avatars', 'submissions', 'content', 'courses', 'images', 'learning').default('content'),
 });
 
 // ─── ID param ────────────────────────────────────────────
