@@ -17,7 +17,14 @@
 import axios from 'axios';
 import { getCurrentTenantId, getPrimaryTenantId } from '../../config/tenantRegistry.js';
 
-const DEFAULT_PANEL_COUNT = 4;
+const DEFAULT_EVALUATION_TARGET_COUNT = 10;
+const DEFAULT_PANEL_COUNT = DEFAULT_EVALUATION_TARGET_COUNT;
+const MIN_COMIC_PANEL_COUNT = 10;
+const MAX_COMIC_PANEL_COUNT = 16;
+const DEFAULT_VIDEO_SCENE_COUNT = 10;
+const MIN_VIDEO_SCENE_COUNT = 8;
+const MAX_VIDEO_SCENE_COUNT = 12;
+const DEFAULT_LEARNING_DIFFICULTY = 'HARD';
 const LEARNING_ARTIFACT_VERSION = 1;
 const DEFAULT_OPENROUTER_IMAGE_MODEL = 'openai/gpt-image-2';
 const LEGACY_OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
@@ -135,7 +142,7 @@ REGLAS CRITICAS:
    - CORRECTO: "A chef in a busy kitchen receiving order tickets and preparing dishes"
    - INCORRECTO: "A chef with a sign that says 'API REQUEST'"
 
-6. Genera entre 4 y 8 paneles con principio, desarrollo y cierre.
+6. Genera minimo 10 paneles con principio, desarrollo, practica guiada y cierre. Si el plan evaluativo pide mas preguntas, genera al menos un panel por pregunta esperada.
 
 7. CODIGO PROGRESIVO: El codigo en "technicalDetail" debe PROGRESAR con la historia:
    - Panel 1: Muestra el problema o concepto inicial (ej: definicion de variable, importacion)
@@ -186,11 +193,13 @@ REGLAS CRITICAS:
 
 6. IMAGEPROMPT CON GLOBOS DE DIALOGO: Describe objetos fisicos, personas, acciones, lugares y globos de dialogo. Solo los globos de dialogo pueden tener texto. No incluyas codigo, formulas, etiquetas, rotulos, marcas de agua ni pantallas con texto.
 
-7. Genera entre 4 y 8 paneles con principio, desarrollo y cierre.
+7. Genera minimo 10 paneles con principio, desarrollo, practica guiada y cierre. Si el plan evaluativo pide mas preguntas, genera al menos un panel por pregunta esperada.
 
-8. CODIGO PROGRESIVO: El codigo en "technicalDetail" debe PROGRESAR con la historia. Cada panel debe mostrar una PARTE DIFERENTE del codigo que se relaciona con esa escena especifica.
+8. PREPARACION PARA REFUERZO: Cada panel debe ensenar una habilidad que luego pueda evaluarse con multiple_choice, fill_in_blank u ordering. Incluye consecuencias, pasos ordenables y detalles tecnicos que el estudiante deba completar.
 
-9. Apoyate en los materiales proporcionados. Si son escasos, complementa con conocimiento general.`;
+9. CODIGO PROGRESIVO: El codigo en "technicalDetail" debe PROGRESAR con la historia. Cada panel debe mostrar una PARTE DIFERENTE del codigo que se relaciona con esa escena especifica.
+
+10. Apoyate en los materiales proporcionados. Si son escasos, complementa con conocimiento general.`;
 
 const VIDEO_SYSTEM_PROMPT = `Eres un guionista pedagógico de video corto (60-90 s).
 Devuelves SIEMPRE un único objeto JSON válido (sin Markdown), con la forma:
@@ -223,9 +232,11 @@ REGLAS CRITICAS:
 
 5. IMAGEPROMPT SIN TEXTO: Solo objetos fisicos, personas, acciones, lugares.
 
-6. Entre 5 y 8 escenas con principio, desarrollo y cierre.
+6. Entre 8 y 12 escenas con principio, desarrollo, practica guiada y cierre. Debe cubrir las habilidades que se evaluaran en refuerzo.
 
-7. CODIGO PROGRESIVO: El codigo en "technicalDetail" debe PROGRESAR con la historia. Cada escena muestra una parte diferente del codigo que se relaciona con esa situacion especifica.`;
+7. PREPARACION PARA REFUERZO: Cada escena debe ensenar una habilidad que luego pueda evaluarse con multiple_choice, fill_in_blank u ordering. Incluye consecuencias, pasos ordenables y detalles tecnicos que el estudiante deba completar.
+
+8. CODIGO PROGRESIVO: El codigo en "technicalDetail" debe PROGRESAR con la historia. Cada escena muestra una parte diferente del codigo que se relaciona con esa situacion especifica.`;
 
 function safeParseJson(text) {
   if (!text) return null;
@@ -253,6 +264,336 @@ function buildSourceContext(ctx) {
   }
   if (!lines.length) lines.push('(Sin contenido extra disponible; usa conocimiento general apropiado al nivel.)');
   return lines.join('\n');
+}
+
+function learningSourceText(ctx) {
+  return [
+    ctx?.topic?.name,
+    ctx?.topic?.description,
+    ctx?.task?.title,
+    ctx?.task?.description,
+    ctx?.ragContent,
+  ].filter(Boolean).join('\n');
+}
+
+function normalizeLearningDifficulty(value) {
+  const difficulty = String(value || DEFAULT_LEARNING_DIFFICULTY).trim().toUpperCase();
+  return ['EASY', 'INTERMEDIATE', 'HARD'].includes(difficulty) ? difficulty : DEFAULT_LEARNING_DIFFICULTY;
+}
+
+function normalizeLearningTargetCount(value, max = MAX_COMIC_PANEL_COUNT) {
+  return boundedNumber(value, DEFAULT_EVALUATION_TARGET_COUNT, MIN_COMIC_PANEL_COUNT, max);
+}
+
+function inferLearningDomain(text) {
+  const source = String(text || '').toLowerCase();
+  if (/(jwt|oauth|ssl|tls|bearer|token|middleware|autentic|authentic|autoriz|authoriz|permiso|permission|rol|role|firma|signature|expir|session|sesion)/i.test(source)) {
+    return 'API_SECURITY';
+  }
+  if (/(api|endpoint|http|request|response|rest|graphql|microservicio|servicio)/i.test(source)) {
+    return 'API';
+  }
+  if (/(sql|select|insert|update|delete|join|tabla|database|base de datos|query|consulta)/i.test(source)) {
+    return 'SQL';
+  }
+  if (/(algoritmo|algorithm|funcion|function|clase|class|variable|javascript|typescript|python|java|codigo|programacion)/i.test(source)) {
+    return 'PROGRAMMING';
+  }
+  return 'GENERAL';
+}
+
+function buildEvaluationReadinessPlan(ctx, { difficulty, targetCount, mode = 'comic' } = {}) {
+  const source = learningSourceText(ctx);
+  const domain = inferLearningDomain(source);
+  const normalizedDifficulty = normalizeLearningDifficulty(difficulty);
+  const normalizedTargetCount = normalizeLearningTargetCount(targetCount);
+  const lines = [
+    'PLAN DE PREPARACION PARA REFUERZO:',
+    `Despues de este ${mode}, el estudiante enfrentara cerca de ${normalizedTargetCount} preguntas de dificultad ${normalizedDifficulty}.`,
+    'Ensenar antes de evaluar: concepto, criterio profesional, ejemplo tecnico, consecuencia de error y practica guiada.',
+    'Cubrir los formatos del refuerzo: multiple_choice para consecuencias y decisiones, fill_in_blank para completar terminos/codigo/configuracion, ordering para ordenar flujos.',
+    'Cada panel o escena debe preparar una pregunta probable, no solo decorar el tema.',
+  ];
+
+  if (domain === 'API_SECURITY') {
+    lines.push(
+      'Dominio detectado: seguridad en APIs.',
+      'Cobertura obligatoria: SSL/TLS antes de procesar tokens, extraccion Bearer, verificacion criptografica de firma JWT, validacion de exp/nbf/iss/aud, identidad vs autorizacion por rol, minimo privilegio, respuestas 401 vs 403, flujo OAuth 2.0, sesion JWT stateless, logging sin secretos.',
+      'Orden profesional esperado: transporte seguro -> autenticacion -> validacion de token -> carga de identidad -> autorizacion -> handler -> auditoria/respuesta.'
+    );
+  } else if (domain === 'API') {
+    lines.push(
+      'Dominio detectado: APIs.',
+      'Cobertura obligatoria: contrato request/response, metodos HTTP, validacion de entrada, autenticacion/autorizacion cuando aplique, codigos de estado, errores, idempotencia y versionado.'
+    );
+  } else if (domain === 'SQL') {
+    lines.push(
+      'Dominio detectado: SQL/base de datos.',
+      'Cobertura obligatoria: modelo de tablas, filtros, joins, claves, indices, integridad, consultas parametrizadas y consecuencias de consultas mal formuladas.'
+    );
+  } else if (domain === 'PROGRAMMING') {
+    lines.push(
+      'Dominio detectado: programacion.',
+      'Cobertura obligatoria: entradas, transformacion, salida, control de flujo, casos borde, errores comunes, complejidad/orden de pasos cuando aplique y fragmentos de codigo funcionales.'
+    );
+  } else {
+    lines.push(
+      'Dominio detectado: general.',
+      'Cobertura obligatoria: definiciones, relaciones causa-efecto, pasos operativos, errores comunes, criterios de decision y ejemplos aplicados.'
+    );
+  }
+
+  return {
+    domain,
+    difficulty: normalizedDifficulty,
+    targetCount: normalizedTargetCount,
+    text: lines.join('\n'),
+  };
+}
+
+function buildEvaluationPrepMeta(evaluationPlan) {
+  const domain = evaluationPlan?.domain || 'GENERAL';
+  const focusByDomain = {
+    API_SECURITY: [
+      'SSL/TLS antes de procesar tokens',
+      'Firma JWT, expiracion y claims criticos',
+      'Autenticacion vs autorizacion por rol',
+      'Flujo OAuth 2.0 ordenado',
+      'JWT stateless y revocacion',
+      'Cadena de middleware con 401/403',
+    ],
+    API: [
+      'Contrato request/response',
+      'Metodos HTTP y codigos de estado',
+      'Validacion de entrada',
+      'Autenticacion y autorizacion',
+      'Errores, idempotencia y versionado',
+    ],
+    SQL: [
+      'Modelo de tablas y claves',
+      'Filtros, joins e indices',
+      'Integridad de datos',
+      'Consultas parametrizadas',
+      'Consecuencias de queries incorrectas',
+    ],
+    PROGRAMMING: [
+      'Entradas, transformacion y salida',
+      'Control de flujo',
+      'Casos borde',
+      'Errores comunes',
+      'Orden de pasos y criterio tecnico',
+    ],
+    GENERAL: [
+      'Definiciones esenciales',
+      'Relaciones causa-efecto',
+      'Pasos operativos',
+      'Errores comunes',
+      'Criterios de decision',
+    ],
+  };
+
+  return {
+    difficulty: evaluationPlan?.difficulty || DEFAULT_LEARNING_DIFFICULTY,
+    targetCount: evaluationPlan?.targetCount || DEFAULT_EVALUATION_TARGET_COUNT,
+    domain,
+    questionTypes: [
+      {
+        type: 'fill_in_blank',
+        label: 'Completar espacios',
+        goal: 'Recordar con precision conceptos, claims, parametros, permisos o fragmentos tecnicos.',
+      },
+      {
+        type: 'ordering',
+        label: 'Ordenar flujos',
+        goal: 'Reconstruir secuencias profesionales como middleware, OAuth, validacion o ejecucion paso a paso.',
+      },
+      {
+        type: 'multiple_choice',
+        label: 'Decisiones profesionales',
+        goal: 'Elegir consecuencias, riesgos y criterios correctos ante casos reales.',
+      },
+    ],
+    focusAreas: focusByDomain[domain] || focusByDomain.GENERAL,
+  };
+}
+
+function hasEvaluationPrep(data) {
+  return Boolean(
+    data?.evaluationPrep &&
+    Array.isArray(data.evaluationPrep.questionTypes) &&
+    data.evaluationPrep.questionTypes.length >= 3 &&
+    Array.isArray(data.evaluationPrep.focusAreas) &&
+    data.evaluationPrep.focusAreas.length > 0
+  );
+}
+
+function buildApiSecurityLearningItems() {
+  return [
+    {
+      caption: 'La entrada segura empieza antes del token: primero se protege el canal para que las credenciales no viajen expuestas.',
+      dialogue: 'Primero cerramos el tunel; despues revisamos la credencial.',
+      technicalDetail: 'Orden inicial: HTTPS/TLS -> recibir request -> leer Authorization: Bearer <jwt>',
+      imagePrompt: 'A guarded building entrance with a protected tunnel before a visitor reaches the badge desk.',
+    },
+    {
+      caption: 'SSL/TLS evita que un atacante lea o altere el token mientras viaja entre cliente y API.',
+      dialogue: 'Sin tunel seguro, el pase puede ser copiado en el camino.',
+      technicalDetail: 'Rechazar en borde: if (req.protocol !== "https") return 400/redirect HTTPS;',
+      imagePrompt: 'A courier carrying a sealed badge through a transparent secure tunnel while others cannot reach it.',
+    },
+    {
+      caption: 'El middleware extrae el Bearer token y valida que la peticion tenga el formato correcto antes de confiar en sus datos.',
+      dialogue: 'No basta traer un pase; debe venir en el formato correcto.',
+      technicalDetail: 'const token = req.headers.authorization?.match(/^Bearer\\s+(.+)$/)?.[1];',
+      imagePrompt: 'A receptionist checking that a visitor hands over the right kind of pass before entering.',
+    },
+    {
+      caption: 'Verificar la firma JWT confirma que el token no fue modificado y que lo emitio una autoridad confiable.',
+      dialogue: 'Si el sello no coincide, nadie entra.',
+      technicalDetail: 'jwt.verify(token, publicKey, { algorithms: ["RS256"], issuer, audience });',
+      imagePrompt: 'A security guard comparing a wax seal on a badge with an official seal stamp.',
+    },
+    {
+      caption: 'Despues de la firma se validan expiracion, emisor, audiencia y ventanas de tiempo para no aceptar tokens viejos o fuera de contexto.',
+      dialogue: 'Un pase vencido ya no abre la puerta.',
+      technicalDetail: 'Claims criticos: exp, nbf, iat, iss, aud, sub. Token expirado => 401.',
+      imagePrompt: 'A guard checking the date window on a visitor pass with an hourglass nearby.',
+    },
+    {
+      caption: 'Autenticacion identifica quien es el usuario; autorizacion decide que puede hacer con ese rol o permiso.',
+      dialogue: 'Ya se quien eres; ahora miro si puedes borrar.',
+      technicalDetail: 'if (!user.roles.includes("admin")) return res.status(403).json({ error: "Forbidden" });',
+      imagePrompt: 'A verified visitor standing before several doors while a guard points to the allowed door only.',
+    },
+    {
+      caption: 'El minimo privilegio evita que un rol lector ejecute acciones destructivas aunque el token sea valido.',
+      dialogue: 'Un lector puede consultar, no destruir registros.',
+      technicalDetail: 'Permisos: reader: ["read"]; editor: ["read","write"]; admin: ["read","write","delete"]',
+      imagePrompt: 'A library worker allowing reading at one desk but blocking access to a disposal machine.',
+    },
+    {
+      caption: 'El flujo OAuth 2.0 separa consentimiento, codigo de autorizacion e intercambio por token para delegar acceso con alcance limitado.',
+      dialogue: 'Primero permiso, luego codigo, despues token con alcance.',
+      technicalDetail: 'OAuth order: authorize -> login/consent -> code -> token exchange -> scoped API request',
+      imagePrompt: 'A visitor getting a permission slip, exchanging it at a counter, then accessing only one service window.',
+    },
+    {
+      caption: 'Una sesion JWT stateless no requiere guardar sesion en memoria del servidor; cada peticion trae claims firmados verificables.',
+      dialogue: 'La API revisa el pase en cada visita.',
+      technicalDetail: 'Stateless: request + signed JWT claims -> verify each time. Revocation needs blacklist/short TTL.',
+      imagePrompt: 'Several service counters independently checking the same signed badge without calling a central desk.',
+    },
+    {
+      caption: 'La seguridad en APIs funciona como cadena de validaciones: si una etapa falla, no se debe continuar al handler protegido.',
+      dialogue: 'Una sola validacion rota debilita toda la ruta.',
+      technicalDetail: 'Secuencia: TLS -> JWT firma -> exp -> identidad -> rol/scope -> handler -> audit log',
+      imagePrompt: 'A chain of checkpoint gates where each gate must open before a visitor reaches the final office.',
+    },
+    {
+      caption: 'Los errores deben distinguir autenticacion fallida de autorizacion denegada sin filtrar secretos ni detalles internos.',
+      dialogue: '401 si no eres valido; 403 si no tienes permiso.',
+      technicalDetail: '401 Unauthorized: token ausente/invalido/expirado. 403 Forbidden: token valido sin permiso.',
+      imagePrompt: 'A guard using two different exit lanes for invalid badges and valid badges without access.',
+    },
+    {
+      caption: 'Antes de ejecutar la logica de negocio, el middleware deja trazabilidad segura para investigar intentos fallidos.',
+      dialogue: 'Registramos el evento, nunca el secreto.',
+      technicalDetail: 'log.warn({ userId, route, reason }, "auth_denied"); // no registrar token completo',
+      imagePrompt: 'A security desk recording a safe incident note while keeping a sealed badge covered.',
+    },
+  ];
+}
+
+function buildGenericLearningItems(ctx) {
+  const topic = ctx?.task?.title || ctx?.topic?.name || 'el tema';
+  return [
+    {
+      caption: `Primero se define el problema central de ${topic} para que el estudiante sepa que debe reconocer en una pregunta dificil.`,
+      dialogue: 'Antes de responder, nombremos el problema real.',
+      technicalDetail: `Objetivo: identificar concepto, entrada, proceso, salida y criterio de exito en ${topic}.`,
+      imagePrompt: 'A team around a workbench separating materials into problem, process, and result areas.',
+    },
+    {
+      caption: 'Luego se separan conceptos parecidos para evitar confusiones en preguntas de seleccion multiple.',
+      dialogue: 'Estas dos ideas se parecen, pero deciden cosas distintas.',
+      technicalDetail: 'Practica multiple_choice: elegir la consecuencia correcta cuando cambia una condicion.',
+      imagePrompt: 'A teacher comparing two similar tools on a table and showing when each one is used.',
+    },
+    {
+      caption: 'El estudiante practica completar la pieza tecnica que falta, igual que en fill_in_blank.',
+      dialogue: 'Si falta una pieza clave, el sistema no funciona.',
+      technicalDetail: 'Practica fill_in_blank: completar el termino, parametro, paso, formula o fragmento de codigo correcto.',
+      imagePrompt: 'A mechanic inserting the missing piece into a machine while others inspect the result.',
+    },
+    {
+      caption: 'El orden de pasos se vuelve explicito para responder ejercicios de ordering sin memorizar frases sueltas.',
+      dialogue: 'El orden importa tanto como la accion.',
+      technicalDetail: 'Practica ordering: 1) preparar entrada 2) validar 3) transformar 4) comprobar salida 5) manejar errores.',
+      imagePrompt: 'A production line with workers passing objects through ordered stations.',
+    },
+    {
+      caption: 'Se muestran errores comunes y sus consecuencias para que el estudiante razone, no adivine.',
+      dialogue: 'Este error parece pequeno, pero cambia el resultado.',
+      technicalDetail: 'Criterio: explicar que falla, por que falla y como se corrige.',
+      imagePrompt: 'A supervisor finding a small misplaced part that causes a whole process to stop.',
+    },
+    {
+      caption: 'El cierre integra los pasos en una lista profesional de verificacion antes de intentar el refuerzo.',
+      dialogue: 'Si puedes justificar cada paso, ya puedes practicar.',
+      technicalDetail: 'Checklist: concepto -> ejemplo -> paso critico -> error comun -> decision correcta.',
+      imagePrompt: 'A team finishing a clean checklist on a blank board with tools arranged neatly.',
+    },
+  ];
+}
+
+function buildFallbackLearningItems(ctx, evaluationPlan) {
+  if (evaluationPlan?.domain === 'API_SECURITY') return buildApiSecurityLearningItems();
+  return buildGenericLearningItems(ctx);
+}
+
+function normalizeGeneratedComicPanel(panel) {
+  return {
+    caption: String(panel?.caption || '').slice(0, 320),
+    dialogue: normalizeComicDialogue(panel?.dialogue || ''),
+    technicalDetail: getTechnicalDetail(panel),
+    imagePrompt: String(panel?.imagePrompt || panel?.caption || '').slice(0, 900),
+  };
+}
+
+function ensureComicPanelCount(panels, requiredCount, ctx, evaluationPlan) {
+  const normalized = Array.isArray(panels) ? panels.map(normalizeGeneratedComicPanel) : [];
+  const fallbackItems = buildFallbackLearningItems(ctx, evaluationPlan).map(normalizeGeneratedComicPanel);
+  let index = 0;
+  while (normalized.length < requiredCount && fallbackItems.length) {
+    normalized.push({ ...fallbackItems[index % fallbackItems.length] });
+    index++;
+  }
+  const desired = Math.max(requiredCount, Math.min(normalized.length, MAX_COMIC_PANEL_COUNT));
+  return normalized.slice(0, desired);
+}
+
+function normalizeGeneratedVideoScene(scene) {
+  return {
+    narration: String(scene?.narration || scene?.caption || '').slice(0, 420),
+    technicalDetail: getTechnicalDetail(scene),
+    imagePrompt: String(scene?.imagePrompt || scene?.narration || scene?.caption || '').slice(0, 900),
+  };
+}
+
+function ensureVideoSceneCount(scenes, requiredCount, ctx, evaluationPlan) {
+  const normalized = Array.isArray(scenes) ? scenes.map(normalizeGeneratedVideoScene) : [];
+  const fallbackItems = buildFallbackLearningItems(ctx, evaluationPlan).map((item) => normalizeGeneratedVideoScene({
+    narration: item.caption,
+    technicalDetail: item.technicalDetail,
+    imagePrompt: item.imagePrompt,
+  }));
+  let index = 0;
+  while (normalized.length < requiredCount && fallbackItems.length) {
+    normalized.push({ ...fallbackItems[index % fallbackItems.length] });
+    index++;
+  }
+  const desired = Math.max(requiredCount, Math.min(normalized.length, MAX_VIDEO_SCENE_COUNT));
+  return normalized.slice(0, desired);
 }
 
 function pickAnalogyHints(text) {
@@ -406,8 +747,14 @@ function imageTimeoutForModel(model) {
     : DEFAULT_IMAGE_TIMEOUT_MS;
 }
 
-function comicPanelLimit() {
-  return boundedNumber(process.env.OPENROUTER_COMIC_PANEL_LIMIT, DEFAULT_PANEL_COUNT, 1, 8);
+function comicPanelLimit(targetCount = DEFAULT_EVALUATION_TARGET_COUNT) {
+  const desired = normalizeLearningTargetCount(targetCount, MAX_COMIC_PANEL_COUNT);
+  return boundedNumber(process.env.OPENROUTER_COMIC_PANEL_LIMIT, desired, MIN_COMIC_PANEL_COUNT, MAX_COMIC_PANEL_COUNT);
+}
+
+function videoSceneLimit(targetCount = DEFAULT_EVALUATION_TARGET_COUNT) {
+  const desired = normalizeLearningTargetCount(targetCount, MAX_VIDEO_SCENE_COUNT);
+  return boundedNumber(process.env.OPENROUTER_VIDEO_SCENE_LIMIT, desired, MIN_VIDEO_SCENE_COUNT, MAX_VIDEO_SCENE_COUNT);
 }
 
 function parseDataUrl(dataUrl, fallbackExt = 'png') {
@@ -454,16 +801,25 @@ function hasMediaRef(value) {
   return Boolean(String(value || '').trim());
 }
 
-function hasUsableArtifactMedia(kind, data) {
+function hasUsableArtifactMedia(kind, data, requirements = {}) {
+  if (requirements.requireEvaluationPrep && !hasEvaluationPrep(data)) return false;
+
   if (kind === 'comic') {
+    const minPanels = Math.max(1, Number(requirements.minPanels) || 1);
     return Array.isArray(data?.panels) &&
-      data.panels.length > 0 &&
+      data.panels.length >= minPanels &&
       data.panels.every((panel) => hasMediaRef(panel?.imageUrl));
   }
   if (kind === 'video') {
-    return hasMediaRef(data?.videoUrl) ||
+    const minScenes = Math.max(1, Number(requirements.minScenes) || 1);
+    const sceneDepth = Math.max(
+      Array.isArray(data?.sceneNotes) ? data.sceneNotes.length : 0,
+      Array.isArray(data?.slides) ? data.slides.length : 0
+    );
+    const hasRequiredDepth = sceneDepth >= minScenes;
+    return (hasMediaRef(data?.videoUrl) && hasRequiredDepth) ||
       (Array.isArray(data?.slides) &&
-        data.slides.length > 0 &&
+        data.slides.length >= minScenes &&
         data.slides.every((slide) => hasMediaRef(slide?.imageUrl)));
   }
   return true;
@@ -550,9 +906,9 @@ function collectTechnicalHighlights(script) {
   return highlights;
 }
 
-function collectSceneNotes(script) {
+function collectSceneNotes(script, limit = DEFAULT_VIDEO_SCENE_COUNT) {
   const scenes = Array.isArray(script?.scenes) ? script.scenes : [];
-  return scenes.slice(0, 8).map((scene) => {
+  return scenes.slice(0, limit).map((scene) => {
     const note = {
       narration: String(scene?.narration || '').slice(0, 420),
     };
@@ -635,15 +991,15 @@ export class LearningDomainService {
     };
   }
 
-  async _readStoredArtifact(kind, descriptor) {
+  async _readStoredArtifact(kind, descriptor, requirements = {}) {
     if (!descriptor) return null;
     if (!this._storageAvailable() || typeof this.fileStoragePort.fetchFile !== 'function') return null;
     try {
       const file = await this.fileStoragePort.fetchFile(descriptor.cacheKey);
       const data = parseStoredArtifact(file);
       if (!data) return null;
-      if (!hasUsableArtifactMedia(kind, data)) {
-        console.warn(`[LearningService] Stored ${kind} artifact has no media; regenerating (${descriptor.cacheKey})`);
+      if (!hasUsableArtifactMedia(kind, data, requirements)) {
+        console.warn(`[LearningService] Stored ${kind} artifact is too short or has no media; regenerating (${descriptor.cacheKey})`);
         return null;
       }
       const normalized = kind === 'video' ? { status: 'completed', ...data } : data;
@@ -751,46 +1107,62 @@ export class LearningDomainService {
   }
 
   // ───────────────────────── COMIC ─────────────────────────
-  async generateComic({ courseId, topicId, taskId, userId }) {
+  async generateComic({ courseId, topicId, taskId, userId, difficulty = DEFAULT_LEARNING_DIFFICULTY, targetCount = DEFAULT_EVALUATION_TARGET_COUNT }) {
+    const normalizedDifficulty = normalizeLearningDifficulty(difficulty);
+    const normalizedTargetCount = normalizeLearningTargetCount(targetCount);
+    const panelCount = comicPanelLimit(normalizedTargetCount);
+    const requirements = { minPanels: panelCount, requireEvaluationPrep: true };
     const descriptor = this._artifactDescriptor('comic', { courseId, topicId, taskId });
-    const stored = await this._readStoredArtifact('comic', descriptor);
+    const stored = await this._readStoredArtifact('comic', descriptor, requirements);
     if (stored) return stored;
 
-    const inFlight = comicArtifactsInFlight.get(descriptor.cacheKey);
+    const flightKey = `${descriptor.cacheKey}:panels_${panelCount}`;
+    const inFlight = comicArtifactsInFlight.get(flightKey);
     if (inFlight) return inFlight;
 
-    const promise = this._generateComicFresh({ courseId, topicId, taskId, userId })
+    const promise = this._generateComicFresh({
+      courseId,
+      topicId,
+      taskId,
+      userId,
+      difficulty: normalizedDifficulty,
+      targetCount: normalizedTargetCount,
+      panelCount,
+    })
       .then(async(result) => {
         const persisted = await this._persistComicMedia(result, descriptor);
-        if (!hasUsableArtifactMedia('comic', persisted)) {
+        if (!hasUsableArtifactMedia('comic', persisted, requirements)) {
           throw new Error('No se pudieron renderizar imagenes para el comic. Revisa el modelo de imagen de OpenRouter.');
         }
         await this._writeStoredArtifact('comic', descriptor, persisted);
         return persisted;
       })
-      .finally(() => comicArtifactsInFlight.delete(descriptor.cacheKey));
+      .finally(() => comicArtifactsInFlight.delete(flightKey));
 
-    comicArtifactsInFlight.set(descriptor.cacheKey, promise);
+    comicArtifactsInFlight.set(flightKey, promise);
     return promise;
   }
 
-  async _generateComicFresh({ courseId, topicId, taskId, userId }) {
-    const ctxResult = await this.learningContextService.buildLearningContext({ courseId, topicId, taskId, userId });
+  async _generateComicFresh({ courseId, topicId, taskId, userId, difficulty = DEFAULT_LEARNING_DIFFICULTY, targetCount = DEFAULT_EVALUATION_TARGET_COUNT, panelCount = null }) {
+    const ctxResult = await this.learningContextService.buildLearningContext({ courseId, topicId, taskId, userId, query: null, retrievalMode: 'hybrid' });
     if (ctxResult.isFail && ctxResult.isFail()) {
       throw ctxResult.getError();
     }
     const ctx = ctxResult.getValue ? ctxResult.getValue() : ctxResult;
     const sourceContext = buildSourceContext(ctx);
+    const evaluationPlan = buildEvaluationReadinessPlan(ctx, { difficulty, targetCount, mode: 'comic' });
+    const desiredPanels = panelCount || comicPanelLimit(evaluationPlan.targetCount);
 
     const userPrompt =
       `Construye una historieta educativa basada EXCLUSIVAMENTE en este material:\n\n` +
       `${sourceContext}\n\n` +
-      `Genera al menos ${DEFAULT_PANEL_COUNT} paneles.`;
+      `${evaluationPlan.text}\n\n` +
+      `Genera al menos ${desiredPanels} paneles. Cada panel debe preparar una pregunta dificil del modulo de refuerzo.`;
 
     const llmResp = await this.llmAdapter.chat(
       COMIC_DIALOGUE_SYSTEM_PROMPT,
       userPrompt,
-      { model: this.textModel, temperature: 0.4, maxTokens: 4096 }
+      { model: this.textModel, temperature: 0.35, maxTokens: 8192 }
     );
     const script = safeParseJson(llmResp?.content);
     if (!script || !Array.isArray(script.panels) || !script.panels.length) {
@@ -800,7 +1172,7 @@ export class LearningDomainService {
     const title = String(script.title || ctx?.topic?.name || 'Cómic educativo');
 
     // Generate images in parallel (small fanout to respect rate limits)
-    const panels = script.panels.slice(0, comicPanelLimit());
+    const panels = ensureComicPanelCount(script.panels, desiredPanels, ctx, evaluationPlan);
     const renderedPanels = await Promise.all(
       panels.map(async (p) => {
         const technicalDetail = getTechnicalDetail(p);
@@ -828,6 +1200,7 @@ export class LearningDomainService {
     return {
       jobId: `comic_${Date.now()}`,
       title,
+      evaluationPrep: buildEvaluationPrepMeta(evaluationPlan),
       panels: renderedPanels,
     };
   }
@@ -980,9 +1353,13 @@ export class LearningDomainService {
    * When no video model is configured the slideshow is built inline and
    * returned with status: 'completed'.
    */
-  async generateVideo({ courseId, topicId, taskId, userId }) {
+  async generateVideo({ courseId, topicId, taskId, userId, difficulty = DEFAULT_LEARNING_DIFFICULTY, targetCount = DEFAULT_EVALUATION_TARGET_COUNT }) {
+    const normalizedDifficulty = normalizeLearningDifficulty(difficulty);
+    const normalizedTargetCount = normalizeLearningTargetCount(targetCount);
+    const sceneCount = videoSceneLimit(normalizedTargetCount);
+    const requirements = { minScenes: sceneCount, requireEvaluationPrep: true };
     const descriptor = this._artifactDescriptor('video', { courseId, topicId, taskId });
-    const stored = await this._readStoredArtifact('video', descriptor);
+    const stored = await this._readStoredArtifact('video', descriptor, requirements);
     if (stored) return stored;
 
     const existingJobId = videoJobsByArtifactKey.get(descriptor.cacheKey);
@@ -992,26 +1369,30 @@ export class LearningDomainService {
       videoJobsByArtifactKey.delete(descriptor.cacheKey);
     }
 
-    const ctxResult = await this.learningContextService.buildLearningContext({ courseId, topicId, taskId, userId });
+    const ctxResult = await this.learningContextService.buildLearningContext({ courseId, topicId, taskId, userId, query: null, retrievalMode: 'hybrid' });
     if (ctxResult.isFail && ctxResult.isFail()) throw ctxResult.getError();
     const ctx = ctxResult.getValue ? ctxResult.getValue() : ctxResult;
     const sourceContext = buildSourceContext(ctx);
+    const evaluationPlan = buildEvaluationReadinessPlan(ctx, { difficulty: normalizedDifficulty, targetCount: normalizedTargetCount, mode: 'video' });
 
     const llmResp = await this.llmAdapter.chat(
       VIDEO_SYSTEM_PROMPT,
-      `Material disponible:\n\n${sourceContext}`,
-      { model: this.textModel, temperature: 0.4, maxTokens: 3072 }
+      `Material disponible:\n\n${sourceContext}\n\n${evaluationPlan.text}\n\nGenera al menos ${sceneCount} escenas. Cada escena debe preparar una pregunta dificil del modulo de refuerzo.`,
+      { model: this.textModel, temperature: 0.35, maxTokens: 6144 }
     );
     const script = safeParseJson(llmResp?.content);
     if (!script || !Array.isArray(script.scenes) || !script.scenes.length) {
       throw new Error('No fue posible interpretar el guion de video.');
     }
 
+    script.scenes = ensureVideoSceneCount(script.scenes, sceneCount, ctx, evaluationPlan);
+
     const title = String(script.title || ctx?.topic?.name || 'Video educativo');
     const summary = String(script.summary || '').slice(0, 520);
-    const durationSeconds = Math.max(45, Math.min(120, script.scenes.length * 10));
+    const durationSeconds = Math.max(75, Math.min(150, script.scenes.length * 10));
     const technicalHighlights = collectTechnicalHighlights(script);
-    const sceneNotes = collectSceneNotes(script);
+    const sceneNotes = collectSceneNotes(script, sceneCount);
+    const evaluationPrep = buildEvaluationPrepMeta(evaluationPlan);
 
     // ── Async path: video model configured ──────────────────
     // Return immediately after script generation so the HTTP connection is never
@@ -1024,6 +1405,7 @@ export class LearningDomainService {
         summary,
         posterUrl: '',
         durationSeconds,
+        evaluationPrep,
         technicalHighlights,
         sceneNotes,
         artifactKey: descriptor.cacheKey,
@@ -1031,10 +1413,10 @@ export class LearningDomainService {
       });
       videoJobsByArtifactKey.set(descriptor.cacheKey, jobId);
       // Start background job — do NOT await so the HTTP response is sent immediately.
-      this._startVideoJob(jobId, script, sourceContext, descriptor).catch((err) =>
+      this._startVideoJob(jobId, script, sourceContext, descriptor, requirements).catch((err) =>
         console.error('[LearningService] Unhandled background video job error:', err?.message)
       );
-      return { jobId, status: 'processing', title, summary, posterUrl: '', durationSeconds, technicalHighlights, sceneNotes };
+      return { jobId, status: 'processing', title, summary, posterUrl: '', durationSeconds, evaluationPrep, technicalHighlights, sceneNotes };
     }
 
     // No video model configured — surface an error so the UI shows a clear message.
@@ -1044,7 +1426,7 @@ export class LearningDomainService {
   /** Polls OpenRouter in the background, then uploads the video to R2 for permanent storage.
    * If video rendering fails (e.g. 402 insufficient credits, model unavailable) the job
    * automatically falls back to a narrated slideshow so the user always gets something. */
-  async _startVideoJob(jobId, script, sourceContext = '', artifactDescriptor = null) {
+  async _startVideoJob(jobId, script, sourceContext = '', artifactDescriptor = null, requirements = {}) {
     const job = () => videoJobs.get(jobId);
     try {
       // Generate poster image in the background (non-blocking update to the job).
@@ -1082,7 +1464,7 @@ export class LearningDomainService {
         }
         const posterUrl = await posterPromise;
         const completed = await this._persistVideoMedia({ ...job(), status: 'completed', posterUrl, videoUrl }, artifactDescriptor);
-        if (!hasUsableArtifactMedia('video', completed)) {
+        if (!hasUsableArtifactMedia('video', completed, requirements)) {
           throw new Error('No se pudo persistir el video ni una presentacion con imagenes.');
         }
         await this._writeStoredArtifact('video', artifactDescriptor, completed);
@@ -1092,10 +1474,10 @@ export class LearningDomainService {
         const httpStatus = videoErr?.response?.status;
         const insufficientCredits = httpStatus === 402;
         console.warn(`[LearningService] Video render failed for job ${jobId} (HTTP ${httpStatus || videoErr?.message}), falling back to slideshow. insufficientCredits=${insufficientCredits}`);
-        const slides = await this._buildSlideshow(script, sourceContext, artifactDescriptor);
+        const slides = await this._buildSlideshow(script, sourceContext, artifactDescriptor, requirements.minScenes);
         const posterUrl = await posterPromise;
         const completed = await this._persistVideoMedia({ ...job(), status: 'completed', posterUrl, slides, insufficientCredits }, artifactDescriptor);
-        if (!hasUsableArtifactMedia('video', completed)) {
+        if (!hasUsableArtifactMedia('video', completed, requirements)) {
           throw new Error('No se pudo persistir el video ni una presentacion con imagenes.');
         }
         await this._writeStoredArtifact('video', artifactDescriptor, completed);
@@ -1109,9 +1491,9 @@ export class LearningDomainService {
   }
 
   /** Generates one image per scene and returns a slides array as a fallback when video is unavailable. */
-  async _buildSlideshow(script, sourceContext = '', artifactDescriptor = null) {
-    const scenes = script.scenes.slice(0, 8);
-    const perScene = Math.max(5, Math.round((script.scenes.length * 10) / scenes.length));
+  async _buildSlideshow(script, sourceContext = '', artifactDescriptor = null, sceneCount = DEFAULT_VIDEO_SCENE_COUNT) {
+    const scenes = script.scenes.slice(0, Math.max(MIN_VIDEO_SCENE_COUNT, Math.min(Number(sceneCount) || DEFAULT_VIDEO_SCENE_COUNT, MAX_VIDEO_SCENE_COUNT)));
+    const perScene = Math.max(5, Math.round((script.scenes.length * 10) / Math.max(scenes.length, 1)));
     return await Promise.all(
       scenes.map(async (scene, index) => {
         const technicalDetail = getTechnicalDetail(scene);
@@ -1157,7 +1539,7 @@ export class LearningDomainService {
 
     // Build a concise text-to-video prompt from the script scenes
     const sceneSummary = script.scenes
-      .slice(0, 4)
+      .slice(0, Math.min(8, script.scenes.length))
       .map((s, i) => {
         const technicalDetail = getTechnicalDetail(s);
         return [
