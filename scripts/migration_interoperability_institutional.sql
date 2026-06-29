@@ -70,3 +70,49 @@ CREATE TABLE IF NOT EXISTS interoperability_connections (
 
 CREATE INDEX IF NOT EXISTS idx_interop_connections_tenant
   ON interoperability_connections (tenant_id, standard_code);
+
+CREATE TABLE IF NOT EXISTS interoperability_qti_packages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id text NOT NULL DEFAULT 'default',
+  course_id bigint,
+  source text NOT NULL DEFAULT 'import',
+  status text NOT NULL DEFAULT 'imported',
+  title text,
+  question_count integer NOT NULL DEFAULT 0,
+  validation_errors jsonb NOT NULL DEFAULT '[]'::jsonb,
+  xml text,
+  created_by bigint,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_interop_qti_packages_tenant
+  ON interoperability_qti_packages (tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS interoperability_oneroster_import_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id text NOT NULL DEFAULT 'default',
+  status text NOT NULL DEFAULT 'committed',
+  file_summary jsonb NOT NULL DEFAULT '{}'::jsonb,
+  preview jsonb NOT NULL DEFAULT '{}'::jsonb,
+  errors jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_by bigint,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_interop_oneroster_jobs_tenant
+  ON interoperability_oneroster_import_jobs (tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS interoperability_oneroster_records (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id text NOT NULL DEFAULT 'default',
+  import_id uuid REFERENCES interoperability_oneroster_import_jobs(id) ON DELETE SET NULL,
+  file_name text NOT NULL,
+  sourced_id text NOT NULL,
+  record_role text,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, file_name, sourced_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_interop_oneroster_records_import
+  ON interoperability_oneroster_records (tenant_id, import_id, file_name);

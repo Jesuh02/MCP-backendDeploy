@@ -70,6 +70,7 @@ const STANDARD_DEFINITIONS = [
     actions: [
       ['export_qti', 'Exportar QTI'],
       ['validate_qti', 'Validar QTI'],
+      ['import_qti', 'Importar QTI'],
     ],
   },
   {
@@ -93,6 +94,7 @@ const STANDARD_DEFINITIONS = [
     actions: [
       ['validate_oneroster_csv', 'Validar CSV'],
       ['import_oneroster_csv', 'Preparar importación'],
+      ['commit_oneroster_csv', 'Confirmar importación'],
     ],
   },
   {
@@ -125,6 +127,9 @@ const ACTION_TABLE = 'interoperability_action_logs';
 const CHECKLIST_TABLE = 'interoperability_checklist';
 const CONNECTION_TABLE = 'interoperability_connections';
 const EVENT_TABLE = 'interoperability_learning_events';
+const ONEROSTER_IMPORT_TABLE = 'interoperability_oneroster_import_jobs';
+const ONEROSTER_RECORD_TABLE = 'interoperability_oneroster_records';
+const QTI_PACKAGE_TABLE = 'interoperability_qti_packages';
 
 const memoryByTenant = new Map();
 
@@ -153,6 +158,9 @@ function createMemoryTenant() {
     connections: {},
     events: [],
     logs: [],
+    oneRosterImports: [],
+    oneRosterRecords: [],
+    qtiPackages: [],
   };
 }
 
@@ -423,6 +431,8 @@ export class InteroperabilityDomainService {
       .filter((log) => log.standardCode === 'oneroster')
       .reduce((total, log) => total + safeInt(log.payload?.errorCount, 0), 0);
     const ltiLaunches = logs.filter((log) => log.standardCode === 'lti' && log.action === 'test_lti_launch' && log.status === 'success').length;
+    const qtiImports = logs.filter((log) => log.standardCode === 'qti' && log.action === 'import_qti' && log.status === 'success').length;
+    const onerosterCommits = logs.filter((log) => log.standardCode === 'oneroster' && log.action === 'commit_oneroster_csv' && log.status === 'success').length;
 
     const [
       courseCount,
@@ -431,6 +441,8 @@ export class InteroperabilityDomainService {
       submissionCount,
       questionCount,
       progressCount,
+      persistedQtiImports,
+      persistedOneRosterImports,
     ] = await Promise.all([
       this._countRows('courses', (q) => q),
       this._countRows('usuarios', (q) => q),
@@ -438,6 +450,8 @@ export class InteroperabilityDomainService {
       this._countRows('task_submissions', (q) => q),
       this._countRows('questions_history', (q) => q),
       this._countRows('progreso_curso', (q) => q),
+      this._countRows(QTI_PACKAGE_TABLE, (q) => q.eq('tenant_id', tenantId).eq('source', 'import')),
+      this._countRows(ONEROSTER_IMPORT_TABLE, (q) => q.eq('tenant_id', tenantId).eq('status', 'committed')),
     ]);
 
     return {
@@ -461,6 +475,7 @@ export class InteroperabilityDomainService {
         compatibleQuestions: Math.max(0, (questionCount || taskCount) - qtiValidationErrors),
         validationErrors: qtiValidationErrors,
         exports: qtiExports,
+        imports: Math.max(qtiImports, persistedQtiImports),
         lastExport: logs.find((log) => log.standardCode === 'qti' && log.action === 'export_qti')?.createdAt || null,
       },
       oneroster: {
@@ -469,6 +484,7 @@ export class InteroperabilityDomainService {
         coursesDetected: logs.find((log) => log.standardCode === 'oneroster')?.payload?.courses || courseCount,
         enrollmentsDetected: logs.find((log) => log.standardCode === 'oneroster')?.payload?.enrollments || progressCount,
         validations: onerosterValidations,
+        committedImports: Math.max(onerosterCommits, persistedOneRosterImports),
         errors: onerosterErrors,
       },
       lti: {
@@ -508,6 +524,7 @@ export class InteroperabilityDomainService {
       mark('question_bank', signals.qti.questionBanks > 0);
       mark('structured_questions', signals.qti.generatedQuestions > 0);
       mark('export_available', signals.qti.exports > 0);
+      mark('import_available', signals.qti.imports > 0);
       mark('validation_errors', signals.qti.validationErrors >= 0);
     } else if (standard.code === 'oneroster') {
       mark('students_import', signals.oneroster.studentsDetected > 0);
@@ -515,7 +532,7 @@ export class InteroperabilityDomainService {
       mark('courses_import', signals.oneroster.coursesDetected > 0);
       mark('enrollments_import', signals.oneroster.enrollmentsDetected > 0);
       mark('duplicates_validation', signals.oneroster.validations > 0);
-      mark('preview_before_save', signals.oneroster.validations > 0);
+      mark('preview_before_save', signals.oneroster.validations > 0 || signals.oneroster.committedImports > 0);
     } else if (standard.code === 'lti') {
       mark('platform_registered', signals.lti.platformRegistered);
       mark('launch_test', signals.lti.launchTests > 0);
@@ -539,11 +556,12 @@ export class InteroperabilityDomainService {
       return 'En diseño';
     }
     if (code === 'qti') {
-      if (signals.qti.exports > 0 && signals.qti.validationErrors === 0) return 'Activo';
-      if (signals.qti.exports > 0) return 'En pruebas';
+      if ((signals.qti.exports > 0 || signals.qti.imports > 0) && signals.qti.validationErrors === 0) return 'Activo';
+      if (signals.qti.exports > 0 || signals.qti.imports > 0) return 'En pruebas';
       return signals.qti.generatedQuestions > 0 ? 'En desarrollo' : 'En diseño';
     }
     if (code === 'oneroster') {
+      if (signals.oneroster.committedImports > 0 && signals.oneroster.errors === 0) return 'En pruebas';
       if (signals.oneroster.validations > 0 && signals.oneroster.errors === 0) return 'En pruebas';
       return signals.oneroster.validations > 0 ? 'En desarrollo' : 'No iniciado';
     }
@@ -571,14 +589,14 @@ export class InteroperabilityDomainService {
       qti: [
         ['Bancos de preguntas', signals.qti.questionBanks],
         ['Preguntas generadas', signals.qti.generatedQuestions],
-        ['Compatibles', signals.qti.compatibleQuestions],
+        ['Importaciones', signals.qti.imports],
         ['Exportaciones', signals.qti.exports],
       ],
       oneroster: [
         ['Estudiantes detectados', signals.oneroster.studentsDetected],
         ['Docentes detectados', signals.oneroster.teachersDetected],
         ['Cursos detectados', signals.oneroster.coursesDetected],
-        ['Errores', signals.oneroster.errors],
+        ['Confirmadas', signals.oneroster.committedImports],
       ],
       lti: [
         ['LMS conectado', signals.lti.provider || 'No registrado'],
@@ -786,8 +804,10 @@ export class InteroperabilityDomainService {
       else if (code === 'xapi' && actionKey === 'retry_failed') result = await this._retryFailedXapi(actorUserId);
       else if (code === 'qti' && actionKey === 'export_qti') result = await this._exportQti(payload, actorUserId);
       else if (code === 'qti' && actionKey === 'validate_qti') result = await this._validateQti(payload, actorUserId);
+      else if (code === 'qti' && actionKey === 'import_qti') result = await this._importQti(payload, actorUserId);
       else if (code === 'oneroster' && actionKey === 'validate_oneroster_csv') result = await this._validateOneRoster(payload, actorUserId);
       else if (code === 'oneroster' && actionKey === 'import_oneroster_csv') result = await this._stageOneRosterImport(payload, actorUserId);
+      else if (code === 'oneroster' && actionKey === 'commit_oneroster_csv') result = await this._commitOneRosterImport(payload, actorUserId);
       else if (code === 'lti' && actionKey === 'register_lms') result = await this._configureConnection('lti', payload, actorUserId);
       else if (code === 'lti' && actionKey === 'test_lti_launch') result = await this._testLtiLaunch(payload, actorUserId);
       else if (code === 'lti' && actionKey === 'send_grade_passback_test') result = await this._testGradePassback(payload, actorUserId);
@@ -1079,6 +1099,76 @@ ${items}
     };
   }
 
+  async _importQti(payload, actorUserId) {
+    const xml = payload.xml || payload.content || '';
+    if (!xml.trim()) {
+      return {
+        status: 'error',
+        summary: 'No se recibio XML QTI para importar.',
+        errors: ['Adjunta o pega un paquete QTI XML antes de importar.'],
+        metrics: { errorCount: 1 },
+      };
+    }
+
+    const validation = await this._validateQti({ ...payload, xml });
+    if (validation.status === 'error') return validation;
+
+    const tenantId = getTenantId();
+    const packageId = randomUUID();
+    const titleMatch = xml.match(/\btitle="([^"]+)"/i);
+    const assessmentItemCount = (xml.match(/<assessmentItem\b|<item\b/gi) || []).length;
+    const responseDeclarationCount = (xml.match(/<response_lid\b|<responseDeclaration\b/gi) || []).length;
+    const questionCount = assessmentItemCount || responseDeclarationCount;
+    const record = {
+      id: packageId,
+      tenant_id: tenantId,
+      course_id: safeInt(payload.courseId ?? payload.course_id, null),
+      source: 'import',
+      status: 'imported',
+      title: titleMatch?.[1] || 'QTI importado',
+      question_count: questionCount,
+      validation_errors: validation.errors || [],
+      xml,
+      created_by: actorUserId,
+      created_at: nowIso(),
+    };
+
+    const mem = tenantMemory(tenantId);
+    await this._insertTable(QTI_PACKAGE_TABLE, record, () => {
+      mem.qtiPackages.unshift({
+        id: packageId,
+        source: record.source,
+        status: record.status,
+        title: record.title,
+        questionCount,
+        courseId: record.course_id,
+        createdAt: record.created_at,
+      });
+      mem.qtiPackages = mem.qtiPackages.slice(0, 100);
+      return record;
+    });
+
+    await this.recordLearningEvent({
+      userId: actorUserId,
+      courseId: record.course_id,
+      eventType: 'qti_bank_imported',
+      eventSource: 'coursev_admin',
+      standardTarget: 'internal',
+      eventPayload: { questions: questionCount, packageId },
+    }, actorUserId);
+
+    return {
+      status: 'success',
+      summary: `Paquete QTI importado con ${questionCount} elemento(s).`,
+      metrics: {
+        packageId,
+        courseId: record.course_id,
+        questions: questionCount,
+        errorCount: 0,
+      },
+    };
+  }
+
   async _validateOneRoster(payload) {
     const files = payload.files || {
       'users.csv': payload.usersCsv || payload.csv || '',
@@ -1139,6 +1229,85 @@ ${items}
       metrics: {
         ...validation.metrics,
         staged: true,
+        writesToAcademicTables: false,
+      },
+    };
+  }
+
+  async _commitOneRosterImport(payload, actorUserId) {
+    const validation = await this._validateOneRoster(payload);
+    if (validation.status === 'error') return validation;
+
+    const tenantId = getTenantId();
+    const importId = randomUUID();
+    const createdAt = nowIso();
+    const files = payload.files || {
+      'users.csv': payload.usersCsv || payload.csv || '',
+      'courses.csv': payload.coursesCsv || '',
+      'classes.csv': payload.classesCsv || '',
+      'enrollments.csv': payload.enrollmentsCsv || '',
+    };
+    const parsedFiles = Object.entries(files)
+      .filter(([, csv]) => csv)
+      .map(([fileName, csv]) => [fileName, parseCsv(csv)]);
+    const preview = Object.fromEntries(parsedFiles.map(([fileName, parsed]) => [
+      fileName,
+      parsed.rows.slice(0, 5),
+    ]));
+
+    const importRecord = {
+      id: importId,
+      tenant_id: tenantId,
+      status: 'committed',
+      file_summary: validation.metrics.files || {},
+      preview,
+      errors: validation.errors || [],
+      created_by: actorUserId,
+      created_at: createdAt,
+    };
+
+    const mem = tenantMemory(tenantId);
+    await this._insertTable(ONEROSTER_IMPORT_TABLE, importRecord, () => {
+      mem.oneRosterImports.unshift(importRecord);
+      mem.oneRosterImports = mem.oneRosterImports.slice(0, 100);
+      return importRecord;
+    });
+
+    let recordsPersisted = 0;
+    for (const [fileName, parsed] of parsedFiles) {
+      for (const row of parsed.rows) {
+        const sourcedId = row.sourcedId || row.userSourcedId || row.classSourcedId || `${fileName}:${row.__line}`;
+        const record = {
+          id: randomUUID(),
+          tenant_id: tenantId,
+          import_id: importId,
+          file_name: fileName,
+          sourced_id: sourcedId,
+          record_role: row.role || null,
+          payload: row,
+          created_at: createdAt,
+        };
+        await this._upsertTable(ONEROSTER_RECORD_TABLE, record, 'tenant_id,file_name,sourced_id', () => {
+          mem.oneRosterRecords = mem.oneRosterRecords.filter((item) =>
+            !(item.tenant_id === tenantId && item.file_name === fileName && item.sourced_id === sourcedId),
+          );
+          mem.oneRosterRecords.unshift(record);
+          mem.oneRosterRecords = mem.oneRosterRecords.slice(0, 1000);
+          return record;
+        });
+        recordsPersisted += 1;
+      }
+    }
+
+    return {
+      status: 'success',
+      summary: `Importacion OneRoster confirmada: ${recordsPersisted} registros institucionales persistidos.`,
+      metrics: {
+        ...validation.metrics,
+        importId,
+        recordsPersisted,
+        committed: true,
+        writesToInteroperabilityTables: true,
         writesToAcademicTables: false,
       },
     };
