@@ -159,6 +159,57 @@ test('renderImage falls back when the configured image model returns 404', async
   }
 });
 
+test('renderImage falls back when gpt-image-2 times out', async() => {
+  const originalPost = axios.post;
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  const originalImageModel = process.env.OPENROUTER_IMAGE_MODEL;
+  const originalComicModel = process.env.OPENROUTER_COMIC_IMAGE_MODEL;
+  const originalTimeout = process.env.OPENROUTER_IMAGE_TIMEOUT_MS;
+  const originalFallbacks = process.env.OPENROUTER_IMAGE_FALLBACK_MODELS;
+  const calls = [];
+
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  process.env.OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+  process.env.OPENROUTER_COMIC_IMAGE_MODEL = 'openai/gpt-image-2';
+  delete process.env.OPENROUTER_IMAGE_TIMEOUT_MS;
+  delete process.env.OPENROUTER_IMAGE_FALLBACK_MODELS;
+
+  axios.post = async(url, body, options) => {
+    calls.push({ url, model: body.model, timeout: options.timeout, quality: body.quality });
+    if (body.model === 'openai/gpt-image-2') {
+      const err = new Error('timeout of 90000ms exceeded');
+      err.code = 'ECONNABORTED';
+      throw err;
+    }
+    return {
+      data: {
+        data: [{ b64_json: 'ZmFzdA==', mime_type: 'image/png' }],
+      },
+    };
+  };
+
+  try {
+    const service = new LearningDomainService({
+      learningContextService: { buildLearningContext: async() => Result.ok({}) },
+      llmAdapter: { chat: async() => ({ content: '{}' }) },
+    });
+    const imageUrl = await service._renderImage('Draw a restaurant API analogy', { model: service.comicImageModel });
+    assert.equal(imageUrl, 'data:image/png;base64,ZmFzdA==');
+    assert.deepEqual(calls.map((call) => call.model), ['openai/gpt-image-2', 'google/gemini-2.5-flash-image']);
+    assert.equal(calls[0].timeout, 180_000);
+    assert.equal(calls[0].quality, 'low');
+    assert.equal(calls[1].timeout, 90_000);
+    assert.ok(calls.every((call) => call.url === 'https://openrouter.ai/api/v1/images'));
+  } finally {
+    axios.post = originalPost;
+    if (originalApiKey == null) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = originalApiKey;
+    if (originalImageModel == null) delete process.env.OPENROUTER_IMAGE_MODEL; else process.env.OPENROUTER_IMAGE_MODEL = originalImageModel;
+    if (originalComicModel == null) delete process.env.OPENROUTER_COMIC_IMAGE_MODEL; else process.env.OPENROUTER_COMIC_IMAGE_MODEL = originalComicModel;
+    if (originalTimeout == null) delete process.env.OPENROUTER_IMAGE_TIMEOUT_MS; else process.env.OPENROUTER_IMAGE_TIMEOUT_MS = originalTimeout;
+    if (originalFallbacks == null) delete process.env.OPENROUTER_IMAGE_FALLBACK_MODELS; else process.env.OPENROUTER_IMAGE_FALLBACK_MODELS = originalFallbacks;
+  }
+});
+
 test('slideshow scenes keep technical details in the side-panel contract', async() => {
   let capturedImagePrompt = '';
   const service = new LearningDomainService({
