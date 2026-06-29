@@ -47,8 +47,8 @@ async function waitForCompletedVideo(service, jobId) {
 test('generateComic renders dialogue bubbles while keeping technical artifacts outside images', async() => {
   let capturedSystemPrompt = '';
   let capturedUserPrompt = '';
-  let capturedImagePrompt = '';
-  let capturedVisualContext = null;
+  const capturedImagePrompts = [];
+  const capturedVisualContexts = [];
 
   const service = new LearningDomainService({
     learningContextService: {
@@ -86,30 +86,37 @@ test('generateComic renders dialogue bubbles while keeping technical artifacts o
   });
 
   service._renderImageSafely = async(prompt, visualContext) => {
-    capturedImagePrompt = prompt;
-    capturedVisualContext = visualContext;
+    capturedImagePrompts.push(prompt);
+    capturedVisualContexts.push(visualContext);
     return 'data:image/png;base64,abc123';
   };
 
   const result = await service.generateComic({ courseId: 1, topicId: 2, taskId: 3, userId: 4 });
+  const firstImagePrompt = capturedImagePrompts[0];
+  const firstVisualContext = capturedVisualContexts[0];
 
   assert.match(capturedSystemPrompt, /technicalDetail/);
   assert.match(capturedSystemPrompt, /codigo|fragmentos de codigo/i);
   assert.match(capturedSystemPrompt, /Solo los globos de dialogo pueden tener texto/i);
   assert.match(capturedUserPrompt, /function sumar/);
-  assert.match(capturedImagePrompt, /COMIC PANEL WITH READABLE SPANISH SPEECH BUBBLES/);
-  assert.match(capturedImagePrompt, /Exact speech bubble text: "La funcion recibe dos piezas y entrega el resultado\."/);
-  assert.match(capturedImagePrompt, /Only the speech bubbles may contain readable text/);
-  assert.doesNotMatch(capturedImagePrompt, /External side-panel technical detail/);
-  assert.doesNotMatch(capturedImagePrompt, /Technical detail to make visible/);
-  assert.doesNotMatch(capturedImagePrompt, /function sumar\(a, b\)/);
-  assert.doesNotMatch(capturedImagePrompt, /return a \+ b|console\.log|whiteboard showing/i);
-  assert.doesNotMatch(capturedImagePrompt, /Caption context|Dialogue context/);
-  assert.equal(capturedVisualContext.title, 'La maquina de sumar');
-  assert.match(capturedVisualContext.sourceContext, /Funciones en JavaScript/);
-  assert.equal(capturedVisualContext.medium, 'comic panel illustration with Spanish speech bubbles');
-  assert.equal(capturedVisualContext.allowSpeechText, true);
-  assert.equal(capturedVisualContext.model, 'openai/gpt-image-2');
+  assert.match(capturedUserPrompt, /PLAN DE PREPARACION PARA REFUERZO/);
+  assert.match(capturedUserPrompt, /multiple_choice/);
+  assert.match(capturedUserPrompt, /fill_in_blank/);
+  assert.match(capturedUserPrompt, /ordering/);
+  assert.match(firstImagePrompt, /COMIC PANEL WITH READABLE SPANISH SPEECH BUBBLES/);
+  assert.match(firstImagePrompt, /Exact speech bubble text: "La funcion recibe dos piezas y entrega el resultado\."/);
+  assert.match(firstImagePrompt, /Only the speech bubbles may contain readable text/);
+  assert.doesNotMatch(firstImagePrompt, /External side-panel technical detail/);
+  assert.doesNotMatch(firstImagePrompt, /Technical detail to make visible/);
+  assert.doesNotMatch(firstImagePrompt, /function sumar\(a, b\)/);
+  assert.doesNotMatch(firstImagePrompt, /return a \+ b|console\.log|whiteboard showing/i);
+  assert.doesNotMatch(firstImagePrompt, /Caption context|Dialogue context/);
+  assert.equal(firstVisualContext.title, 'La maquina de sumar');
+  assert.match(firstVisualContext.sourceContext, /Funciones en JavaScript/);
+  assert.equal(firstVisualContext.medium, 'comic panel illustration with Spanish speech bubbles');
+  assert.equal(firstVisualContext.allowSpeechText, true);
+  assert.equal(firstVisualContext.model, 'openai/gpt-image-2');
+  assert.equal(result.panels.length, 10);
   assert.equal(result.panels[0].dialogue, 'La funcion recibe dos piezas y entrega el resultado.');
   assert.equal(result.panels[0].technicalDetail, 'function sumar(a, b) { return a + b; }');
 });
@@ -365,6 +372,7 @@ test('generateVideo returns a completed stored artifact without calling the LLM'
         status: 'completed',
         videoUrl: 'https://r2.test/learning/artifacts/qa-develop/course_10/topic_20/task_30/video/video.mp4',
         durationSeconds: 60,
+        sceneNotes: Array.from({ length: 10 }, (_, index) => ({ narration: `Escena ${index + 1}` })),
       },
     })),
     descriptor.cacheKey,
