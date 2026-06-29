@@ -39,6 +39,10 @@ function timingSafeHexEqual(a, b) {
     return crypto.timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
 }
 
+function normalizeLoginCredential(value) {
+    return String(value ?? '').replace(/\s+/g, '');
+}
+
 function parseConfiguredSessionLinks() {
     const configured = [];
     const raw = process.env.COURSEV_SESSION_LINKS;
@@ -76,13 +80,15 @@ export class CrossTenantAuthService {
      * @param {{ username: string, password: string, cedula?: string }} params
      */
     async login({ username, password, cedula }) {
+        const normalizedUsername = normalizeLoginCredential(username);
+        const normalizedPassword = normalizeLoginCredential(password);
         const entries = getAllTenantEntries();
         if (entries.length === 0) {
             return Result.fail(new UnauthorizedError('No hay instituciones configuradas'));
         }
 
         const results = await Promise.allSettled(
-            entries.map(entry => this._tryLogin(entry, username, password)),
+            entries.map(entry => this._tryLogin(entry, normalizedUsername, normalizedPassword)),
         );
 
         return this._resolveMatches(results, 'Credenciales inválidas', cedula);
@@ -396,33 +402,35 @@ export class CrossTenantAuthService {
     }
 
     async _tryLogin(entry, username, password) {
+        const normalizedUsername = normalizeLoginCredential(username);
+        const normalizedPassword = normalizeLoginCredential(password);
         if (!entry.client) {
             console.warn(`[CrossTenantAuth] Tenant ${entry.id} has no client — skipping probe`);
             return null;
         }
-        console.log(`[CrossTenantAuth] Probing tenant ${entry.id} for username=${username}`);
+        console.log(`[CrossTenantAuth] Probing tenant ${entry.id} for username=${normalizedUsername}`);
         try {
             const userRepo = new SupabaseUserRepository(entry.client);
             const instRepo = new SupabaseInstitucionRepository(entry.client);
 
-            let user = await userRepo.findByUsername(username);
-            if (!user) user = await userRepo.findByEmail(username);
+            let user = await userRepo.findByUsername(normalizedUsername);
+            if (!user) user = await userRepo.findByEmail(normalizedUsername);
             if (!user) {
-                console.warn(`[CrossTenantAuth] No user found in tenant ${entry.id} for username=${username}`);
+                console.warn(`[CrossTenantAuth] No user found in tenant ${entry.id} for username=${normalizedUsername}`);
                 return null;
             }
 
             if (user.isActive === false) {
-                console.warn(`[CrossTenantAuth] User '${username}' (id=${user.id}) is deactivated in tenant ${entry.id}`);
+                console.warn(`[CrossTenantAuth] User '${normalizedUsername}' (id=${user.id}) is deactivated in tenant ${entry.id}`);
                 throw new ForbiddenError('Su usuario ha sido desactivado, porfavor contactar con soporte');
             }
 
-            const valid = await this._verifyPassword(userRepo, user, password);
+            const valid = await this._verifyPassword(userRepo, user, normalizedPassword);
             if (!valid) {
-                console.warn(`[CrossTenantAuth] Password mismatch for user '${username}' (id=${user.id}) in tenant ${entry.id}`);
+                console.warn(`[CrossTenantAuth] Password mismatch for user '${normalizedUsername}' (id=${user.id}) in tenant ${entry.id}`);
                 return null;
             }
-            console.log(`[CrossTenantAuth] Password OK for user '${username}' (id=${user.id}) in tenant ${entry.id}`);
+            console.log(`[CrossTenantAuth] Password OK for user '${normalizedUsername}' (id=${user.id}) in tenant ${entry.id}`);
 
             // Run institution enrichment and cedula fetch in parallel (saves ~100-200ms)
             const [, cedulaHash] = await Promise.all([
@@ -609,15 +617,16 @@ export class CrossTenantAuthService {
     }
 
     async _verifyPassword(userRepo, user, password) {
+        const normalizedPassword = normalizeLoginCredential(password);
         const isBcrypt = user.password && /^\$2[aby]\$/.test(user.password);
         if (isBcrypt) {
-            return this.jwt.comparePassword(password, user.password);
+            return this.jwt.comparePassword(normalizedPassword, user.password);
         }
         // Legacy plain-text: auto-migrate to bcrypt on success
-        const valid = password === user.password;
+        const valid = normalizedPassword === user.password;
         if (valid) {
             try {
-                const hashed = await this.jwt.hashPassword(password);
+                const hashed = await this.jwt.hashPassword(normalizedPassword);
                 await userRepo.update(user.id, { password: hashed });
             } catch { /* non-fatal */ }
         }
