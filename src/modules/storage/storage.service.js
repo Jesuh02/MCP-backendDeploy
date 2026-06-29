@@ -6,7 +6,7 @@ import { Result } from '../../shared/Result.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/index.js';
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
-const ALLOWED_PREFIXES = ['videos', 'thumbnails', 'avatars', 'submissions', 'content', 'courses', 'images'];
+const ALLOWED_PREFIXES = ['videos', 'thumbnails', 'avatars', 'submissions', 'content', 'courses', 'images', 'learning'];
 
 export class StorageDomainService {
     constructor({ fileStoragePort }) {

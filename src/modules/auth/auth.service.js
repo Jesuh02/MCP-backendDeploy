@@ -3,6 +3,10 @@ import { UnauthorizedError, ConflictError, ValidationError, NotFoundError, Forbi
 import { hashPasswordFingerprint } from '../user/infrastructure/supabase.user.repository.js';
 import { getCurrentTenantId, getPrimaryTenantId } from '../../config/tenantRegistry.js';
 
+function normalizeLoginCredential(value) {
+    return String(value ?? '').replace(/\s+/g, '');
+}
+
 export class AuthService {
     constructor({ userRepository, jwtAdapter, institucionRepository }) {
         this.userRepo = userRepository;
@@ -38,23 +42,26 @@ export class AuthService {
         return Result.ok({ user: this._safeUser(user), ...tokens });
     }
     async login({ username, password }) {
-        console.log(`[AuthService] Login attempt for: ${username}`);
+        const normalizedUsername = normalizeLoginCredential(username);
+        const normalizedPassword = normalizeLoginCredential(password);
+
+        console.log(`[AuthService] Login attempt for: ${normalizedUsername}`);
 
         // 1. Try by username
-        let user = await this.userRepo.findByUsername(username);
+        let user = await this.userRepo.findByUsername(normalizedUsername);
 
         // 2. If not found, try by email
         if (!user) {
-            user = await this.userRepo.findByEmail(username);
+            user = await this.userRepo.findByEmail(normalizedUsername);
         }
 
         if (!user) {
-            console.log(`[AuthService] User/Email '${username}' not found`);
+            console.log(`[AuthService] User/Email '${normalizedUsername}' not found`);
             return Result.fail(new UnauthorizedError('Credenciales inválidas'));
         }
 
         if (user.isActive === false) {
-            console.log(`[AuthService] User '${username}' is deactivated`);
+            console.log(`[AuthService] User '${normalizedUsername}' is deactivated`);
             return Result.fail(new ForbiddenError('Tu usuario ha sido desactivado, por favor contactar a soporte'));
         }
 
@@ -62,24 +69,24 @@ export class AuthService {
         // Check if stored password is a bcrypt hash (starts with $2a$, $2b$, or $2y$)
         const isBcryptHash = user.password && /^\$2[aby]\$/.test(user.password);
         if (isBcryptHash) {
-            valid = await this.jwt.comparePassword(password, user.password);
+            valid = await this.jwt.comparePassword(normalizedPassword, user.password);
         } else {
             // Fallback: plain-text comparison (for legacy users inserted directly into DB)
-            valid = (password === user.password);
+            valid = (normalizedPassword === user.password);
             if (valid) {
                 // Auto-migrate: hash the plain-text password for future logins
-                console.log(`[AuthService] Auto-migrating plain-text password to bcrypt for user '${username}'`);
+                console.log(`[AuthService] Auto-migrating plain-text password to bcrypt for user '${normalizedUsername}'`);
                 try {
-                    const hashedPassword = await this.jwt.hashPassword(password);
+                    const hashedPassword = await this.jwt.hashPassword(normalizedPassword);
                     await this.userRepo.update(user.id, { password: hashedPassword });
-                    console.log(`[AuthService] Password migration successful for '${username}'`);
+                    console.log(`[AuthService] Password migration successful for '${normalizedUsername}'`);
                 } catch (migrationErr) {
-                    console.error(`[AuthService] Password migration failed for '${username}':`, migrationErr.message);
+                    console.error(`[AuthService] Password migration failed for '${normalizedUsername}':`, migrationErr.message);
                 }
             }
         }
         if (!valid) {
-            console.log(`[AuthService] Password validation failed for '${username}'`);
+            console.log(`[AuthService] Password validation failed for '${normalizedUsername}'`);
             return Result.fail(new UnauthorizedError('Credenciales inválidas'));
         }
 

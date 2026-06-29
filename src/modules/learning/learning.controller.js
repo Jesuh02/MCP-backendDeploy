@@ -12,6 +12,11 @@ const parseId = (v) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
+const parseTargetCount = (v) => {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+};
+
 export class LearningController {
   /** @param {{ learningService: import('./learning.service.js').LearningDomainService }} deps */
   constructor({ learningService }) {
@@ -24,11 +29,13 @@ export class LearningController {
       const courseId = parseId(req.body.courseId ?? req.body.course_id);
       const topicId = parseId(req.body.topicId ?? req.body.topic_id);
       const taskId = parseId(req.body.taskId ?? req.body.task_id);
+      const difficulty = req.body.difficulty;
+      const targetCount = parseTargetCount(req.body.targetCount ?? req.body.target_count);
 
       if (!userId) return next(new ValidationError('Authentication required'));
       if (!courseId) return next(new ValidationError('courseId is required'));
 
-      const data = await this.learningService.generateComic({ courseId, topicId, taskId, userId });
+      const data = await this.learningService.generateComic({ courseId, topicId, taskId, userId, difficulty, targetCount });
       res.json(data);
     } catch (err) {
       if (err?.statusCode) {
@@ -44,11 +51,13 @@ export class LearningController {
       const courseId = parseId(req.body.courseId ?? req.body.course_id);
       const topicId = parseId(req.body.topicId ?? req.body.topic_id);
       const taskId = parseId(req.body.taskId ?? req.body.task_id);
+      const difficulty = req.body.difficulty;
+      const targetCount = parseTargetCount(req.body.targetCount ?? req.body.target_count);
 
       if (!userId) return next(new ValidationError('Authentication required'));
       if (!courseId) return next(new ValidationError('courseId is required'));
 
-      const data = await this.learningService.generateVideo({ courseId, topicId, taskId, userId });
+      const data = await this.learningService.generateVideo({ courseId, topicId, taskId, userId, difficulty, targetCount });
       res.json(data);
     } catch (err) {
       if (err?.statusCode) {

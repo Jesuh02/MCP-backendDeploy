@@ -50,6 +50,14 @@ export const refreshTokenSchema = Joi.object({
     refreshToken: Joi.string().optional(),
 });
 
+export const sessionLinkSchema = Joi.object({
+    code: Joi.string().min(16).max(160).required().messages({
+        'any.required': 'El codigo de sesion es requerido',
+        'string.empty': 'El codigo de sesion es requerido',
+        'string.min': 'El codigo de sesion no es valido',
+    }),
+});
+
 export const changePasswordSchema = Joi.object({
     currentPassword: Joi.string().required(),
     newPassword: Joi.string().min(6).max(128).required(),
