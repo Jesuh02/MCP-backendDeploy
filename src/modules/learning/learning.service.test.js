@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import axios from 'axios';
 import { LearningDomainService } from './learning.service.js';
 import { Result } from '../../shared/Result.js';
 
@@ -32,6 +33,15 @@ function createMemoryStorage() {
     },
     files,
   };
+}
+
+async function waitForCompletedVideo(service, jobId) {
+  for (let i = 0; i < 30; i++) {
+    const job = service.getVideoStatus(jobId);
+    if (job && job.status !== 'processing') return job;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('video job did not complete in time');
 }
 
 test('generateComic renders dialogue bubbles while keeping technical artifacts outside images', async() => {
@@ -102,6 +112,51 @@ test('generateComic renders dialogue bubbles while keeping technical artifacts o
   assert.equal(capturedVisualContext.model, 'openai/gpt-image-2');
   assert.equal(result.panels[0].dialogue, 'La funcion recibe dos piezas y entrega el resultado.');
   assert.equal(result.panels[0].technicalDetail, 'function sumar(a, b) { return a + b; }');
+});
+
+test('renderImage falls back when the configured image model returns 404', async() => {
+  const originalPost = axios.post;
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  const originalImageModel = process.env.OPENROUTER_IMAGE_MODEL;
+  const originalComicModel = process.env.OPENROUTER_COMIC_IMAGE_MODEL;
+  const originalFallbacks = process.env.OPENROUTER_IMAGE_FALLBACK_MODELS;
+  const calls = [];
+
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  process.env.OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+  process.env.OPENROUTER_COMIC_IMAGE_MODEL = 'missing/image-model';
+  delete process.env.OPENROUTER_IMAGE_FALLBACK_MODELS;
+
+  axios.post = async(url, body) => {
+    calls.push({ url, model: body.model });
+    if (body.model === 'missing/image-model') {
+      const err = new Error('Request failed with status code 404');
+      err.response = { status: 404 };
+      throw err;
+    }
+    return {
+      data: {
+        data: [{ b64_json: 'Zm9v', mime_type: 'image/png' }],
+      },
+    };
+  };
+
+  try {
+    const service = new LearningDomainService({
+      learningContextService: { buildLearningContext: async() => Result.ok({}) },
+      llmAdapter: { chat: async() => ({ content: '{}' }) },
+    });
+    const imageUrl = await service._renderImage('Draw a warehouse analogy', { model: service.comicImageModel });
+    assert.equal(imageUrl, 'data:image/png;base64,Zm9v');
+    assert.deepEqual(calls.map((call) => call.model), ['missing/image-model', 'google/gemini-2.5-flash-image']);
+    assert.ok(calls.every((call) => call.url === 'https://openrouter.ai/api/v1/images'));
+  } finally {
+    axios.post = originalPost;
+    if (originalApiKey == null) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = originalApiKey;
+    if (originalImageModel == null) delete process.env.OPENROUTER_IMAGE_MODEL; else process.env.OPENROUTER_IMAGE_MODEL = originalImageModel;
+    if (originalComicModel == null) delete process.env.OPENROUTER_COMIC_IMAGE_MODEL; else process.env.OPENROUTER_COMIC_IMAGE_MODEL = originalComicModel;
+    if (originalFallbacks == null) delete process.env.OPENROUTER_IMAGE_FALLBACK_MODELS; else process.env.OPENROUTER_IMAGE_FALLBACK_MODELS = originalFallbacks;
+  }
 });
 
 test('slideshow scenes keep technical details in the side-panel contract', async() => {
@@ -176,6 +231,59 @@ test('generateComic stores the rendered artifact in R2 and reuses it on the next
   assert.ok(storage.files.has('learning/artifacts/qa-develop/course_10/topic_20/task_30/comic.json'));
 });
 
+test('generateComic ignores a stored artifact without rendered images', async() => {
+  const storage = createMemoryStorage();
+  let llmCalls = 0;
+
+  const service = new LearningDomainService({
+    fileStoragePort: storage,
+    learningContextService: {
+      buildLearningContext: async() => Result.ok({
+        topic: { name: 'Algoritmos', description: 'Pasos y decisiones.' },
+        task: { title: 'Crear un flujo', description: 'Explicar un if.' },
+        ragContent: 'if (score >= 3) return "aprobado";',
+      }),
+    },
+    llmAdapter: {
+      chat: async() => {
+        llmCalls++;
+        return {
+          content: JSON.stringify({
+            title: 'La receta con decisiones',
+            panels: [{
+              caption: 'Una receta cambia de paso segun el resultado.',
+              technicalDetail: 'if (score >= 3) return "aprobado";',
+              imagePrompt: 'A kitchen recipe line where a cook chooses the next step.',
+            }],
+          }),
+        };
+      },
+    },
+  });
+
+  const descriptor = service._artifactDescriptor('comic', { courseId: 12, topicId: 24, taskId: 36 });
+  await storage.uploadFile(
+    Buffer.from(JSON.stringify({
+      version: 1,
+      kind: 'comic',
+      data: {
+        title: 'Comic roto',
+        panels: [{ caption: 'Sin imagen', imageUrl: '' }],
+      },
+    })),
+    descriptor.cacheKey,
+    'application/json',
+  );
+
+  service._renderImageSafely = async() => 'data:image/png;base64,bmV3';
+
+  const result = await service.generateComic({ courseId: 12, topicId: 24, taskId: 36, userId: 1 });
+
+  assert.equal(llmCalls, 1);
+  assert.equal(result.title, 'La receta con decisiones');
+  assert.match(result.panels[0].imageUrl, /^https:\/\/r2\.test\/learning\/artifacts\//);
+});
+
 test('generateVideo returns a completed stored artifact without calling the LLM', async() => {
   const storage = createMemoryStorage();
   let llmCalls = 0;
@@ -218,4 +326,52 @@ test('generateVideo returns a completed stored artifact without calling the LLM'
   assert.equal(result.cached, true);
   assert.equal(result.status, 'completed');
   assert.equal(result.videoUrl, 'https://r2.test/learning/artifacts/qa-develop/course_10/topic_20/task_30/video/video.mp4');
+});
+
+test('generateVideo persists rendered video, poster, and artifact JSON in R2', async() => {
+  const storage = createMemoryStorage();
+  const originalApiKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'test-key';
+
+  const service = new LearningDomainService({
+    fileStoragePort: storage,
+    learningContextService: {
+      buildLearningContext: async() => Result.ok({
+        topic: { name: 'Consumo de API', description: 'Peticiones HTTP y respuestas JSON.' },
+        task: { title: 'Consultar usuarios', description: 'Hacer GET a un endpoint.' },
+        ragContent: 'GET /users/42 -> 200 { "name": "Ana" }',
+      }),
+    },
+    llmAdapter: {
+      chat: async() => ({
+        content: JSON.stringify({
+          title: 'El restaurante de datos',
+          summary: 'Una analogia visual para explicar una API.',
+          scenes: [{
+            narration: 'El mesero lleva una solicitud a cocina y vuelve con el plato correcto.',
+            technicalDetail: 'GET /users/42 -> 200 { "name": "Ana" }',
+            imagePrompt: 'A restaurant waiter carrying an order card to the kitchen.',
+          }],
+        }),
+      }),
+    },
+  });
+
+  service._renderImageSafely = async() => 'data:image/png;base64,cG9zdGVy';
+  service._renderVideo = async() => 'data:video/mp4;base64,dmlkZW8=';
+
+  try {
+    const initial = await service.generateVideo({ courseId: 11, topicId: 22, taskId: 33, userId: 1 });
+    assert.equal(initial.status, 'processing');
+
+    const completed = await waitForCompletedVideo(service, initial.jobId);
+    assert.equal(completed.status, 'completed');
+    assert.match(completed.videoUrl, /^https:\/\/r2\.test\/learning\/artifacts\/qa-develop\/course_11\/topic_22\/task_33\/video\/video\.mp4$/);
+    assert.match(completed.posterUrl, /^https:\/\/r2\.test\/learning\/artifacts\/qa-develop\/course_11\/topic_22\/task_33\/video\/poster\.png$/);
+    assert.ok(storage.files.has('learning/artifacts/qa-develop/course_11/topic_22/task_33/video/video.mp4'));
+    assert.ok(storage.files.has('learning/artifacts/qa-develop/course_11/topic_22/task_33/video/poster.png'));
+    assert.ok(storage.files.has('learning/artifacts/qa-develop/course_11/topic_22/task_33/video.json'));
+  } finally {
+    if (originalApiKey == null) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = originalApiKey;
+  }
 });
