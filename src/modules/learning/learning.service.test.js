@@ -117,6 +117,9 @@ test('generateComic renders dialogue bubbles while keeping technical artifacts o
   assert.equal(firstVisualContext.allowSpeechText, true);
   assert.equal(firstVisualContext.model, 'openai/gpt-image-2');
   assert.equal(result.panels.length, 10);
+  assert.equal(result.evaluationPrep.targetCount, 10);
+  assert.equal(result.evaluationPrep.difficulty, 'HARD');
+  assert.ok(result.evaluationPrep.questionTypes.some((item) => item.type === 'fill_in_blank'));
   assert.equal(result.panels[0].dialogue, 'La funcion recibe dos piezas y entrega el resultado.');
   assert.equal(result.panels[0].technicalDetail, 'function sumar(a, b) { return a + b; }');
 });
@@ -372,6 +375,17 @@ test('generateVideo returns a completed stored artifact without calling the LLM'
         status: 'completed',
         videoUrl: 'https://r2.test/learning/artifacts/qa-develop/course_10/topic_20/task_30/video/video.mp4',
         durationSeconds: 60,
+        evaluationPrep: {
+          difficulty: 'HARD',
+          targetCount: 10,
+          domain: 'API',
+          questionTypes: [
+            { type: 'fill_in_blank', label: 'Completar espacios' },
+            { type: 'ordering', label: 'Ordenar flujos' },
+            { type: 'multiple_choice', label: 'Decisiones profesionales' },
+          ],
+          focusAreas: ['Contratos HTTP'],
+        },
         sceneNotes: Array.from({ length: 10 }, (_, index) => ({ narration: `Escena ${index + 1}` })),
       },
     })),

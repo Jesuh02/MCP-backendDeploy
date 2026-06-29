@@ -351,6 +351,82 @@ function buildEvaluationReadinessPlan(ctx, { difficulty, targetCount, mode = 'co
   };
 }
 
+function buildEvaluationPrepMeta(evaluationPlan) {
+  const domain = evaluationPlan?.domain || 'GENERAL';
+  const focusByDomain = {
+    API_SECURITY: [
+      'SSL/TLS antes de procesar tokens',
+      'Firma JWT, expiracion y claims criticos',
+      'Autenticacion vs autorizacion por rol',
+      'Flujo OAuth 2.0 ordenado',
+      'JWT stateless y revocacion',
+      'Cadena de middleware con 401/403',
+    ],
+    API: [
+      'Contrato request/response',
+      'Metodos HTTP y codigos de estado',
+      'Validacion de entrada',
+      'Autenticacion y autorizacion',
+      'Errores, idempotencia y versionado',
+    ],
+    SQL: [
+      'Modelo de tablas y claves',
+      'Filtros, joins e indices',
+      'Integridad de datos',
+      'Consultas parametrizadas',
+      'Consecuencias de queries incorrectas',
+    ],
+    PROGRAMMING: [
+      'Entradas, transformacion y salida',
+      'Control de flujo',
+      'Casos borde',
+      'Errores comunes',
+      'Orden de pasos y criterio tecnico',
+    ],
+    GENERAL: [
+      'Definiciones esenciales',
+      'Relaciones causa-efecto',
+      'Pasos operativos',
+      'Errores comunes',
+      'Criterios de decision',
+    ],
+  };
+
+  return {
+    difficulty: evaluationPlan?.difficulty || DEFAULT_LEARNING_DIFFICULTY,
+    targetCount: evaluationPlan?.targetCount || DEFAULT_EVALUATION_TARGET_COUNT,
+    domain,
+    questionTypes: [
+      {
+        type: 'fill_in_blank',
+        label: 'Completar espacios',
+        goal: 'Recordar con precision conceptos, claims, parametros, permisos o fragmentos tecnicos.',
+      },
+      {
+        type: 'ordering',
+        label: 'Ordenar flujos',
+        goal: 'Reconstruir secuencias profesionales como middleware, OAuth, validacion o ejecucion paso a paso.',
+      },
+      {
+        type: 'multiple_choice',
+        label: 'Decisiones profesionales',
+        goal: 'Elegir consecuencias, riesgos y criterios correctos ante casos reales.',
+      },
+    ],
+    focusAreas: focusByDomain[domain] || focusByDomain.GENERAL,
+  };
+}
+
+function hasEvaluationPrep(data) {
+  return Boolean(
+    data?.evaluationPrep &&
+    Array.isArray(data.evaluationPrep.questionTypes) &&
+    data.evaluationPrep.questionTypes.length >= 3 &&
+    Array.isArray(data.evaluationPrep.focusAreas) &&
+    data.evaluationPrep.focusAreas.length > 0
+  );
+}
+
 function buildApiSecurityLearningItems() {
   return [
     {
@@ -726,6 +802,8 @@ function hasMediaRef(value) {
 }
 
 function hasUsableArtifactMedia(kind, data, requirements = {}) {
+  if (requirements.requireEvaluationPrep && !hasEvaluationPrep(data)) return false;
+
   if (kind === 'comic') {
     const minPanels = Math.max(1, Number(requirements.minPanels) || 1);
     return Array.isArray(data?.panels) &&
@@ -1033,7 +1111,7 @@ export class LearningDomainService {
     const normalizedDifficulty = normalizeLearningDifficulty(difficulty);
     const normalizedTargetCount = normalizeLearningTargetCount(targetCount);
     const panelCount = comicPanelLimit(normalizedTargetCount);
-    const requirements = { minPanels: panelCount };
+    const requirements = { minPanels: panelCount, requireEvaluationPrep: true };
     const descriptor = this._artifactDescriptor('comic', { courseId, topicId, taskId });
     const stored = await this._readStoredArtifact('comic', descriptor, requirements);
     if (stored) return stored;
@@ -1122,6 +1200,7 @@ export class LearningDomainService {
     return {
       jobId: `comic_${Date.now()}`,
       title,
+      evaluationPrep: buildEvaluationPrepMeta(evaluationPlan),
       panels: renderedPanels,
     };
   }
@@ -1278,7 +1357,7 @@ export class LearningDomainService {
     const normalizedDifficulty = normalizeLearningDifficulty(difficulty);
     const normalizedTargetCount = normalizeLearningTargetCount(targetCount);
     const sceneCount = videoSceneLimit(normalizedTargetCount);
-    const requirements = { minScenes: sceneCount };
+    const requirements = { minScenes: sceneCount, requireEvaluationPrep: true };
     const descriptor = this._artifactDescriptor('video', { courseId, topicId, taskId });
     const stored = await this._readStoredArtifact('video', descriptor, requirements);
     if (stored) return stored;
@@ -1313,6 +1392,7 @@ export class LearningDomainService {
     const durationSeconds = Math.max(75, Math.min(150, script.scenes.length * 10));
     const technicalHighlights = collectTechnicalHighlights(script);
     const sceneNotes = collectSceneNotes(script, sceneCount);
+    const evaluationPrep = buildEvaluationPrepMeta(evaluationPlan);
 
     // ── Async path: video model configured ──────────────────
     // Return immediately after script generation so the HTTP connection is never
@@ -1325,6 +1405,7 @@ export class LearningDomainService {
         summary,
         posterUrl: '',
         durationSeconds,
+        evaluationPrep,
         technicalHighlights,
         sceneNotes,
         artifactKey: descriptor.cacheKey,
@@ -1335,7 +1416,7 @@ export class LearningDomainService {
       this._startVideoJob(jobId, script, sourceContext, descriptor, requirements).catch((err) =>
         console.error('[LearningService] Unhandled background video job error:', err?.message)
       );
-      return { jobId, status: 'processing', title, summary, posterUrl: '', durationSeconds, technicalHighlights, sceneNotes };
+      return { jobId, status: 'processing', title, summary, posterUrl: '', durationSeconds, evaluationPrep, technicalHighlights, sceneNotes };
     }
 
     // No video model configured — surface an error so the UI shows a clear message.
