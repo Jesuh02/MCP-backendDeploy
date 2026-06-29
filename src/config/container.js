@@ -105,6 +105,9 @@ import { PaymentController } from '../modules/payment/payment.controller.js';
 
 import { StorageDomainService } from '../modules/storage/storage.service.js';
 import { StorageController } from '../modules/storage/storage.controller.js';
+import { FilePreviewDomainService } from '../modules/file-preview/file-preview.service.js';
+import { FilePreviewController } from '../modules/file-preview/file-preview.controller.js';
+import { LibreOfficePdfConverter } from '../modules/file-preview/infrastructure/libreoffice-pdf.converter.js';
 
 import { ReinforcementDomainService } from '../modules/reinforcement/reinforcement.service.js';
 import { SupabaseReinforcementRepository } from '../modules/reinforcement/infrastructure/supabase.reinforcement.repository.js';
@@ -225,6 +228,7 @@ export function createContainer() {
     const ragAdapter = safeInit('RAGAdapter', () => new RAGAdapter());
     const githubAdapter = safeInit('GitHubAdapter', () => new GitHubAdapter());
     const cacheAdapter = safeInit('CacheAdapter', () => new CacheAdapter());
+    const filePreviewConverter = safeInit('LibreOfficePdfConverter', () => new LibreOfficePdfConverter());
 
     // Circuit Breaker: proteger adaptadores externos contra fallos/lentitud
     const llmAdapter = rawLlmAdapter ? withCircuitBreaker(rawLlmAdapter, { name: 'LLM', threshold: 3, timeout: 30_000 }) : null;
@@ -319,6 +323,7 @@ export function createContainer() {
         collaboratorRepository: collaboratorRepo,
     });
     const storageService = new StorageDomainService({ fileStoragePort: storageAdapter });
+    const filePreviewService = new FilePreviewDomainService({ fileStoragePort: storageAdapter, pdfConverter: filePreviewConverter });
     const topicService = new TopicDomainService({ topicRepository: topicRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
     const subjectService = new SubjectDomainService({ subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo, progressRepository: progressRepo });
     const contentItemService = new ContentItemDomainService({ contentItemRepository: contentItemRepo, topicRepository: topicRepo, taskRepository: taskRepo, subjectRepository: subjectRepo, courseRepository: courseRepo, collaboratorRepository: collaboratorRepo });
@@ -508,6 +513,7 @@ export function createContainer() {
     const notificationController = new NotificationController({ notificationService });
     const paymentController = new PaymentController({ paymentService });
     const storageController = new StorageController({ storageService });
+    const filePreviewController = new FilePreviewController({ filePreviewService });
     const healthController = new HealthController({ fileStoragePort: storageAdapter, pushNotificationPort: fcmAdapter, emailPort: emailAdapter, paymentGatewayPort: paymentGateway });
     const personaController = new PersonaController({ personaService });
     const rolController = new RolController({ rolService });
@@ -590,6 +596,7 @@ export function createContainer() {
         notificationController,
         paymentController,
         storageController,
+        filePreviewController,
         healthController,
         personaController,
         rolController,
@@ -633,6 +640,7 @@ export function createContainer() {
         notificationService,
         paymentService,
         storageService,
+        filePreviewService,
         personaService,
         rolService,
         fileContextService,
@@ -657,6 +665,7 @@ export function createContainer() {
         storageAdapter,
         fcmAdapter,
         emailAdapter,
+        filePreviewConverter,
         paymentGateway,
         ttsAdapter,
         videoProcessingAdapter,

@@ -21,11 +21,11 @@ services:
       # Ensure containers can resolve the Docker host on systems that support host-gateway
       - "host.docker.internal:host-gateway"
     healthcheck:
-      # Aggressive healthcheck for local/dev. Also try resolving host.docker.internal so host networking is visible.
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || wget --no-verbose --tries=1 --spider http://host.docker.internal:3000/health || wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1"]
-      interval: 3s
-      timeout: 2s
-      retries: 2
-      start_period: 5s
-
+      # Use Node's built-in fetch so the healthcheck does not depend on wget/curl
+      # being installed in the slim runtime image.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 

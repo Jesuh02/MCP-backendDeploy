@@ -19,6 +19,7 @@ import { notificationRoutes } from '../../modules/notification/notification.rout
 import { paymentRoutes } from '../../modules/payment/payment.routes.js';
 import { storageRoutes } from '../../modules/storage/storage.routes.js';
 import { healthRoutes } from '../../modules/health/health.routes.js';
+import { filePreviewRoutes } from '../../modules/file-preview/file-preview.routes.js';
 import { personaRoutes } from '../../modules/persona/persona.routes.js';
 import { rolRoutes } from '../../modules/rol/rol.routes.js';
 import { fileContextRoutes } from '../../modules/file-context/file-context.routes.js';
@@ -115,6 +116,7 @@ export function createRouter(deps) {
     router.use('/notifications', notificationRoutes({...deps, requireRoles }));
     router.use('/payment', paymentRoutes(deps));
     router.use('/storage', storageRoutes(deps));
+    router.use('/files', filePreviewRoutes(deps));
     router.use('/personas', personaRoutes(deps));
     router.use('/roles', rolRoutes(deps));
     router.use('/file-contexts', fileContextRoutes(deps));

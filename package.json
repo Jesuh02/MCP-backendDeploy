@@ -14,6 +14,7 @@
     "test": "node --test src/**/*.test.js",
     "lint": "eslint src/",
     "security-check": "npm audit",
+    "interoperability:migrate": "node scripts/run-sql.mjs scripts/migration_interoperability_institutional.sql",
     "icfes:migrate": "node scripts/run-sql.mjs scripts/migration_icfes_schema.sql",
     "icfes:ingest": "node scripts/icfes_ingest/index.js",
     "icfes:ingest:dry": "node scripts/icfes_ingest/index.js --dry-run",

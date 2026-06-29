@@ -10,9 +10,15 @@
 # =============================================================================
 FROM node:20-slim
 
-# Install FFmpeg for video processing.
+# Install FFmpeg for video processing and LibreOffice for Office-to-PDF previews.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libreoffice-writer \
+        libreoffice-impress \
+        libreoffice-calc \
+        fonts-dejavu \
+        fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

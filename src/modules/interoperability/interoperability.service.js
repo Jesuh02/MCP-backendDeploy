@@ -33,7 +33,7 @@ const STANDARD_DEFINITIONS = [
     short: 'xAPI',
     area: 'Experiencias externas',
     description: 'Registro de experiencias de aprendizaje fuera de CourseV mediante statements xAPI.',
-    coursevUse: 'WhatsApp, simulaciones, recursos externos, prácticas offline y actividades presenciales.',
+    coursevUse: 'Simulaciones, prácticas presenciales, actividades offline, recursos externos y experiencias con IA.',
     priority: 'Alta',
     owner: 'Integraciones',
     accent: '#60A5FA',
@@ -414,6 +414,8 @@ export class InteroperabilityDomainService {
     const monitoredStudents = new Set(events.map((event) => event.userId).filter(Boolean)).size;
     const statementsSent = logs.filter((log) => log.standardCode === 'xapi' && log.status === 'success').length;
     const statementsFailed = logs.filter((log) => log.standardCode === 'xapi' && log.status === 'error').length;
+    const xapiEvents = events.filter((event) => event.standardTarget === 'xapi');
+    const latestXapiSource = xapiEvents.find((event) => event.eventSource)?.eventSource || null;
     const qtiExports = logs.filter((log) => log.standardCode === 'qti' && log.action === 'export_qti' && log.status === 'success').length;
     const qtiValidationErrors = logs.filter((log) => log.standardCode === 'qti' && log.status === 'error').length;
     const onerosterValidations = logs.filter((log) => log.standardCode === 'oneroster' && log.action.includes('oneroster')).length;
@@ -450,7 +452,7 @@ export class InteroperabilityDomainService {
         lrsConnected: connections.xapi?.status === 'success',
         statementsSent,
         statementsFailed,
-        mainSource: events.some((event) => event.eventSource === 'whatsapp') ? 'WhatsApp' : 'Sin fuente externa',
+        mainSource: latestXapiSource || 'Sin fuente externa',
         lastSync: logs.find((log) => log.standardCode === 'xapi')?.createdAt || null,
       },
       qti: {
@@ -984,11 +986,11 @@ export class InteroperabilityDomainService {
   async _retryFailedXapi(actorUserId) {
     await this.recordLearningEvent({
       userId: actorUserId,
-      eventType: 'whatsapp_learning_interaction',
-      eventSource: 'whatsapp',
+      eventType: 'offline_practice_completed',
+      eventSource: 'external_practice',
       standardTarget: 'xapi',
       eventPayload: {
-        statement: 'Jesus completó Refuerzo de regresión lineal desde WhatsApp.',
+        statement: 'El estudiante completó una práctica externa de refuerzo.',
         retry: true,
       },
     }, actorUserId);
