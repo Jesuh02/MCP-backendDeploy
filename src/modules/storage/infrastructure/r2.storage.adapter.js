@@ -263,10 +263,26 @@ export class R2StorageAdapter {
         if (!url) return null;
         if (!url.startsWith('http://') && !url.startsWith('https://')) return null;
 
+        try {
+            const parsed = new URL(url);
+            const pathname = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+            if (!pathname) return null;
+
+            if (parsed.hostname.endsWith('.r2.cloudflarestorage.com')) {
+                const parts = pathname.split('/');
+                if (parts[0] === this.bucketName && parts.length > 1) return parts.slice(1).join('/');
+                return pathname;
+            }
+
+            if (parsed.hostname.endsWith('.r2.dev')) return pathname;
+        } catch {
+            // Fall through to legacy regex parsing for unusual URL strings.
+        }
+
         const patterns = [
-            /https?:\/\/pub-[^/]+\.r2\.dev\/(.+)/,
-            /https?:\/\/[^/]+\.r2\.cloudflarestorage\.com\/[^/]+\/(.+)/,
-            /https?:\/\/[^/]+\.r2\.cloudflarestorage\.com\/(.+)/,
+            /https?:\/\/pub-[^/]+\.r2\.dev\/([^?#]+)/,
+            /https?:\/\/[^/]+\.r2\.cloudflarestorage\.com\/[^/]+\/([^?#]+)/,
+            /https?:\/\/[^/]+\.r2\.cloudflarestorage\.com\/([^?#]+)/,
         ];
         for (const p of patterns) {
             const m = url.match(p);
