@@ -142,3 +142,11 @@ models/sign-language/config.json
 models/sign-language/preprocessor_config.json
 
 out/sign_language_confusion_matrix.html
+
+# Docker
+.docker/
+docker-data/
+.docker-data/
+docker-compose.override.yml
+docker-compose.yml.save
+*.docker-compose.yml.save
