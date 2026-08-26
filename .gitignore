@@ -150,3 +150,6 @@ docker-data/
 docker-compose.override.yml
 docker-compose.yml.save
 *.docker-compose.yml.save
+docker-compose.yml
+Dockerfile
+.dockerignore
