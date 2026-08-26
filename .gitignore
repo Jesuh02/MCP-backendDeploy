@@ -153,3 +153,7 @@ docker-compose.yml.save
 docker-compose.yml
 Dockerfile
 .dockerignore
+
+# Railway
+railway.json
+.env-raildway.json
