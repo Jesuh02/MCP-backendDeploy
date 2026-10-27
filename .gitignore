@@ -157,3 +157,7 @@ Dockerfile
 # Railway
 railway.json
 .env-raildway.json
+
+# Graphify (Knowledge graph outputs & local virtualenv)
+graphify-out/
+.venv-graphify/
