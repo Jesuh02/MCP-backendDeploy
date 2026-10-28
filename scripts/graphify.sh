@@ -37,7 +37,7 @@ if [ -f "$GITIGNORE" ]; then
     fi
 fi
 
-# 3. Asegurar regla automática para que la IA consulte Graphify por sí sola
+# 3. Asegurar reglas automáticas para asistentes de IA (Antigravity y Codex)
 AGENTS_RULES_DIR="$PROJECT_ROOT/.agents/rules"
 RULE_FILE="$AGENTS_RULES_DIR/graphify.md"
 if [ ! -f "$RULE_FILE" ]; then
@@ -54,10 +54,16 @@ Este proyecto cuenta con un grafo de conocimiento generado en `graphify-out/`.
 
 Reglas para el asistente:
 - Para preguntas sobre arquitectura, dependencias o ubicación de funciones/clases, si `graphify-out/graph.json` existe, consulta primero el grafo antes de hacer lecturas masivas o búsquedas ciegas de archivos.
-- Puedes usar `./scripts/graphify.sh query "<pregunta o símbolo>"` o inspeccionar el grafo para obtener el subgrafo de dependencias exacto.
+- Puedes usar `graphify query "<pregunta o símbolo>"` o inspeccionar el grafo para obtener el subgrafo de dependencias exacto.
 - Al modificar código relevante en la sesión, recuerda actualizar el grafo con `./scripts/graphify.sh` (extracción local AST rápida y gratuita).
 EOF
-    echo "ℹ️ Regla de IA configurada en .agents/rules/graphify.md (la IA consultará el grafo automáticamente)"
+    echo "ℹ️ Regla de Antigravity configurada en .agents/rules/graphify.md"
+fi
+
+# Soporte para Codex / Aider / OpenCode (AGENTS.md)
+if [ ! -f "$PROJECT_ROOT/AGENTS.md" ] || ! grep -q "## graphify" "$PROJECT_ROOT/AGENTS.md" 2>/dev/null; then
+    (cd "$PROJECT_ROOT" && "$GRAPHIFY_EXEC" codex install &>/dev/null) || true
+    echo "ℹ️ Regla de Codex configurada en AGENTS.md y .codex/hooks.json"
 fi
 
 # 4. Si no se pasan argumentos, corre la extracción de código AST por defecto
