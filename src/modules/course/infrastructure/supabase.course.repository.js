@@ -334,6 +334,13 @@ export class SupabaseCourseRepository {
                 if (topicDelErr) throw new Error(`Error eliminando temas del curso: ${topicDelErr.message}`);
             }
 
+            // Clean up remaining subject-level children before deleting the subjects themselves.
+            // These tables have FKs to subjects (e.g. manual_grades_subject_fkey) and would block the delete.
+            await this.client.from('manual_grades').delete().in('subject_id', subjectIds);
+            await this.client.from('grade_periods').delete().in('subject_id', subjectIds);
+            await this.client.from('subject_access_blocks').delete().in('subject_id', subjectIds);
+            await this.client.from('subject_collaborators').delete().in('subject_id', subjectIds);
+
             const { error: subjectDeleteError } = await this.client.from('subjects').delete().eq('course_id', id);
             if (subjectDeleteError) throw new Error(`Error eliminando materias del curso: ${subjectDeleteError.message}`);
         }
