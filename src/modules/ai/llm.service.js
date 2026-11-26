@@ -952,8 +952,16 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 });
             }
 
+            // Tool-calling (consultas a BD) SIEMPRE con el modelo inteligente (SMART).
+            // gpt-4o-mini (SMALL) falla el tool-calling multi-paso: emite bloques
+            // ```json``` parciales en vez de un tool_call estructurado, que luego se
+            // suprimen y dejan la respuesta vacía. Forzamos SMART cuando hay tools.
+            const effectiveModel = needsMCPTools
+                ? (process.env.OPENAI_MODEL_SMART || 'gpt-4o')
+                : model;
+
             let response = await this.llm.chat(systemPrompt, fullPrompt, {
-                model,
+                model: effectiveModel,
                 tools,
                 // When MCP tools are needed AND the prompt explicitly matches DB patterns,
                 // force the model to call at least one tool on the first turn.
@@ -1113,7 +1121,31 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 let finalContent = String(response?.content || '');
                 if (/"tool"\s*:\s*"query_database"/.test(finalContent) || /"arguments"\s*:\s*\{[\s\S]*?"query"\s*:/.test(finalContent)) {
                     console.warn('[LLMDomainService] Response contains raw tool call JSON — suppressing.');
-                    response = { ...response, content: 'Lo siento, no pude obtener los datos en este momento. Por favor intenta de nuevo.' };
+                    // Si YA tenemos datos reales de un query_database exitoso, no los
+                    // desperdiciemos: construimos una respuesta con esos datos en vez
+                    // del mensaje de error. (El modelo emitió el tool-call como texto
+                    // pero el SQL ya se ejecutó y trajo filas.)
+                    if (Array.isArray(rawQueryData) && rawQueryData.length > 0) {
+                        const stripIds = (row) => {
+                            if (typeof row !== 'object' || row === null) return row;
+                            const cleaned = {};
+                            for (const [k, v] of Object.entries(row)) {
+                                if (/^id$|_id$/i.test(k)) continue;
+                                cleaned[k] = v;
+                            }
+                            return Object.keys(cleaned).length > 0 ? cleaned : row;
+                        };
+                        const lines = rawQueryData.slice(0, 20).map((r) => {
+                            const clean = stripIds(r);
+                            if (clean && typeof clean === 'object') {
+                                return '- ' + Object.entries(clean).map(([k, v]) => `${k}: ${v}`).join(', ');
+                            }
+                            return `- ${clean}`;
+                        });
+                        response = { ...response, content: `Resultados:\n${lines.join('\n')}` };
+                    } else {
+                        response = { ...response, content: 'Lo siento, no pude obtener los datos en este momento. Por favor intenta de nuevo.' };
+                    }
                 } else if (/"tool"\s*:\s*"create_course_structure"/.test(finalContent)) {
                     // A course-creation tool call leaked into the text body. Course creation
                     // must go through the planner → confirm flow, never a raw insert dumped
