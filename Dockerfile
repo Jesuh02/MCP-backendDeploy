@@ -23,9 +23,16 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY package*.json ./
+# Copiar también .npmrc para que las flags de instalación (p.ej.
+# onnxruntime-node-install-cuda=skip) apliquen durante npm install.
+COPY package*.json .npmrc ./
 
-RUN npm install --omit=dev --legacy-peer-deps
+# onnxruntime-node intenta por defecto descargar el binario GPU/CUDA
+# (onnxruntime-linux-x64-gpu), que no existe y devuelve 404. Railway no tiene
+# GPU; forzamos el skip por env para no depender solo del .npmrc.
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
+RUN npm install --omit=dev --legacy-peer-deps --onnxruntime-node-install-cuda=skip
 
 COPY . .
 
