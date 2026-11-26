@@ -1476,13 +1476,23 @@ export class MCPDomainService {
             'Realistic academic setting, relevant objects for the subject, natural light, high detail,',
             'clean 16:9 composition, no text overlays, no logos, no watermarks.',
         ].join(' ');
-        const body = {
-            model: imageModel,
-            prompt,
-            n: 1,
-            size: process.env.OPENAI_IMAGE_SIZE || '1024x1024',
-            quality: process.env.OPENAI_IMAGE_QUALITY || 'high',
-        };
+        const isDallE = /dall-e/i.test(imageModel);
+        const body = isDallE
+            ? {
+                model: imageModel,
+                prompt,
+                n: 1,
+                size: process.env.OPENAI_IMAGE_SIZE || '1024x1024',
+                quality: process.env.OPENAI_IMAGE_QUALITY_DALLE || 'standard',
+                response_format: 'b64_json',
+            }
+            : {
+                model: imageModel,
+                prompt,
+                n: 1,
+                size: process.env.OPENAI_IMAGE_SIZE || '1024x1024',
+                quality: process.env.OPENAI_IMAGE_QUALITY || 'high',
+            };
 
         const resp = await fetch('https://api.openai.com/v1/images/generations', {
             method: 'POST',
