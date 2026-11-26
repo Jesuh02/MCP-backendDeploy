@@ -979,7 +979,8 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                 const extractToolCalls = (r) => r?.tool_calls || r?.toolCalls || (r?.raw && (r.raw.tool_calls || r.raw.toolCalls)) || null;
                 let toolCalls = extractToolCalls(response);
                 let loop = 0;
-                const MAX_TOOL_ITERS = 3;
+                // Permite encadenar varias consultas (preguntas multi-parte).
+                const MAX_TOOL_ITERS = 5;
                 while (toolCalls && toolCalls.length > 0 && loop < MAX_TOOL_ITERS) {
                     loop++;
                     toolLoopExecuted = true;
