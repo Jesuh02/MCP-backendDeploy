@@ -1231,28 +1231,54 @@ export class LearningDomainService {
   }
 
   async _renderImageWithModel({ apiKey, model, fullPrompt }) {
-    const body = {
-      model,
-      prompt: fullPrompt,
-      n: 1,
-      size: process.env.OPENAI_IMAGE_SIZE || '1024x1024',
-      quality: process.env.OPENAI_IMAGE_QUALITY || 'high',
-    };
+    const isDallE = /dall-e/i.test(model);
+    const size = process.env.OPENAI_IMAGE_SIZE || '1024x1024';
 
-    const resp = await axios.post(
-      'https://api.openai.com/v1/images/generations',
-      body,
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: imageTimeoutForModel(model),
+    // El body difiere por modelo:
+    //  - gpt-image-1: quality ∈ low|medium|high|auto, devuelve SIEMPRE b64_json.
+    //  - dall-e-3:    quality ∈ standard|hd, admite response_format url|b64_json.
+    const body = isDallE
+      ? {
+          model,
+          prompt: fullPrompt,
+          n: 1,
+          size,
+          quality: process.env.OPENAI_IMAGE_QUALITY_DALLE || 'standard',
+          response_format: 'b64_json',
+        }
+      : {
+          model,
+          prompt: fullPrompt,
+          n: 1,
+          size,
+          quality: process.env.OPENAI_IMAGE_QUALITY || 'high',
+        };
+
+    let resp;
+    try {
+      resp = await axios.post(
+        'https://api.openai.com/v1/images/generations',
+        body,
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: imageTimeoutForModel(model),
+        }
+      );
+    } catch (err) {
+      // Exponer el mensaje real de OpenAI (p.ej. organización no verificada,
+      // parámetro inválido) en lugar de un genérico "status code 400".
+      const apiErr = err?.response?.data?.error;
+      if (apiErr) {
+        console.error(`[LearningService] OpenAI images ${model} error ${err.response.status}: ${apiErr.message || JSON.stringify(apiErr)}`);
+        throw new Error(`OpenAI images (${model}): ${apiErr.message || apiErr.code || 'error'}`);
       }
-    );
+      throw err;
+    }
 
-    // OpenAI images API returns { created, data: [{ b64_json }] }.
-    // gpt-image-1 always returns base64 (no url, no response_format).
+    // OpenAI images API returns { created, data: [{ b64_json | url }] }.
     const item = resp?.data?.data?.[0];
     if (item?.url) return item.url;
     if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
