@@ -544,6 +544,20 @@ export class WhatsAppDomainService {
     async _resolveQueryTenant(from, text, session, sessionTenantId, isMultiTenant = false) {
         const availableTenants = TENANT_CONFIGS.map(t => ({ id: t.id, name: t.name }));
 
+        // ── FORZAR TENANT DE CONSULTA ───────────────────────────────────────────
+        // Si WHATSAPP_QUERY_TENANT_ID (o WHATSAPP_DEFAULT_TENANT_ID) está definido,
+        // TODAS las consultas de datos van SIEMPRE a esa base, sin importar en qué
+        // tenant está la sesión del teléfono. Esto hace que WhatsApp consulte
+        // siempre la base de producción (p.ej. 'incat' = gzckzrocfmhsizlrnqep),
+        // aunque la sesión del número viva en qa-develop.
+        const forcedQueryTenant = process.env.WHATSAPP_QUERY_TENANT_ID || process.env.WHATSAPP_DEFAULT_TENANT_ID || null;
+        if (forcedQueryTenant && TENANT_CONFIGS.some(t => t.id === forcedQueryTenant)) {
+            if (forcedQueryTenant !== sessionTenantId) {
+                console.log(`[WhatsApp] query tenant FORZADO a '${forcedQueryTenant}' (sesión en '${sessionTenantId}').`);
+            }
+            return forcedQueryTenant;
+        }
+
         // Allow user to explicitly request a different institution at any time
         const explicitTenant = this._detectExplicitTenantRequest(text, availableTenants);
         if (explicitTenant) {
