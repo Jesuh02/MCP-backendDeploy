@@ -656,9 +656,11 @@ export class ProgressDomainService {
         ]);
         const completedTasks = submittedTaskIds.length;
 
-        const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
-        const taskAverageRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
-        const taskAverage = Math.round(taskAverageRaw * 100) / 100;
+        // El promedio de tareas se calcula SOLO sobre las tareas efectivamente
+        // calificadas (una nota por tarea, la más reciente), no sobre el total de
+        // tareas del curso. Dividir entre totalTasks hundía el promedio y marcaba
+        // como 'Perdido' a estudiantes con buenas notas.
+        const taskAverage = this._computeTaskAverage(graded);
 
         // Fetch manual grades across all subjects for this course
         let manualAverages = { comportamiento: null, participacion: null, examenes: null };
@@ -751,9 +753,9 @@ export class ProgressDomainService {
         const completedTasks = submittedTaskIds.length;
 
         const graded = await this.submissionRepo.getGradedByUserAndSubject(userId, subjectId);
-        const gradedSum = graded.reduce((sum, item) => sum + (Number(item.grade) || 0), 0);
-        const taskAverageRaw = totalTasks > 0 ? (gradedSum / totalTasks) : 0;
-        const taskAverage = Math.round(taskAverageRaw * 100) / 100;
+        // Promedio solo sobre tareas calificadas (una nota por tarea), no sobre el
+        // total de tareas de la materia. Ver _recalculateAndUpsertUserCourseProgress.
+        const taskAverage = this._computeTaskAverage(graded);
 
         // Fetch manual grades (comportamiento, participacion, examenes)
         let manualAverages = { comportamiento: null, participacion: null, examenes: null };
@@ -817,13 +819,85 @@ export class ProgressDomainService {
     }
 
     /**
+     * Computes the task average for a student from their graded submissions.
+     *
+     * Reglas (idénticas al recálculo SQL en sql/fix_promedios_progreso.sql):
+     *  - Solo cuentan las tareas CON nota (grade no nulo). Las tareas no entregadas
+     *    o sin calificar NO se promedian como 0: el divisor es el número de tareas
+     *    calificadas, no el total de tareas del curso/materia.
+     *  - Una nota por tarea: si existen varias entregas de la misma tarea (reenvíos),
+     *    se toma la más reciente con orden LEXICOGRÁFICO estricto, igual que el
+     *    `DISTINCT ON ... ORDER BY graded_at DESC NULLS LAST, submission_date DESC
+     *    NULLS LAST, id DESC` del SQL: primero graded_at (null = más antiguo),
+     *    luego submission_date, luego id. (No se fusionan los ejes en un solo
+     *    número: comparar ms de fecha contra un bigint de otra escala daría
+     *    decisiones erróneas.)
+     *  - Nota 0 calificada SÍ cuenta (es una nota válida).
+     *
+     * @param {Array<{task_id:number, grade:number, graded_at?:string, submission_date?:number, id?:number}>} graded
+     * @returns {number|null} promedio redondeado a 2 decimales, o null si no hay
+     *          ninguna tarea calificada (para distinguir "sin tareas" de "promedio 0").
+     */
+    _computeTaskAverage(graded) {
+        if (!Array.isArray(graded) || graded.length === 0) return null;
+
+        // Clave de recencia como tripleta ordenable (mismo criterio que el SQL).
+        // graded_at nulo/ inválido => -Infinity (va al final, como NULLS LAST en DESC).
+        const recencyKey = (item) => {
+            const t = item?.graded_at ? new Date(item.graded_at).getTime() : NaN;
+            return [
+                Number.isFinite(t) ? t : -Infinity,
+                Number(item?.submission_date) || -Infinity,
+                Number(item?.id) || -Infinity,
+            ];
+        };
+        const isNewer = (a, b) => {
+            for (let i = 0; i < 3; i++) {
+                if (a[i] > b[i]) return true;
+                if (a[i] < b[i]) return false;
+            }
+            return false; // iguales: conservar el existente
+        };
+
+        // Deduplicar por task_id conservando la entrega calificada más reciente.
+        const latestByTask = new Map();
+        for (const item of graded) {
+            if (item?.grade === null || item?.grade === undefined) continue;
+            const grade = Number(item.grade);
+            if (!Number.isFinite(grade)) continue;
+
+            const taskId = item.task_id ?? item.taskId ?? item.id;
+            const key = recencyKey(item);
+
+            const prev = latestByTask.get(taskId);
+            if (!prev || isNewer(key, prev.key)) {
+                latestByTask.set(taskId, { grade, key });
+            }
+        }
+
+        if (latestByTask.size === 0) return null;
+
+        let sum = 0;
+        for (const { grade } of latestByTask.values()) sum += grade;
+        const average = sum / latestByTask.size;
+        return Math.round(average * 100) / 100;
+    }
+
+    /**
      * Computes a general average from the 4 grade categories:
      * tareas, comportamiento, participacion, examenes.
      * Only categories with a value contribute to the average.
+     *
+     * El componente de tareas se incluye siempre que EXISTA al menos una tarea
+     * calificada (taskAverage !== null), aunque su promedio sea 0 — una nota 0
+     * real es una nota válida y debe pesar. Solo se omite cuando el alumno no
+     * tiene ninguna tarea calificada (taskAverage === null), para no arrastrar
+     * un 0 ficticio sobre sus notas manuales. Si ningún componente tiene valor,
+     * el promedio general es 0.
      */
     _computeGeneralAverage(taskAverage, manualAverages) {
         const components = [];
-        if (taskAverage > 0 || taskAverage === 0) components.push(taskAverage);
+        if (taskAverage !== null && taskAverage !== undefined) components.push(taskAverage);
         if (manualAverages.comportamiento !== null) components.push(manualAverages.comportamiento);
         if (manualAverages.participacion !== null) components.push(manualAverages.participacion);
         if (manualAverages.examenes !== null) components.push(manualAverages.examenes);
