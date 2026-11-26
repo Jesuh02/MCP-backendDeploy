@@ -1830,6 +1830,15 @@ ${schemaInfo}${accessRestriction}
 
 **⚠️ REGLA CRÍTICA: USA ÚNICAMENTE las columnas listadas arriba. Si una columna no está en la lista, NO EXISTE.**
 
+**REGLA DE ENTIDAD CANÓNICA — "PERSONAS / USUARIOS DE LA PLATAFORMA":**
+- "personas", "usuarios", "gente", "miembros" o "personas de la plataforma" se refieren SIEMPRE a las cuentas de la tabla \`usuarios\`. Esta es la fuente de verdad única.
+- Consulta CANÓNICA para listar todas las personas/usuarios (úsala SIEMPRE, sin filtros extra salvo que el usuario los pida):
+  SELECT u.username, u.first_name, u.last_name
+  FROM usuarios u
+  ORDER BY u.first_name, u.last_name
+- NO mezcles la tabla \`personas\` con \`usuarios\` para contar/listar gente: dan totales distintos. Para "personas de la plataforma" usa SIEMPRE \`usuarios\`.
+- El total de personas = número de filas de esa consulta canónica. Debe ser el MISMO número tanto si el usuario pide la lista como si pide un Excel. NUNCA reportes un total que no coincida con las filas devueltas.
+
 **INSTRUCCIONES:**
 1. Lee el esquema CUIDADOSAMENTE antes de escribir SQL
 2. Verifica que CADA columna que uses exista en el esquema
@@ -1868,6 +1877,14 @@ GROUP BY u.id, u.username
 - ❌ Filtrar por username mencionado en el mensaje (usa siempre el ID autenticado)
 
 **IMPORTANTE:** Cuando recibas datos exitosos, presenta la respuesta final al usuario. NO sigas generando SQL.
+
+**REGLA DE COMPLETITUD — LISTAR TODAS LAS FILAS (OBLIGATORIO):**
+- Cuando el usuario pida una lista (ej. "todas las personas", "dame los usuarios", "lista de estudiantes", "quiénes están"), DEBES enumerar TODAS y CADA UNA de las filas que devolvió la consulta. NO muestres solo "algunas".
+- PROHIBIDO usar frases como "algunas personas", "aquí tienes algunos", "entre otros", "etc.", "y más", "una muestra" o "los primeros N". Esas frases están terminantemente prohibidas cuando el usuario pidió la lista completa.
+- PROHIBIDO recortar, resumir o truncar la lista. Si la consulta devolvió 137 filas, tu respuesta debe contener las 137 entradas numeradas, de principio a fin.
+- Numera cada entrada (1, 2, 3, …) e incluye el total real al inicio o al final (ej. "Total: 137 personas"). El número de entradas que escribas DEBE coincidir con el total de filas recibidas.
+- Si por el volumen la respuesta es muy larga, igualmente escríbela COMPLETA: el canal se encarga de dividirla en varios mensajes. NUNCA decidas tú acortarla.
+- Solo resume (en vez de enumerar) cuando el usuario pida explícitamente un conteo/total/estadística ("cuántos hay", "promedio", "total").
 
 **REGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:**
 - NUNCA muestres IDs numéricos de base de datos (user_id, course_id, id, etc.) al usuario.
@@ -2124,9 +2141,12 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
             return Object.keys(out).length ? out : row;
         };
         const cleanRows = Array.isArray(rows) ? rows.map(stripIds) : rows;
+        const total = Array.isArray(cleanRows) ? cleanRows.length : 0;
         const dataJson = JSON.stringify(cleanRows, null, 2);
+        // Volcado de RESPALDO: enumera TODAS las filas (sin recortar), para que si
+        // el LLM falla al redactar, el usuario igual reciba la lista completa.
         const dumpFallback = Array.isArray(cleanRows)
-            ? `Resultados (${cleanRows.length}):\n${cleanRows.slice(0, 50).map(r => '- ' + (typeof r === 'object' ? Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(', ') : String(r))).join('\n')}`
+            ? `Resultados (${total}):\n${cleanRows.map((r, i) => `${i + 1}. ` + (typeof r === 'object' ? Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(', ') : String(r))).join('\n')}`
             : String(dataJson);
         try {
             if (!this.llmService) return dumpFallback;
@@ -2135,11 +2155,15 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                 `Eres un asistente que redacta la respuesta final para el usuario a partir de datos reales de la base de datos. ` +
                 `Responde en español, claro y bien formateado en Markdown. ` +
                 `PROHIBIDO: mostrar IDs numéricos, mostrar JSON o código, inventar datos. ` +
-                `Usa los datos proporcionados para responder directamente la pregunta; si procede, resume y da una breve conclusión o recomendación.`,
+                `REGLA DE COMPLETITUD (OBLIGATORIA): cuando la pregunta pide una lista ("todas", "dame los/las", "lista de", "quiénes"), ` +
+                `DEBES enumerar TODAS y CADA UNA de las ${total} filas recibidas, numeradas (1..${total}), sin omitir ninguna. ` +
+                `PROHIBIDO escribir "algunas", "una muestra", "los primeros", "entre otros", "etc." o truncar la lista. ` +
+                `El total que menciones DEBE ser exactamente ${total} (el número de filas recibidas); NO inventes otro total ni ejecutes otro conteo. ` +
+                `Solo resume (sin enumerar) si la pregunta pide explícitamente un conteo/total/estadística.`,
             );
             const human = new HumanMessage(
-                `PREGUNTA DEL USUARIO:\n${question}\n\nDATOS REALES DE LA BASE DE DATOS (ya sin IDs):\n\`\`\`json\n${dataJson}\n\`\`\`\n\n` +
-                `Redacta la respuesta final en español usando estos datos. No muestres el JSON ni IDs.`,
+                `PREGUNTA DEL USUARIO:\n${question}\n\nDATOS REALES DE LA BASE DE DATOS (ya sin IDs, total=${total} filas):\n\`\`\`json\n${dataJson}\n\`\`\`\n\n` +
+                `Redacta la respuesta final en español usando estos datos. Enumera las ${total} entradas completas. No muestres el JSON ni IDs. El total es ${total}.`,
             );
             // forceSmart: redacción de calidad con gpt-4o.
             const resp = await this.llmService.generateResponse([sys, human], [], { forceSmart: true });
