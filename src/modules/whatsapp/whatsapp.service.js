@@ -900,8 +900,8 @@ export class WhatsAppDomainService {
                                     }
                                     return Object.keys(cleaned).length > 0 ? cleaned : row;
                                 };
-                                const sample = payload.slice(0, 10).map(r => (typeof r === 'string' ? r : JSON.stringify(stripIds(r)))).join('\n');
-                                replyText = `Resultados (muestra hasta 10 filas):\n${sample}`;
+                                const listed = payload.map((r, i) => `${i + 1}. ` + (typeof r === 'string' ? r : JSON.stringify(stripIds(r)))).join('\n');
+                                replyText = `Resultados (${payload.length}):\n${listed}`;
                             } else if (typeof payload === 'object') {
                                 replyText = JSON.stringify(payload, null, 2);
                             } else {
@@ -1785,7 +1785,7 @@ export class WhatsAppDomainService {
                 "```json\n" +
                 "{\"tool\":\"query_database\",\"arguments\":{\"query\":\"<tu SQL aquí>\"}}\n" +
                 "```\n" +
-                `   Debes esperar a que el backend ejecute ese SQL y componer tu reporte utilizando la respuesta.\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta "query_database" del agente MCP y espera su respuesta antes de concluir.\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.).\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra username o nombre (first_name, last_name). Haz JOIN con usuarios.\n- Para cursos: muestra título (title). Haz JOIN con courses.\n- Para temas: muestra nombre (name). Para tareas: muestra título (title).\n- Si una columna es FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible.\n\n🎯 ¡Bienvenido/a, ${username}!`;
+                `   Debes esperar a que el backend ejecute ese SQL y componer tu reporte utilizando la respuesta.\n\nIMPORTANTE: Basa tus respuestas en DATOS REALES de la base de datos. Si necesitas información real, llama a la herramienta "query_database" del agente MCP y espera su respuesta antes de concluir.\n\nREGLA DE ENTIDAD CANÓNICA — "PERSONAS / USUARIOS DE LA PLATAFORMA":\n- "personas", "usuarios", "gente", "miembros" o "personas de la plataforma" se refieren SIEMPRE a las cuentas de la tabla usuarios (fuente de verdad única).\n- Consulta CANÓNICA para listar todas las personas/usuarios (úsala SIEMPRE, sin filtros extra salvo que se pidan):\n  SELECT u.username, u.first_name, u.last_name FROM usuarios u ORDER BY u.first_name, u.last_name\n- NO mezcles la tabla personas con usuarios para contar/listar gente: dan totales distintos. Usa SIEMPRE usuarios.\n- Devuelve TODAS las filas (sin LIMIT ni recortes) para que el Excel contenga la lista completa.\n\nREGLA DE PRESENTACIÓN — NUNCA MOSTRAR IDs NUMÉRICOS:\n- NUNCA muestres IDs numéricos (user_id, course_id, id, student_id, creator_user_id, topic_id, task_id, etc.).\n- NUNCA incluyas columnas de IDs en el SELECT de tus consultas SQL.\n- Para personas: muestra username o nombre (first_name, last_name). Haz JOIN con usuarios.\n- Para cursos: muestra título (title). Haz JOIN con courses.\n- Para temas: muestra nombre (name). Para tareas: muestra título (title).\n- Si una columna es FK (ej: creator_user_id, student_id, subscriber_id), haz JOIN con la tabla correspondiente y selecciona el campo legible.\n\n🎯 ¡Bienvenido/a, ${username}!`;
 
             const currentTenantId = getCurrentTenantId();
             const currentTenantCfg = currentTenantId ? TENANT_CONFIGS.find(t => t.id === currentTenantId) : null;
@@ -2042,8 +2042,8 @@ export class WhatsAppDomainService {
                                         }
                                         return Object.keys(cleaned).length > 0 ? cleaned : row;
                                     };
-                                    const sample = payload.slice(0, 10).map(r => JSON.stringify(stripIds(r))).join('\n');
-                                    return markdownToWhatsApp(`Resultados (muestra hasta 10 filas):\n${sample}`);
+                                    const listed = payload.map((r, i) => `${i + 1}. ` + JSON.stringify(stripIds(r))).join('\n');
+                                    return markdownToWhatsApp(`Resultados (${payload.length}):\n${listed}`);
                                 }
                                 if (typeof payload === 'object') return markdownToWhatsApp(JSON.stringify(payload, null, 2));
                                 return markdownToWhatsApp(String(payload || 'No se encontraron datos.'));
