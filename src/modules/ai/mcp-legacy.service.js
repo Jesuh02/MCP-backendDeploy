@@ -2043,10 +2043,11 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                     logger.warn(`⚠️ Empty/short response (${consecutiveEmptyResponses}/${MAX_EMPTY_RESPONSES})`);
                     
                     if (consecutiveEmptyResponses >= MAX_EMPTY_RESPONSES) {
-                        // Return last successful data if available
+                        // Ya hay datos: pedir al LLM que REDACTE la respuesta final
+                        // en lenguaje natural (sin volcar JSON crudo al usuario).
                         if (lastSuccessfulData) {
-                            logger.info(`📊 Returning last successful data after empty responses`);
-                            return `Datos obtenidos:\n\`\`\`json\n${JSON.stringify(lastSuccessfulData.results || lastSuccessfulData, null, 2)}\n\`\`\``;
+                            logger.info(`📊 Composing natural-language answer from last successful data`);
+                            return await this._composeAnswerFromData(query, lastSuccessfulData.results || lastSuccessfulData);
                         }
                         
                         // Try fallback SQL based on query analysis
@@ -2065,7 +2066,8 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                                 } else if (resultCount === 1 && fallbackResult[0].total !== undefined) {
                                     return `**Resultado:** ${fallbackResult[0].total}`;
                                 } else {
-                                    return `**Resultados encontrados (${resultCount}):**\n\`\`\`json\n${JSON.stringify(fallbackResult, null, 2)}\n\`\`\``;
+                                    // Redactar en lenguaje natural en vez de volcar JSON.
+                                    return await this._composeAnswerFromData(query, fallbackResult);
                                 }
                             } catch (e) {
                                 logger.error(`❌ Fallback SQL failed: ${e.message}`);
@@ -2096,6 +2098,56 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
         } catch (error) {
             logger.error(`❌ Agent error: ${error.message}`, error.stack);
             return `Error procesando la consulta: ${error.message}\n\nIntenta reformular tu pregunta.`;
+        }
+    }
+
+    /**
+     * Redacta una respuesta en lenguaje natural a partir de datos crudos de la BD.
+     * Se usa como ÚLTIMO recurso cuando el agente ya obtuvo datos pero el modelo no
+     * compuso una respuesta final: en vez de volcar el JSON crudo al usuario, pedimos
+     * al LLM que lo argumente en español, sin IDs numéricos ni código.
+     * @param {string} question - La pregunta original del usuario.
+     * @param {Array|Object} rawData - Filas devueltas por query_database.
+     * @returns {Promise<string>} Respuesta en lenguaje natural (o volcado JSON si falla).
+     * @private
+     */
+    async _composeAnswerFromData(question, rawData) {
+        const rows = Array.isArray(rawData) ? rawData : (rawData?.results || rawData?.rows || []);
+        // Quitar IDs numéricos antes de mandar al LLM (regla de presentación).
+        const stripIds = (row) => {
+            if (typeof row !== 'object' || row === null) return row;
+            const out = {};
+            for (const [k, v] of Object.entries(row)) {
+                if (/^id$|_id$/i.test(k)) continue;
+                out[k] = v;
+            }
+            return Object.keys(out).length ? out : row;
+        };
+        const cleanRows = Array.isArray(rows) ? rows.map(stripIds) : rows;
+        const dataJson = JSON.stringify(cleanRows, null, 2);
+        const dumpFallback = Array.isArray(cleanRows)
+            ? `Resultados (${cleanRows.length}):\n${cleanRows.slice(0, 50).map(r => '- ' + (typeof r === 'object' ? Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(', ') : String(r))).join('\n')}`
+            : String(dataJson);
+        try {
+            if (!this.llmService) return dumpFallback;
+            const { HumanMessage, SystemMessage } = await import('@langchain/core/messages');
+            const sys = new SystemMessage(
+                `Eres un asistente que redacta la respuesta final para el usuario a partir de datos reales de la base de datos. ` +
+                `Responde en español, claro y bien formateado en Markdown. ` +
+                `PROHIBIDO: mostrar IDs numéricos, mostrar JSON o código, inventar datos. ` +
+                `Usa los datos proporcionados para responder directamente la pregunta; si procede, resume y da una breve conclusión o recomendación.`,
+            );
+            const human = new HumanMessage(
+                `PREGUNTA DEL USUARIO:\n${question}\n\nDATOS REALES DE LA BASE DE DATOS (ya sin IDs):\n\`\`\`json\n${dataJson}\n\`\`\`\n\n` +
+                `Redacta la respuesta final en español usando estos datos. No muestres el JSON ni IDs.`,
+            );
+            // forceSmart: redacción de calidad con gpt-4o.
+            const resp = await this.llmService.generateResponse([sys, human], [], { forceSmart: true });
+            const text = (resp?.content || '').trim();
+            return text && text.length > 0 ? text : dumpFallback;
+        } catch (e) {
+            logger.warn(`[_composeAnswerFromData] no se pudo redactar, se devuelve volcado: ${e.message}`);
+            return dumpFallback;
         }
     }
 
