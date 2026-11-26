@@ -39,7 +39,7 @@ router.post('/procesar-prompt', async(req, res) => {
                 if (isEmbeddingModel) {
                     // FORCE override for this endpoint which is specifically for processing prompts/generation
                     // There is rarely a reason to hit /procesar-prompt JUST for embedding without generation.
-                    console.warn(`⚠️ Model '${model}' is an embedding model but hit /procesar-prompt. Forcing Generation Mode with DeepSeek.`);
+                    console.warn(`⚠️ Model '${model}' is an embedding model but hit /procesar-prompt. Forcing Generation Mode with OpenAI.`);
                     isEmbeddingModel = false;
                     // We intentionally set this to false to proceed to LLM generation logic below.
                 }
@@ -398,7 +398,7 @@ router.post('/procesar-prompt', async(req, res) => {
                                             }
 
                                             if (extractedText) {
-                                                // SAFETY LIMIT: DeepSeek has 128k context, OpenRouter 160k.
+                                                // SAFETY LIMIT: OpenAI gpt-4o has 128k context.
                                                 // We cap total prompt size to ~40k tokens (approx 160k chars) to leave room for history and reasoning.
                                                 const MAX_TOTAL_CONTEXT_CHARS = 160000;
                                                 const currentLength = augmentedPrompt.length;
@@ -526,7 +526,7 @@ router.post('/procesar-prompt', async(req, res) => {
         let llmRequestHeader = "";
         
         if (isQuizGeneration) {
-             llmRequestHeader = `🎯 SISTEMA DE GENERACIÓN DE PREGUNTAS - MODO ESTRICTO (DEEPSEEK ONLY)
+             llmRequestHeader = `🎯 SISTEMA DE GENERACIÓN DE PREGUNTAS - MODO ESTRICTO (OPENAI)
 
 CONTEXTO: Se te proporciona contenido educativo real. DEBES crear preguntas basadas ÚNICAMENTE en la información específica de este contenido.
 
@@ -568,116 +568,99 @@ NO USES JAMÁS en preguntas u opciones:
 
 
                 // ═══════════════════════════════════════════════════════════════
-                // 🔥 DEEPSEEK PRIORITY: Siempre usar DeepSeek para generación
+                // 🔥 OPENAI PRIORITY: modelo SMART para quiz/grading, SMALL para chat
                 // ═══════════════════════════════════════════════════════════════
-                
-                // DeepSeek API configuration (priority over OpenRouter for chat)
-                const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
-                const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
-                
+
+                // OpenAI chat configuration (único proveedor de chat)
+                const OPENAI_API_URL = `${process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'}/chat/completions`;
+                const openaiApiKey = process.env.OPENAI_API_KEY;
+                // Tareas inteligentes (generar quiz / calificar) => SMART; chat simple => SMALL.
+                const openaiChatModel = (isQuizGeneration || isGradingRequest)
+                    ? (process.env.OPENAI_MODEL_SMART || 'gpt-4o')
+                    : (process.env.OPENAI_MODEL_SMALL || 'gpt-4o-mini');
+
                 let data;
-                
-                // ALWAYS prefer DeepSeek
-                if (deepseekApiKey) {
+
+                // ALWAYS prefer OpenAI
+                if (openaiApiKey) {
                     try {
-                        const systemPrompt = isQuizGeneration 
+                        const systemPrompt = isQuizGeneration
                             ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA. PROHIBIDO usar "Ref:". PROHIBIDO opciones genéricas.'
                             : isGradingRequest
                             ? 'Eres un profesor experto evaluador. Responde en español. MODO CALIFICACIÓN ACTIVO. Recibes la descripción de una tarea y la entrega del estudiante. Tu trabajo es:\n1. Leer cuidadosamente la descripción/requisitos de la tarea\n2. Analizar el contenido de la entrega del estudiante\n3. Evaluar rigurosamente si la entrega cumple los requisitos\n4. Dar retroalimentación constructiva y detallada\n5. OBLIGATORIO: Incluir al final de tu respuesta la línea exacta "**calificación actual: X/10**" (donde X es la nota numérica). Sin esta línea, el profesor NO podrá guardar la nota en el sistema. Ejemplo: "**calificación actual: 8/10**"\n\nSi el contenido del archivo parece vacío o ilegible, asigna 0/10 y explica por qué.'
                             : 'Eres un tutor inteligente y experto. Responde en español. IMPORTANTE: NO califiques ni des notas numéricas a menos que el usuario lo pida EXPLÍCITAMENTE con frases como "califica", "dame la nota", "evalúa la entrega". Si el usuario hace una pregunta general (por ejemplo "qué se nota al hablar de X", "explica Y", "qué es Z"), responde como un tutor explicando el tema. NO incluyas "calificación actual: X/10" en preguntas generales. Solo incluye "**calificación actual: X/10**" cuando el usuario PIDA EXPLÍCITAMENTE una calificación.';
-                            
-                        console.log(`🧠 Usando DeepSeek (${isQuizGeneration ? 'QUIZ MODE' : 'CHAT MODE'})...`);
-                        
+
+                        console.log(`🧠 Usando OpenAI ${openaiChatModel} (${isQuizGeneration ? 'QUIZ MODE' : isGradingRequest ? 'GRADING MODE' : 'CHAT MODE'})...`);
+
                         const controller = new AbortController();
                         const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout
 
-                        const response = await fetch(DEEPSEEK_API_URL, {
+                        const response = await fetch(OPENAI_API_URL, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${deepseekApiKey}`
+                                'Authorization': `Bearer ${openaiApiKey}`
                             },
                             body: JSON.stringify({
-                                model: 'deepseek-chat',
+                                model: openaiChatModel,
                                 messages: [
                                     {
                                         role: 'system',
                                         content: systemPrompt
                                     },
                                     {
-                                        role: 'user', 
+                                        role: 'user',
                                         content: augmentedPrompt
                                     }
                                 ],
                                 temperature: 0.7,
-                                max_tokens: 4096,
-                                stream: false
+                                max_tokens: 4096
                             }),
                             signal: controller.signal
                         });
-                        
+
                         clearTimeout(timeoutId);
 
                         if (!response.ok) {
                             const errText = await response.text();
-                            throw new Error(`DeepSeek API error: ${response.status} - ${errText}`);
+                            throw new Error(`OpenAI API error: ${response.status} - ${errText}`);
                         }
-                        
+
                         const json = await response.json();
                         data = {
                             response: json.choices?.[0]?.message?.content || ""
                         };
-                        console.log('✅ DeepSeek respondió correctamente.');
-                        console.log('📜 LLM Raw Response (DeepSeek):', data.response); // Keep log for debugging
-                        
-                    } catch (deepseekError) {
-                        console.error('❌ Error CRÍTICO con DeepSeek:', deepseekError.message);
+                        console.log('✅ OpenAI respondió correctamente.');
+                        console.log('📜 LLM Raw Response (OpenAI):', data.response); // Keep log for debugging
+
+                    } catch (openaiError) {
+                        console.error('❌ Error CRÍTICO con OpenAI:', openaiError.message);
                         // Fallback logic continues below...
                         data = null;
                     }
                 }
                 
-                // Fallback: OpenRouter if DeepSeek failed
-                if (!data && process.env.OPENROUTER_API_KEY) {
+                // Fallback: reintento OpenAI con el modelo SMALL si el intento anterior falló
+                if (!data && process.env.OPENAI_API_KEY) {
                     try {
                         // -------------------------------------------------------------------------
-                        // OPENROUTER API CALL (OpenAI Compatible)
+                        // OPENAI RETRY (modelo SMALL, más barato)
                         // -------------------------------------------------------------------------
-                        const openRouterUrl = "https://openrouter.ai/api/v1/chat/completions";
-                        // Prioritize Chat-specific env var, then generic, then fallback. Avoid using embedding models for chat.
-                        const envModel = process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL;
-                        const safeEnvModel = (envModel && !envModel.toLowerCase().includes('embedding')) ? envModel : null;
-                        
-                        // Fix for invalid model IDs sent by older clients (specifically Qwen3-Embedding incorrectly sent to Chat)
-                        // User Request: Force DeepSeek (via OpenRouter or Native)
-                        let finalModel = model;
-                        if (!finalModel || finalModel === "Qwen3-VL-Embedding-8B" || finalModel === "qwen/qwen3-embedding-8b" || (typeof finalModel === 'string' && finalModel.toLowerCase().includes('embedding'))) {
-                             console.warn(`⚠️ Detected invalid chat model ID request ('${finalModel}' sent to Chat endpoint). Swapping to 'deepseek/deepseek-chat'.`);
-                             finalModel = "deepseek/deepseek-chat";
-                        }
+                        const openaiRetryUrl = `${process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'}/chat/completions`;
+                        const openaiRetryModel = process.env.OPENAI_MODEL_SMALL || 'gpt-4o-mini';
 
-                        let openRouterModel = safeEnvModel || finalModel || "deepseek/deepseek-chat";
-                        
-                        // FINAL SAFETY CHECK: If the resolved model is still an embedding model (e.g. from misconfigured env var), FORCE a chat model.
-                        if (openRouterModel.toLowerCase().includes('embedding')) {
-                            console.warn(`⚠️ FINAL CHECK: Model '${openRouterModel}' is an embedding model. Forcing fallback to 'deepseek/deepseek-chat'.`);
-                            openRouterModel = "deepseek/deepseek-chat";
-                        }
-                        
-                        console.log(`🤖 Sending request to OpenRouter (Model: ${openRouterModel})`);
-                        
-                        const response = await fetch(openRouterUrl, {
+                        console.log(`🤖 Reintentando con OpenAI (Model: ${openaiRetryModel})`);
+
+                        const response = await fetch(openaiRetryUrl, {
                             method: 'POST',
-                            headers: { 
+                            headers: {
                                 'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                                'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com', // Required by OpenRouter
-                                'X-Title': 'CourseV MCP Backend'
+                                'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
                             },
                             body: JSON.stringify({
-                                model: openRouterModel, 
+                                model: openaiRetryModel,
                                 messages: [
-                                    { role: "system", content: isQuizGeneration 
+                                    { role: "system", content: isQuizGeneration
                                         ? 'Eres un sistema experto de evaluación educativa. Genera preguntas únicas, técnicas y específicas basadas SOLO en el texto proporcionado. ESTRUCTURA JSON OBLIGATORIA.'
                                         : isGradingRequest
                                         ? 'Eres un profesor experto evaluador. Responde en español. Evalúa la entrega del estudiante contra los requisitos de la tarea. OBLIGATORIO: Incluir al final "**calificación actual: X/10**".'
@@ -691,27 +674,25 @@ NO USES JAMÁS en preguntas u opciones:
 
                         if (!response.ok) {
                             const errText = await response.text();
-                            throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errText}`);
+                            throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errText}`);
                         }
 
                         const json = await response.json();
-                        // Normalize OpenRouter (OpenAI-style) response to expected Ollama-style internal format for processing
                         data = {
                             response: json.choices?.[0]?.message?.content || ""
                         };
-                    } catch (orError) {
+                    } catch (oaError) {
                          // 🛑 CRITICAL: Do NOT fallback if error is Context Length (token limit) related
-                         // This prevents trying to send a massive prompt to a local model which will likely crash or also fail.
-                         if (orError.message && (orError.message.includes('context length') || orError.message.includes('tokens') || orError.message.includes('too large'))) {
-                             console.error(`❌ OpenRouter Context Length Error: ${orError.message}`);
+                         if (oaError.message && (oaError.message.includes('context length') || oaError.message.includes('tokens') || oaError.message.includes('too large'))) {
+                             console.error(`❌ OpenAI Context Length Error: ${oaError.message}`);
                              console.warn("🚫 Aborting fallback to local model due to Context Length violation. This request should probably be handled via RAG/Ingest.");
-                             throw orError; 
+                             throw oaError;
                          }
 
-                        console.warn(`⚠️ OpenRouter call failed: ${orError.message}. Falling back to local DeepSeek/Ollama.`);
+                        console.warn(`⚠️ OpenAI retry failed: ${oaError.message}. Falling back to local Ollama.`);
                         // Fallback proceeds to next block if data is still undefined
                     }
-                } 
+                }
                 
                 // Fallback or Standard Local Call (Ollama local)
                 if (!data && ollamaUrl) {
@@ -722,11 +703,7 @@ NO USES JAMÁS en preguntas u opciones:
                     const targetUrl = `${baseUrl}/api/generate`;
                     
                     // Validate model for local call too (prevent sending embedding models to chat endpoint)
-                    let localModel = model || 'deepseek-chat';
-                    if (localModel.toLowerCase().includes('embedding')) {
-                         console.warn(`⚠️ Detected embedding model '${localModel}' for Chat fallback. Swapping to 'deepseek-chat'.`);
-                         localModel = 'deepseek-chat';
-                    }
+                    let localModel = (model && !model.toLowerCase().includes('embedding')) ? model : (process.env.OLLAMA_MODEL || 'llama3');
 
                     console.log(`🤖 Fallback: Sending request to local Ollama at ${targetUrl} (Model: ${localModel})`);
             
@@ -744,21 +721,21 @@ NO USES JAMÁS en preguntas u opciones:
                     });
             
                     if (!response.ok) {
-                        throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
+                        throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
                     }
-                    
+
                     data = await response.json();
                 }
 
                 // Si ningún LLM respondió, lanzar error
                 if (!data || !data.response) {
-                    throw new Error('No se pudo obtener respuesta de ningún modelo LLM (DeepSeek, OpenRouter, Ollama)');
+                    throw new Error('No se pudo obtener respuesta de ningún modelo LLM (OpenAI, Ollama)');
                 }
 
                 // Attempt to normalize and shuffle options so the correct answer isn't always in the same position.
                 let respuestaTexto = data.response;
 
-                // 🛠️ FIX: Clean Markdown code blocks from DeepSeek response
+                // 🛠️ FIX: Clean Markdown code blocks from OpenAI response
                 if (typeof respuestaTexto === 'string') {
                     if (respuestaTexto.includes('```json')) {
                         respuestaTexto = respuestaTexto.split('```json')[1].split('```')[0].trim();
@@ -959,7 +936,7 @@ NO USES JAMÁS en preguntas u opciones:
 
                                 // If everything was filtered out (duplicates/disallowed), attempt up to 2 retries
                                 if ((userId && courseId) && Array.isArray(filtered) && filtered.length === 0 && historyQuestionsList.length > 0) {
-                                    console.log('🔁 All questions filtered; attempting DeepSeek/LLM retries to generate distinct questions');
+                                    console.log('🔁 All questions filtered; attempting OpenAI/LLM retries to generate distinct questions');
                                     for (let attempt = 1; attempt <= 2 && filtered.length === 0; attempt++) {
                                         try {
                                             // Sample a NEW set of history for the retry to give different negative examples
@@ -970,53 +947,31 @@ NO USES JAMÁS en preguntas u opciones:
                                             
                                             let retryData = null;
 
-                                            // 1. Retry with DeepSeek (Priority)
-                                            if (deepseekApiKey) {
-                                                const dsResp = await fetch("https://api.deepseek.com/chat/completions", {
+                                            // 1. Retry with OpenAI SMART (generación de quiz = tarea inteligente)
+                                            if (openaiApiKey) {
+                                                const oaResp = await fetch(`${process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'}/chat/completions`, {
                                                     method: 'POST',
-                                                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekApiKey}` },
+                                                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiApiKey}` },
                                                     body: JSON.stringify({
-                                                        model: 'deepseek-chat',
+                                                        model: process.env.OPENAI_MODEL_SMART || 'gpt-4o',
                                                         messages: [{ role: 'system', content: 'Eres un sistema experto.' }, { role: 'user', content: retryPrompt }],
                                                         temperature: 0.8,
-                                                        max_tokens: 4096,
-                                                        stream: false
+                                                        max_tokens: 4096
                                                     })
                                                 });
-                                                if (dsResp.ok) {
-                                                    const dsJson = await dsResp.json();
-                                                    retryData = { response: dsJson.choices?.[0]?.message?.content || "" };
-                                                }
-                                            } 
-                                            // 2. Retry with OpenRouter
-                                            else if (process.env.OPENROUTER_API_KEY) {
-                                                const orResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-                                                    method: 'POST',
-                                                    headers: { 
-                                                        'Content-Type': 'application/json', 
-                                                        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                                                        'HTTP-Referer': process.env.BASE_URL || 'https://coursev.com',
-                                                        'X-Title': 'CourseV MCP Backend'
-                                                    },
-                                                    body: JSON.stringify({
-                                                        model: process.env.OPENROUTER_CHAT_MODEL || 'deepseek/deepseek-chat', 
-                                                        messages: [{ role: "user", content: retryPrompt }],
-                                                        temperature: 0.8
-                                                    })
-                                                });
-                                                if (orResp.ok) {
-                                                    const orJson = await orResp.json();
-                                                    retryData = { response: orJson.choices?.[0]?.message?.content || "" };
+                                                if (oaResp.ok) {
+                                                    const oaJson = await oaResp.json();
+                                                    retryData = { response: oaJson.choices?.[0]?.message?.content || "" };
                                                 }
                                             }
-                                            // 3. Retry with Local Ollama
+                                            // 2. Retry with Local Ollama
                                             else if (ollamaUrl) {
                                                 const baseUrl = ollamaUrl.endsWith('/') ? ollamaUrl.slice(0, -1) : ollamaUrl;
                                                 const localTarget = `${baseUrl}/api/generate`;
                                                 const localResp = await fetch(localTarget, {
                                                     method: 'POST',
                                                     headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ model: model || 'deepseek-chat', prompt: retryPrompt, stream: false, options: { temperature: 0.8 } })
+                                                    body: JSON.stringify({ model: (model && !model.toLowerCase().includes('embedding')) ? model : (process.env.OLLAMA_MODEL || 'llama3'), prompt: retryPrompt, stream: false, options: { temperature: 0.8 } })
                                                 });
                                                 if (localResp.ok) retryData = await localResp.json();
                                             }

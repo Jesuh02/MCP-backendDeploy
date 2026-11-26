@@ -1,10 +1,10 @@
 /**
  * LLMAdapter — Adaptador de infraestructura que implementa ILLMPort.
  *
- * Envuelve LLMService (DeepSeek/Ollama/OpenRouter) existente detrás de un
+ * Envuelve LLMService (OpenAI) existente detrás de un
  * puerto abstracto. El dominio solo conoce ILLMPort.
  *
- * También implementa fallback remoto (OpenRouter / DeepSeek HTTP directo)
+ * También implementa fallback remoto (OpenAI HTTP directo)
  * que antes estaba inline en index.js.
  */
 
@@ -104,34 +104,24 @@ export class LLMAdapter {
             }
         }
 
-        // Fallback: OpenRouter API
-        if (process.env.OPENROUTER_API_KEY) {
+        // Fallback: OpenAI HTTP directo
+        if (process.env.OPENAI_API_KEY) {
             try {
-                return await this._callOpenRouter(systemPrompt, userPrompt, options.model);
+                return await this._callOpenAI(systemPrompt, userPrompt, options.model);
             } catch (err) {
-                console.warn(`[LLMAdapter] OpenRouter directo falló: ${err.message}`);
-                providerErrors.push(`OpenRouter: ${err.message}`);
-            }
-        }
-
-        // Fallback: DeepSeek HTTP directo
-        if (process.env.DEEPSEEK_API_KEY) {
-            try {
-                return await this._callDeepSeekDirect(systemPrompt, userPrompt);
-            } catch (err) {
-                console.warn(`[LLMAdapter] DeepSeek directo falló: ${err.message}`);
-                providerErrors.push(`DeepSeek: ${err.message}`);
+                console.warn(`[LLMAdapter] OpenAI directo falló: ${err.message}`);
+                providerErrors.push(`OpenAI: ${err.message}`);
             }
         }
 
         const detail = providerErrors.length ? ` Detalle: ${providerErrors.join(' | ')}` : '';
-        throw new Error(`No hay proveedor LLM disponible o todos fallaron. Configure DEEPSEEK_API_KEY u OPENROUTER_API_KEY.${detail}`);
+        throw new Error(`No hay proveedor LLM disponible o todos fallaron. Configure OPENAI_API_KEY.${detail}`);
     }
 
     /**
      * Genera una respuesta de chat con imagen (visión).
-     * DeepSeek no soporta imágenes directamente, así que usamos OCR (tesseract.js)
-     * para extraer texto de la imagen y enviarlo como contexto textual a DeepSeek.
+     * El fallback HTTP directo no procesa imágenes, así que usamos OCR (tesseract.js)
+     * para extraer texto de la imagen y enviarlo como contexto textual a OpenAI.
      * @param {string} systemPrompt
      * @param {string} userPrompt
      * @param {string} imageBase64 - Imagen en base64 (data:image/...;base64,... o raw base64)
@@ -193,20 +183,21 @@ export class LLMAdapter {
             const result = await this._llmService.testConnection();
             return result.status === 'connected';
         }
-        return !!(process.env.DEEPSEEK_API_KEY || process.env.OPENROUTER_API_KEY);
+        return !!process.env.OPENAI_API_KEY;
     }
 
     /** @returns {string} */
     getCurrentModel() {
-        return process.env.CHAT_MODEL || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+        return process.env.OPENAI_MODEL_SMART || 'gpt-4o';
     }
 
     /** @private */
-    async _callOpenRouter(systemPrompt, userPrompt, model) {
-        const apiKey = process.env.OPENROUTER_API_KEY;
-        const chatModel = model || process.env.OPENROUTER_CHAT_MODEL || process.env.OPENROUTER_MODEL || 'qwen/qwen-2.5-72b-instruct';
-
-        const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+    async _callOpenAI(systemPrompt, userPrompt, model) {
+        const apiKey = process.env.OPENAI_API_KEY;
+        const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+        // Simple chat → SMALL; callers can force a model via `model`.
+        const chatModel = model || process.env.OPENAI_MODEL_SMALL || 'gpt-4o-mini';
+        const response = await axios.post(`${baseUrl}/chat/completions`, {
             model: chatModel,
             messages: [
                 { role: 'system', content: systemPrompt },
@@ -221,41 +212,10 @@ export class LLMAdapter {
             },
             timeout: 120000,
         });
-
         const choice = response.data.choices?.[0];
         return {
             content: choice?.message?.content || '',
             model: chatModel,
-            usage: response.data.usage || null,
-        };
-    }
-
-    /** @private */
-    async _callDeepSeekDirect(systemPrompt, userPrompt) {
-        const apiKey = process.env.DEEPSEEK_API_KEY;
-        const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-        const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-
-        const response = await axios.post(`${baseUrl}/v1/chat/completions`, {
-            model,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt },
-            ],
-            max_tokens: 4096,
-            temperature: 0.3,
-        }, {
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-            },
-            timeout: 120000,
-        });
-
-        const choice = response.data.choices?.[0];
-        return {
-            content: choice?.message?.content || '',
-            model,
             usage: response.data.usage || null,
         };
     }

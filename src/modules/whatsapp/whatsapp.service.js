@@ -1731,7 +1731,7 @@ export class WhatsAppDomainService {
 
             const currentTenantId = getCurrentTenantId();
             const currentTenantCfg = currentTenantId ? TENANT_CONFIGS.find(t => t.id === currentTenantId) : null;
-            const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
+            const preferredModel = process.env.OPENAI_MODEL_SMART || process.env.CHAT_MODEL || undefined;
 
             try {
                 const llmResult = await this.llmService.processPrompt({
@@ -1816,7 +1816,7 @@ export class WhatsAppDomainService {
 
     async _handleGeneralQuestion(text, session, user, userRoles = []) {
         try {
-            if (!this.llmService) return 'El servicio de IA no está disponible en este momento. Verifica que DEEPSEEK_API_KEY esté configurado y USE_LLM no esté desactivado.';
+            if (!this.llmService) return 'El servicio de IA no está disponible en este momento. Verifica que OPENAI_API_KEY esté configurado y USE_LLM no esté desactivado.';
 
             // early exit for pdf requests
             const pdfResp = await this._maybeHandlePdf(text, user, userRoles, session.phoneNumber || null);
@@ -1862,8 +1862,8 @@ export class WhatsAppDomainService {
                 promptToSend = biPrompt;
             }
 
-            // Prefer DeepSeek model when configured (LLMDomainService will forward this to the infra adapter)
-            const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
+            // Prefer OpenAI smart model when configured (LLMDomainService will forward this to the infra adapter)
+            const preferredModel = process.env.OPENAI_MODEL_SMART || process.env.CHAT_MODEL || undefined;
 
             // Resolve institution context from the current AsyncLocalStorage tenant.
             const currentTenantId = getCurrentTenantId();
@@ -2216,7 +2216,7 @@ export class WhatsAppDomainService {
                 `## Conclusiones\n[Síntesis del análisis y el impacto esperado]\n\n` +
                 `IMPORTANTE: Basa el análisis ÚNICAMENTE en los datos proporcionados. No inventes cifras.`;
 
-            const preferredModel = process.env.DEEPSEEK_MODEL || process.env.CHAT_MODEL || undefined;
+            const preferredModel = process.env.OPENAI_MODEL_SMART || process.env.CHAT_MODEL || undefined;
             const result = await this.llmService.processPrompt({
                 prompt: analysisPrompt,
                 model: preferredModel,

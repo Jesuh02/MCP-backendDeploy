@@ -22,7 +22,7 @@
  * `null` y el caller decide si caer a la pipeline de alfabeto.
  *
  * Variables de entorno:
- *   OPENROUTER_API_KEY         (obligatoria para el VLM)
+ *   OPENAI_API_KEY             (obligatoria para el VLM)
  *   SIGN_LANGUAGE_VLM_MODEL    (default: "qwen/qwen2.5-vl-72b-instruct")
  *   SIGN_LANGUAGE_VLM_TIMEOUT  (ms, default 20000)
  *   SIGN_LANGUAGE_VLM_FALLBACK (modelo alterno si el primario falla;
@@ -38,9 +38,9 @@ import { computeThumbnail, motionScore } from './motion-detector.js';
 // que no debe ser el default: agregaba una llamada fallida antes de cada
 // reconocimiento. Gemini 2.5 Flash respondio correctamente y mantiene buena
 // latencia para clips cortos.
-const DEFAULT_MODEL = process.env.SIGN_LANGUAGE_VLM_MODEL || 'google/gemini-2.5-flash';
-const FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK || 'openai/gpt-4o';
-const SECONDARY_FALLBACK_MODEL = process.env.SIGN_LANGUAGE_VLM_FALLBACK2 || 'qwen/qwen2.5-vl-32b-instruct';
+const DEFAULT_MODEL = process.env.OPENAI_MODEL_SMART || 'gpt-4o';
+const FALLBACK_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o';
+const SECONDARY_FALLBACK_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o';
 const REQUEST_TIMEOUT_MS = Number(process.env.SIGN_LANGUAGE_VLM_TIMEOUT) || 15000;
 // 14 frames conserva mejor trayectoria de manos en clips dinamicos sin mandar
 // el video completo al VLM.
@@ -883,8 +883,8 @@ function buildClipPrompt(opts, frameCount, language) {
  * }>}
  */
 export async function recognizeSignClip(frames, opts = {}) {
-    if (!process.env.OPENROUTER_API_KEY) {
-        throw Object.assign(new Error('OPENROUTER_API_KEY no está configurada.'), {
+    if (!process.env.OPENAI_API_KEY) {
+        throw Object.assign(new Error('OPENAI_API_KEY no está configurada.'), {
             code: 'VLM_NOT_CONFIGURED',
             statusCode: 503,
         });
@@ -934,7 +934,7 @@ export async function recognizeSignClip(frames, opts = {}) {
 async function callOpenRouterVLM(model, userParts, timeoutMs, opts = {}) {
     const language = resolveSignLanguageProfile(opts.language);
     const response = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
+        'https://api.openai.com/v1/chat/completions',
         {
             model,
             messages: [
@@ -948,10 +948,8 @@ async function callOpenRouterVLM(model, userParts, timeoutMs, opts = {}) {
         },
         {
             headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
                 'Content-Type': 'application/json',
-                'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://tareamov.com',
-                'X-Title': 'Tareamov Sign Language',
             },
             timeout: timeoutMs,
         },
@@ -1593,8 +1591,8 @@ export async function recognizeSignStream(frames, opts = {}) {
  * partía en 2-4 clips y el VLM inventaba palabras distintas para cada trozo.
  */
 export async function recognizeSignTimeline(frames, opts = {}) {
-    if (!process.env.OPENROUTER_API_KEY) {
-        throw Object.assign(new Error('OPENROUTER_API_KEY no está configurada.'), {
+    if (!process.env.OPENAI_API_KEY) {
+        throw Object.assign(new Error('OPENAI_API_KEY no está configurada.'), {
             code: 'VLM_NOT_CONFIGURED',
             statusCode: 503,
         });
@@ -1744,7 +1742,7 @@ async function recognizeTimelineWindow(frames, timestampsMs, opts) {
 async function callOpenRouterTimeline(model, userParts, timeoutMs, opts = {}) {
     const language = resolveSignLanguageProfile(opts.language);
     const response = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
+        'https://api.openai.com/v1/chat/completions',
         {
             model,
             messages: [
@@ -1758,10 +1756,8 @@ async function callOpenRouterTimeline(model, userParts, timeoutMs, opts = {}) {
         },
         {
             headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
                 'Content-Type': 'application/json',
-                'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://tareamov.com',
-                'X-Title': 'Tareamov Sign Language Timeline',
             },
             timeout: timeoutMs,
         },
