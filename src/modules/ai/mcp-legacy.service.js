@@ -2010,19 +2010,19 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                     // treat it as the final answer. This prevents the loop where short
                     // answers are mistaken for "empty" responses and re-prompted.
                     const hasDataContext = !!lastSuccessfulData;
-                    const isLikelyFinalAnswer = hasDataContext && trimmedResponse.length > 5;
 
-                    // Un "anuncio" (p.ej. "Voy a buscar... un momento") NO es una
-                    // respuesta final: el modelo prometió consultar pero no ejecutó
-                    // nada. Sin datos (hasDataContext=false), un anuncio debe forzar
-                    // un reintento para que emita el tool-call, en vez de enviarse al
-                    // usuario como respuesta.
-                    const looksLikeAnnouncement = /(voy a (buscar|consultar|obtener|proceder)|consultar(é|e) la base|un momento,?\s*por favor|dame un momento|perm[ií]teme consultar|estoy consultando|primero,?\s+consultar)/i.test(trimmedResponse);
-
-                    // Solo tratamos como respuesta final cuando:
-                    //  • ya hay datos (isLikelyFinalAnswer), o
-                    //  • es texto sustancial que NO parece un anuncio sin datos.
-                    const acceptAsFinal = isLikelyFinalAnswer || (trimmedResponse.length > 50 && !(looksLikeAnnouncement && !hasDataContext));
+                    // REGLA CLAVE: sin datos ejecutados (hasDataContext=false) y SIN
+                    // tool-call en esta respuesta, NUNCA es una respuesta final. El
+                    // modelo solo "anunció" que va a consultar (p.ej. "Procederé con
+                    // la consulta", "Voy a buscar...", "Primero identificaré...") pero
+                    // no ejecutó nada. En ese caso forzamos un reintento para que
+                    // emita el tool-call, en vez de mandarle el anuncio al usuario.
+                    //
+                    // Solo aceptamos como respuesta final cuando:
+                    //  • ya hay datos de una consulta previa (hasDataContext=true), o
+                    //  • el texto es sustancial Y NO quedan intentos (se maneja abajo
+                    //    con MAX_EMPTY_RESPONSES / fallback SQL).
+                    const acceptAsFinal = hasDataContext && trimmedResponse.length > 5;
 
                     if (acceptAsFinal) {
                         logger.info(`✅ Agent completed after ${iteration} iterations (hasDataContext=${hasDataContext}, len=${trimmedResponse.length})`);
@@ -2078,7 +2078,13 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                     // Add retry message with example specific to the query
                     conversationHistory.push(new AIMessage(responseContent || "(sin respuesta)"));
                     conversationHistory.push(new HumanMessage(
-                        `Genera una consulta SQL para responder la pregunta. Formato requerido:\n\`\`\`json\n{"tool": "query_database", "arguments": {"query": "SELECT ... FROM ... LIMIT 50"}}\n\`\`\`\n\nRecuerda usar SOLO las columnas del esquema proporcionado.`
+                        `⛔ NO anuncies ni expliques lo que vas a hacer. NO escribas frases como ` +
+                        `"voy a consultar", "procederé", "un momento" ni "primero identificaré".\n` +
+                        `RESPONDE ÚNICAMENTE con el bloque JSON de la herramienta, sin texto antes ni después:\n` +
+                        "```json\n" +
+                        `{"tool": "query_database", "arguments": {"query": "SELECT ... FROM ... LIMIT 50"}}\n` +
+                        "```\n" +
+                        `Usa SOLO las columnas del esquema proporcionado. Tu siguiente mensaje debe empezar con \`\`\`json.`
                     ));
                 }
             }
