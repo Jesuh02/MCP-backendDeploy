@@ -27,7 +27,7 @@ import {
     formatProgressReport,
     MESSAGES,
 } from '../../utils/whatsappFormatter.js';
-import { getAllTenantEntries, TENANT_CONFIGS, runInTenantContext, getTenantClient, getCurrentTenantId, getTenantMcpServerUrl } from '../../config/tenantRegistry.js';
+import { getAllTenantEntries, TENANT_CONFIGS, runInTenantContext, getTenantClient, getCurrentTenantId, getTenantMcpServerUrl, getPrimaryTenantId } from '../../config/tenantRegistry.js';
 import { SupabaseUserRepository } from '../user/infrastructure/supabase.user.repository.js';
 import { SupabasePersonaRepository } from '../persona/infrastructure/supabase.persona.repository.js';
 
@@ -362,11 +362,18 @@ export class WhatsAppDomainService {
             // 4. Session lookup across ALL tenant databases.
             //    WebHook requests carry no JWT so TenantMiddleware sets the default
             //    tenant.  We must probe every tenant to find where this phone lives.
-            // Tenant por defecto para consultas de WhatsApp. Configurable por
-            // WHATSAPP_DEFAULT_TENANT_ID para que el chatbot consulte SIEMPRE una
-            // base concreta (p.ej. 'incat' = gzckzrocfmhsizlrnqep) sin importar el
-            // entorno (QA o prod). Fallback: 'qa-develop'.
-            const WA_DEFAULT_TENANT = process.env.WHATSAPP_DEFAULT_TENANT_ID || 'qa-develop';
+            // Tenant por defecto para consultas de WhatsApp.
+            // Prioridad:
+            //   1) WHATSAPP_DEFAULT_TENANT_ID (override explícito).
+            //   2) El tenant PRIMARIO del servidor (derivado de SUPABASE_URL/
+            //      SUPABASE_SERVICE_KEY). En producción eso es la base de
+            //      PRODUCCIÓN (gzckzrocfmhsizlrnqep = 'incat'); en QA es qa-develop.
+            //   3) Fallback final 'qa-develop'.
+            // Esto garantiza que, en el servidor de producción, WhatsApp consulte
+            // SIEMPRE la base de producción por defecto, sin depender de variables.
+            let _primaryTenant = 'qa-develop';
+            try { _primaryTenant = getPrimaryTenantId() || 'qa-develop'; } catch { /* registry no listo */ }
+            const WA_DEFAULT_TENANT = process.env.WHATSAPP_DEFAULT_TENANT_ID || _primaryTenant;
             let session = null;
             let sessionTenantId = WA_DEFAULT_TENANT;
 
@@ -2203,7 +2210,9 @@ export class WhatsAppDomainService {
      */
     async _handleMCPQuery(text, user, userRoles = []) {
         try {
-            const tenantId = getCurrentTenantId() || process.env.WHATSAPP_DEFAULT_TENANT_ID || 'qa-develop';
+            let _primaryTenant = 'qa-develop';
+            try { _primaryTenant = getPrimaryTenantId() || 'qa-develop'; } catch { /* registry no listo */ }
+            const tenantId = getCurrentTenantId() || process.env.WHATSAPP_DEFAULT_TENANT_ID || _primaryTenant;
             const hasMcpCapability = Boolean(this.mcpService) || Boolean(getTenantMcpServerUrl(tenantId));
             if (!hasMcpCapability) return 'El servicio MCP no está disponible.';
 
