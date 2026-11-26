@@ -1236,7 +1236,8 @@ export class LearningDomainService {
 
     // El body difiere por modelo:
     //  - gpt-image-1: quality ∈ low|medium|high|auto, devuelve SIEMPRE b64_json.
-    //  - dall-e-3:    quality ∈ standard|hd, admite response_format url|b64_json.
+    //  - dall-e-3:    quality ∈ standard|hd. NO acepta response_format
+    //    (deprecado en /images/generations); devuelve una `url` por defecto.
     const body = isDallE
       ? {
           model,
@@ -1244,7 +1245,6 @@ export class LearningDomainService {
           n: 1,
           size,
           quality: process.env.OPENAI_IMAGE_QUALITY_DALLE || 'standard',
-          response_format: 'b64_json',
         }
       : {
           model,

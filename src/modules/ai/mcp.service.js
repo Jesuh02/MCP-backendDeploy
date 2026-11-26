@@ -1484,7 +1484,6 @@ export class MCPDomainService {
                 n: 1,
                 size: process.env.OPENAI_IMAGE_SIZE || '1024x1024',
                 quality: process.env.OPENAI_IMAGE_QUALITY_DALLE || 'standard',
-                response_format: 'b64_json',
             }
             : {
                 model: imageModel,
