@@ -1119,7 +1119,7 @@ export class LearningDomainService {
       .then(async(result) => {
         const persisted = await this._persistComicMedia(result, descriptor);
         if (!hasUsableArtifactMedia('comic', persisted, requirements)) {
-          throw new Error('No se pudieron renderizar imagenes para el comic. Revisa el modelo de imagen de OpenRouter.');
+          throw new Error('No se pudieron renderizar imagenes para el comic. Revisa OPENAI_API_KEY y el modelo de imagen de OpenAI.');
         }
         await this._writeStoredArtifact('comic', descriptor, persisted);
         return persisted;
