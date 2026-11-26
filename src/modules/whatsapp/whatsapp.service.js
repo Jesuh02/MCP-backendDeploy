@@ -362,8 +362,13 @@ export class WhatsAppDomainService {
             // 4. Session lookup across ALL tenant databases.
             //    WebHook requests carry no JWT so TenantMiddleware sets the default
             //    tenant.  We must probe every tenant to find where this phone lives.
+            // Tenant por defecto para consultas de WhatsApp. Configurable por
+            // WHATSAPP_DEFAULT_TENANT_ID para que el chatbot consulte SIEMPRE una
+            // base concreta (p.ej. 'incat' = gzckzrocfmhsizlrnqep) sin importar el
+            // entorno (QA o prod). Fallback: 'qa-develop'.
+            const WA_DEFAULT_TENANT = process.env.WHATSAPP_DEFAULT_TENANT_ID || 'qa-develop';
             let session = null;
-            let sessionTenantId = 'qa-develop';
+            let sessionTenantId = WA_DEFAULT_TENANT;
 
             // sessionIsMultiTenant = true only when this phone number genuinely
             // has sessions in MORE THAN ONE tenant.  A user linked to a single
@@ -412,7 +417,7 @@ export class WhatsAppDomainService {
 
                     const primaryMatch = pool[0];
                     session = primaryMatch?.session ?? null;
-                    sessionTenantId = primaryMatch?.tenantId ?? 'qa-develop';
+                    sessionTenantId = primaryMatch?.tenantId ?? WA_DEFAULT_TENANT;
                 } else if (crossResult) {
                     session = crossResult.session;
                     sessionTenantId = crossResult.tenantId;
@@ -1814,6 +1819,27 @@ export class WhatsAppDomainService {
         }
     }
 
+    /**
+     * Detecta respuestas del LLM que NO son una respuesta final para el usuario:
+     *  - el JSON crudo de un tool-call: {"tool":"query_database","arguments":{...}}
+     *  - un "anuncio" de que va a consultar ("voy a consultar", "un momento"...)
+     *    sin datos reales.
+     * @param {string} s
+     * @returns {boolean}
+     */
+    _looksLikeToolAnnouncement(s) {
+        if (!s || typeof s !== 'string') return false;
+        const t = s.trim();
+        // JSON crudo de tool-call (con o sin bloque ```json).
+        if (/\{\s*"tool"\s*:\s*"query_database"/i.test(t)) return true;
+        if (/"arguments"\s*:\s*\{\s*"query"/i.test(t)) return true;
+        // Anuncios de relleno sin datos: textos cortos que solo prometen consultar.
+        if (t.length <= 240 && /(voy a consultar|consultar(é|e) la base|un momento,?\s*por favor|dame un momento|permíteme consultar|estoy consultando)/i.test(t)) {
+            return true;
+        }
+        return false;
+    }
+
     async _handleGeneralQuestion(text, session, user, userRoles = []) {
         try {
             if (!this.llmService) return 'El servicio de IA no está disponible en este momento. Verifica que OPENAI_API_KEY esté configurado y USE_LLM no esté desactivado.';
@@ -1862,6 +1888,33 @@ export class WhatsAppDomainService {
                 promptToSend = biPrompt;
             }
 
+            // ── Consultas de datos (BI): ejecutar la ruta AGÉNTICA real ───────────
+            // El LLM NO debe limitarse a "anunciar" la consulta en texto. Cuando es
+            // una consulta de datos (forceTools), usamos processQueryWithAgent, que
+            // ejecuta el SQL contra la base y compone la respuesta en lenguaje
+            // natural. Esto elimina el bug donde el chatbot respondía con el JSON
+            // crudo {"tool":"query_database",...} o con un "voy a consultar... un
+            // momento" sin datos reales.
+            if (forceTools && this.mcpService && typeof this.mcpService.processQueryWithAgent === 'function') {
+                try {
+                    const agentText = await this.mcpService.processQueryWithAgent(text, {
+                        userId: user.id,
+                        username: user.username,
+                        userRoles,
+                    });
+                    const agentStr = typeof agentText === 'string'
+                        ? agentText
+                        : (agentText?.response || agentText?.text || '');
+                    // Aceptar solo si trae contenido real (no un "anuncio" ni JSON crudo de tool-call).
+                    if (agentStr && agentStr.trim() && !this._looksLikeToolAnnouncement(agentStr)) {
+                        return markdownToWhatsApp(agentStr.trim());
+                    }
+                    console.warn('[WhatsApp] processQueryWithAgent devolvió vacío/anuncio; usando flujo LLM estándar.');
+                } catch (agentErr) {
+                    console.error('[WhatsApp] processQueryWithAgent falló, usando flujo LLM estándar:', agentErr && (agentErr.message || agentErr));
+                }
+            }
+
             // Prefer OpenAI smart model when configured (LLMDomainService will forward this to the infra adapter)
             const preferredModel = process.env.OPENAI_MODEL_SMART || process.env.CHAT_MODEL || undefined;
 
@@ -1903,9 +1956,11 @@ export class WhatsAppDomainService {
                 // strip any grading signal the LLM may have included; WhatsApp should
                 // behave as a general Q&A channel only
                 responseText = responseText.replace(/\[GRADING_REQUEST(?::\s*\d+(?:\.\d+)?)?\]\s*/gi, '');
-                // If the LLM produced no usable text (common when it chose not to call tools),
-                // attempt a MCP fallback that runs the DB agent or direct query execution.
-                if (!responseText || !String(responseText).trim()) {
+                // Fallback MCP cuando el LLM:
+                //  • no produjo texto usable, o
+                //  • solo "anunció" la consulta / devolvió el JSON crudo del
+                //    tool-call sin ejecutar nada (bug de tool-call-como-texto).
+                if (!responseText || !String(responseText).trim() || this._looksLikeToolAnnouncement(responseText)) {
                     try {
                         if (this.mcpService) {
                             let mcpResult = null;
@@ -2111,7 +2166,7 @@ export class WhatsAppDomainService {
      */
     async _handleMCPQuery(text, user, userRoles = []) {
         try {
-            const tenantId = getCurrentTenantId() || 'qa-develop';
+            const tenantId = getCurrentTenantId() || process.env.WHATSAPP_DEFAULT_TENANT_ID || 'qa-develop';
             const hasMcpCapability = Boolean(this.mcpService) || Boolean(getTenantMcpServerUrl(tenantId));
             if (!hasMcpCapability) return 'El servicio MCP no está disponible.';
 
