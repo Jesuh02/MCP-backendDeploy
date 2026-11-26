@@ -116,76 +116,44 @@ export class LLMService {
     async _doInit() {
         await ensureLangChainLoaded();
 
-        // ── PRIMARY MODEL: Qwen3.6 Plus via OpenRouter ─────────────────────────
-        const openRouterApiKey = process.env.OPENROUTER_API_KEY;
-        if (openRouterApiKey && ChatOpenAI) {
-            const modelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
-            console.log(`🧠 Initializing PRIMARY model: ${modelName} via OpenRouter ...`);
-            this.primaryProvider = 'openrouter';
+        // ── PRIMARY MODEL: OpenAI (SMART) ──────────────────────────────────────
+        // Modelo inteligente para consultas a BD, tool-calling, quiz y grading.
+        // Un modelo pequeño (SMALL) se construye aparte para tareas simples y se
+        // elige por request en generateResponse().
+        const openAiApiKey = process.env.OPENAI_API_KEY;
+        const openAiBaseURL = process.env.OPENAI_BASE_URL; // opcional; vacío => default del SDK
+        if (openAiApiKey && ChatOpenAI) {
+            const smartModelName = process.env.OPENAI_MODEL_SMART || 'gpt-4o';
+            const smallModelName = process.env.OPENAI_MODEL_SMALL || 'gpt-4o-mini';
+            console.log(`🧠 Initializing PRIMARY model: OpenAI ${smartModelName} (SMART) + ${smallModelName} (SMALL) ...`);
+            this.primaryProvider = 'openai';
             this.primaryModel = new ChatOpenAI({
-                openAIApiKey: openRouterApiKey,
-                configuration: {
-                    baseURL: 'https://openrouter.ai/api/v1',
-                },
-                modelName,
-                temperature: 0.3,
-                timeout: 300000,
-                maxRetries: 1,
-            });
-        }
-
-        // ── FALLBACK MODEL: DeepSeek ──────────────────────────────────────────
-        const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
-        const useDeepSeek = Boolean(deepSeekApiKey) && process.env.USE_LLM !== 'false';
-        if (deepSeekApiKey && process.env.USE_LLM !== 'true') {
-            console.warn('[LLMService] DEEPSEEK_API_KEY present; enabling LLM even though USE_LLM!=true');
-        }
-
-        if (useDeepSeek && ChatOpenAI) {
-            const modelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-            console.log(`🧠 Initializing FALLBACK model: DeepSeek ${modelName} ...`);
-            this.fallbackProvider = 'deepseek';
-            this.fallbackModel = new ChatOpenAI({
-                openAIApiKey: deepSeekApiKey,
-                configuration: {
-                    baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
-                },
-                modelName,
+                openAIApiKey: openAiApiKey,
+                ...(openAiBaseURL ? { configuration: { baseURL: openAiBaseURL } } : {}),
+                modelName: smartModelName,
                 temperature: 0.3,
                 timeout: 300000,
                 maxRetries: 2,
             });
+            // Modelo pequeño para tareas simples (texto, formateo, Q&A sin tools).
+            this.smallModel = new ChatOpenAI({
+                openAIApiKey: openAiApiKey,
+                ...(openAiBaseURL ? { configuration: { baseURL: openAiBaseURL } } : {}),
+                modelName: smallModelName,
+                temperature: 0.3,
+                timeout: 120000,
+                maxRetries: 2,
+            });
         }
 
-        // ── TERTIARY MODEL: OpenRouter with a cheaper/free model ─────────────
-        // Used when BOTH primary (Qwen3.6+) and fallback (DeepSeek) fail.
-        // Configure with OPENROUTER_FALLBACK_MODEL (default: meta-llama/llama-3.3-70b-instruct).
-        if (openRouterApiKey && ChatOpenAI) {
-            const tertiaryModelName = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct';
-            // Only create tertiary if it differs from the primary to avoid redundant calls
-            if (tertiaryModelName !== (process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus')) {
-                console.log(`🧠 Initializing TERTIARY model: ${tertiaryModelName} via OpenRouter (emergency fallback) ...`);
-                this.tertiaryProvider = 'openrouter-fallback';
-                this.tertiaryModel = new ChatOpenAI({
-                    openAIApiKey: openRouterApiKey,
-                    configuration: {
-                        baseURL: 'https://openrouter.ai/api/v1',
-                    },
-                    modelName: tertiaryModelName,
-                    temperature: 0.3,
-                    timeout: 120000,
-                    maxRetries: 1,
-                });
-            }
-        }
+        // OpenRouter y DeepSeek fueron retirados del chat: OpenAI es el único
+        // proveedor de chat/razonamiento. (OpenRouter solo se conserva para
+        // embeddings en embedding.service.js.)
 
-        // ── Set active model: primary preferred, fallback otherwise ───────────
+        // ── Set active model: OpenAI primary; Ollama como último recurso local ─
         if (this.primaryModel) {
             this.model = this.primaryModel;
             this.provider = this.primaryProvider;
-        } else if (this.fallbackModel) {
-            this.model = this.fallbackModel;
-            this.provider = this.fallbackProvider;
         } else if (ChatOllama) {
             console.log('Initializing Ollama LLM...');
             this.provider = 'ollama';
@@ -209,17 +177,14 @@ export class LLMService {
                 setTimeout(() => reject(new Error('Connection test timeout')), 30000)
             );
             await Promise.race([this.model.invoke("Hello"), timeoutPromise]);
-            const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
-            const fallbackModelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-            const tertiaryModelName = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+            const openAiSmart = process.env.OPENAI_MODEL_SMART || 'gpt-4o';
+            const openAiSmall = process.env.OPENAI_MODEL_SMALL || 'gpt-4o-mini';
+            const primaryModelName = this.provider === 'openai' ? openAiSmart : 'llama3:8b';
             return {
                 status: 'connected',
                 provider: this.provider,
-                model: this.provider === 'openrouter' ? primaryModelName : (this.provider === 'deepseek' ? fallbackModelName : 'llama3:8b'),
-                hasFallback: !!this.fallbackModel,
-                fallbackProvider: this.fallbackProvider,
-                hasTertiary: !!this.tertiaryModel,
-                tertiaryModel: this.tertiaryModel ? tertiaryModelName : null,
+                model: primaryModelName,
+                smallModel: this.smallModel ? openAiSmall : null,
             };
         } catch (error) {
             console.error("LLM Connection failed:", error);
@@ -235,17 +200,35 @@ export class LLMService {
      * @private
      */
     async _invokeWithFallback(invokeFn, opts = {}) {
-        const DEFAULT_PRIMARY_TIMEOUT_MS = 300000; // 300s (5 min) — allow Qwen3.6 Plus time to respond
+        const DEFAULT_PRIMARY_TIMEOUT_MS = 300000; // 300s (5 min) — allow the primary model time to respond
         // Allow callers (e.g. ChatBot, DatabaseQuery, WhatsApp) to shorten the
-        // primary-model timeout so the request fails over to DeepSeek faster.
+        // primary-model timeout so the request fails over faster.
         const PRIMARY_TIMEOUT_MS = Number.isFinite(opts.primaryTimeoutMs) && opts.primaryTimeoutMs > 0
             ? opts.primaryTimeoutMs
             : DEFAULT_PRIMARY_TIMEOUT_MS;
-        const primaryModelName = process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus';
-        const fallbackModelName = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-        const tertiaryModelName = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+        // Routing: a simple-task caller may request the SMALL OpenAI model.
+        // Only honored when a dedicated small model exists (OpenAI configured).
+        const preferSmall = opts.preferSmall === true && this.smallModel;
+        const primaryModelName = process.env.OPENAI_MODEL_SMART || 'gpt-4o';
+        const smallModelName = process.env.OPENAI_MODEL_SMALL || 'gpt-4o-mini';
 
-        if (this.primaryModel && this.fallbackModel) {
+        // SMALL path: for simple tasks, try the cheaper OpenAI model first.
+        // On any error, fall through to the SMART primary below.
+        if (preferSmall) {
+            try {
+                const startTime = Date.now();
+                const result = await invokeFn(this.smallModel);
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                console.log(`✅ RESPONDIÓ: OpenAI ${smallModelName} (SMALL) en ${elapsed}s`);
+                return result;
+            } catch (smallErr) {
+                console.warn(`⚠️ OpenAI ${smallModelName} (SMALL) FALLÓ: ${smallErr.message}. Reintentando con el modelo inteligente (SMART)...`);
+            }
+        }
+
+        // SMART path: single OpenAI provider (con Ollama local como último recurso
+        // si es el único modelo disponible). Sin DeepSeek ni OpenRouter.
+        if (this.primaryModel) {
             try {
                 const startTime = Date.now();
                 const result = await Promise.race([
@@ -255,66 +238,26 @@ export class LLMService {
                     ),
                 ]);
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                console.log(`✅ RESPONDIÓ: Qwen3.6 Plus (${primaryModelName}) vía OpenRouter en ${elapsed}s`);
+                console.log(`✅ RESPONDIÓ: ${primaryModelName} (${this.primaryProvider}) en ${elapsed}s`);
                 return result;
             } catch (primaryErr) {
-                const primaryAuthFailed = isAuthenticationError(primaryErr);
-                console.warn(`⚠️ Qwen3.6 Plus (${primaryModelName}) FALLÓ: ${primaryErr.message}. Cambiando a DeepSeek (${fallbackModelName})...`);
-                try {
+                // Sin proveedor secundario: si existe Ollama local como this.model
+                // distinto del primary, intentarlo; si no, propagar el error.
+                if (this.model && this.model !== this.primaryModel) {
+                    console.warn(`⚠️ ${primaryModelName} FALLÓ: ${primaryErr.message}. Intentando modelo local (Ollama)...`);
                     const startTime = Date.now();
-                    const result = await invokeFn(this.fallbackModel);
+                    const result = await invokeFn(this.model);
                     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                    console.log(`✅ RESPONDIÓ: DeepSeek (${fallbackModelName}) vía DeepSeek API en ${elapsed}s (fallback)`);
+                    console.log(`✅ RESPONDIÓ: Ollama local en ${elapsed}s (fallback)`);
                     return result;
-                } catch (fallbackErr) {
-                    // DeepSeek also failed (e.g. 402 Insufficient Balance, 5xx, timeout)
-                    console.warn(`⚠️ DeepSeek (${fallbackModelName}) FALLÓ: ${fallbackErr.message}.`);
-                    if (this.tertiaryModel && !primaryAuthFailed) {
-                        console.warn(`⚠️ Intentando modelo terciario OpenRouter (${tertiaryModelName})...`);
-                        const startTime = Date.now();
-                        const result = await invokeFn(this.tertiaryModel);
-                        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                        console.log(`✅ RESPONDIÓ: OpenRouter fallback (${tertiaryModelName}) en ${elapsed}s (tertiary)`);
-                        return result;
-                    }
-                    if (primaryAuthFailed) {
-                        console.warn('⚠️ OpenRouter devolvio autenticacion invalida; se omite el modelo terciario porque usa la misma credencial.');
-                    }
-                    throw fallbackErr;
                 }
+                throw primaryErr;
             }
         }
 
-        // Primary only (no DeepSeek configured), but tertiary is available as backup
-        if (this.primaryModel && this.tertiaryModel && !this.fallbackModel) {
-            try {
-                const startTime = Date.now();
-                const result = await Promise.race([
-                    invokeFn(this.primaryModel),
-                    new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error(`Primary model timeout (${Math.round(PRIMARY_TIMEOUT_MS / 1000)}s)`)), PRIMARY_TIMEOUT_MS)
-                    ),
-                ]);
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                console.log(`✅ RESPONDIÓ: ${primaryModelName} vía OpenRouter en ${elapsed}s`);
-                return result;
-            } catch (err) {
-                if (isAuthenticationError(err)) {
-                    console.warn(`⚠️ ${primaryModelName} devolvio autenticacion invalida; se omite el modelo terciario porque usa la misma credencial.`);
-                    throw err;
-                }
-                console.warn(`⚠️ ${primaryModelName} FALLÓ: ${err.message}. Intentando modelo terciario (${tertiaryModelName})...`);
-                const startTime = Date.now();
-                const result = await invokeFn(this.tertiaryModel);
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                console.log(`✅ RESPONDIÓ: OpenRouter fallback (${tertiaryModelName}) en ${elapsed}s (tertiary)`);
-                return result;
-            }
-        }
-
-        // Only one model available
+        // Only one model available (e.g. solo Ollama)
         if (!this.model) throw new Error('LLM disabled');
-        const singleModelName = this.provider === 'openrouter' ? primaryModelName : (this.provider === 'deepseek' ? fallbackModelName : 'ollama');
+        const singleModelName = this.provider === 'openai' ? primaryModelName : 'ollama';
         const startTime = Date.now();
         const result = await invokeFn(this.model);
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -369,9 +312,12 @@ export class LLMService {
             // Sanitize messages to avoid DeepSeek API errors
             const sanitizedMessages = this.sanitizeMessages(messages);
 
-            // If no tools, just invoke directly
+            // If no tools, just invoke directly.
+            // Simple task (no tools) → prefer the SMALL OpenAI model unless the
+            // caller explicitly forces the smart model via opts.forceSmart.
             if (!tools || tools.length === 0) {
-                const response = await this._invokeWithFallback(model => model.invoke(sanitizedMessages), fallbackOpts);
+                const simpleOpts = opts.forceSmart ? fallbackOpts : { ...fallbackOpts, preferSmall: true };
+                const response = await this._invokeWithFallback(model => model.invoke(sanitizedMessages), simpleOpts);
 
                 // --- USER REQUESTED LOGGING ---
                 console.log("\n📤 [LLM RESPONSE] -------------------------------------------");
@@ -393,12 +339,8 @@ export class LLMService {
             }));
 
             const response = await this._invokeWithFallback(async (model) => {
-                // OpenRouter routing does not support the tool_choice parameter for all models.
-                // Skip it for the OpenRouter primary to avoid a 404 on first attempt.
-                const isOpenRouter = (model === this.primaryModel && this.primaryProvider === 'openrouter');
-                const bindOpts = isOpenRouter
-                    ? { tools: formattedTools }
-                    : { tools: formattedTools, tool_choice: toolChoice };
+                // OpenAI soporta tool_choice de forma nativa.
+                const bindOpts = { tools: formattedTools, tool_choice: toolChoice };
                 try {
                     const modelWithTools = model.bind(bindOpts);
                     return await modelWithTools.invoke(sanitizedMessages);
@@ -430,27 +372,26 @@ export class LLMService {
             console.log("------------------------------------------------------------\n");
             // ------------------------------
 
-            // Detect a degenerate primary response: no tool_calls AND blank/empty content
-            // (Qwen via OpenRouter occasionally emits just an empty ```json``` fence, which
-            // would otherwise reach the user as an empty answer).
+            // Detect a degenerate response: no tool_calls AND blank/empty content.
             const primaryNoToolCalls = !response.tool_calls || response.tool_calls.length === 0;
             const primaryContentBlank = isBlankModelContent(response.content);
 
-            // Retry with the fallback model (DeepSeek) when either:
+            // Retry with the SMART model (tool_choice forced) when either:
             //   • toolChoice was 'required' but the model returned no tool_calls, or
             //   • the model returned no tool_calls AND empty content.
+            // (Útil cuando el primer intento fue el SMALL o no invocó la tool.)
             if (
-                this.fallbackModel &&
+                this.primaryModel &&
                 primaryNoToolCalls &&
                 (toolChoice === 'required' || primaryContentBlank)
             ) {
                 const retryToolChoice = toolChoice === 'required' ? 'required' : 'auto';
-                console.warn(`[LLMService] Primary returned no tool_calls${primaryContentBlank ? ' and blank content' : ''} — retrying with fallback model (DeepSeek), tool_choice=${retryToolChoice}`);
+                console.warn(`[LLMService] Sin tool_calls${primaryContentBlank ? ' y contenido vacío' : ''} — reintentando con el modelo SMART, tool_choice=${retryToolChoice}`);
                 try {
-                    const retryResponse = await this.fallbackModel
+                    const retryResponse = await this.primaryModel
                         .bind({ tools: formattedTools, tool_choice: retryToolChoice })
                         .invoke(sanitizedMessages);
-                    console.log('\n📤 [LLM RESPONSE (TOOL RETRY WITH FALLBACK)] ----------------');
+                    console.log('\n📤 [LLM RESPONSE (TOOL RETRY WITH SMART)] -------------------');
                     console.log('OUTPUT CONTENT:', retryResponse.content);
                     const retryHasToolCalls = retryResponse.tool_calls && retryResponse.tool_calls.length > 0;
                     if (retryHasToolCalls) {
@@ -461,9 +402,9 @@ export class LLMService {
                     if (retryHasToolCalls || !isBlankModelContent(retryResponse.content)) {
                         return retryResponse;
                     }
-                    console.log('⚠️ Fallback retry also empty — proceeding with original response');
+                    console.log('⚠️ Reintento SMART también vacío — usando la respuesta original');
                 } catch (retryErr) {
-                    console.warn('[LLMService] Fallback retry with tools failed:', retryErr.message, '— returning original response');
+                    console.warn('[LLMService] Reintento con SMART falló:', retryErr.message, '— devolviendo respuesta original');
                 }
             }
 

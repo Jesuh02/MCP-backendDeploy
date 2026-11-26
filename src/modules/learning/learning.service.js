@@ -1,14 +1,14 @@
 /**
- * LearningDomainService — Generates AI-assisted learning artifacts (comics, video)
+ * LearningDomainService — Generates AI-assisted learning artifacts (comics)
  * from the materials of a given course/topic/task.
  *
  * Pipeline:
  *   1. learningContextService.buildLearningContext() — pulls topic/task/RAG docs.
  *   2. LLM (text)  → produces a structured script (title + panels[]).
- *   3. LLM (image) → renders each panel via OpenRouter image-capable models.
- *   4. (video)     → produces a narrated script + poster image. Returns a job
- *                    stub when no video provider is configured so the client
- *                    can show a graceful "not yet available" state.
+ *   3. LLM (image) → renders each panel via OpenAI's images API (gpt-image-1).
+ *
+ * Video generation is DISABLED: it relied on OpenRouter's /api/v1/videos
+ * endpoint, for which OpenAI offers no equivalent. generateVideo() now throws.
  *
  * Hex / SOLID:
  *   - Depends on ports (learningContextService, llmAdapter), not infra.
@@ -26,8 +26,7 @@ const MIN_VIDEO_SCENE_COUNT = 8;
 const MAX_VIDEO_SCENE_COUNT = 12;
 const DEFAULT_LEARNING_DIFFICULTY = 'HARD';
 const LEARNING_ARTIFACT_VERSION = 1;
-const DEFAULT_OPENROUTER_IMAGE_MODEL = 'openai/gpt-image-2';
-const LEGACY_OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+const DEFAULT_OPENAI_IMAGE_MODEL = 'gpt-image-1';
 const DEFAULT_OPENAI_IMAGE_TIMEOUT_MS = 180_000;
 const DEFAULT_IMAGE_TIMEOUT_MS = 90_000;
 
@@ -716,16 +715,12 @@ function extractImageRefFromImagesApiResponse(payload) {
 
   for (const item of candidates) {
     const contentType = imageContentType(
-      item?.mime_type || item?.mimeType || item?.content_type || item?.contentType
+      item?.mime_type || item?.mimeType || item?.content_type || item?.contentType,
+      'image/png'
     );
-    if (item?.b64_json) return imageDataUrl(item.b64_json, contentType);
-    if (item?.base64_json) return imageDataUrl(item.base64_json, contentType);
-    if (item?.image_base64) return imageDataUrl(item.image_base64, contentType);
-    if (item?.data && typeof item.data === 'string') return imageDataUrl(item.data, contentType);
+    // OpenAI images API: gpt-image-1 always returns b64_json, but honor url first if present.
     if (item?.url) return item.url;
-    if (item?.image_url?.url) return item.image_url.url;
-    if (item?.image?.b64_json) return imageDataUrl(item.image.b64_json, contentType);
-    if (item?.image?.url) return item.image.url;
+    if (item?.b64_json) return imageDataUrl(item.b64_json, contentType);
   }
 
   return '';
@@ -738,11 +733,11 @@ function boundedNumber(value, fallback, min, max) {
 }
 
 function imageTimeoutForModel(model) {
-  const configured = process.env.OPENROUTER_IMAGE_TIMEOUT_MS;
+  const configured = process.env.OPENAI_IMAGE_TIMEOUT_MS;
   if (configured) {
     return boundedNumber(configured, DEFAULT_OPENAI_IMAGE_TIMEOUT_MS, 30_000, 300_000);
   }
-  return String(model || '').startsWith('openai/')
+  return String(model || '').startsWith('gpt-image')
     ? DEFAULT_OPENAI_IMAGE_TIMEOUT_MS
     : DEFAULT_IMAGE_TIMEOUT_MS;
 }
@@ -750,11 +745,6 @@ function imageTimeoutForModel(model) {
 function comicPanelLimit(targetCount = DEFAULT_EVALUATION_TARGET_COUNT) {
   const desired = normalizeLearningTargetCount(targetCount, MAX_COMIC_PANEL_COUNT);
   return boundedNumber(process.env.OPENROUTER_COMIC_PANEL_LIMIT, desired, MIN_COMIC_PANEL_COUNT, MAX_COMIC_PANEL_COUNT);
-}
-
-function videoSceneLimit(targetCount = DEFAULT_EVALUATION_TARGET_COUNT) {
-  const desired = normalizeLearningTargetCount(targetCount, MAX_VIDEO_SCENE_COUNT);
-  return boundedNumber(process.env.OPENROUTER_VIDEO_SCENE_LIMIT, desired, MIN_VIDEO_SCENE_COUNT, MAX_VIDEO_SCENE_COUNT);
 }
 
 function parseDataUrl(dataUrl, fallbackExt = 'png') {
@@ -953,17 +943,14 @@ export class LearningDomainService {
     this.learningContextService = learningContextService;
     this.llmAdapter = llmAdapter;
     this.fileStoragePort = fileStoragePort;
-    // Best-in-class OpenRouter models, overridable by env.
-    // Video generation is fixed to Seedance 2.0 so this flow uses one provider model.
-    this.imageModel = process.env.OPENROUTER_IMAGE_MODEL || DEFAULT_OPENROUTER_IMAGE_MODEL;
-    this.comicImageModel = process.env.OPENROUTER_COMIC_IMAGE_MODEL || this.imageModel;
+    // Image generation uses OpenAI's images API (gpt-image-1), overridable by env.
+    this.imageModel = process.env.OPENAI_IMAGE_MODEL || DEFAULT_OPENAI_IMAGE_MODEL;
+    this.comicImageModel = process.env.OPENAI_COMIC_IMAGE_MODEL || this.imageModel;
     this.imageFallbackModels = uniqueModelList([
-      ...parseModelList(process.env.OPENROUTER_IMAGE_FALLBACK_MODELS),
+      ...parseModelList(process.env.OPENAI_IMAGE_FALLBACK_MODELS),
       this.imageModel,
-      LEGACY_OPENROUTER_IMAGE_MODEL,
     ]);
-    this.textModel = process.env.OPENROUTER_LEARNING_MODEL || process.env.OPENROUTER_CHAT_MODEL || 'qwen/qwen-2.5-72b-instruct';
-    this.videoModel = 'bytedance/seedance-2.0';
+    this.textModel = process.env.OPENAI_MODEL_SMART || 'gpt-4o';
   }
 
   _storageAvailable() {
@@ -1219,7 +1206,7 @@ export class LearningDomainService {
   }
 
   async _renderImage(prompt, visualContext = {}) {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return '';
 
     const fullPrompt = buildAnalogyVisualPrompt(prompt, visualContext);
@@ -1248,246 +1235,44 @@ export class LearningDomainService {
       model,
       prompt: fullPrompt,
       n: 1,
+      size: process.env.OPENAI_IMAGE_SIZE || '1024x1024',
+      quality: process.env.OPENAI_IMAGE_QUALITY || 'high',
     };
 
-    if (String(model || '').startsWith('openai/')) {
-      body.quality = process.env.OPENROUTER_IMAGE_QUALITY || 'low';
-      body.background = process.env.OPENROUTER_IMAGE_BACKGROUND || 'opaque';
-      const compression = Number(process.env.OPENROUTER_IMAGE_OUTPUT_COMPRESSION);
-      if (Number.isFinite(compression)) {
-        body.output_compression = Math.max(0, Math.min(100, Math.round(compression)));
-      }
-    } else if (String(model || '').startsWith('google/')) {
-      body.aspect_ratio = process.env.OPENROUTER_IMAGE_ASPECT_RATIO || '4:3';
-    }
-
     const resp = await axios.post(
-      'https://openrouter.ai/api/v1/images',
+      'https://api.openai.com/v1/images/generations',
       body,
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://coursev.app',
-          'X-Title': 'CourseV Learning',
         },
         timeout: imageTimeoutForModel(model),
       }
     );
 
-    const imageFromImagesApi = extractImageRefFromImagesApiResponse(resp?.data);
-    if (imageFromImagesApi) return imageFromImagesApi;
+    // OpenAI images API returns { created, data: [{ b64_json }] }.
+    // gpt-image-1 always returns base64 (no url, no response_format).
+    const item = resp?.data?.data?.[0];
+    if (item?.url) return item.url;
+    if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
 
-    const message = resp?.data?.choices?.[0]?.message;
-
-    // Debug: log response shape without dumping large base64 blobs
-    try {
-      const shape = {
-        model,
-        endpoint: '/api/v1/images',
-        dataItems: Array.isArray(resp?.data?.data)
-          ? resp.data.data.map((item) => ({
-            hasB64: Boolean(item?.b64_json || item?.base64_json || item?.image_base64),
-            hasUrl: Boolean(item?.url || item?.image_url?.url),
-            mimeType: item?.mime_type || item?.mimeType || item?.content_type || item?.contentType,
-          }))
-          : undefined,
-        messageKeys: message ? Object.keys(message) : null,
-        contentType: Array.isArray(message?.content) ? 'array' : typeof message?.content,
-        contentLen: Array.isArray(message?.content) ? message.content.length : undefined,
-        contentBlocks: Array.isArray(message?.content)
-          ? message.content.map(b => ({ type: b?.type, hasImageUrl: !!b?.image_url, hasSource: !!b?.source, hasInlineData: !!b?.inlineData }))
-          : undefined,
-        hasImages: !!message?.images,
-      };
-      console.log('[LearningService] _renderImage response shape:', JSON.stringify(shape));
-    } catch (_) { /* non-critical */ }
-
-    // 1. OpenRouter images[] array (some providers, e.g. older Gemini variants)
-    const fromImages = message?.images?.[0]?.image_url?.url;
-    if (fromImages) return fromImages;
-
-    // 2. Content is an array of blocks — most common for OpenRouter/Gemini/Anthropic
-    if (Array.isArray(message?.content)) {
-      for (const block of message.content) {
-        // Standard OpenRouter image_url block
-        if (block?.type === 'image_url' && block.image_url?.url) return block.image_url.url;
-        // OpenRouter output_image block
-        if (block?.type === 'output_image' && block.image_url?.url) return block.image_url.url;
-        // Anthropic-style: { type: 'image', source: { type: 'base64', media_type, data } }
-        if (block?.type === 'image' && block.source?.type === 'base64' && block.source?.data) {
-          return `data:${block.source.media_type || 'image/png'};base64,${block.source.data}`;
-        }
-        // Anthropic-style: { type: 'image', source: { type: 'url', url } }
-        if (block?.type === 'image' && block.source?.url) return block.source.url;
-        // Gemini native inlineData: { inlineData: { mimeType, data } }
-        if (block?.inlineData?.data) {
-          return `data:${block.inlineData.mimeType || 'image/png'};base64,${block.inlineData.data}`;
-        }
-        // Fallback: any block that carries a direct base64 data field
-        if (block?.data && block?.mimeType) {
-          return `data:${block.mimeType};base64,${block.data}`;
-        }
-      }
-    }
-
-    // 3. Content is a string — look for embedded markdown image or raw data URI
-    if (typeof message?.content === 'string') {
-      const mdImg = message.content.match(/!\[.*?\]\((data:image\/[^)]+)\)/);
-      if (mdImg) return mdImg[1];
-      const dataUri = message.content.match(/(data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{20,})/);
-      if (dataUri) return dataUri[1];
-    }
-
-    return '';
+    throw new Error('OpenAI images API returned no image');
   }
 
   // ───────────────────────── VIDEO ─────────────────────────
 
   /**
-   * Returns immediately with { status: 'processing', jobId } when a real video
-   * model is configured so that the HTTP connection is never held open for
-   * more than the time needed to build the script + poster (~30 s).
-   * Clients must poll GET /api/learning/video/status/:jobId.
+   * Video generation is DISABLED.
    *
-   * When no video model is configured the slideshow is built inline and
-   * returned with status: 'completed'.
+   * It previously relied on OpenRouter's /api/v1/videos endpoint (Seedance 2.0),
+   * for which OpenAI offers no equivalent. The method signature is preserved so
+   * existing callers/routes do not crash, but it throws immediately and never
+   * contacts any external provider.
    */
-  async generateVideo({ courseId, topicId, taskId, userId, difficulty = DEFAULT_LEARNING_DIFFICULTY, targetCount = DEFAULT_EVALUATION_TARGET_COUNT }) {
-    const normalizedDifficulty = normalizeLearningDifficulty(difficulty);
-    const normalizedTargetCount = normalizeLearningTargetCount(targetCount);
-    const sceneCount = videoSceneLimit(normalizedTargetCount);
-    const requirements = { minScenes: sceneCount, requireEvaluationPrep: true };
-    const descriptor = this._artifactDescriptor('video', { courseId, topicId, taskId });
-    const stored = await this._readStoredArtifact('video', descriptor, requirements);
-    if (stored) return stored;
-
-    const existingJobId = videoJobsByArtifactKey.get(descriptor.cacheKey);
-    if (existingJobId) {
-      const existingJob = this.getVideoStatus(existingJobId);
-      if (existingJob) return { jobId: existingJobId, ...existingJob };
-      videoJobsByArtifactKey.delete(descriptor.cacheKey);
-    }
-
-    const ctxResult = await this.learningContextService.buildLearningContext({ courseId, topicId, taskId, userId, query: null, retrievalMode: 'hybrid' });
-    if (ctxResult.isFail && ctxResult.isFail()) throw ctxResult.getError();
-    const ctx = ctxResult.getValue ? ctxResult.getValue() : ctxResult;
-    const sourceContext = buildSourceContext(ctx);
-    const evaluationPlan = buildEvaluationReadinessPlan(ctx, { difficulty: normalizedDifficulty, targetCount: normalizedTargetCount, mode: 'video' });
-
-    const llmResp = await this.llmAdapter.chat(
-      VIDEO_SYSTEM_PROMPT,
-      `Material disponible:\n\n${sourceContext}\n\n${evaluationPlan.text}\n\nGenera al menos ${sceneCount} escenas. Cada escena debe preparar una pregunta dificil del modulo de refuerzo.`,
-      { model: this.textModel, temperature: 0.35, maxTokens: 6144 }
-    );
-    const script = safeParseJson(llmResp?.content);
-    if (!script || !Array.isArray(script.scenes) || !script.scenes.length) {
-      throw new Error('No fue posible interpretar el guion de video.');
-    }
-
-    script.scenes = ensureVideoSceneCount(script.scenes, sceneCount, ctx, evaluationPlan);
-
-    const title = String(script.title || ctx?.topic?.name || 'Video educativo');
-    const summary = String(script.summary || '').slice(0, 520);
-    const durationSeconds = Math.max(75, Math.min(150, script.scenes.length * 10));
-    const technicalHighlights = collectTechnicalHighlights(script);
-    const sceneNotes = collectSceneNotes(script, sceneCount);
-    const evaluationPrep = buildEvaluationPrepMeta(evaluationPlan);
-
-    // ── Async path: video model configured ──────────────────
-    // Return immediately after script generation so the HTTP connection is never
-    // held open longer than ~20 s. Poster + video generation happen in the background.
-    if (this.videoModel && process.env.OPENROUTER_API_KEY) {
-      const jobId = `video_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      videoJobs.set(jobId, {
-        status: 'processing',
-        title,
-        summary,
-        posterUrl: '',
-        durationSeconds,
-        evaluationPrep,
-        technicalHighlights,
-        sceneNotes,
-        artifactKey: descriptor.cacheKey,
-        createdAt: Date.now(),
-      });
-      videoJobsByArtifactKey.set(descriptor.cacheKey, jobId);
-      // Start background job — do NOT await so the HTTP response is sent immediately.
-      this._startVideoJob(jobId, script, sourceContext, descriptor, requirements).catch((err) =>
-        console.error('[LearningService] Unhandled background video job error:', err?.message)
-      );
-      return { jobId, status: 'processing', title, summary, posterUrl: '', durationSeconds, evaluationPrep, technicalHighlights, sceneNotes };
-    }
-
-    // No video model configured — surface an error so the UI shows a clear message.
-    throw new Error('No hay modelo de video configurado. Contacta al administrador.');
-  }
-
-  /** Polls OpenRouter in the background, then uploads the video to R2 for permanent storage.
-   * If video rendering fails (e.g. 402 insufficient credits, model unavailable) the job
-   * automatically falls back to a narrated slideshow so the user always gets something. */
-  async _startVideoJob(jobId, script, sourceContext = '', artifactDescriptor = null, requirements = {}) {
-    const job = () => videoJobs.get(jobId);
-    try {
-      // Generate poster image in the background (non-blocking update to the job).
-      const firstScene = script.scenes?.[0] || {};
-      const firstTechnicalDetail = getTechnicalDetail(firstScene);
-      const posterPromise = this._renderImageSafely(
-        [
-          String(firstScene.imagePrompt || script.title || ''),
-          firstTechnicalDetail ? `External side-panel technical detail, do not render as image text: ${firstTechnicalDetail}` : '',
-        ].filter(Boolean).join('\n'),
-        { title: script.title, sourceContext, medium: 'video poster illustration' }
-      ).then(async(posterUrl) => {
-        const storedPosterUrl = artifactDescriptor
-          ? await this._persistMediaSource(posterUrl, `${artifactDescriptor.mediaPrefix}/poster`, 'png')
-          : posterUrl;
-        const current = videoJobs.get(jobId);
-        if (current) videoJobs.set(jobId, { ...current, posterUrl: storedPosterUrl });
-        return storedPosterUrl;
-      }).catch((err) => {
-        console.warn(`[LearningService] Poster generation failed for job ${jobId}: ${err?.message || err}`);
-        return '';
-      });
-
-      let videoUrl = null;
-      try {
-        const cdnUrl = await this._renderVideo(script, sourceContext);
-        videoUrl = cdnUrl;
-        // Download from the video provider CDN and upload to Cloudflare R2 for a permanent, CORS-safe URL.
-        if (artifactDescriptor) {
-          const publicUrl = await this._persistMediaSource(cdnUrl, `${artifactDescriptor.mediaPrefix}/video`, 'mp4');
-          if (publicUrl) {
-            videoUrl = publicUrl;
-            console.info(`[LearningService] Video job ${jobId} persisted: ${publicUrl}`);
-          }
-        }
-        const posterUrl = await posterPromise;
-        const completed = await this._persistVideoMedia({ ...job(), status: 'completed', posterUrl, videoUrl }, artifactDescriptor);
-        if (!hasUsableArtifactMedia('video', completed, requirements)) {
-          throw new Error('No se pudo persistir el video ni una presentacion con imagenes.');
-        }
-        await this._writeStoredArtifact('video', artifactDescriptor, completed);
-        videoJobs.set(jobId, { ...completed, artifactKey: artifactDescriptor?.cacheKey, createdAt: job()?.createdAt || Date.now() });
-        console.info(`[LearningService] Video job ${jobId} completed.`);
-      } catch (videoErr) {
-        const httpStatus = videoErr?.response?.status;
-        const insufficientCredits = httpStatus === 402;
-        console.warn(`[LearningService] Video render failed for job ${jobId} (HTTP ${httpStatus || videoErr?.message}), falling back to slideshow. insufficientCredits=${insufficientCredits}`);
-        const slides = await this._buildSlideshow(script, sourceContext, artifactDescriptor, requirements.minScenes);
-        const posterUrl = await posterPromise;
-        const completed = await this._persistVideoMedia({ ...job(), status: 'completed', posterUrl, slides, insufficientCredits }, artifactDescriptor);
-        if (!hasUsableArtifactMedia('video', completed, requirements)) {
-          throw new Error('No se pudo persistir el video ni una presentacion con imagenes.');
-        }
-        await this._writeStoredArtifact('video', artifactDescriptor, completed);
-        videoJobs.set(jobId, { ...completed, artifactKey: artifactDescriptor?.cacheKey, createdAt: job()?.createdAt || Date.now() });
-        console.info(`[LearningService] Video job ${jobId} completed as slideshow (${slides.length} slides).`);
-      }
-    } catch (err) {
-      console.error(`[LearningService] Video job ${jobId} failed: ${err?.message}`);
-      videoJobs.set(jobId, { ...job(), status: 'error', error: err.message });
-    }
+  // eslint-disable-next-line no-unused-vars
+  async generateVideo({ courseId, topicId, taskId, userId, difficulty = DEFAULT_LEARNING_DIFFICULTY, targetCount = DEFAULT_EVALUATION_TARGET_COUNT } = {}) {
+    throw new Error('La generación de video está deshabilitada.');
   }
 
   /** Generates one image per scene and returns a slides array as a fallback when video is unavailable. */
@@ -1532,83 +1317,6 @@ export class LearningDomainService {
     }
     const { artifactKey, ...clientJob } = job;
     return clientJob;
-  }
-
-  async _renderVideo(script, sourceContext = '') {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-
-    // Build a concise text-to-video prompt from the script scenes
-    const sceneSummary = script.scenes
-      .slice(0, Math.min(8, script.scenes.length))
-      .map((s, i) => {
-        const technicalDetail = getTechnicalDetail(s);
-        return [
-          `Scene ${i + 1}: ${s.imagePrompt || s.narration || ''}`,
-          technicalDetail ? `External side-panel technical content: ${technicalDetail}` : '',
-        ].filter(Boolean).join('. ');
-      })
-      .join('. ');
-    const technicalSummary = collectTechnicalHighlights(script).join(' | ');
-    const prompt = buildAnalogyVisualPrompt(
-      [
-        script.summary || '',
-        sceneSummary,
-        technicalSummary ? `External technical content shown beside the video: ${technicalSummary}.` : '',
-        'Smooth camera movement, coherent continuity between scenes, no decorative on-screen text; do not render code, formulas, tables, endpoints, commands, labels, captions, or any readable text inside the video.',
-      ].filter(Boolean).join('. '),
-      { title: script.title, sourceContext, medium: 'short educational video' }
-    );
-
-    // Step 1: Submit video generation job to OpenRouter /api/v1/videos
-    const genResp = await axios.post(
-      'https://openrouter.ai/api/v1/videos',
-      {
-        model: this.videoModel,
-        prompt,
-        duration: Number(process.env.OPENROUTER_VIDEO_DURATION) || 10,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.OPENROUTER_REFERER || 'https://coursev.app',
-          'X-Title': 'CourseV Learning',
-        },
-        timeout: 30_000,
-      }
-    );
-
-    const pollingUrl = genResp?.data?.polling_url;
-    if (!pollingUrl) throw new Error('No se obtuvo polling_url del proveedor de video.');
-
-    // Step 2: Poll until the video is ready.
-    // Seedance 2.0 can take several minutes. The frontend polls for ~8 min
-    // (100 × 5 s) after receiving the initial response, so 5 min here is safe.
-    const maxWaitMs = 5 * 60 * 1000; // 5 minutes
-    const pollIntervalMs = 6_000;
-    const deadline = Date.now() + maxWaitMs;
-
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-      const pollResp = await axios.get(pollingUrl, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        timeout: 15_000,
-      });
-      const data = pollResp?.data;
-      const jobStatus = data?.status;
-
-      if (jobStatus === 'completed') {
-        const url = data?.unsigned_urls?.[0] || data?.data?.[0]?.url;
-        if (url) return url;
-        throw new Error('Generación completada pero sin URL de video.');
-      }
-      if (jobStatus === 'failed' || jobStatus === 'error') {
-        throw new Error(`Generación de video fallida: ${data?.error || 'error desconocido'}`);
-      }
-      console.info(`[LearningService] Video generation status: ${jobStatus}, waiting...`);
-    }
-
-    throw new Error('Tiempo de espera agotado esperando el video (máx 5 min).');
   }
 }
 

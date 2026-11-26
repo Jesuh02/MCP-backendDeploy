@@ -1467,43 +1467,43 @@ export class MCPDomainService {
     }
 
     async _generateThumbnailImage(description) {
-        const apiKey = process.env.OPENROUTER_API_KEY;
-        if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured for image generation');
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) throw new Error('OPENAI_API_KEY not configured for image generation');
 
-        const imageModel = process.env.OPENROUTER_IMAGE_MODEL || 'openai/gpt-image-2';
+        const imageModel = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
         const prompt = [
             `Professional, photorealistic educational subject thumbnail: ${String(description || '').slice(0, 240)}.`,
             'Realistic academic setting, relevant objects for the subject, natural light, high detail,',
             'clean 16:9 composition, no text overlays, no logos, no watermarks.',
         ].join(' ');
-        const body = { model: imageModel, prompt, n: 1 };
-        if (String(imageModel).startsWith('openai/')) {
-            body.quality = process.env.OPENROUTER_IMAGE_QUALITY || 'auto';
-            body.background = process.env.OPENROUTER_IMAGE_BACKGROUND || 'opaque';
-        } else if (String(imageModel).startsWith('google/')) {
-            body.aspect_ratio = process.env.OPENROUTER_IMAGE_ASPECT_RATIO || '16:9';
-        }
+        const body = {
+            model: imageModel,
+            prompt,
+            n: 1,
+            size: process.env.OPENAI_IMAGE_SIZE || '1024x1024',
+            quality: process.env.OPENAI_IMAGE_QUALITY || 'high',
+        };
 
-        const resp = await fetch('https://openrouter.ai/api/v1/images', {
+        const resp = await fetch('https://api.openai.com/v1/images/generations', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
-                'HTTP-Referer': process.env.OPENROUTER_REFERER || process.env.SITE_URL || 'https://coursev.app',
-                'X-Title': 'CourseV',
             },
             body: JSON.stringify(body),
             signal: AbortSignal.timeout(90_000),
         });
         if (!resp.ok) {
             const msg = await resp.text().catch(() => '');
-            throw new Error(`OpenRouter image API ${resp.status}: ${msg.slice(0, 300)}`);
+            throw new Error(`OpenAI image API ${resp.status}: ${msg.slice(0, 300)}`);
         }
 
         const json = await resp.json();
-        const imageRef = this._extractImageRefFromImagesApi(json) ||
-            this._extractImageRef(json?.choices?.[0]?.message);
-        if (!imageRef) throw new Error(`OpenRouter image generation returned no image for model ${imageModel}`);
+        const item = json.data?.[0];
+        let imageRef;
+        if (item?.url) imageRef = item.url;
+        else if (item?.b64_json) imageRef = `data:image/png;base64,${item.b64_json}`;
+        else throw new Error('OpenAI images API returned no image');
         return this._imageRefToBuffer(imageRef);
     }
 
