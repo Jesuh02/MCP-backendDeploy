@@ -1619,8 +1619,9 @@ Cuando tengas los datos, responde: DATOS_LISTOS`);
 
         while (iteration < MAX_SAFETY_ITERATIONS) {
             iteration++;
-            
-            const response = await this.llmService.generateResponse(conversationHistory, []);
+
+            // forceSmart: consultas a BD → modelo SMART (gpt-4o), no el SMALL.
+            const response = await this.llmService.generateResponse(conversationHistory, [], { forceSmart: true });
             const responseContent = response.content || "";
 
             // Check if agent signals completion
@@ -1908,8 +1909,10 @@ GROUP BY u.id, u.username
                 iteration++;
                 logger.info(`🔄 Agent iteration ${iteration}`);
 
-                // Get LLM response (no tools passed - schema is pre-loaded in prompt)
-                const response = await this.llmService.generateResponse(conversationHistory, []);
+                // Get LLM response (no tools passed - schema is pre-loaded in prompt).
+                // forceSmart: estas son consultas a BD (razonamiento SQL), deben usar
+                // el modelo SMART (gpt-4o), NO el SMALL que falla el formato de tool-call.
+                const response = await this.llmService.generateResponse(conversationHistory, [], { forceSmart: true });
                 const responseContent = response.content || "";
 
                 logger.info(`📝 LLM Response (iteration ${iteration}):`, responseContent.substring(0, 500));
@@ -2008,9 +2011,20 @@ Analiza estos datos. Si recibiste un hint de 0 resultados y crees que es un erro
                     // answers are mistaken for "empty" responses and re-prompted.
                     const hasDataContext = !!lastSuccessfulData;
                     const isLikelyFinalAnswer = hasDataContext && trimmedResponse.length > 5;
-                    
-                    // If we have meaningful content (not just empty), treat as final response
-                    if (isLikelyFinalAnswer || trimmedResponse.length > 50) {
+
+                    // Un "anuncio" (p.ej. "Voy a buscar... un momento") NO es una
+                    // respuesta final: el modelo prometió consultar pero no ejecutó
+                    // nada. Sin datos (hasDataContext=false), un anuncio debe forzar
+                    // un reintento para que emita el tool-call, en vez de enviarse al
+                    // usuario como respuesta.
+                    const looksLikeAnnouncement = /(voy a (buscar|consultar|obtener|proceder)|consultar(é|e) la base|un momento,?\s*por favor|dame un momento|perm[ií]teme consultar|estoy consultando|primero,?\s+consultar)/i.test(trimmedResponse);
+
+                    // Solo tratamos como respuesta final cuando:
+                    //  • ya hay datos (isLikelyFinalAnswer), o
+                    //  • es texto sustancial que NO parece un anuncio sin datos.
+                    const acceptAsFinal = isLikelyFinalAnswer || (trimmedResponse.length > 50 && !(looksLikeAnnouncement && !hasDataContext));
+
+                    if (acceptAsFinal) {
                         logger.info(`✅ Agent completed after ${iteration} iterations (hasDataContext=${hasDataContext}, len=${trimmedResponse.length})`);
                         
                         // Clean up any residual code blocks that shouldn't be shown
