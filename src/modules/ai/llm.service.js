@@ -1026,13 +1026,19 @@ Si generas un ejercicio trivial o matemáticamente inconsistente, el sistema lo 
                             if (toolResultStr.length > 12000) {
                                 toolResultStr = toolResultStr.substring(0, 12000) + '\n... (resultados truncados por longitud)';
                             }
-                            // If query_database or create_course_structure succeeded, stop tool loop so the LLM formulates a text response
-                            const gotData = (toolName === 'query_database' || toolName === 'create_course_structure') && toolResult && (toolResult.success || toolResult.results);
-                            const nextTools = gotData ? [] : tools;
-                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model, tools: nextTools, ...fastTimeout });
+                            // Mantener las tools disponibles para que el modelo pueda
+                            // encadenar VARIAS consultas (p.ej. una pregunta de 3 partes:
+                            // total de estudiantes + cuántos enviaron tareas + top 5).
+                            // El loop se detiene solo cuando el modelo deja de pedir tools
+                            // o al alcanzar MAX_TOOL_ITERS. Para create_course_structure sí
+                            // cortamos (flujo de confirmación aparte).
+                            const stopLoop = toolName === 'create_course_structure' && toolResult && (toolResult.success || toolResult.results);
+                            const nextTools = stopLoop ? [] : tools;
+                            // Usar el modelo SMART en las continuaciones del tool-loop.
+                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_RESULT name=${toolName}]\n${toolResultStr}`, fullPrompt, { model: effectiveModel, tools: nextTools, toolChoice: 'auto', ...fastTimeout });
                         } catch (execErr) {
                             const errStr = String(execErr && (execErr.message || execErr));
-                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_ERROR name=${toolName}]\n${errStr}`, fullPrompt, { model, tools, ...fastTimeout });
+                            response = await this.llm.chat(systemPrompt + `\n\n[TOOL_ERROR name=${toolName}]\n${errStr}`, fullPrompt, { model: effectiveModel, tools, toolChoice: 'auto', ...fastTimeout });
                         }
                     }
 

@@ -847,8 +847,11 @@ export class WhatsAppDomainService {
                 const isExcelRequest = /\bexcel\b/i.test(text);
                 const isPdfRequest   = /\bpdf\b/i.test(text);
                 const isEmailRequest = this._isEmailIntent(text);
+                // Saludos / charla trivial NO deben ir al pipeline de BD: de lo
+                // contrario el modelo responde con el JSON crudo del tool-call.
+                const isSmallTalk    = this._isSmallTalk(text);
 
-                if (canUseMCP && !isExcelRequest && !isPdfRequest && !isEmailRequest && (roleAllows || looksLikeDbQuery)) {
+                if (canUseMCP && !isExcelRequest && !isPdfRequest && !isEmailRequest && !isSmallTalk && (roleAllows || looksLikeDbQuery)) {
                     let mcpResult = null;
                     try {
                         mcpResult = await this._callMcpForTenant(
@@ -1667,6 +1670,35 @@ export class WhatsAppDomainService {
         return keywords.some(kw => text.includes(kw));
     }
 
+    /**
+     * Detecta saludos y charla trivial (small-talk) que NO deben enrutarse al
+     * pipeline de consultas a la base de datos. Sin esto, un simple "hola" de un
+     * admin/docente entra en la ruta MCP/BI y el modelo acaba emitiendo el JSON
+     * crudo de un tool-call ({"tool":"query_database",...}) como respuesta.
+     * @param {string} text
+     * @returns {boolean}
+     */
+    _isSmallTalk(text) {
+        if (!text || typeof text !== 'string') return false;
+        const t = text.trim().toLowerCase().replace(/[!¡¿?.,]/g, '').trim();
+        if (!t) return false;
+        // Mensajes muy cortos de cortesía: tratar como charla, no como consulta BD.
+        const greetings = [
+            'hola', 'holi', 'buenas', 'buenos dias', 'buenos días', 'buen dia', 'buen día',
+            'buenas tardes', 'buenas noches', 'hey', 'hi', 'hello', 'que tal', 'qué tal',
+            'como estas', 'cómo estás', 'como estás', 'cómo estas', 'que mas', 'qué más',
+            'gracias', 'muchas gracias', 'ok', 'okay', 'vale', 'listo', 'perfecto',
+            'adios', 'adiós', 'chao', 'hasta luego', 'bye',
+        ];
+        if (greetings.includes(t)) return true;
+        // "hola ..." / "buenas ..." muy cortos (<= 4 palabras) sin señales de consulta.
+        const words = t.split(/\s+/);
+        if (words.length <= 4 && /^(hola|holi|buenas|buenos|buen|hey|hi|hello|gracias|chao|adios|adiós)\b/.test(t)) {
+            if (!this._isMCPIntent(t) && !this._isProgressIntent(t)) return true;
+        }
+        return false;
+    }
+
     _hasPermission(userRoles, required) {
         if (required === 'admin') return userRoles.includes(3) || userRoles.includes(4);
         if (required === 'teacher') return userRoles.includes(2) || userRoles.includes(3) || userRoles.includes(4);
@@ -1873,7 +1905,10 @@ export class WhatsAppDomainService {
             // Teachers (role 2) also get the BI persona so they can query their students'
             // progress, grades, and reinforcement practice — scoped to their collaborator subjects.
             const isTeacher = Array.isArray(userRoles) && userRoles.includes(2);
-            if (isAdmin || isTeacher) {
+            // Saludos / charla trivial: responder como asistente general normal,
+            // sin forzar la persona BI ni el tool-calling a la base de datos.
+            const isSmallTalk = this._isSmallTalk(text);
+            if ((isAdmin || isTeacher) && !isSmallTalk) {
                 forceTools = true;
                 const username = user?.username || 'usuario';
                 const biPrompt = `CONSULTA DE BUSINESS INTELIGENCIA: ${text}\n\nINSTRUCCIONES:\nEres un experto en Business Intelligence y Marketing. Tu objetivo es analizar la base de datos y dar recomendaciones estratégicas.\n\n1. El esquema de la base de datos YA ESTÁ en tu contexto. NO llames a 'get_database_schema' (salvo que necesites confirmar la estructura de tablas).\n2. 📌 OBLIGATORIO: usa la herramienta 'query_database' para obtener métricas reales (usuarios, cursos, ventas, etc.). No inventes datos.\n   - Para invocarla, responde primero con un bloque JSON EXACTO:\n` +
@@ -1931,8 +1966,10 @@ export class WhatsAppDomainService {
                 username: user.username,
                 userRoles,
                 fromWhatsApp: true,
-                // admins get BI tools via forceTools; all other WhatsApp users get scoped MCP access
-                forceMCPTools: forceTools || !!user.id,
+                // admins get BI tools via forceTools; all other WhatsApp users get scoped MCP access.
+                // Saludos / charla trivial: NO forzar tools (evita que el modelo
+                // devuelva el JSON crudo del tool-call en vez de un saludo normal).
+                forceMCPTools: !isSmallTalk && (forceTools || !!user.id),
                 // Institution context so the LLM knows which DB it is querying
                 tenantId: currentTenantId,
                 institutionName: currentInstitutionName,
@@ -2516,6 +2553,29 @@ export class WhatsAppDomainService {
     _sanitizeForWhatsApp(text) {
         if (!text) return text;
         let out = String(text);
+
+        // ── ÚLTIMA LÍNEA DE DEFENSA: nunca mostrar el JSON crudo de un tool-call ──
+        // Algunos modelos emiten {"tool":"query_database","arguments":{...}} como
+        // texto en vez de usar el mecanismo de tool-calls. Si ese JSON llega hasta
+        // aquí (sin importar la ruta interna que lo filtró), lo eliminamos para que
+        // el usuario jamás lo vea. Todas las respuestas de WhatsApp pasan por aquí.
+        {
+            // Bloque ```json ... "tool" ... ``` o ``` ... "query_database" ... ```
+            out = out.replace(/```(?:json)?\s*\{[\s\S]*?"tool"\s*:\s*"[^"]+"[\s\S]*?\}\s*```/gi, '');
+            // JSON de tool-call suelto (sin fences). Brace-aware simple: desde
+            // {"tool": ...} hasta su cierre, tolerando objetos anidados en arguments.
+            out = out.replace(/\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/gi, '');
+            // Variantes parciales que igual no deben verse.
+            out = out.replace(/\{\s*"tool"\s*:\s*"query_database"[\s\S]*$/gi, '');
+            // Bloques de SQL crudos que a veces se filtran.
+            out = out.replace(/```sql[\s\S]*?```/gi, '');
+            out = out.trim();
+            // Si al quitar el JSON no quedó contenido útil, dar un saludo/aviso amable
+            // en vez de un mensaje vacío.
+            if (out.length < 2) {
+                out = '¡Hola! 👋 ¿En qué puedo ayudarte hoy?';
+            }
+        }
 
         // Replace **bold** with *bold* (WhatsApp uses single asterisks)
         out = out.replace(/\*\*(.+?)\*\*/gs, '*$1*');
