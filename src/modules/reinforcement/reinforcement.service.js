@@ -1709,7 +1709,7 @@ IMPORTANTE:
         // Each call asks for (targetCount + 3) questions; after filtering we usually
         // reach targetCount in a single round, skipping all subsequent iterations.
         const buildUserPrompt = (exclusionBlock, reqCount) =>
-            `${contextBlock}\n${exclusionBlock}\n\n${topicHint}${hardEnforcement}\n\n═══ INSTRUCCIÓN PRINCIPAL ═══\nANTES de generar cualquier ejercicio, ANALIZA el material de referencia proporcionado e identifica:\n1. La TEMÁTICA PRINCIPAL del contenido (ej: historia, biología, programación, idiomas, etc.)\n2. Los CONCEPTOS CLAVE que el estudiante debe dominar\n3. Los EJEMPLOS y DATOS específicos del material\n\nLuego genera EXACTAMENTE ${reqCount} ejercicios de evaluación que cubran EXCLUSIVAMENTE esa temática.\n${!isMathContent ? 'PROHIBIDO: ejercicios de cálculo, aritmética, sumas, ecuaciones o cualquier problema matemático puro. ' : ''}OBLIGATORIO: MEZCLA los tipos (multiple_choice, fill_in_blank, ordering) — incluye EJERCICIOS PRÁCTICOS donde el estudiante demuestre comprensión profunda del material. Cada ejercicio debe exigir razonamiento genuino acorde al nivel ${diffLabel}.\nFormato: JSON array. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
+            `${contextBlock}\n${exclusionBlock}\n\n${topicHint}${hardEnforcement}\n\n═══ INSTRUCCIÓN PRINCIPAL ═══\nANTES de generar cualquier ejercicio, ANALIZA el material de referencia proporcionado e identifica:\n1. La TEMÁTICA PRINCIPAL del contenido (ej: historia, biología, programación, idiomas, etc.)\n2. Los CONCEPTOS CLAVE que el estudiante debe dominar\n3. Los EJEMPLOS y DATOS específicos del material\n\nLuego genera EXACTAMENTE ${reqCount} ejercicios de evaluación que cubran EXCLUSIVAMENTE esa temática.\n${!isMathContent ? 'PROHIBIDO: ejercicios de cálculo, aritmética, sumas, ecuaciones o cualquier problema matemático puro. ' : ''}OBLIGATORIO: TODOS los ejercicios DEBEN SER de tipo "multiple_choice" (opción múltiple con 4 opciones A, B, C, D). PROHIBIDO TOTAL: fill_in_blank (respuesta escrita), ordering (ordenamiento), o cualquier otro tipo. INCLUYE EJERCICIOS PRÁCTICOS donde el estudiante demuestre comprensión profunda del material seleccionando la opción correcta. Cada ejercicio debe exigir razonamiento genuino acorde al nivel ${diffLabel}.\nFormato: JSON array. Tu ÚNICA salida debe ser el JSON array, sin texto adicional.`;
 
         const callLLM = (temperature, reqCount, exclusionBlock) =>
             this.llmPort.chat(systemPrompt, buildUserPrompt(exclusionBlock, reqCount), {
@@ -2229,6 +2229,8 @@ VERIFICACIÓN OBLIGATORIA antes de cada ejercicio:
     _buildSystemPrompt(difficulty, targetCount, domain = 'GENERAL', isMathContent = false) {
         const groundingRule = `REGLA: Basa los ejercicios EXCLUSIVAMENTE en el material proporcionado. NO inventes información.`;
 
+        const multipleChoiceRule = `\n🔴 REGLA OBLIGATORIA - TIPO DE PREGUNTA 🔴\nTODOS los ejercicios DEBEN SER de tipo "multiple_choice" (opción múltiple con exactamente 4 opciones).\nProhibido TOTAL: fill_in_blank (respuesta escrita), ordering (ordenamiento), o cualquier otro tipo.\nCada pregunta debe tener:\n- "type": "multiple_choice"\n- "options": array de EXACTAMENTE 4 opciones (A, B, C, D)\n- "correctIndex": índice 0-3 indicando la opción correcta\n🔴 FIN REGLA OBLIGATORIA 🔴`;
+
         // Domain-specific complexity rules conditioned on difficulty
         // GENERAL only gets math rules when the content has been explicitly identified as math
         const MATH_DOMAINS = ['MATH', 'PHYSICS', 'CHEMISTRY', 'ACCOUNTING'];
@@ -2425,74 +2427,49 @@ REGLA UNIVERSAL HARD: Si puedes describir el ejercicio en una línea simple, NO 
 ` : '';
 
         const exerciseTypeInstructions = `
-TIPOS DE EJERCICIOS DISPONIBLES (usa "type" para identificar cada uno):
+🔴 TIPO DE EJERCICIO OBLIGATORIO - SOLO OPCIÓN MÚLTIPLE 🔴
 
-1. "multiple_choice" — Pregunta de opción múltiple clásica.
-   Campos: { type: "multiple_choice", question, options (array de 4), correctIndex (0-3), explanation }
+TODOS los ejercicios DEBEN SER de tipo "multiple_choice" (opción múltiple con exactamente 4 opciones).
 
-2. "fill_in_blank" — Ejercicio PRÁCTICO donde el estudiante resuelve y escribe la respuesta.
-   OBLIGATORIO para: ${isMathRelevant ? 'cálculos matemáticos, resolver operaciones, ' : ''}completar código, completar frases, traducciones, respuestas conceptuales.
-   Campos: { type: "fill_in_blank", question (usa "___" para marcar el espacio), correctAnswer (string), hint (pista opcional), explanation }
-   ${isMathRelevant ? `Ejemplos por dominio y dificultad:
-   EASY:
-   - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 24 + 18 = ___", correctAnswer: "42", hint: "Suma las unidades primero", explanation: "24 + 18 = 42" }
-   INTERMEDIATE:
-   - Matemáticas: { type: "fill_in_blank", question: "Resuelve: 4,827 + 3,695 = ___", correctAnswer: "8522", hint: "Suma columna por columna con acarreo", explanation: "7+5=12 (lleva 1), 2+9+1=12 (lleva 1), 8+6+1=15 (lleva 1), 4+3+1=8. Resultado: 8,522" }
-   HARD (COMPLEJIDAD MÁXIMA — los ejemplos para HARD son los que debes seguir):
-   - Matemáticas/Suma: { type: "fill_in_blank", question: "Una empresa tiene 3 sucursales con ventas mensuales de $45,230, $78,945 y $63,120. Calcula el total de ventas y luego aplica un impuesto del 16%. ¿Cuál es el monto total con impuesto? (redondea a entero)", correctAnswer: "217422", hint: "Primero suma las 3 cantidades, luego multiplica por 1.16", explanation: "Paso 1: 45230 + 78945 + 63120 = 187295. Paso 2: 187295 × 1.16 = 217262.2 → redondeado: 217262. VERIFICACIÓN: 187295 × 0.16 = 29967.2, + 187295 = 217262." }
-   - Matemáticas/Álgebra: { type: "fill_in_blank", question: "Sea f(x) = x³ - 6x² + 9x + 2. Encuentra el valor de x donde ocurre el mínimo local. f'(x) = 0 cuando x = ___ (entero positivo)", correctAnswer: "3", hint: "Deriva y factoriza: f'(x)=3x²-12x+9=3(x-1)(x-3)", explanation: "f'(x)=3x²-12x+9=0 → x=1 (máximo local) y x=3 (mínimo local). VERIFICACIÓN: f''(x)=6x-12, f''(3)=6>0 confirma mínimo local. f(3)=27-54+27+2=2." }` : `Ejemplos por dominio y dificultad:
-   EASY:
-   - General: { type: "fill_in_blank", question: "El proceso por el cual las plantas convierten la luz solar en energía se llama ___", correctAnswer: "fotosíntesis", hint: "Es un proceso que ocurre en los cloroplastos", explanation: "La fotosíntesis es el proceso por el cual las plantas convierten CO₂ y H₂O en glucosa usando luz solar." }
-   INTERMEDIATE:
-   - General: { type: "fill_in_blank", question: "En el contexto de la Segunda Guerra Mundial, el desembarco aliado en Normandía el 6 de junio de 1944 se conoce como ___", correctAnswer: "Día D", hint: "Es una letra del alfabeto seguida de su nombre", explanation: "El Día D (D-Day) fue la operación Overlord, el mayor desembarco anfibio de la historia." }
-   HARD:
-   - General: { type: "fill_in_blank", question: "Según el material proporcionado, el concepto clave que se aplica en este contexto es ___", correctAnswer: "(basado en el material RAG)", hint: "Revisa el material de referencia", explanation: "Basado en el contenido del material proporcionado." }`}
-   - SQL: { type: "fill_in_blank", question: "Completa la función de ventana para calcular el salario acumulado por departamento:\nSELECT nombre, departamento, salario,\n  ___(salario) OVER (PARTITION BY departamento ORDER BY fecha_contratacion) AS salario_acum\nFROM empleados;", correctAnswer: "SUM", hint: "Función de agregado que suma progresivamente", explanation: "SUM() OVER(PARTITION BY ... ORDER BY ...) calcula una suma acumulada (running total) dentro de cada partición." }
-   - Programación: { type: "fill_in_blank", question: "Completa la búsqueda binaria recursiva:\nfunction binarySearch(arr, target, lo, hi) {\n  if (lo > hi) return -1;\n  const mid = Math.floor((lo + hi) / 2);\n  if (arr[mid] === target) return mid;\n  if (arr[mid] < target) return binarySearch(arr, target, ___, hi);\n  return binarySearch(arr, target, lo, mid - 1);\n}", correctAnswer: "mid + 1", hint: "Si el elemento del medio es menor, busca en la mitad derecha", explanation: "Si arr[mid] < target, el objetivo está en [mid+1, hi]. Pasar lo=mid+1 descarta la mitad izquierda." }
-   ${isMathRelevant ? `- Física: { type: "fill_in_blank", question: "Un proyectil se lanza a 30° con v₀=40m/s. Su alcance horizontal R = v₀²·sin(2θ)/g = ___ m (g=10m/s², sin(60°)≈0.866)", correctAnswer: "138.56", hint: "R=1600·0.866/10", explanation: "R = (40²·sin(60°))/10 = (1600·0.866)/10 ≈ 138.56 m" }` : ''}
+PROHIBIDO TOTAL:
+  ✗ fill_in_blank (respuesta escrita)
+  ✗ ordering (ordenamiento)
+  ✗ Cualquier otro tipo
 
-3. "ordering" — Ordenar elementos en la secuencia correcta.
-   Ideal para: pasos de un algoritmo, líneas de código, procesos complejos, pasos de demostración.
-   Campos: { type: "ordering", question, items (array EN ORDEN CORRECTO — el servidor los baraja automáticamente), correctOrder: [0,1,2,...] (siempre identidad — el servidor lo recalcula), explanation }
-   IMPORTANTE: Proporciona los items YA EN SU ORDEN CORRECTO y pon correctOrder como [0,1,2,...]. El servidor los baraja automáticamente y recalcula los índices.
+ESTRUCTURA REQUERIDA para "multiple_choice":
+  {
+    "type": "multiple_choice",
+    "question": "pregunta clara y detallada",
+    "options": [
+      "A) Primera opción",
+      "B) Segunda opción",
+      "C) Tercera opción",
+      "D) Cuarta opción"
+    ],
+    "correctIndex": 0,  // índice de la opción correcta (0-3)
+    "explanation": "Explicación detallada de por qué es correcta esta opción"
+  }
 
-   ⚠️ REGLA CRÍTICA DE CONSISTENCIA — OBLIGATORIA:
-   La explanation NUNCA debe mencionar un número de pasos, fases o etapas distinto al número real de items.
-   Si tienes 5 items, la explanation DEBE decir "5 pasos" o simplemente no enumerar. NUNCA escribas "4 fases" si hay 5 items.
-   VERIFICA: cuenta los items y asegúrate de que la explanation sea coherente antes de emitir el JSON.
+REGLAS PARA GENERAR OPCIONES (MUY IMPORTANTE):
+1. EXACTAMENTE 4 opciones (A, B, C, D)
+2. La opción correcta debe estar presentada con la misma estructura y longitud que las incorrectas
+3. Los distractores deben ser plausibles pero claramente incorrectos
+4. Las 4 opciones deben tener longitud SIMILAR (máximo 15% de diferencia)
+5. PROHIBIDO que la opción correcta sea más larga o detallada que las otras
 
-   ${isMathRelevant ? `⚠️ REGLA PEDAGÓGICA PARA ARITMÉTICA CON DECIMALES — OBLIGATORIA:
-   La "coma decimal" (o "punto decimal") en operaciones de suma/resta con decimales se coloca PRIMERO, junto con la alineación.
-   NUNCA debe aparecer como paso final. El orden correcto es SIEMPRE:
-     PASO 1 (PRIMERO): Alinear los números verticalmente por la coma decimal Y marcar la posición de la coma en el resultado.
-     PASOS 2…N: Operar columna por columna de derecha a izquierda (centésimas → décimas → unidades → decenas…).
-     ÚLTIMO PASO: Escribir o verificar el resultado completo.
-   PROHIBIDO: "Bajar la coma decimal", "Colocar la coma decimal" o equivalentes como PASO FINAL.
+EJEMPLOS POR DOMINIO:
+- Matemáticas: Generar opciones con errores comunes (cálculos incorrectos, operaciones mal hechas, etc.)
+- Programación: Opciones con variaciones de sintaxis, lógica incorrecta, o algoritmos similares pero erróneos
+- Historia/Sociales: Eventos confundibles, fechas cercanas, personajes similares, causas alternativas
+- Idiomas: Conjugaciones o palabras similares, traducciones alternativas incorrectas
 
-   Ejemplo EASY (enteros): { type: "ordering", question: "Ordena los pasos para resolver 234 + 178", items: ["Sumar unidades: 4+8=12, escribir 2, llevar 1", "Sumar decenas: 3+7+1=11, escribir 1, llevar 1", "Sumar centenas: 2+1+1=4", "Obtener resultado: 412"], correctOrder: [0, 1, 2, 3], explanation: "Se suman 4 columnas de derecha a izquierda propagando el acarreo." }
-   Ejemplo EASY (decimales): { type: "ordering", question: "Ordena los pasos para sumar 45.67 + 128.3", items: ["Alinear los números por la coma decimal y marcar su posición en el resultado", "Sumar centésimas: 7+0=7", "Sumar décimas: 6+3=9", "Sumar unidades: 5+8=13, escribir 3, llevar 1", "Sumar decenas y centenas con acarreo; resultado final: 173.97"], correctOrder: [0, 1, 2, 3, 4], explanation: "5 pasos: la coma decimal se fija PRIMERO por alineación; luego se opera columna por columna de derecha a izquierda." }` : ''}
-   Ejemplo HARD: { type: "ordering", question: "Ordena los pasos de QuickSort para el arreglo [3,8,1,5,2,7]", items: ["Seleccionar pivote (ej: 5)", "Particionar: [3,1,2] [5] [8,7]", "Recursión izquierda: [1,2,3]", "Recursión derecha: [7,8]", "Combinar: [1,2,3,5,7,8]"], correctOrder: [0, 1, 2, 3, 4], explanation: "5 pasos — QuickSort: selecciona pivote, particiona O(n), aplica recursión en cada mitad. Complejidad promedio O(n log n)." }
+PROHIBICIÓN ABSOLUTA:
+❌ NO GENERES fill_in_blank bajo ninguna circunstancia
+❌ NO GENERES ordering bajo ninguna circunstancia
+❌ NO GENERES otros tipos de ejercicios
+❌ TODOS LOS ${targetCount} EJERCICIOS DEBEN SER multiple_choice
 
-DECISIÓN INTELIGENTE DE TIPOS — PRIORIZA EJERCICIOS PRÁCTICOS:
-- PRIMERO identifica el DOMINIO del tema/tarea (matemáticas, programación, idiomas, ciencias, etc.)
-- SEGUNDO decide qué tipos de ejercicios MIDEN MEJOR la competencia del estudiante en ese dominio.
-- PRINCIPIO CLAVE: Si el tema involucra HACER (calcular, resolver, programar, escribir), usa "fill_in_blank" para que el estudiante HAGA, no solo elija respuestas.
-
-REGLAS POR DOMINIO (AJUSTA COMPLEJIDAD según dificultad seleccionada):
-${isMathRelevant ? `- MATEMÁTICAS: MÍNIMO 5 de ${targetCount} deben ser "fill_in_blank". Escala de complejidad: EASY (1-2 dígitos: 3+5), INTERMEDIATE (3-4 dígitos: 4827+3695), HARD (7+ dígitos, 3+ operandos, operaciones mezcladas: 1023232+12213456+987654, o sumatorias Σ, series, sistemas de ecuaciones, derivadas, integrales). PROHIBIDO EN HARD: sumas de menos de 5 dígitos o de solo 2 números simples.
-- CIENCIAS: MÍNIMO 3 "fill_in_blank" con problemas multi-fórmula. HARD: 3+ ecuaciones encadenadas. NUNCA cálculos de un solo paso.` : `- ⚠️ DOMINIO ${domain}: NO generes ejercicios matemáticos. TODOS los ejercicios deben ser sobre el contenido del material.`}
-- SQL/BASES DE DATOS: MÍNIMO 4 "fill_in_blank". EASY: SELECTs con WHERE. INTERMEDIATE: JOINs simples, GROUP BY. HARD: CTEs, window functions, subconsultas correlacionadas — NUNCA SELECTs sin JOIN.
-- PROGRAMACIÓN: MÍNIMO 4 "fill_in_blank" para completar código, 2 "ordering" para algoritmos. HARD: algoritmos avanzados (recursión, grafos, programación dinámica), análisis de complejidad. NUNCA sintaxis básica.
-- IDIOMAS: MÍNIMO 4 "fill_in_blank". HARD: gramática avanzada (subjuntivo, condicionales mixtos), traducción técnica. NUNCA vocabulario básico.
-- HISTORIA, SOCIALES: 2-3 "ordering" para causalidad compleja, resto "multiple_choice" para análisis crítico.
-- BIOLOGÍA, NATURALES: MÍNIMO 3 "fill_in_blank" con procesos multi-etapa, 2 "ordering" para secuencias biológicas.
-- OTROS DOMINIOS: MÍNIMO 3 "fill_in_blank", 1-2 "ordering". HARD: Lleva el tema a su expresión práctica más compleja y profesional.
-
-REGLAS DE CALIDAD:
-- Los ejercicios fill_in_blank deben tener UNA sola respuesta correcta clara y verificable.
-- Para ordering, provee entre 4 y 6 items con secuencias no triviales.
-- NO varíes la dificultad internamente en un set HARD — mantén la complejidad máxima en TODOS los ejercicios.
-- Contextualiza: en HARD usa escenarios del mundo profesional, no de aula básica.
+🔴 FIN REGLA OBLIGATORIA - SOLO OPCIÓN MÚLTIPLE 🔴
 
 REGLA CRÍTICA DE LONGITUD EN OPCIONES (multiple_choice) — ANTI-SESGO DE LONGITUD:
 - TODAS las opciones DEBEN tener longitud MUY SIMILAR (máximo 15% de diferencia en caracteres entre la más corta y la más larga).
@@ -2500,12 +2477,7 @@ REGLA CRÍTICA DE LONGITUD EN OPCIONES (multiple_choice) — ANTI-SESGO DE LONGI
 - Si la respuesta correcta necesita ser específica, haz que TODAS las opciones sean IGUALMENTE específicas y detalladas.
 - PROHIBIDO ABSOLUTO: opciones cortas como distractores y la correcta larga/detallada.
 - TÉCNICA OBLIGATORIA: Escribe PRIMERO la respuesta correcta con el nivel de detalle necesario. Luego escribe CADA distractor con el MISMO nivel de detalle, la MISMA estructura gramatical y longitud SIMILAR.
-- VERIFICACIÓN: Antes de finalizar cada pregunta multiple_choice, CUENTA los caracteres de cada opción. Si alguna difiere más de 15% del promedio, REESCRIBE las opciones.
-
-DISTRIBUCIÓN OBLIGATORIA DE TIPOS:
-- SIEMPRE incluye AL MENOS 3 ejercicios "fill_in_blank" y AL MENOS 1 "ordering" en cada set de ${targetCount}.
-- NUNCA generes SOLO preguntas "multiple_choice". La variedad es OBLIGATORIA.
-`;
+- VERIFICACIÓN: Antes de finalizar cada pregunta multiple_choice, CUENTA los caracteres de cada opción. Si alguna difiere más de 15% del promedio, REESCRIBE las opciones.`;
 
         return `Eres un profesor experto de nivel universitario/profesional diseñando ${targetCount} ejercicios de evaluación.
 ${difficultyInstructions[difficulty] || difficultyInstructions.HARD}
