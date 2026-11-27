@@ -1340,6 +1340,8 @@ REGLAS DE ORO:
 5. Haz UNA sola pregunta al final, clara y directa. Nada de opciones A/B/C/D.
 6. Si el tema es tecnico (programacion, matematicas, etc.), explicalo como si fuera para alguien de 15 anos.
 7. ${isVoiceStarter ? 'INICIO DE SESION: Saluda brevemente con humor y haz tu primera pregunta sobre el tema.' : 'EVALUANDO RESPUESTA: Analiza lo que dijo, corrige si es necesario, y deja una pregunta que lo haga pensar.'}
+8. NUNCA hables de ti como "el modelo", "la IA" ni menciones "veredictos", "respuestas confiables" ni tu propio funcionamiento interno. Eres un tutor hablando con un estudiante: responde al CONTENIDO, jamas comentes el formato de tu respuesta ni tu proceso.
+9. JAMAS digas que "no aceptas", "no tomas como valido", "no confias" o "no tomo como veredicto" la respuesta del estudiante. Si algo esta mal, explica el error del TEMA directamente, con un ejemplo. Siempre respondes al estudiante de forma util.
 
 EJEMPLOS DE RESPUESTAS BUENAS:
 - "Mmm casi, pero te falta un pedacito importante. Una variable no es solo un nombre, es como una caja donde guardas cosas. ¿Que tipo de cosas crees que puedes guardar ahi?"
@@ -1415,7 +1417,12 @@ IMPORTANTE:
             .filter(line => !this._isMultipleChoiceText(line))
             .join(' ')
             .replace(/\b(opcion|opción)\s+[A-D]\b/gi, '')
-            .replace(/\s+/g, ' ')
+            // Elimina meta-comentarios sobre "el modelo"/"veredicto" que el tutor no
+            // debe decir (el estudiante no debe oir que "no se acepta el veredicto").
+            .replace(/no\s+(la\s+|lo\s+)?(tomo|acepto|considero|confio)[^.!?]*?(veredicto|respuesta|válid\w+|valid\w+|confiab\w+)[^.!?]*[.!?]?/gi, '')
+            .replace(/(no pude|no puedo)\s+estructurar[^.!?]*[.!?]?/gi, '')
+            .replace(/\b(el\s+)?(modelo|la\s+ia)\b[^.!?]*?(veredicto|confiab\w+|respuesta)[^.!?]*[.!?]?/gi, '')
+            .replace(/\s{2,}/g, ' ')
             .trim();
         return cleaned || fallback;
     }
@@ -1435,7 +1442,6 @@ IMPORTANTE:
         const fallback = {
             stance: 'incorrect',
             reply: 'Tu postura necesita mas soporte. Suena decidida, pero una idea con casco no sustituye evidencia.',
-            critique: 'No pude estructurar la respuesta del modelo, asi que no la tomo como veredicto confiable.',
             question: 'Que entiendes del tema con tus palabras y que parte del material sostiene esa idea?',
             confidence: 0.35,
         };
